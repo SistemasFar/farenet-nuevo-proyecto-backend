@@ -9,6 +9,10 @@ const crearAccessTokenTemporal = () => {
     return `ACCESS_TOKEN_JWT_VALIDO_${Date.now()}`;
 };
 
+const normalizarTexto = (valor) => {
+    return String(valor || '').trim();
+};
+
 const construirUsuarioResponse = (user) => {
     return {
         username: user.username,
@@ -31,13 +35,27 @@ const obtenerPlantasAsignadas = async (username) => {
         WHERE TRIM(up.usuario_username) = $1
         ORDER BY p.nombre
         `,
-        [username.trim()]
+        [normalizarTexto(username)]
     );
 
     return plantasResult.rows.map((p) => ({
         key: p.key,
         nombre: p.nombre
     }));
+};
+
+const obtenerPlantaPorKey = async (plantaKey) => {
+    const result = await db.query(
+        `
+        SELECT key, nombre
+        FROM planta
+        WHERE key = $1
+        LIMIT 1
+        `,
+        [normalizarTexto(plantaKey)]
+    );
+
+    return result.rows[0] || null;
 };
 
 const validarAccesoPlanta = async (username, plantaKey) => {
@@ -49,7 +67,7 @@ const validarAccesoPlanta = async (username, plantaKey) => {
           AND up.plantas_key = $2
         LIMIT 1
         `,
-        [username.trim(), plantaKey]
+        [normalizarTexto(username), normalizarTexto(plantaKey)]
     );
 
     return validacion.rowCount > 0;
@@ -60,10 +78,10 @@ const cerrarSesionesActivas = async (username) => {
         `
         UPDATE sesion_usuario
         SET activo = false
-        WHERE username = $1
+        WHERE TRIM(username) = $1
           AND activo = true
         `,
-        [username.trim()]
+        [normalizarTexto(username)]
     );
 };
 
@@ -88,19 +106,14 @@ const registrarSesion = async (username, plantaKey, refreshToken) => {
         )
         `,
         [
-            username.trim(),
+            normalizarTexto(username),
             refreshToken,
-            plantaKey
+            normalizarTexto(plantaKey)
         ]
     );
 };
 
 const login = async (req, res) => {
-    console.log("\n========================================================");
-    console.log("📥 [FRONTEND -> BACKEND] Petición recibida en auth.controller:");
-    console.log("Cuerpo (req.body):", req.body);
-    console.log("========================================================");
-
     const { username, password } = req.body;
 
     if (!username || !password) {
@@ -111,12 +124,7 @@ const login = async (req, res) => {
 
     try {
         const dataAuth = await authService.authenticateUser(username, password);
-
-        console.log("✅ [AUTENTICACIÓN EXITOSA] Servicio retornó dataAuth para:", username);
-
         const plantas = await obtenerPlantasAsignadas(dataAuth.user.username);
-
-        console.log(`📊 [SEDES CARGADAS]: ${plantas.length}`);
 
         if (plantas.length === 0) {
             return res.status(403).json({
@@ -129,10 +137,11 @@ const login = async (req, res) => {
             const refreshToken = crearRefreshToken();
 
             await cerrarSesionesActivas(dataAuth.user.username);
-            await registrarSesion(
+            await registrarSesion(dataAuth.user.username, planta.key, refreshToken);
+
+            const permisos = await authService.obtenerPermisosPorUsuario(
                 dataAuth.user.username,
-                planta.key,
-                refreshToken
+                planta.key
             );
 
             return res.status(200).json({
@@ -141,28 +150,22 @@ const login = async (req, res) => {
                 accessToken: dataAuth.token,
                 refreshToken,
                 user: construirUsuarioResponse(dataAuth.user),
-                plantaSeleccionada: planta.key,
+                plantaSeleccionada: planta,
                 plantas,
-                permisos: dataAuth.permisos || []
+                permisos
             });
         }
 
         return res.status(200).json({
             status: "success",
             requiereSeleccionarPlanta: true,
-            user: {
-                username: dataAuth.user.username,
-                perfilId: dataAuth.user.perfil_id
-            },
+            user: construirUsuarioResponse(dataAuth.user),
             plantas,
             permisos: dataAuth.permisos || []
         });
 
     } catch (error) {
-        console.error("❌ [LOGIN RECHAZADO] Excepción controlada:");
-        console.error("Mensaje exacto del error:", error.message);
-        console.error("Stack trace para auditoría:", error.stack);
-        console.log("========================================================\n");
+        console.error("❌ [LOGIN RECHAZADO]:", error.message);
 
         return res.status(401).json({
             message: error.message
@@ -176,7 +179,7 @@ const confirmarPlanta = async (req, res) => {
     try {
         if (!username || !plantaKey) {
             return res.status(400).json({
-                message: 'Usuario y Sede operativa son obligatorios.'
+                message: 'Usuario y sede operativa son obligatorios.'
             });
         }
 
@@ -188,23 +191,37 @@ const confirmarPlanta = async (req, res) => {
             });
         }
 
+        const user = await authService.obtenerUsuarioPorUsername(username);
+
+        if (!user) {
+            return res.status(404).json({
+                message: 'Usuario no encontrado.'
+            });
+        }
+
+        const planta = await obtenerPlantaPorKey(plantaKey);
+
+        if (!planta) {
+            return res.status(404).json({
+                message: 'Sede no encontrada.'
+            });
+        }
+
         await cerrarSesionesActivas(username);
 
         const refreshToken = crearRefreshToken();
 
-        await registrarSesion(
-            username,
-            plantaKey,
-            refreshToken
-        );
+        await registrarSesion(username, plantaKey, refreshToken);
 
-        console.log(`💾 [AUDITORÍA]: ${username} ingresó a la sede ${plantaKey}`);
+        const permisos = await authService.obtenerPermisosPorUsuario(username, plantaKey);
 
         return res.status(200).json({
             status: 'success',
             accessToken: crearAccessTokenTemporal(),
             refreshToken,
-            plantaSeleccionada: plantaKey
+            user: construirUsuarioResponse(user),
+            plantaSeleccionada: planta,
+            permisos
         });
 
     } catch (error) {
@@ -234,21 +251,27 @@ const cambiarPlanta = async (req, res) => {
             });
         }
 
+        const planta = await obtenerPlantaPorKey(plantaKey);
+
+        if (!planta) {
+            return res.status(404).json({
+                message: 'Sede no encontrada.'
+            });
+        }
+
         await cerrarSesionesActivas(username);
 
         const refreshToken = crearRefreshToken('REFRESH_TOKEN_CAMBIO');
 
-        await registrarSesion(
-            username,
-            plantaKey,
-            refreshToken
-        );
+        await registrarSesion(username, plantaKey, refreshToken);
 
-        console.log(`🔁 [CAMBIO SEDE]: ${username} cambió a la sede ${plantaKey}`);
+        const permisos = await authService.obtenerPermisosPorUsuario(username, plantaKey);
 
         return res.status(200).json({
             status: 'success',
-            plantaSeleccionada: plantaKey
+            refreshToken,
+            plantaSeleccionada: planta,
+            permisos
         });
 
     } catch (error) {
@@ -256,6 +279,35 @@ const cambiarPlanta = async (req, res) => {
 
         return res.status(500).json({
             message: 'Error al cambiar de sede.'
+        });
+    }
+};
+
+const obtenerPermisos = async (req, res) => {
+    const { username } = req.params;
+    const { plantaKey } = req.query;
+
+    try {
+        if (!username) {
+            return res.status(400).json({
+                message: 'Usuario es obligatorio.'
+            });
+        }
+
+        const permisos = await authService.obtenerPermisosPorUsuario(username, plantaKey || null);
+
+        return res.status(200).json({
+            status: 'success',
+            username,
+            plantaKey: plantaKey || null,
+            permisos
+        });
+
+    } catch (error) {
+        console.error('❌ Error obteniendo permisos:', error);
+
+        return res.status(500).json({
+            message: 'Error al obtener permisos del usuario.'
         });
     }
 };
@@ -290,5 +342,6 @@ module.exports = {
     login,
     logout,
     confirmarPlanta,
-    cambiarPlanta
+    cambiarPlanta,
+    obtenerPermisos
 };

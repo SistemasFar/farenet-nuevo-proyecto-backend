@@ -1,21 +1,16 @@
 const db = require('../config/database');
 const bcrypt = require('bcryptjs');
 
-/**
- * Servicio centralizado para autenticar credenciales contra PostgreSQL
- * @param {string} username
- * @param {string} password
- */
-const authenticateUser = async (username, password) => {
-    const cleanUsername = String(username || '').trim();
-    const cleanPassword = String(password || '').trim();
+const normalizarTexto = (valor) => {
+    return String(valor || '').trim();
+};
 
-    console.log("\n🔍 ========================================================");
-    console.log("🕵️‍♂️ [AUDITORÍA DE AUTENTICACIÓN - ENTRADA EN SERVICIO]");
-    console.log("-> Usuario recibido del Front:", cleanUsername);
-    console.log("-> Password length:", cleanPassword.length);
-    console.log("-> Clave plano recibida del Front:", cleanPassword ? "•••••••• (Texto enviado)" : "VACÍA");
-    console.log("========================================================");
+const generarTokenMock = () => {
+    return "JWT_ACCESS_TOKEN_GENERADO_MOCK_FARENET_" + Date.now();
+};
+
+const obtenerUsuarioPorUsername = async (username) => {
+    const cleanUsername = normalizarTexto(username);
 
     const query = `
         SELECT 
@@ -31,44 +26,103 @@ const authenticateUser = async (username, password) => {
     `;
 
     const result = await db.query(query, [cleanUsername]);
-    const user = result.rows[0];
+    return result.rows[0];
+};
+
+const obtenerPermisosBasePorPerfil = async (perfilId) => {
+    const cleanPerfilId = normalizarTexto(perfilId);
+
+    const query = `
+        SELECT DISTINCT TRIM(roles_clave) AS permiso_clave
+        FROM perfil_rol
+        WHERE TRIM(perfil_clave) = $1
+        ORDER BY TRIM(roles_clave)
+    `;
+
+    const result = await db.query(query, [cleanPerfilId]);
+
+    return result.rows
+        .map((row) => row.permiso_clave)
+        .filter(Boolean);
+};
+
+const obtenerOverridesUsuario = async (username, plantaKey = null) => {
+    const cleanUsername = normalizarTexto(username);
+    const cleanPlantaKey = plantaKey ? normalizarTexto(plantaKey) : null;
+
+    const query = `
+        SELECT 
+            TRIM(permiso_clave) AS permiso_clave,
+            concedido
+        FROM usuario_permiso_override
+        WHERE TRIM(usuario_username) = $1
+          AND (
+                planta_key IS NULL
+                OR TRIM(planta_key) = $2
+              )
+        ORDER BY creado_utc ASC
+    `;
+
+    const result = await db.query(query, [cleanUsername, cleanPlantaKey]);
+
+    return result.rows.filter((row) => row.permiso_clave);
+};
+
+const obtenerPermisosPorUsuario = async (username, plantaKey = null) => {
+    const user = await obtenerUsuarioPorUsername(username);
 
     if (!user) {
-        console.log(`❌ [RESULTADO AUDITORÍA]: El usuario '${cleanUsername}' NO existe en la tabla 'usuario'.`);
-        console.log("========================================================\n");
         throw new Error("Usuario no encontrado en el sistema.");
     }
 
-    const hashBD = String(user.contrasenha || '').trim();
+    const permisosBase = await obtenerPermisosBasePorPerfil(user.perfil_id);
+    const permisosFinales = new Set(permisosBase);
 
-    console.log("✅ [USUARIO ENCONTRADO]: Registro recuperado con éxito.");
-    console.log("-> Usuario BD:", user.username);
-    console.log("-> Hash length:", hashBD.length);
-    console.log("-> Hash inicia con:", hashBD.substring(0, 4));
-    console.log("-> Estado usuario:", user.estado);
+    const overrides = await obtenerOverridesUsuario(username, plantaKey);
 
-    let isMatch = false;
-
-    try {
-        if (
-            hashBD.startsWith('$2a$') ||
-            hashBD.startsWith('$2b$') ||
-            hashBD.startsWith('$2y$')
-        ) {
-            isMatch = bcrypt.compareSync(cleanPassword, hashBD);
-            console.log("-> [MÉTODO]: Validación por Hash de Bcrypt ejecutada.");
-            console.log("-> ¿Bcrypt confirmó que coinciden?:", isMatch ? "SÍ ✅" : "NO ❌");
+    overrides.forEach((override) => {
+        if (override.concedido === true) {
+            permisosFinales.add(override.permiso_clave);
         } else {
-            isMatch = cleanPassword === hashBD;
-            console.log("⚠️ [ALERTA DE SEGURIDAD]: La clave en la base de datos está en TEXTO PLANO.");
-            console.log("-> ¿Comparación directa de texto coincide?:", isMatch ? "SÍ ✅" : "NO ❌");
+            permisosFinales.delete(override.permiso_clave);
         }
-    } catch (bcryptError) {
-        console.error("❌ Error interno al procesar el hash con Bcrypt:", bcryptError.message);
-        isMatch = false;
+    });
+
+    return Array.from(permisosFinales).sort();
+};
+
+const validarPassword = (passwordPlano, hashBD) => {
+    const cleanPassword = normalizarTexto(passwordPlano);
+    const cleanHash = normalizarTexto(hashBD);
+
+    if (
+        cleanHash.startsWith('$2a$') ||
+        cleanHash.startsWith('$2b$') ||
+        cleanHash.startsWith('$2y$')
+    ) {
+        return bcrypt.compareSync(cleanPassword, cleanHash);
     }
 
-    console.log("========================================================\n");
+    return cleanPassword === cleanHash;
+};
+
+const authenticateUser = async (username, password) => {
+    const cleanUsername = normalizarTexto(username);
+    const cleanPassword = normalizarTexto(password);
+
+    console.log("\n🔍 ========================================================");
+    console.log("🕵️‍♂️ [AUDITORÍA DE AUTENTICACIÓN]");
+    console.log("-> Usuario recibido:", cleanUsername);
+    console.log("-> Password length:", cleanPassword.length);
+    console.log("========================================================");
+
+    const user = await obtenerUsuarioPorUsername(cleanUsername);
+
+    if (!user) {
+        throw new Error("Usuario no encontrado en el sistema.");
+    }
+
+    const isMatch = validarPassword(cleanPassword, user.contrasenha);
 
     if (!isMatch) {
         throw new Error("La contraseña ingresada no coincide con el registro.");
@@ -78,59 +132,25 @@ const authenticateUser = async (username, password) => {
         throw new Error("El usuario se encuentra inactivo.");
     }
 
-    const permisosMock = [
-        "INICIO_VER",
-        "INSPECCIONES_CREAR",
-        "VEHICULOS_BUSCAR",
-        "CAJA_OPERAR"
-    ];
-
-    const tokenMock = "JWT_ACCESS_TOKEN_GENERADO_MOCK_FARENET_" + Date.now();
+    const permisos = await obtenerPermisosPorUsuario(cleanUsername);
 
     return {
-        token: tokenMock,
+        token: generarTokenMock(),
         user: {
-            username: String(user.username || '').trim(),
+            username: normalizarTexto(user.username),
             perfil_id: user.perfil_id,
             persona_nrodocumentoidentidad: user.persona_nrodocumentoidentidad,
             estado: user.estado,
             user_type: user.user_type
         },
-        permisos: permisosMock
+        permisos
     };
-};
-
-const login = async (req, res) => {
-    const { username, password } = req.body;
-
-    if (!username || !password) {
-        return res.status(400).json({ message: "Usuario y contraseña son requeridos." });
-    }
-
-    try {
-        const dataAuth = await authenticateUser(username, password);
-
-        return res.status(200).json({
-            status: "success",
-            token: dataAuth.token,
-            user: dataAuth.user,
-            permisos: dataAuth.permisos || []
-        });
-    } catch (error) {
-        console.error("Error en Login (Service Bridge):", error.message);
-        return res.status(401).json({ message: error.message });
-    }
-};
-
-const logout = async (req, res) => {
-    return res.status(200).json({
-        status: "success",
-        message: "Sesión cerrada correctamente"
-    });
 };
 
 module.exports = {
     authenticateUser,
-    login,
-    logout
+    obtenerUsuarioPorUsername,
+    obtenerPermisosPorUsuario,
+    obtenerPermisosBasePorPerfil,
+    obtenerOverridesUsuario
 };

@@ -131,5 +131,5 @@ router.post('/cambiar-planta', authController.cambiarPlanta);
  * description: Error al actualizar el estado en PostgreSQL.
  */
 router.post('/logout', authController.logout);
-
+router.get('/permisos/:username', authController.obtenerPermisos);
 module.exports = router;
