@@ -7,7 +7,7 @@ const authController = require('../controllers/auth.controller');
  * /auth/login:
  * post:
  * summary: Iniciar sesión del operador (HU001 - Paso 1)
- * description: Valida las credenciales con Bcrypt en PostgreSQL y retorna las sedes asignadas.
+ * description: Valida las credenciales con Bcrypt en PostgreSQL y retorna solo las sedes asignadas al usuario.
  * requestBody:
  * required: true
  * content:
@@ -26,9 +26,13 @@ const authController = require('../controllers/auth.controller');
  * example: "76052066"
  * responses:
  * 200:
- * description: Autenticación exitosa. Retorna el listado de plantas.
+ * description: Autenticación exitosa. Si tiene una sede ingresa directo; si tiene varias retorna selector.
+ * 400:
+ * description: Usuario y contraseña requeridos.
  * 401:
  * description: Credenciales incorrectas o usuario inactivo.
+ * 403:
+ * description: Usuario sin sedes asignadas.
  * 500:
  * description: Error interno del servidor.
  */
@@ -38,8 +42,8 @@ router.post('/login', authController.login);
  * @openapi
  * /auth/confirmar-planta:
  * post:
- * summary: Confirmar sede operativa (HU001 - Paso 2)
- * description: Registra la auditoría en la tabla 'sesion_usuario' con estado activo y genera los tokens JWT.
+ * summary: Confirmar sede operativa seleccionada (HU006)
+ * description: Valida que el usuario tenga acceso a la sede seleccionada y registra la sesión activa.
  * requestBody:
  * required: true
  * content:
@@ -61,10 +65,46 @@ router.post('/login', authController.login);
  * description: Sede confirmada y sesión registrada en PostgreSQL.
  * 400:
  * description: Faltan parámetros obligatorios.
+ * 403:
+ * description: El usuario no tiene acceso a la sede seleccionada.
  * 500:
  * description: Error al insertar en la base de datos.
  */
 router.post('/confirmar-planta', authController.confirmarPlanta);
+
+/**
+ * @openapi
+ * /auth/cambiar-planta:
+ * post:
+ * summary: Cambiar sede activa durante la sesión (HU006)
+ * description: Permite cambiar la sede de trabajo del usuario validando que tenga acceso a la nueva sede.
+ * requestBody:
+ * required: true
+ * content:
+ * application/json:
+ * schema:
+ * type: object
+ * required:
+ * - username
+ * - plantaKey
+ * properties:
+ * username:
+ * type: string
+ * example: mchavez
+ * plantaKey:
+ * type: string
+ * example: "26"
+ * responses:
+ * 200:
+ * description: Sede cambiada correctamente.
+ * 400:
+ * description: Usuario y sede son obligatorios.
+ * 403:
+ * description: El usuario no tiene acceso a la sede seleccionada.
+ * 500:
+ * description: Error al cambiar de sede.
+ */
+router.post('/cambiar-planta', authController.cambiarPlanta);
 
 /**
  * @openapi
