@@ -139,3 +139,4 @@ app.listen(PORT, '127.0.0.1', () => {
     console.log(`📑 SWAGGER VIVO EN: http://127.0.0.1:${PORT}/api-docs`);
     console.log(`================================================================`);
 });
+// Inicialización del proceso permanentemente en IPv4 local
