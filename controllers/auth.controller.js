@@ -1,4 +1,5 @@
 const authService = require('../services/auth.service');
+const auditoriaService = require('../services/auditoria.service');
 const db = require('../config/database');
 
 const crearRefreshToken = (prefijo = 'REFRESH_TOKEN_FARENET') => {
@@ -138,6 +139,14 @@ const login = async (req, res) => {
 
             await cerrarSesionesActivas(dataAuth.user.username);
             await registrarSesion(dataAuth.user.username, planta.key, refreshToken);
+            await auditoriaService.registrarAuditoriaAcceso({
+                req,
+                username: dataAuth.user.username,
+                evento: 'LOGIN',
+                exitoso: true,
+                mensaje: 'Login exitoso',
+                plantaKey: planta.key
+            });
 
             const permisos = await authService.obtenerPermisosPorUsuario(
                 dataAuth.user.username,
@@ -156,6 +165,14 @@ const login = async (req, res) => {
             });
         }
 
+        await auditoriaService.registrarAuditoriaAcceso({
+            req,
+            username: dataAuth.user.username,
+            evento: 'LOGIN',
+            exitoso: true,
+            mensaje: 'Login exitoso pendiente de selección de sede'
+        });
+
         return res.status(200).json({
             status: "success",
             requiereSeleccionarPlanta: true,
@@ -163,14 +180,22 @@ const login = async (req, res) => {
             plantas,
             permisos: dataAuth.permisos || []
         });
-
     } catch (error) {
         console.error("❌ [LOGIN RECHAZADO]:", error.message);
+
+        await auditoriaService.registrarAuditoriaAcceso({
+            req,
+            username,
+            evento: 'LOGIN',
+            exitoso: false,
+            mensaje: error.message
+        });
 
         return res.status(401).json({
             message: error.message
         });
     }
+
 };
 
 const confirmarPlanta = async (req, res) => {
@@ -212,6 +237,14 @@ const confirmarPlanta = async (req, res) => {
         const refreshToken = crearRefreshToken();
 
         await registrarSesion(username, plantaKey, refreshToken);
+        await auditoriaService.registrarAuditoriaAcceso({
+            req,
+            username,
+            evento: 'CONFIRMAR_PLANTA',
+            exitoso: true,
+            mensaje: 'Sede operativa confirmada correctamente',
+            plantaKey
+        });
 
         const permisos = await authService.obtenerPermisosPorUsuario(username, plantaKey);
 
@@ -264,6 +297,14 @@ const cambiarPlanta = async (req, res) => {
         const refreshToken = crearRefreshToken('REFRESH_TOKEN_CAMBIO');
 
         await registrarSesion(username, plantaKey, refreshToken);
+        await auditoriaService.registrarAuditoriaAcceso({
+            req,
+            username,
+            evento: 'CAMBIO_PLANTA',
+            exitoso: true,
+            mensaje: 'Cambio de sede realizado correctamente',
+            plantaKey
+        });
 
         const permisos = await authService.obtenerPermisosPorUsuario(username, plantaKey);
 
@@ -323,6 +364,13 @@ const logout = async (req, res) => {
         }
 
         await cerrarSesionesActivas(username);
+        await auditoriaService.registrarAuditoriaAcceso({
+            req,
+            username,
+            evento: 'LOGOUT',
+            exitoso: true,
+            mensaje: 'Sesión cerrada correctamente'
+        });
 
         return res.status(200).json({
             status: "success",
