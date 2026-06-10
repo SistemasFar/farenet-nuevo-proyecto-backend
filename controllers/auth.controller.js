@@ -385,11 +385,73 @@ const logout = async (req, res) => {
         });
     }
 };
+const validarSesion = async (req, res) => {
+    const { username } = req.body;
 
+    try {
+        if (!username) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Usuario es obligatorio.'
+            });
+        }
+
+        const result = await db.query(
+            `
+            SELECT
+                id,
+                username,
+                planta_key,
+                activo,
+                fechcreacion,
+                fechexpiracion
+            FROM sesion_usuario
+            WHERE TRIM(username) = $1
+              AND activo = true
+            ORDER BY fechcreacion DESC
+            LIMIT 1
+            `,
+            [normalizarTexto(username)]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(401).json({
+                status: 'expired',
+                message: 'No existe una sesión activa.'
+            });
+        }
+
+        const sesion = result.rows[0];
+
+        if (new Date(sesion.fechexpiracion) <= new Date()) {
+            await cerrarSesionesActivas(username);
+
+            return res.status(401).json({
+                status: 'expired',
+                message: 'La sesión ha expirado. Inicie sesión nuevamente.'
+            });
+        }
+
+        return res.status(200).json({
+            status: 'success',
+            message: 'Sesión vigente.',
+            sesion
+        });
+
+    } catch (error) {
+        console.error('❌ Error validando sesión:', error);
+
+        return res.status(500).json({
+            status: 'error',
+            message: 'Error al validar la sesión.'
+        });
+    }
+};
 module.exports = {
     login,
     logout,
     confirmarPlanta,
     cambiarPlanta,
-    obtenerPermisos
+    obtenerPermisos,
+    validarSesion
 };
