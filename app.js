@@ -9,6 +9,7 @@ const swaggerJsDoc = require('swagger-jsdoc');
 const authRoutes = require('./routes/auth.routes');
 const usuarioRoutes = require('./routes/usuario.routes');
 const operacionRoutes = require('./routes/operacion.routes');
+const inspeccionesRoutes = require('./routes/inspecciones.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -150,7 +151,7 @@ const swaggerOptions = {
             '/operacion/inspecciones-dia': {
                 get: {
                     summary: 'HU010 - Panel principal de operación',
-                    description: 'Lista las inspecciones del día por sede.',
+                    description: 'Lista las inspecciones del día por sede. No muestra estados CON ni ANULADO.',
                     parameters: [
                         {
                             in: 'query',
@@ -162,7 +163,16 @@ const swaggerOptions = {
                         },
                         {
                             in: 'query',
-                            name: 'fecha',
+                            name: 'fechaInicio',
+                            required: false,
+                            schema: {
+                                type: 'string',
+                                example: '2026-06-10'
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'fechaFin',
                             required: false,
                             schema: {
                                 type: 'string',
@@ -192,11 +202,139 @@ const swaggerOptions = {
                             schema: {
                                 type: 'string'
                             }
+                        },
+                        {
+                            in: 'query',
+                            name: 'page',
+                            required: false,
+                            schema: {
+                                type: 'integer',
+                                example: 1
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'pageSize',
+                            required: false,
+                            schema: {
+                                type: 'integer',
+                                example: 10
+                            }
                         }
                     ],
                     responses: {
                         200: {
-                            description: 'Listado de inspecciones'
+                            description: 'Listado de inspecciones operativas'
+                        }
+                    }
+                }
+            },
+
+            '/inspecciones/buscar': {
+                get: {
+                    summary: 'HU011 - Buscar inspecciones registradas',
+                    description: 'Busca inspecciones registradas por sede. Solo muestra estados CON, ANULADO y RETIRADO.',
+                    parameters: [
+                        {
+                            in: 'query',
+                            name: 'plantaKey',
+                            required: true,
+                            schema: {
+                                type: 'string',
+                                example: '201'
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'numeroInspeccion',
+                            required: false,
+                            schema: {
+                                type: 'string',
+                                example: 'INS-201'
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'placa',
+                            required: false,
+                            schema: {
+                                type: 'string',
+                                example: 'ABC123'
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'comprobante',
+                            required: false,
+                            schema: {
+                                type: 'string',
+                                example: 'BE03'
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'cliente',
+                            required: false,
+                            schema: {
+                                type: 'string',
+                                example: '20604368406'
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'fechaInicio',
+                            required: false,
+                            schema: {
+                                type: 'string',
+                                example: '2026-06-01'
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'fechaFin',
+                            required: false,
+                            schema: {
+                                type: 'string',
+                                example: '2026-06-10'
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'estado',
+                            required: false,
+                            schema: {
+                                type: 'string',
+                                enum: ['CON', 'ANULADO', 'RETIRADO']
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'page',
+                            required: false,
+                            schema: {
+                                type: 'integer',
+                                example: 1
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'pageSize',
+                            required: false,
+                            schema: {
+                                type: 'integer',
+                                example: 10
+                            }
+                        }
+                    ],
+                    responses: {
+                        200: {
+                            description: 'Listado de inspecciones registradas'
+                        },
+                        400: {
+                            description: 'Falta plantaKey'
+                        },
+                        500: {
+                            description: 'Error interno al buscar inspecciones'
                         }
                     }
                 }
@@ -221,6 +359,7 @@ app.use(
 app.use('/api/auth', authRoutes);
 app.use('/api/usuarios', usuarioRoutes);
 app.use('/api/operacion', operacionRoutes);
+app.use('/api/inspecciones', inspeccionesRoutes);
 
 // ==========================
 // HEALTH CHECK
@@ -242,5 +381,6 @@ app.listen(PORT, '127.0.0.1', () => {
     console.log(`🚀 SERVIDOR CORRIENDO EN: http://127.0.0.1:${PORT}`);
     console.log('🔒 CORS CONFIGURADO PARA VITE 5173 Y 5174');
     console.log(`📑 SWAGGER: http://127.0.0.1:${PORT}/api-docs`);
+    console.log('📌 HU011 ACTIVA: GET /api/inspecciones/buscar');
     console.log('================================================================');
 });
