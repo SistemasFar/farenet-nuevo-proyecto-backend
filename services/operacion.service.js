@@ -35,7 +35,12 @@ const listarInspecciones = async ({
   }
 
   if (estado && estado.trim() !== '') {
-    values.push(estado.trim().toUpperCase());
+    const estadoNormalizado =
+      estado.trim().toUpperCase() === 'EN_PROCESO'
+        ? 'PROCESO'
+        : estado.trim().toUpperCase();
+
+    values.push(estadoNormalizado);
 
     conditions.push(`
       UPPER(
@@ -44,6 +49,15 @@ const listarInspecciones = async ({
           ''
         )
       ) = $${values.length}
+    `);
+  } else {
+    conditions.push(`
+      UPPER(
+        COALESCE(
+          i.inspeccionestado_key,
+          ''
+        )
+      ) NOT IN ('CON', 'ANULADO')
     `);
   }
 
