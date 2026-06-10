@@ -447,11 +447,74 @@ const validarSesion = async (req, res) => {
         });
     }
 };
+const refrescarSesion = async (req, res) => {
+    const { username } = req.body;
+
+    try {
+        if (!username) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Usuario es obligatorio.'
+            });
+        }
+
+        const result = await db.query(
+            `
+            UPDATE sesion_usuario
+            SET fechexpiracion = NOW() + INTERVAL '12 hours'
+            WHERE TRIM(username) = $1
+              AND activo = true
+              AND fechexpiracion > NOW()
+            RETURNING
+                id,
+                username,
+                planta_key,
+                activo,
+                fechcreacion,
+                fechexpiracion
+            `,
+            [normalizarTexto(username)]
+        );
+
+        if (result.rowCount === 0) {
+            await cerrarSesionesActivas(username);
+
+            return res.status(401).json({
+                status: 'expired',
+                message: 'La sesión ha expirado. Inicie sesión nuevamente.'
+            });
+        }
+
+        await auditoriaService.registrarAuditoriaAcceso({
+            req,
+            username,
+            evento: 'REFRESH_SESION',
+            exitoso: true,
+            mensaje: 'Sesión renovada automáticamente',
+            plantaKey: result.rows[0].planta_key
+        });
+
+        return res.status(200).json({
+            status: 'success',
+            message: 'Sesión renovada correctamente.',
+            sesion: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('❌ Error refrescando sesión:', error);
+
+        return res.status(500).json({
+            status: 'error',
+            message: 'Error al refrescar la sesión.'
+        });
+    }
+};
 module.exports = {
     login,
     logout,
     confirmarPlanta,
     cambiarPlanta,
     obtenerPermisos,
-    validarSesion
+    validarSesion,
+    refrescarSesion
 };

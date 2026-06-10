@@ -132,5 +132,6 @@ router.post('/cambiar-planta', authController.cambiarPlanta);
  */
 router.post('/logout', authController.logout);
 router.post('/validar-sesion', authController.validarSesion);
+router.post('/refresh-sesion', authController.refrescarSesion);
 router.get('/permisos/:username', authController.obtenerPermisos);
 module.exports = router;
