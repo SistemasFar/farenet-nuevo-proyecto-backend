@@ -103,7 +103,7 @@ const registrarSesion = async (username, plantaKey, refreshToken) => {
             $2,
             $3,
             true,
-            NOW() + INTERVAL '7 days'
+            NOW() + INTERVAL '12 hours'
         )
         `,
         [
