@@ -8,45 +8,48 @@ const swaggerJsDoc = require('swagger-jsdoc');
 // Importación de Enrutadores Modulares
 const authRoutes = require('./routes/auth.routes');
 const usuarioRoutes = require('./routes/usuario.routes');
+const operacionRoutes = require('./routes/operacion.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 🚀 CONFIGURACIÓN GLOBAL DE RED: Ignora mayúsculas/minúsculas y barras inclinadas extra
+// 🚀 CONFIGURACIÓN GLOBAL DE RED
 app.set('case sensitive routing', false);
 app.set('strict routing', false);
 
-// 🔒 CANDADO DE SEGURIDAD CORS MULTI-PUERTO (Desarrollo Seguro)
-// Permite que tanto el puerto base como el alternativo de tu entorno local en Vite se comuniquen con el Backend
+// 🔒 CORS
 const corsOptions = {
-    origin: ['http://localhost:5173', 'http://localhost:5174'],
-    credentials: true, // <--- Crucial para el intercambio de cookies/tokens en la HU004
+    origin: [
+        'http://localhost:5173',
+        'http://localhost:5174'
+    ],
+    credentials: true,
     optionsSuccessStatus: 200
 };
+
 app.use(cors(corsOptions));
 app.use(express.json());
 
-// Configuración de Documentación Swagger interactiva
+// Swagger
 const swaggerOptions = {
     definition: {
         openapi: '3.0.0',
         info: {
             title: 'Farenet API Desacoplada',
             version: '1.0.0',
-            description: 'Estructura profesional, modular y blindada para el nuevo Backend de Farenet',
+            description: 'Backend modular Farenet'
         },
         servers: [
             {
                 url: 'http://127.0.0.1:3000/api',
-                description: 'Servidor Local',
-            },
+                description: 'Servidor Local'
+            }
         ],
-        // 🚀 INYECTAMOS LOS ENDPOINTS DIRECTO AQUÍ COMO CÓDIGO JAVASCRIPT
         paths: {
             '/auth/login': {
                 post: {
-                    summary: 'Iniciar sesión del operador (HU001 - Paso 1)',
-                    description: 'Valida las credenciales con Bcrypt en PostgreSQL y retorna las sedes asignadas.',
+                    summary: 'Iniciar sesión del operador',
+                    description: 'Valida credenciales y retorna sedes asignadas.',
                     requestBody: {
                         required: true,
                         content: {
@@ -54,8 +57,14 @@ const swaggerOptions = {
                                 schema: {
                                     type: 'object',
                                     properties: {
-                                        username: { type: 'string', example: 'mchavez' },
-                                        password: { type: 'string', example: '76052066' }
+                                        username: {
+                                            type: 'string',
+                                            example: 'mchavez'
+                                        },
+                                        password: {
+                                            type: 'string',
+                                            example: '76052066'
+                                        }
                                     },
                                     required: ['username', 'password']
                                 }
@@ -63,15 +72,20 @@ const swaggerOptions = {
                         }
                     },
                     responses: {
-                        200: { description: 'Autenticación exitosa. Retorna el listado de plantas.' },
-                        401: { description: 'Credenciales incorrectas.' }
+                        200: {
+                            description: 'Autenticación exitosa'
+                        },
+                        401: {
+                            description: 'Credenciales inválidas'
+                        }
                     }
                 }
             },
+
             '/auth/confirmar-planta': {
                 post: {
-                    summary: 'Confirmar sede operativa (HU001 - Paso 2)',
-                    description: 'Registra la auditoría en la tabla sesion_usuario y genera los tokens.',
+                    summary: 'Confirmar sede operativa',
+                    description: 'Registra la sesión y genera tokens.',
                     requestBody: {
                         required: true,
                         content: {
@@ -79,23 +93,35 @@ const swaggerOptions = {
                                 schema: {
                                     type: 'object',
                                     properties: {
-                                        username: { type: 'string', example: 'mchavez' },
-                                        plantaKey: { type: 'string', example: '25' }
+                                        username: {
+                                            type: 'string',
+                                            example: 'mchavez'
+                                        },
+                                        plantaKey: {
+                                            type: 'string',
+                                            example: '25'
+                                        }
                                     },
-                                    required: ['username', 'plantaKey']
+                                    required: [
+                                        'username',
+                                        'plantaKey'
+                                    ]
                                 }
                             }
                         }
                     },
                     responses: {
-                        200: { description: 'Sede confirmada y sesión registrada en Postgres.' }
+                        200: {
+                            description: 'Sede confirmada'
+                        }
                     }
                 }
             },
+
             '/auth/logout': {
                 post: {
-                    summary: 'Cerrar sesión del operador (HU002)',
-                    description: 'Realiza el cierre lógico cambiando activo a false en PostgreSQL.',
+                    summary: 'Cerrar sesión',
+                    description: 'Cierre lógico de sesión.',
                     requestBody: {
                         required: true,
                         content: {
@@ -103,7 +129,10 @@ const swaggerOptions = {
                                 schema: {
                                     type: 'object',
                                     properties: {
-                                        username: { type: 'string', example: 'mchavez' }
+                                        username: {
+                                            type: 'string',
+                                            example: 'mchavez'
+                                        }
                                     },
                                     required: ['username']
                                 }
@@ -111,32 +140,107 @@ const swaggerOptions = {
                         }
                     },
                     responses: {
-                        200: { description: 'Cierre de sesión exitoso.' }
+                        200: {
+                            description: 'Logout exitoso'
+                        }
+                    }
+                }
+            },
+
+            '/operacion/inspecciones-dia': {
+                get: {
+                    summary: 'HU010 - Panel principal de operación',
+                    description: 'Lista las inspecciones del día por sede.',
+                    parameters: [
+                        {
+                            in: 'query',
+                            name: 'plantaKey',
+                            required: true,
+                            schema: {
+                                type: 'string'
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'fecha',
+                            required: false,
+                            schema: {
+                                type: 'string',
+                                example: '2026-06-10'
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'placa',
+                            required: false,
+                            schema: {
+                                type: 'string'
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'estado',
+                            required: false,
+                            schema: {
+                                type: 'string'
+                            }
+                        },
+                        {
+                            in: 'query',
+                            name: 'numeroInspeccion',
+                            required: false,
+                            schema: {
+                                type: 'string'
+                            }
+                        }
+                    ],
+                    responses: {
+                        200: {
+                            description: 'Listado de inspecciones'
+                        }
                     }
                 }
             }
         }
     },
-    apis: [], // Lo dejamos vacío porque ya definimos las rutas arriba de forma nativa
+    apis: []
 };
-const swaggerDocs = swaggerJsDoc(swaggerOptions);
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
-// 🚀 MONTAJE DE RUTAS ESTÁNDAR (Preparadas en minúsculas para JavaScript nativo)
+const swaggerDocs = swaggerJsDoc(swaggerOptions);
+
+app.use(
+    '/api-docs',
+    swaggerUi.serve,
+    swaggerUi.setup(swaggerDocs)
+);
+
+// ==========================
+// RUTAS API
+// ==========================
+
 app.use('/api/auth', authRoutes);
 app.use('/api/usuarios', usuarioRoutes);
+app.use('/api/operacion', operacionRoutes);
 
-// Endpoint de diagnóstico rápido para el Área de Sistemas
+// ==========================
+// HEALTH CHECK
+// ==========================
+
 app.get('/api/health', (req, res) => {
-    res.status(200).json({ status: 'online', database: 'connected_postgres' });
+    res.status(200).json({
+        status: 'online',
+        database: 'connected_postgres'
+    });
 });
 
-// Inicialización del proceso permanentemente en IPv4 local
+// ==========================
+// START SERVER
+// ==========================
+
 app.listen(PORT, '127.0.0.1', () => {
-    console.log(`================================================================`);
-    console.log(`🚀 SERVIDOR BLINDADO CORRIENDO EN: http://127.0.0.1:${PORT}`);
-    console.log(`🔒 CORS CONFIGURADO PARA ENTORNOS VITE: 5173 Y 5174`);
-    console.log(`📑 SWAGGER VIVO EN: http://127.0.0.1:${PORT}/api-docs`);
-    console.log(`================================================================`);
+    console.log('================================================================');
+    console.log(`🚀 SERVIDOR CORRIENDO EN: http://127.0.0.1:${PORT}`);
+    console.log('🔒 CORS CONFIGURADO PARA VITE 5173 Y 5174');
+    console.log(`📑 SWAGGER: http://127.0.0.1:${PORT}/api-docs`);
+    console.log('================================================================');
 });
-// Inicialización del proceso permanentemente en IPv4 local
