@@ -357,6 +357,8 @@ app.use(
 // ==========================
 
 app.use('/api/auth', authRoutes);
+const auditoriaRoutes = require('./routes/auditoria.routes');
+app.use('/api/auditoria', auditoriaRoutes);
 app.use('/api/usuarios', usuarioRoutes);
 app.use('/api/operacion', operacionRoutes);
 app.use('/api/inspecciones', inspeccionesRoutes);
