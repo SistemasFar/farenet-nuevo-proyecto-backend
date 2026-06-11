@@ -7,6 +7,7 @@ const listarInspecciones = async ({
   placa,
   estado,
   numeroInspeccion,
+  cliente,
   page = 1,
   pageSize = 5
 }) => {
@@ -34,6 +35,23 @@ const listarInspecciones = async ({
     `);
   }
 
+  if (cliente && cliente.trim() !== '') {
+    values.push(`%${cliente.trim().toUpperCase()}%`);
+
+    conditions.push(`
+    (
+      UPPER(COALESCE(c.cliente_nrodocumentoidentidad, '')) LIKE $${values.length}
+      OR UPPER(COALESCE(p.nombres, '')) LIKE $${values.length}
+      OR UPPER(COALESCE(p.apellidos, '')) LIKE $${values.length}
+      OR UPPER(COALESCE(p.nombrerazonsocial, '')) LIKE $${values.length}
+      OR UPPER(
+        TRIM(
+          COALESCE(p.nombres, '') || ' ' || COALESCE(p.apellidos, '')
+        )
+      ) LIKE $${values.length}
+    )
+  `);
+  }
   if (estado && estado.trim() !== '') {
     const estadoNormalizado =
       estado.trim().toUpperCase() === 'EN_PROCESO'
@@ -83,26 +101,29 @@ const listarInspecciones = async ({
   const countQuery = `
     SELECT COUNT(*) AS total
 
-    FROM inspeccion i
+   FROM inspeccion i
 
-    LEFT JOIN LATERAL (
-      SELECT c2.*
-      FROM comprobante c2
-      WHERE c2.id = i.comprobante_id
-         OR c2.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
-      ORDER BY
-        CASE
-          WHEN c2.id = i.comprobante_id THEN 0
-          ELSE 1
-        END,
-        c2.fechcreacion DESC
-      LIMIT 1
-    ) c ON TRUE
+LEFT JOIN LATERAL (
+  SELECT c2.*
+  FROM comprobante c2
+  WHERE c2.id = i.comprobante_id
+     OR c2.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
+  ORDER BY
+    CASE
+      WHEN c2.id = i.comprobante_id THEN 0
+      ELSE 1
+    END,
+    c2.fechcreacion DESC
+  LIMIT 1
+) c ON TRUE
 
-    LEFT JOIN linea l
-      ON l.key = c.linea_key
+LEFT JOIN linea l
+  ON l.key = c.linea_key
 
-    ${whereClause}
+LEFT JOIN persona p
+  ON p.nrodocumentoidentidad = c.cliente_nrodocumentoidentidad
+
+${whereClause}
   `;
 
   const countResult = await db.query(
@@ -143,7 +164,23 @@ const listarInspecciones = async ({
         c.nrocomprobante,
         ''
       ) AS "comprobante",
+       COALESCE(
+  c.cliente_nrodocumentoidentidad,
+  ''
+) AS "clienteDocumento",
 
+COALESCE(
+  CASE
+    WHEN LENGTH(COALESCE(p.nrodocumentoidentidad, '')) = 11
+      THEN p.nombrerazonsocial
+    ELSE CONCAT(
+      COALESCE(p.nombres, ''),
+      ' ',
+      COALESCE(p.apellidos, '')
+    )
+  END,
+  ''
+) AS "clienteNombre",
       COALESCE(
         ci.nombre,
         ''
@@ -162,6 +199,32 @@ const listarInspecciones = async ({
           ELSE 'PENDIENTE'
         END
       ) AS "estado",
+       i.posicion AS "posicion",
+
+CASE i.posicion
+  WHEN 0 THEN 'CAJA'
+  WHEN 1 THEN 'PAGO'
+  WHEN 2 THEN 'VEHICULO'
+  WHEN 3 THEN 'CLIENTE'
+  WHEN 4 THEN 'VERIFICACION'
+  WHEN 5 THEN 'GASES'
+  WHEN 6 THEN 'OPACIDAD'
+  WHEN 7 THEN 'LUCES'
+  WHEN 8 THEN 'INSPECCION VISUAL'
+  WHEN 9 THEN 'SONOMETRO'
+  WHEN 10 THEN 'PROFUNDIMETRO'
+  WHEN 11 THEN 'FRENOMETRO'
+  WHEN 12 THEN 'ALINEACION'
+  WHEN 13 THEN 'SUSPENSION'
+  WHEN 14 THEN 'CONSOLIDACION'
+  WHEN 15 THEN 'FOTO'
+  WHEN 16 THEN 'FOTO'
+  WHEN 17 THEN 'SERVICIO'
+  WHEN 18 THEN 'DUPLICADO'
+  ELSE 'SIN ESTADO'
+END AS "estadoActual",
+
+      
 
       COALESCE(
         cert.nrodocumentocertificado,
@@ -211,6 +274,8 @@ const listarInspecciones = async ({
 
     LEFT JOIN conceptoinspeccion ci
       ON ci.key = c.conceptoinspeccion_key
+      LEFT JOIN persona p
+  ON p.nrodocumentoidentidad = c.cliente_nrodocumentoidentidad
 
     LEFT JOIN certificado cert
       ON cert.inspeccion_nrodocumentoinspeccion =
