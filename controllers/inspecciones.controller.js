@@ -1,5 +1,6 @@
 const inspeccionesService = require('../services/inspecciones.service');
 
+
 const buscarInspecciones = async (req, res) => {
   try {
     const {
