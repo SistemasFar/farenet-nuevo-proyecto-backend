@@ -58,6 +58,7 @@ const buscarInspecciones = async (filtros) => {
     where += ` AND UPPER(COALESCE(c.cliente_nrodocumentoidentidad, '')) LIKE $${params.length}`;
   }
 
+if (fechaInicio || fechaFin) {
   if (fechaInicio) {
     params.push(fechaInicio);
     where += ` AND DATE(i.fechcreacion) >= $${params.length}`;
@@ -67,6 +68,9 @@ const buscarInspecciones = async (filtros) => {
     params.push(fechaFin);
     where += ` AND DATE(i.fechcreacion) <= $${params.length}`;
   }
+} else {
+  where += ` AND DATE(i.fechcreacion) = CURRENT_DATE`;
+}
 
   const baseFrom = `
     FROM inspeccion i
