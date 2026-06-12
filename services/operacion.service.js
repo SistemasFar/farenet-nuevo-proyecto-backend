@@ -16,16 +16,7 @@ const listarInspecciones = async ({
 
   values.push(plantaKey);
   conditions.push(`l.planta_key = $${values.length}`);
-
-  if (fechaInicio) {
-    values.push(fechaInicio);
-    conditions.push(`DATE(i.fechcreacion) >= $${values.length}`);
-  }
-
-  if (fechaFin) {
-    values.push(fechaFin);
-    conditions.push(`DATE(i.fechcreacion) <= $${values.length}`);
-  }
+conditions.push(`DATE(i.fechcreacion) = CURRENT_DATE`);
 
   if (placa && placa.trim() !== '') {
     values.push(`%${placa.trim().toUpperCase()}%`);
@@ -35,12 +26,13 @@ const listarInspecciones = async ({
     `);
   }
 
-  if (cliente && cliente.trim() !== '') {
-    values.push(`%${cliente.trim().toUpperCase()}%`);
+if (cliente && cliente.trim() !== '') {
+  values.push(`%${cliente.trim().toUpperCase()}%`);
 
-    conditions.push(`
+  conditions.push(`
     (
-      UPPER(COALESCE(c.cliente_nrodocumentoidentidad, '')) LIKE $${values.length}
+      UPPER(COALESCE(c.placamotor, '')) LIKE $${values.length}
+      OR UPPER(COALESCE(c.cliente_nrodocumentoidentidad, '')) LIKE $${values.length}
       OR UPPER(COALESCE(p.nombres, '')) LIKE $${values.length}
       OR UPPER(COALESCE(p.apellidos, '')) LIKE $${values.length}
       OR UPPER(COALESCE(p.nombrerazonsocial, '')) LIKE $${values.length}
@@ -51,7 +43,9 @@ const listarInspecciones = async ({
       ) LIKE $${values.length}
     )
   `);
-  }
+}
+
+    
   if (estado && estado.trim() !== '') {
     const estadoNormalizado =
       estado.trim().toUpperCase() === 'EN_PROCESO'
@@ -181,11 +175,11 @@ COALESCE(
   END,
   ''
 ) AS "clienteNombre",
-      COALESCE(
-        ci.nombre,
-        ''
-      ) AS "conceptoVehicular",
-
+   
+COALESCE(
+  ci.abreviatura,
+  ''
+) AS "conceptoVehicular",
       COALESCE(
         l.nombre,
         ''
