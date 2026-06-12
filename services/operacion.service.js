@@ -16,7 +16,7 @@ const listarInspecciones = async ({
 
   values.push(plantaKey);
   conditions.push(`l.planta_key = $${values.length}`);
-conditions.push(`DATE(i.fechcreacion) = CURRENT_DATE`);
+  conditions.push(`DATE(i.fechcreacion) = CURRENT_DATE`);
 
   if (placa && placa.trim() !== '') {
     values.push(`%${placa.trim().toUpperCase()}%`);
@@ -26,10 +26,10 @@ conditions.push(`DATE(i.fechcreacion) = CURRENT_DATE`);
     `);
   }
 
-if (cliente && cliente.trim() !== '') {
-  values.push(`%${cliente.trim().toUpperCase()}%`);
+  if (cliente && cliente.trim() !== '') {
+    values.push(`%${cliente.trim().toUpperCase()}%`);
 
-  conditions.push(`
+    conditions.push(`
     (
       UPPER(COALESCE(c.placamotor, '')) LIKE $${values.length}
       OR UPPER(COALESCE(c.cliente_nrodocumentoidentidad, '')) LIKE $${values.length}
@@ -43,9 +43,9 @@ if (cliente && cliente.trim() !== '') {
       ) LIKE $${values.length}
     )
   `);
-}
+  }
 
-    
+
   if (estado && estado.trim() !== '') {
     const estadoNormalizado =
       estado.trim().toUpperCase() === 'EN_PROCESO'
@@ -64,13 +64,13 @@ if (cliente && cliente.trim() !== '') {
     `);
   } else {
     conditions.push(`
-      UPPER(
-        COALESCE(
-          i.inspeccionestado_key,
-          ''
-        )
-      ) NOT IN ('CON', 'ANULADO')
-    `);
+    UPPER(
+      COALESCE(
+        i.inspeccionestado_key,
+        ''
+      )
+    ) = 'PROCESO'
+  `);
   }
 
   if (
@@ -225,10 +225,11 @@ END AS "estadoActual",
         ''
       ) AS "numeroCertificado",
 
-      COALESCE(
-        i.resultado,
-        'PENDIENTE'
-      ) AS "resultado",
+    CASE
+  WHEN UPPER(COALESCE(i.inspeccionestado_key, '')) = 'CON'
+    THEN COALESCE(i.resultado, 'PENDIENTE')
+  ELSE 'PENDIENTE'
+END AS "resultado",
 
       CASE
         WHEN cert.nrodocumentocertificado IS NULL
@@ -277,7 +278,9 @@ END AS "estadoActual",
 
     ${whereClause}
 
-    ORDER BY i.fechcreacion DESC
+    ORDER BY
+  COALESCE(i.posicion, 0) DESC,
+  i.fechcreacion DESC
 
     LIMIT $${limitPosition}
     OFFSET $${offsetPosition}
