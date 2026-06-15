@@ -134,4 +134,5 @@ router.post('/logout', authController.logout);
 router.post('/validar-sesion', authController.validarSesion);
 router.post('/refresh-sesion', authController.refrescarSesion);
 router.get('/permisos/:username', authController.obtenerPermisos);
+router.put('/change-password', authController.changePassword);
 module.exports = router;

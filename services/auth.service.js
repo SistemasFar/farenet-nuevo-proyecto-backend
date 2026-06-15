@@ -147,10 +147,32 @@ const authenticateUser = async (username, password) => {
     };
 };
 
+const actualizarContrasena = async (username, currentPassword, newPassword) => {
+    const cleanUsername = normalizarTexto(username);
+    const user = await obtenerUsuarioPorUsername(cleanUsername);
+
+    if (!user) {
+        throw new Error("Usuario no encontrado en el sistema.");
+    }
+
+    const isMatch = validarPassword(currentPassword, user.contrasenha);
+    if (!isMatch) {
+        throw new Error("La contraseña actual es incorrecta.");
+    }
+
+    const newHash = bcrypt.hashSync(normalizarTexto(newPassword), 10);
+
+    await db.query(
+        `UPDATE usuario SET contrasenha = $1 WHERE TRIM(username) = $2`,
+        [newHash, cleanUsername]
+    );
+};
+
 module.exports = {
     authenticateUser,
     obtenerUsuarioPorUsername,
     obtenerPermisosPorUsuario,
     obtenerPermisosBasePorPerfil,
-    obtenerOverridesUsuario
+    obtenerOverridesUsuario,
+    actualizarContrasena
 };

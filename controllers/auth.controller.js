@@ -509,6 +509,20 @@ const refrescarSesion = async (req, res) => {
         });
     }
 };
+const changePassword = async (req, res) => {
+    const { username, currentPassword, newPassword } = req.body;
+    try {
+        if (!username || !currentPassword || !newPassword) {
+            return res.status(400).json({ status: 'error', message: 'Faltan parámetros obligatorios.' });
+        }
+        await authService.actualizarContrasena(username, currentPassword, newPassword);
+        return res.status(200).json({ status: 'success', message: 'Contraseña actualizada correctamente.' });
+    } catch (error) {
+        console.error('❌ Error cambiando contraseña:', error);
+        return res.status(400).json({ status: 'error', message: error.message || 'Error al cambiar contraseña.' });
+    }
+};
+
 module.exports = {
     login,
     logout,
@@ -516,5 +530,6 @@ module.exports = {
     cambiarPlanta,
     obtenerPermisos,
     validarSesion,
-    refrescarSesion
+    refrescarSesion,
+    changePassword
 };
