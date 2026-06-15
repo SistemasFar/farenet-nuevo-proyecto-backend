@@ -310,10 +310,11 @@ END AS "resultado",
 
 const listarLineas = async (plantaKey) => {
   const query = `
-    SELECT key, nombre
-    FROM linea
-    WHERE planta_key = $1
-    ORDER BY nombre ASC
+    SELECT l.key, l.nombre
+    FROM linea l
+    LEFT JOIN linea_estado le ON l.key = le.linea_key AND l.planta_key = le.planta_key
+    WHERE l.planta_key = $1 AND COALESCE(le.estado, true) = true
+    ORDER BY l.nombre ASC
   `;
   const result = await db.query(query, [plantaKey]);
   return result.rows;

@@ -366,6 +366,8 @@ app.use('/api/auditoria', auditoriaRoutes);
 app.use('/api/usuarios', usuarioRoutes);
 app.use('/api/operacion', operacionRoutes);
 app.use('/api/inspecciones', inspeccionesRoutes);
+const maestrosRoutes = require('./routes/maestros.routes');
+app.use('/api/maestros', maestrosRoutes);
 
 // ==========================
 // HEALTH CHECK
