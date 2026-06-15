@@ -14,14 +14,16 @@ const obtenerUsuarioPorUsername = async (username) => {
 
     const query = `
         SELECT 
-            username, 
-            contrasenha, 
-            perfil_id, 
-            persona_nrodocumentoidentidad, 
-            estado, 
-            user_type 
-        FROM usuario 
-        WHERE TRIM(username) = $1 
+            u.username, 
+            u.contrasenha, 
+            u.perfil_id, 
+            u.persona_nrodocumentoidentidad, 
+            u.estado, 
+            u.user_type,
+            TRIM(COALESCE(p.apellidos, '') || ' ' || COALESCE(p.nombres, '')) AS nombre_completo
+        FROM usuario u
+        LEFT JOIN persona p ON u.persona_nrodocumentoidentidad = p.nrodocumentoidentidad
+        WHERE TRIM(u.username) = $1 
         LIMIT 1
     `;
 

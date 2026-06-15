@@ -17,6 +17,7 @@ const normalizarTexto = (valor) => {
 const construirUsuarioResponse = (user) => {
     return {
         username: user.username,
+        nombreCompleto: user.nombre_completo ? user.nombre_completo.trim() : user.username,
         perfilId: user.perfil_id,
         personaDocumento: user.persona_nrodocumentoidentidad,
         estado: user.estado,
