@@ -2,6 +2,10 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
+const http = require('http');
+const { Server } = require('socket.io');
+const pool = require('./config/database');
+
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsDoc = require('swagger-jsdoc');
 
@@ -375,10 +379,48 @@ app.get('/api/health', (req, res) => {
 });
 
 // ==========================
+// WEBSOCKETS & POSTGRES LISTEN
+// ==========================
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: ['http://localhost:5173', 'http://localhost:5174'],
+        credentials: true,
+        methods: ["GET", "POST"]
+    }
+});
+
+io.on('connection', (socket) => {
+    console.log('🔗 Cliente conectado a Socket.io:', socket.id);
+    socket.on('disconnect', () => {
+        console.log('❌ Cliente desconectado:', socket.id);
+    });
+});
+
+async function setupPostgresListen() {
+    try {
+        const client = await pool.connect();
+        await client.query('LISTEN inspeccion_cambio');
+        
+        client.on('notification', (msg) => {
+            if (msg.channel === 'inspeccion_cambio') {
+                const payload = JSON.parse(msg.payload);
+                console.log('🔔 Evento Postgres "inspeccion_cambio":', payload);
+                io.emit('inspeccionActualizada', payload);
+            }
+        });
+        console.log('✅ Node.js escuchando eventos "inspeccion_cambio" en PostgreSQL');
+    } catch (error) {
+        console.error('❌ Error configurando LISTEN en Postgres:', error);
+    }
+}
+setupPostgresListen();
+
+// ==========================
 // START SERVER
 // ==========================
 
-app.listen(PORT, '127.0.0.1', () => {
+server.listen(PORT, '127.0.0.1', () => {
     console.log('================================================================');
     console.log(`🚀 SERVIDOR CORRIENDO EN: http://127.0.0.1:${PORT}`);
     console.log('🔒 CORS CONFIGURADO PARA VITE 5173 Y 5174');

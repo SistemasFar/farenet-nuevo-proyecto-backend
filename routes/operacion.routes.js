@@ -29,4 +29,9 @@ router.get(
   operacionController.listarInspecciones
 );
 
+router.get(
+  '/lineas/:plantaKey',
+  operacionController.listarLineas
+);
+
 module.exports = router;

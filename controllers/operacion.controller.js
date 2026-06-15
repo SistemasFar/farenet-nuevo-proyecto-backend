@@ -10,6 +10,7 @@ const listarInspecciones = async (req, res) => {
       estado,
       numeroInspeccion,
       cliente,
+      lineaKey,
       page,
       pageSize
     } = req.query;
@@ -78,6 +79,9 @@ const listarInspecciones = async (req, res) => {
     cliente: cliente
       ? String(cliente).trim()
       : undefined,
+    lineaKey: lineaKey
+      ? String(lineaKey).trim()
+      : undefined,
     page: pageNumber,
     pageSize: pageSizeNumber
   });
@@ -114,6 +118,21 @@ const listarInspecciones = async (req, res) => {
   }
 };
 
+const listarLineas = async (req, res) => {
+  try {
+    const { plantaKey } = req.params;
+    if (!plantaKey) {
+      return res.status(400).json({ status: 'error', message: 'plantaKey requerido' });
+    }
+    const data = await operacionService.listarLineas(plantaKey);
+    return res.status(200).json({ status: 'success', data });
+  } catch (error) {
+    console.error('❌ Error en listarLineas:', error);
+    return res.status(500).json({ status: 'error', message: 'Error interno' });
+  }
+};
+
 module.exports = {
-  listarInspecciones
+  listarInspecciones,
+  listarLineas
 };

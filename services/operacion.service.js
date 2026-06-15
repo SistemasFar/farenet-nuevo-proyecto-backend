@@ -8,6 +8,7 @@ const listarInspecciones = async ({
   estado,
   numeroInspeccion,
   cliente,
+  lineaKey,
   page = 1,
   pageSize = 5
 }) => {
@@ -17,6 +18,11 @@ const listarInspecciones = async ({
   values.push(plantaKey);
   conditions.push(`l.planta_key = $${values.length}`);
   conditions.push(`DATE(i.fechcreacion) = CURRENT_DATE`);
+
+  if (lineaKey && lineaKey.trim() !== '' && lineaKey.trim().toUpperCase() !== 'TODOS') {
+    values.push(lineaKey.trim());
+    conditions.push(`l.key = $${values.length}`);
+  }
 
   if (placa && placa.trim() !== '') {
     values.push(`%${placa.trim().toUpperCase()}%`);
@@ -302,6 +308,18 @@ END AS "resultado",
   };
 };
 
+const listarLineas = async (plantaKey) => {
+  const query = `
+    SELECT key, nombre
+    FROM linea
+    WHERE planta_key = $1
+    ORDER BY nombre ASC
+  `;
+  const result = await db.query(query, [plantaKey]);
+  return result.rows;
+};
+
 module.exports = {
-  listarInspecciones
+  listarInspecciones,
+  listarLineas
 };
