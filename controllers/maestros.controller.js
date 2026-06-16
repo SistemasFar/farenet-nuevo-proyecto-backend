@@ -8,14 +8,16 @@ const obtenerMaestrosCaja = async (req, res) => {
             categorias,
             tiposInspeccion,
             tiposCertificado,
-            tiposAutorizacion
+            tiposAutorizacion,
+            tiposDocumento
         ] = await Promise.all([
             db.query('SELECT id, nombre FROM tipoplaca ORDER BY nombre ASC'),
             db.query('SELECT key, COALESCE(abreviatura, nombre) AS abreviatura FROM conceptoinspeccion ORDER BY abreviatura ASC'),
             db.query('SELECT key, nombre FROM categoria ORDER BY nombre ASC'),
             db.query('SELECT key, codigosunat, nombre FROM tipoinspeccion ORDER BY nombre ASC'),
             db.query('SELECT key, COALESCE(abreviacion, nombre) AS abreviacion FROM tipocertificado ORDER BY abreviacion ASC'),
-            db.query('SELECT key, ambito AS nombre FROM tipoautorizacion ORDER BY ambito ASC')
+            db.query('SELECT key, ambito AS nombre FROM tipoautorizacion ORDER BY ambito ASC'),
+            db.query('SELECT key, nombre FROM tipodocumento ORDER BY nombre ASC')
         ]);
 
         return res.status(200).json({
@@ -26,7 +28,8 @@ const obtenerMaestrosCaja = async (req, res) => {
                 categorias: categorias.rows,
                 tiposInspeccion: tiposInspeccion.rows,
                 tiposCertificado: tiposCertificado.rows,
-                tiposAutorizacion: tiposAutorizacion.rows
+                tiposAutorizacion: tiposAutorizacion.rows,
+                tiposDocumento: tiposDocumento.rows
             }
         });
     } catch (error) {
