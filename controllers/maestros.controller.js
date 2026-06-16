@@ -74,7 +74,40 @@ const obtenerPrecioConcepto = async (req, res) => {
     }
 };
 
+const obtenerMaestrosPago = async (req, res) => {
+    try {
+        const [
+            formasPago,
+            tarjetas,
+            entidadesFinancieras,
+            cuentasCorrientes
+        ] = await Promise.all([
+            db.query('SELECT key, nombre FROM formapago ORDER BY nombre ASC'),
+            db.query('SELECT key, nombre FROM tarjeta ORDER BY nombre ASC'),
+            db.query('SELECT key, nombre FROM entidadfinanciera ORDER BY nombre ASC'),
+            db.query('SELECT key, nroctacorriente AS nombre, entidadfinanciera_key FROM cuentacorriente ORDER BY nroctacorriente ASC')
+        ]);
+
+        return res.status(200).json({
+            status: 'success',
+            data: {
+                formasPago: formasPago.rows,
+                tarjetas: tarjetas.rows,
+                entidadesFinancieras: entidadesFinancieras.rows,
+                cuentasCorrientes: cuentasCorrientes.rows
+            }
+        });
+    } catch (error) {
+        console.error('Error al obtener maestros de pago:', error);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Error interno del servidor al consultar maestros de pago.'
+        });
+    }
+};
+
 module.exports = {
     obtenerMaestrosCaja,
-    obtenerPrecioConcepto
+    obtenerPrecioConcepto,
+    obtenerMaestrosPago
 };
