@@ -38,6 +38,40 @@ const obtenerMaestrosCaja = async (req, res) => {
     }
 };
 
+const obtenerPrecioConcepto = async (req, res) => {
+    try {
+        const { planta_key, concepto_key } = req.query;
+
+        if (!planta_key || !concepto_key) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Se requieren planta_key y concepto_key.'
+            });
+        }
+
+        const result = await db.query(
+            'SELECT valor FROM conceptoinspecciondetalle WHERE planta_key = $1 AND conceptoinspeccion_key = $2',
+            [planta_key, concepto_key]
+        );
+
+        const valor = result.rows.length > 0 ? result.rows[0].valor : 0;
+
+        return res.status(200).json({
+            status: 'success',
+            data: {
+                precio: valor
+            }
+        });
+    } catch (error) {
+        console.error('Error al obtener precio de concepto:', error);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Error interno del servidor al consultar precio.'
+        });
+    }
+};
+
 module.exports = {
-    obtenerMaestrosCaja
+    obtenerMaestrosCaja,
+    obtenerPrecioConcepto
 };
