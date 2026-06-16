@@ -11,10 +11,10 @@ const obtenerMaestrosCaja = async (req, res) => {
             tiposAutorizacion
         ] = await Promise.all([
             db.query('SELECT id, nombre FROM tipoplaca ORDER BY nombre ASC'),
-            db.query('SELECT key, nombre FROM conceptoinspeccion WHERE estado = true ORDER BY nombre ASC'),
+            db.query('SELECT key, COALESCE(abreviatura, nombre) AS abreviatura FROM conceptoinspeccion ORDER BY abreviatura ASC'),
             db.query('SELECT key, nombre FROM categoria ORDER BY nombre ASC'),
             db.query('SELECT key, codigosunat, nombre FROM tipoinspeccion ORDER BY nombre ASC'),
-            db.query('SELECT key, abreviacion, nombre FROM tipocertificado ORDER BY nombre ASC'),
+            db.query('SELECT key, COALESCE(abreviacion, nombre) AS abreviacion FROM tipocertificado ORDER BY abreviacion ASC'),
             db.query('SELECT key, ambito AS nombre FROM tipoautorizacion ORDER BY ambito ASC')
         ]);
 
