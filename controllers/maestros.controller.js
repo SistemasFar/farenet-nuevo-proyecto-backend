@@ -111,17 +111,16 @@ const obtenerMaestrosVehiculo = async (req, res) => {
         const [
             clases,
             marcas,
-            modelos,
             colores,
             carrocerias,
             combustibles
         ] = await Promise.all([
-            db.query('SELECT key, nombre FROM vehiculoclase ORDER BY nombre ASC'),
-            db.query('SELECT key, nombre FROM marca ORDER BY nombre ASC'),
-            db.query('SELECT key, nombre FROM modelo ORDER BY nombre ASC'),
-            db.query('SELECT key, nombre FROM color ORDER BY nombre ASC'),
-            db.query('SELECT key, nombre FROM carroceria ORDER BY nombre ASC'),
-            db.query('SELECT key, nombre FROM combustible ORDER BY nombre ASC')
+            db.query("SELECT MIN(key) as key, nombre FROM vehiculoclase WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC"),
+            db.query("SELECT MIN(key) as key, nombre FROM marca WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC"),
+            // Modelos removidos para cargarse asíncronamente
+            db.query("SELECT MIN(key) as key, nombre FROM color WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC"),
+            db.query("SELECT MIN(key) as key, nombre FROM carroceria WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC"),
+            db.query("SELECT MIN(key) as key, nombre FROM combustible WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC")
         ]);
 
         return res.status(200).json({
@@ -129,7 +128,7 @@ const obtenerMaestrosVehiculo = async (req, res) => {
             data: {
                 clases: clases.rows,
                 marcas: marcas.rows,
-                modelos: modelos.rows,
+                modelos: [], // Array vacío por retrocompatibilidad
                 colores: colores.rows,
                 carrocerias: carrocerias.rows,
                 combustibles: combustibles.rows
@@ -154,9 +153,40 @@ const obtenerMaestrosVehiculo = async (req, res) => {
     }
 };
 
+const buscarModelosVehiculo = async (req, res) => {
+    try {
+        const query = req.query.q || '';
+        const limit = 50;
+
+        let sql = "SELECT MIN(key) as key, nombre FROM modelo WHERE nombre ~ '[a-zA-Z]' ";
+        let params = [];
+
+        if (query.trim() !== '') {
+            sql += " AND nombre ILIKE $1 ";
+            params.push(`%${query.trim()}%`);
+        }
+
+        sql += " GROUP BY nombre ORDER BY nombre ASC LIMIT " + limit;
+
+        const result = await db.query(sql, params);
+
+        return res.status(200).json({
+            status: 'success',
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('Error al buscar modelos de vehículo:', error);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Error interno del servidor al buscar modelos.'
+        });
+    }
+};
+
 module.exports = {
     obtenerMaestrosCaja,
     obtenerPrecioConcepto,
     obtenerMaestrosPago,
-    obtenerMaestrosVehiculo
+    obtenerMaestrosVehiculo,
+    buscarModelosVehiculo
 };

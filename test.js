@@ -1,12 +1,1 @@
-const db = require('./config/database');
-async function test() {
-    try {
-        const res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name='cuentacorriente'");
-        console.log(res.rows);
-    } catch(e) {
-        console.error(e);
-    } finally {
-        process.exit();
-    }
-}
-test();
+const { Pool } = require('pg'); const pool = new Pool({user: 'postgres', host: '192.168.14.19', database: 'inspeccion', password: 'farenet2026**', port: 5432}); pool.query('SELECT table_name, column_name FROM information_schema.columns WHERE column_name ILIKE ''%placa%''').then(res => console.log(res.rows)).catch(console.error).finally(()=>pool.end());
