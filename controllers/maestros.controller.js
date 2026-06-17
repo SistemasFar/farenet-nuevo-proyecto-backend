@@ -106,8 +106,57 @@ const obtenerMaestrosPago = async (req, res) => {
     }
 };
 
+const obtenerMaestrosVehiculo = async (req, res) => {
+    try {
+        const [
+            clases,
+            marcas,
+            modelos,
+            colores,
+            carrocerias,
+            combustibles
+        ] = await Promise.all([
+            db.query('SELECT key, nombre FROM vehiculoclase ORDER BY nombre ASC'),
+            db.query('SELECT key, nombre FROM marca ORDER BY nombre ASC'),
+            db.query('SELECT key, nombre FROM modelo ORDER BY nombre ASC'),
+            db.query('SELECT key, nombre FROM color ORDER BY nombre ASC'),
+            db.query('SELECT key, nombre FROM carroceria ORDER BY nombre ASC'),
+            db.query('SELECT key, nombre FROM combustible ORDER BY nombre ASC')
+        ]);
+
+        return res.status(200).json({
+            status: 'success',
+            data: {
+                clases: clases.rows,
+                marcas: marcas.rows,
+                modelos: modelos.rows,
+                colores: colores.rows,
+                carrocerias: carrocerias.rows,
+                combustibles: combustibles.rows
+            }
+        });
+    } catch (error) {
+        console.error('Error al obtener maestros para vehículo:', error);
+        // Si hay error por una tabla que no existe, devolver array vacío para no quebrar el frontend
+        if (error.code === '42P01') {
+            console.warn('Algunas tablas maestras de vehículos no existen aún. Devolviendo data vacía.');
+            return res.status(200).json({
+                status: 'success',
+                data: {
+                    clases: [], marcas: [], modelos: [], colores: [], carrocerias: [], combustibles: []
+                }
+            });
+        }
+        return res.status(500).json({
+            status: 'error',
+            message: 'Error interno del servidor al consultar maestros de vehículo.'
+        });
+    }
+};
+
 module.exports = {
     obtenerMaestrosCaja,
     obtenerPrecioConcepto,
-    obtenerMaestrosPago
+    obtenerMaestrosPago,
+    obtenerMaestrosVehiculo
 };
