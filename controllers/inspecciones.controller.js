@@ -51,19 +51,30 @@ const buscarInspecciones = async (req, res) => {
   }
 };
 
+const cajaService = require('../services/caja.service');
+const pagoService = require('../services/pago.service');
+const vehiculoService = require('../services/vehiculo.service');
+
 const guardarInspeccion = async (req, res) => {
   try {
-    const data = req.body;
-    console.log("Datos recibidos para guardar la inspección:", data);
+    const { formCaja, pagosAgregados, formVehiculo } = req.body;
+    console.log("Datos recibidos para guardar la inspección:", req.body);
     
-    // Aquí implementaremos la lógica de guardado en la base de datos
-    // INSERT INTO vehiculo ...
-    // INSERT INTO inspeccion ...
+    // Procesar cada sección de forma independiente
+    const resCaja = await cajaService.guardarCaja(formCaja);
+    const resPago = await pagoService.guardarPago(pagosAgregados);
+    const resVehiculo = await vehiculoService.guardarVehiculo(formVehiculo, formCaja);
+    
+    // Aquí implementaremos la lógica de guardado de la inspección final
     
     return res.status(200).json({
       status: 'success',
-      message: 'Inspección (y vehículo) guardada correctamente (Función preparada)',
-      data: data
+      message: 'Inspección guardada correctamente (Arquitectura desacoplada)',
+      data: {
+        caja: resCaja,
+        pago: resPago,
+        vehiculo: resVehiculo
+      }
     });
   } catch (error) {
     console.error('Error al guardar inspección:', error);
