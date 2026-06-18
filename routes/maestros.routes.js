@@ -7,5 +7,6 @@ router.get('/precio', maestrosController.obtenerPrecioConcepto);
 router.get('/pago', maestrosController.obtenerMaestrosPago);
 router.get('/vehiculo', maestrosController.obtenerMaestrosVehiculo);
 router.get('/vehiculo/modelos', maestrosController.buscarModelosVehiculo);
+router.post('/agregar', maestrosController.agregarNuevoMaestro);
 
 module.exports = router;

@@ -183,10 +183,58 @@ const buscarModelosVehiculo = async (req, res) => {
     }
 };
 
+const agregarNuevoMaestro = async (req, res) => {
+    try {
+        const { tabla, nombre } = req.body;
+        
+        // Tablas permitidas para evitar SQL Injection
+        const tablasPermitidas = {
+            'clase': 'vehiculoclase',
+            'marca': 'marca',
+            'carroceria': 'carroceria',
+            'modelo': 'modelo',
+            'color': 'color'
+        };
+
+        const tablaReal = tablasPermitidas[tabla];
+        if (!tablaReal) {
+            return res.status(400).json({ status: 'error', message: 'Tabla no válida' });
+        }
+
+        // Validación extra en el backend: Solo mayúsculas, números y guiones intermedios
+        if (!/^[A-Z0-9]+(?:-[A-Z0-9]+)*$/.test(nombre)) {
+            return res.status(400).json({ status: 'error', message: 'Formato inválido. Solo mayúsculas, números y guiones intermedios permitidos.' });
+        }
+
+        // Verificar si existe
+        const existe = await db.query(`SELECT key, nombre FROM ${tablaReal} WHERE nombre ILIKE $1 LIMIT 1`, [nombre]);
+        
+        if (existe.rows.length > 0) {
+            return res.status(400).json({ status: 'error', message: `El valor "${nombre}" ya existe.` });
+        }
+
+        await db.query(`INSERT INTO ${tablaReal} (key, nombre) VALUES ($1, $2)`, [nombre, nombre]);
+
+        return res.status(200).json({
+            status: 'success',
+            message: `Agregado correctamente a ${tabla}`,
+            data: { key: nombre, nombre: nombre }
+        });
+
+    } catch (error) {
+        console.error('Error al agregar maestro:', error);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Error interno del servidor al agregar el maestro.'
+        });
+    }
+};
+
 module.exports = {
     obtenerMaestrosCaja,
     obtenerPrecioConcepto,
     obtenerMaestrosPago,
     obtenerMaestrosVehiculo,
-    buscarModelosVehiculo
+    buscarModelosVehiculo,
+    agregarNuevoMaestro
 };
