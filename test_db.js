@@ -1,13 +1,18 @@
-const db = require('./config/database');
+const { Pool } = require('pg');
+const pool = new Pool({
+  user: 'postgres',
+  host: '192.168.14.19',
+  database: 'inspeccion',
+  password: 'farenet2026**',
+  port: 5432
+});
 
-async function test() {
-    try {
-        const res = await db.query("SELECT key, nombre, estado FROM conceptoinspeccion WHERE nombre ILIKE '%colectivo%' OR estado = false");
-        console.log(res.rows);
-    } catch (e) {
-        console.error(e);
-    } finally {
-        process.exit(0);
-    }
+async function run() {
+  try {
+    const res = await pool.query("SELECT * FROM tipocertificado LIMIT 5");
+    console.log(res.rows);
+  } finally {
+    pool.end();
+  }
 }
-test();
+run();

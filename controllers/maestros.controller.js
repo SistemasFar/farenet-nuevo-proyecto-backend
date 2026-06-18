@@ -113,14 +113,18 @@ const obtenerMaestrosVehiculo = async (req, res) => {
             marcas,
             carrocerias,
             combustibles,
-            categoriasExtra
+            categoriasExtra,
+            tiposPoliza,
+            aseguradoras
         ] = await Promise.all([
             db.query("SELECT MIN(key) as key, nombre FROM vehiculoclase WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC"),
             db.query("SELECT MIN(key) as key, nombre FROM marca WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC"),
             // Modelos y Colores removidos para cargarse asíncronamente
             db.query("SELECT MIN(key) as key, nombre FROM carroceria WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC"),
             db.query("SELECT MIN(key) as key, nombre FROM combustible WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC"),
-            db.query("SELECT DISTINCT categoriaextra as key, categoriaextra as nombre FROM vehiculo WHERE categoriaextra IS NOT NULL AND categoriaextra != '-SD' ORDER BY categoriaextra ASC")
+            db.query("SELECT DISTINCT categoriaextra as key, categoriaextra as nombre FROM vehiculo WHERE categoriaextra IS NOT NULL AND categoriaextra != '-SD' ORDER BY categoriaextra ASC"),
+            db.query("SELECT MIN(key) as key, nombre FROM tipopoliza WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC"),
+            db.query("SELECT MIN(key) as key, nombre FROM aseguradora WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC")
         ]);
 
         return res.status(200).json({
@@ -133,7 +137,9 @@ const obtenerMaestrosVehiculo = async (req, res) => {
 
                 carrocerias: carrocerias.rows,
                 combustibles: combustibles.rows,
-                categoriasExtra: categoriasExtra.rows
+                categoriasExtra: categoriasExtra.rows,
+                tiposPoliza: tiposPoliza.rows,
+                aseguradoras: aseguradoras.rows
             }
         });
     } catch (error) {
@@ -144,7 +150,7 @@ const obtenerMaestrosVehiculo = async (req, res) => {
             return res.status(200).json({
                 status: 'success',
                 data: {
-                    clases: [], marcas: [], modelos: [], colores: [], carrocerias: [], combustibles: [], categoriasExtra: []
+                    clases: [], marcas: [], modelos: [], colores: [], carrocerias: [], combustibles: [], categoriasExtra: [], tiposPoliza: [], aseguradoras: []
                 }
             });
         }
