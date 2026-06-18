@@ -111,15 +111,13 @@ const obtenerMaestrosVehiculo = async (req, res) => {
         const [
             clases,
             marcas,
-            colores,
             carrocerias,
             combustibles,
             categoriasExtra
         ] = await Promise.all([
             db.query("SELECT MIN(key) as key, nombre FROM vehiculoclase WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC"),
             db.query("SELECT MIN(key) as key, nombre FROM marca WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC"),
-            // Modelos removidos para cargarse asíncronamente
-            db.query("SELECT MIN(key) as key, nombre FROM color WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC"),
+            // Modelos y Colores removidos para cargarse asíncronamente
             db.query("SELECT MIN(key) as key, nombre FROM carroceria WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC"),
             db.query("SELECT MIN(key) as key, nombre FROM combustible WHERE nombre ~ '[a-zA-Z]' GROUP BY nombre ORDER BY nombre ASC"),
             db.query("SELECT DISTINCT categoriaextra as key, categoriaextra as nombre FROM vehiculo WHERE categoriaextra IS NOT NULL AND categoriaextra != '-SD' ORDER BY categoriaextra ASC")
@@ -131,7 +129,8 @@ const obtenerMaestrosVehiculo = async (req, res) => {
                 clases: clases.rows,
                 marcas: marcas.rows,
                 modelos: [], // Array vacío por retrocompatibilidad
-                colores: colores.rows,
+                colores: [], // Array vacío porque ahora es AsyncSelect
+
                 carrocerias: carrocerias.rows,
                 combustibles: combustibles.rows,
                 categoriasExtra: categoriasExtra.rows
@@ -182,6 +181,36 @@ const buscarModelosVehiculo = async (req, res) => {
         return res.status(500).json({
             status: 'error',
             message: 'Error interno del servidor al buscar modelos.'
+        });
+    }
+};
+
+const buscarColoresVehiculo = async (req, res) => {
+    try {
+        const query = req.query.q || '';
+        const limit = 50;
+
+        let sql = "SELECT MIN(key) as key, nombre FROM color WHERE nombre ~ '[a-zA-Z]' ";
+        let params = [];
+
+        if (query.trim() !== '') {
+            sql += " AND nombre ILIKE $1 ";
+            params.push(`%${query.trim()}%`);
+        }
+
+        sql += " GROUP BY nombre ORDER BY nombre ASC LIMIT " + limit;
+
+        const result = await db.query(sql, params);
+
+        return res.status(200).json({
+            status: 'success',
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('Error al buscar colores:', error);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Error interno del servidor.'
         });
     }
 };
@@ -239,5 +268,6 @@ module.exports = {
     obtenerMaestrosPago,
     obtenerMaestrosVehiculo,
     buscarModelosVehiculo,
+    buscarColoresVehiculo,
     agregarNuevoMaestro
 };
