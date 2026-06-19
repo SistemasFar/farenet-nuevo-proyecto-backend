@@ -165,25 +165,29 @@ ${whereClause}
         ''
       ) AS "comprobante",
        COALESCE(
-  c.cliente_nrodocumentoidentidad,
+  NULLIF(c.cliente_nrodocumentoidentidad, '-'),
+  be.estado_json::json->'formVehiculo'->>'nroDocProp',
   ''
 ) AS "clienteDocumento",
 
 COALESCE(
-  CASE
-    WHEN LENGTH(COALESCE(p.nrodocumentoidentidad, '')) = 11
-      THEN p.nombrerazonsocial
-    ELSE CONCAT(
-      COALESCE(p.nombres, ''),
-      ' ',
-      COALESCE(p.apellidos, '')
-    )
-  END,
+  NULLIF(
+    CASE
+      WHEN LENGTH(COALESCE(p.nrodocumentoidentidad, '')) = 11 THEN p.nombrerazonsocial
+      ELSE CONCAT(COALESCE(p.nombres, ''), ' ', COALESCE(p.apellidos, ''))
+    END, 
+    ' '
+  ),
+  NULLIF(
+    CONCAT(COALESCE(be.estado_json::json->'formVehiculo'->>'nombresProp', ''), ' ', COALESCE(be.estado_json::json->'formVehiculo'->>'apellidosProp', '')),
+    ' '
+  ),
   ''
 ) AS "clienteNombre",
    
 COALESCE(
   ci.abreviatura,
+  (SELECT ci2.abreviatura FROM conceptoinspeccion ci2 WHERE ci2.key::text = (be.estado_json::json->'formCaja'->>'concepto') LIMIT 1),
   ''
 ) AS "conceptoVehicular",
       COALESCE(
@@ -281,6 +285,9 @@ END AS "resultado",
     LEFT JOIN certificado cert
       ON cert.inspeccion_nrodocumentoinspeccion =
          i.nrodocumentoinspeccion
+
+    LEFT JOIN borrador_estado be
+      ON be.inspeccion_id = i.nrodocumentoinspeccion
 
     ${whereClause}
 

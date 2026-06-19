@@ -155,7 +155,13 @@ const guardarBorrador = async (req, res) => {
       plantaKey,
       formCaja,
       formVehiculo,
-      pagosAgregados: req.body.pagosAgregados || []
+      pagosAgregados: req.body.pagosAgregados || [],
+      isConsultado: req.body.isConsultado,
+      documentoPago: req.body.documentoPago,
+      precioSubtotal: req.body.precioSubtotal,
+      descuento: req.body.descuento,
+      precioTotal: req.body.precioTotal,
+      documentoDescuento: req.body.documentoDescuento
     });
 
     await pool.query(`
