@@ -1,1 +1,10 @@
-const { Pool } = require('pg'); const pool = new Pool({user: 'postgres', host: '192.168.14.19', database: 'inspeccion', password: 'farenet2026**', port: 5432}); pool.query('SELECT table_name, column_name FROM information_schema.columns WHERE column_name ILIKE ''%placa%''').then(res => console.log(res.rows)).catch(console.error).finally(()=>pool.end());
+const data = {
+  currentStepIndex: 1,
+  plantaKey: '201',
+  formCaja: { placa: 'ABC-123', linea: 'L1' }
+};
+fetch('http://127.0.0.1:3000/api/inspecciones/borrador', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(data)
+}).then(res => res.json()).then(console.log).catch(console.error);

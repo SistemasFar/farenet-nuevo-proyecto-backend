@@ -5,5 +5,7 @@ const inspeccionesController = require('../controllers/inspecciones.controller')
 
 router.get('/buscar', inspeccionesController.buscarInspecciones);
 router.post('/guardar', inspeccionesController.guardarInspeccion);
+router.post('/borrador', inspeccionesController.guardarBorrador);
+router.get('/borrador/:id', inspeccionesController.obtenerBorrador);
 
 module.exports = router;
