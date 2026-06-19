@@ -16,7 +16,7 @@ const listarInspecciones = async ({
   const conditions = [];
 
   values.push(plantaKey);
-  conditions.push(`l.planta_key = $${values.length}`);
+  conditions.push(`(l.planta_key = $${values.length} OR SPLIT_PART(i.nrodocumentoinspeccion, '-', 2) = $${values.length})`);
   conditions.push(`DATE(i.fechcreacion) = CURRENT_DATE`);
 
   if (lineaKey && lineaKey.trim() !== '' && lineaKey.trim().toUpperCase() !== 'TODOS') {

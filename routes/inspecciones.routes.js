@@ -7,5 +7,6 @@ router.get('/buscar', inspeccionesController.buscarInspecciones);
 router.post('/guardar', inspeccionesController.guardarInspeccion);
 router.post('/borrador', inspeccionesController.guardarBorrador);
 router.get('/borrador/:id', inspeccionesController.obtenerBorrador);
+router.delete('/borrador/:id', inspeccionesController.eliminarBorrador);
 
 module.exports = router;

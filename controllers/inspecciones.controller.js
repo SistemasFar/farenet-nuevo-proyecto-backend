@@ -94,19 +94,19 @@ const guardarBorrador = async (req, res) => {
 
     // Si no hay idBorrador, generamos uno nuevo y hacemos INSERT
     if (!nroInspeccion) {
-      // Obtener el número máximo para generar el correlativo
-      const result = await pool.query("SELECT nrodocumentoinspeccion FROM inspeccion ORDER BY nrodocumentoinspeccion DESC LIMIT 1");
-      let nextNum = 1;
-      if (result.rows.length > 0) {
-        const lastNro = result.rows[0].nrodocumentoinspeccion;
-        const parts = lastNro.split('-');
-        if (parts.length === 3) {
-          nextNum = parseInt(parts[2], 10) + 1;
-        }
-      }
-      
       const pKey = plantaKey || '201';
-      nroInspeccion = `INS-${pKey}-${String(nextNum).padStart(9, '0')}`;
+      
+      const numResult = await pool.query(
+        `SELECT COALESCE(MAX(SPLIT_PART(nrodocumentoinspeccion, '-', 3)::INTEGER), 0) + 1 AS next_num
+         FROM inspeccion WHERE SPLIT_PART(nrodocumentoinspeccion, '-', 2) = $1`,
+        [pKey]
+      );
+      
+      const nextNum = numResult.rows[0].next_num;
+      const nextNumVal = String(nextNum).padStart(9, '0');
+      nroInspeccion = `INS-${pKey}-${nextNumVal}`;
+
+      console.log('--- POST BORRADOR --- generated nroInspeccion:', nroInspeccion);
 
       // Insertar en inspeccion
       await pool.query(
@@ -148,6 +148,22 @@ const guardarBorrador = async (req, res) => {
         [placa, nroInspeccion]
       );
     }
+
+    // Guardar el estado JSON en la tabla borrador_estado
+    const estadoJson = JSON.stringify({
+      currentStepIndex,
+      plantaKey,
+      formCaja,
+      formVehiculo,
+      pagosAgregados: req.body.pagosAgregados || []
+    });
+
+    await pool.query(`
+      INSERT INTO borrador_estado (inspeccion_id, estado_json)
+      VALUES ($1, $2)
+      ON CONFLICT (inspeccion_id)
+      DO UPDATE SET estado_json = EXCLUDED.estado_json
+    `, [nroInspeccion, estadoJson]);
     
     return res.status(200).json({
       status: 'success',
@@ -169,16 +185,50 @@ const guardarBorrador = async (req, res) => {
 const obtenerBorrador = async (req, res) => {
   try {
     const { id } = req.params;
-    // Aquí buscaremos el borrador en la DB
-    // Por ahora mock
+    
+    const result = await pool.query(
+      `SELECT estado_json FROM borrador_estado WHERE inspeccion_id = $1`,
+      [id]
+    );
+
+    let data = null;
+    if (result.rows.length > 0) {
+      data = JSON.parse(result.rows[0].estado_json);
+    }
+
     return res.status(200).json({
       status: 'success',
-      data: null // Mock empty
+      data
     });
   } catch (error) {
+    console.error('Error al recuperar borrador:', error);
     return res.status(500).json({
       status: 'error',
-      message: 'Error al recuperar borrador'
+      message: 'Error al recuperar borrador',
+      error: error.message
+    });
+  }
+};
+
+const eliminarBorrador = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Eliminar de las 3 tablas
+    await pool.query('DELETE FROM borrador_estado WHERE inspeccion_id = $1', [id]);
+    await pool.query('DELETE FROM comprobante WHERE inspeccion_nrodocumentoinspeccion = $1', [id]);
+    await pool.query('DELETE FROM inspeccion WHERE nrodocumentoinspeccion = $1', [id]);
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Borrador eliminado correctamente'
+    });
+  } catch (error) {
+    console.error('Error al eliminar borrador:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Error al eliminar borrador',
+      error: error.message
     });
   }
 };
@@ -187,5 +237,6 @@ module.exports = {
   buscarInspecciones,
   guardarInspeccion,
   guardarBorrador,
-  obtenerBorrador
+  obtenerBorrador,
+  eliminarBorrador
 };
