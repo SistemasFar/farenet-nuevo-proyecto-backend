@@ -268,6 +268,50 @@ const agregarNuevoMaestro = async (req, res) => {
     }
 };
 
+const obtenerMaestrosPropietario = async (req, res) => {
+    try {
+        const [tiposDocumento, paises, departamentos] = await Promise.all([
+            db.query("SELECT key, nombre FROM tipodocumentoidentidad ORDER BY nombre ASC"),
+            db.query("SELECT key, nombre FROM pais ORDER BY nombre ASC"),
+            db.query("SELECT key, nombre FROM departamento ORDER BY nombre ASC")
+        ]);
+
+        return res.status(200).json({
+            status: 'success',
+            data: {
+                tiposDocumento: tiposDocumento.rows,
+                paises: paises.rows,
+                departamentos: departamentos.rows
+            }
+        });
+    } catch (error) {
+        console.error('Error al obtener maestros para propietario:', error);
+        return res.status(500).json({ status: 'error', message: 'Error interno del servidor.' });
+    }
+};
+
+const obtenerProvincias = async (req, res) => {
+    try {
+        const { departamento_key } = req.params;
+        const result = await db.query("SELECT key, nombre FROM provincia WHERE departamento_key = $1 ORDER BY nombre ASC", [departamento_key]);
+        return res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('Error al obtener provincias:', error);
+        return res.status(500).json({ status: 'error', message: 'Error interno del servidor.' });
+    }
+};
+
+const obtenerDistritos = async (req, res) => {
+    try {
+        const { provincia_key } = req.params;
+        const result = await db.query("SELECT key, nombre FROM distrito WHERE provincia_key = $1 ORDER BY nombre ASC", [provincia_key]);
+        return res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('Error al obtener distritos:', error);
+        return res.status(500).json({ status: 'error', message: 'Error interno del servidor.' });
+    }
+};
+
 module.exports = {
     obtenerMaestrosCaja,
     obtenerPrecioConcepto,
@@ -275,5 +319,8 @@ module.exports = {
     obtenerMaestrosVehiculo,
     buscarModelosVehiculo,
     buscarColoresVehiculo,
-    agregarNuevoMaestro
+    agregarNuevoMaestro,
+    obtenerMaestrosPropietario,
+    obtenerProvincias,
+    obtenerDistritos
 };

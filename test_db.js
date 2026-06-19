@@ -9,8 +9,11 @@ const pool = new Pool({
 
 async function run() {
   try {
-    const res = await pool.query("SELECT * FROM tipocertificado LIMIT 5");
-    console.log(res.rows);
+    console.log("Departamento:", (await pool.query("SELECT * FROM departamento LIMIT 1")).rows[0]);
+    console.log("Provincia:", (await pool.query("SELECT * FROM provincia LIMIT 1")).rows[0]);
+    console.log("Distrito:", (await pool.query("SELECT * FROM distrito LIMIT 1")).rows[0]);
+    console.log("Pais:", (await pool.query("SELECT * FROM pais LIMIT 1")).rows[0]);
+    console.log("TipoDoc:", (await pool.query("SELECT * FROM tipodocumentoidentidad LIMIT 1")).rows[0]);
   } finally {
     pool.end();
   }
