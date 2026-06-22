@@ -1,6 +1,6 @@
 const pool = require('../config/database');
 
-const ESTADOS_PERMITIDOS = ['CON', 'ANULADO', 'RETIRADO'];
+const ESTADOS_PERMITIDOS = ['CON', 'ANULADO', 'RETIRADO', 'PROCESO'];
 
 const buscarInspecciones = async (filtros) => {
   const {
@@ -24,7 +24,7 @@ const buscarInspecciones = async (filtros) => {
 
   let where = `
     WHERE l.planta_key = $1
-      AND UPPER(COALESCE(i.inspeccionestado_key, '')) IN ('CON', 'ANULADO', 'RETIRADO')
+      AND UPPER(COALESCE(i.inspeccionestado_key, '')) IN ('CON', 'ANULADO', 'RETIRADO', 'PROCESO')
   `;
 
   params.push(plantaKey);
