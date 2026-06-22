@@ -108,12 +108,19 @@ const guardarBorrador = async (req, res) => {
 
       console.log('--- POST BORRADOR --- generated nroInspeccion:', nroInspeccion);
 
-      // Insertar en inspeccion
+      // Insertar en inspeccion con los campos del borrador
       await pool.query(
         `INSERT INTO inspeccion (
-          nrodocumentoinspeccion, posicion, estado, fechcreacion, inspeccionestado_key, indicedesaprobado
-        ) VALUES ($1, $2, true, NOW(), 'PROCESO', 0)`,
-        [nroInspeccion, currentStepIndex]
+          nrodocumentoinspeccion, posicion, estado, fechcreacion, inspeccionestado_key, indicedesaprobado,
+          tipoinspeccion_key, tipocertificado_key, tipoautorizacion_key
+        ) VALUES ($1, $2, true, NOW(), 'PROCESO', 0, $3, $4, $5)`,
+        [
+          nroInspeccion, 
+          currentStepIndex,
+          formCaja?.tipoInspeccion || null,
+          formCaja?.tipoCertificado || null,
+          formCaja?.tipoAutorizacion || null
+        ]
       );
 
       const lineaResult = await pool.query(
@@ -126,14 +133,26 @@ const guardarBorrador = async (req, res) => {
       const compRes = await pool.query(`SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM comprobante`);
       const nextCompId = compRes.rows[0].next_id;
 
-      // Insertar un comprobante temporal para que listarInspecciones lo encuentre
-      const placa = formCaja?.placa || formVehiculo?.placa || '-';
+      // Insertar un comprobante temporal con los campos
+      const placa = formCaja?.placa || formVehiculo?.placaNueva || formVehiculo?.placa || '-';
       await pool.query(
         `INSERT INTO comprobante (
           id, nrocomprobante, inspeccion_nrodocumentoinspeccion, placamotor, cliente_nrodocumentoidentidad, linea_key, fechcreacion,
-          importetotal, totaldscto, totalsindscto
-        ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), 0, 0, 0)`,
-        [nextCompId, `BORRADOR-${nextNum}`, nroInspeccion, placa, '-', randomLinea]
+          importetotal, totaldscto, totalsindscto, conceptoinspeccion_key, tipodocumento_key
+        ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9, $10, $11)`,
+        [
+          nextCompId, 
+          `BORRADOR-${nextNumVal}`, 
+          nroInspeccion, 
+          placa, 
+          req.body.documentoDescuento || '-', 
+          randomLinea,
+          req.body.precioTotal || 0,
+          req.body.descuento || 0,
+          req.body.precioSubtotal || 0,
+          formCaja?.concepto || null,
+          req.body.documentoPago || null
+        ]
       );
     } else {
       // Si ya existe, actualizamos posicion, estado y campos básicos de la inspección
@@ -181,79 +200,68 @@ const guardarBorrador = async (req, res) => {
 
       // Actualizamos vehiculo si hay placa real
       if (placa && placa !== '-') {
-        // Intentar actualizar primero
+        // En lugar de requerir que el usuario digite el motor, usaremos uno temporal si no lo hay
+        const motorAUsar = formVehiculo?.nroMotor || ('TMP-' + nroInspeccion);
+        
+        // Intentar actualizar usando la placa o el motor temporal
         const upRes = await pool.query(`
           UPDATE vehiculo SET 
-            categoria_key = $1,
-            categoriaextra = $2,
-            vehiculoclase_key = $3,
-            marca_key = $4,
-            modelo_key = $5,
-            color_key = $6,
-            carroceria_key = $7,
-            nroserie = $8,
-            aniofabricacion = $9,
-            combustible_key = $10,
-            nrocilindros = $11,
-            kilometraje = $12,
-            nroasientos = $13,
-            nropasajeros = $14,
-            nropuertas = $15,
-            nropisos = $16,
-            nrosalidaemergencia = $17,
-            pesoseco = $18,
-            cargautil = $19,
-            pesobruto = $20,
-            longitud = $21,
-            ancho = $22,
-            alto = $23,
-            nroejes = $24,
-            nroruedas = $25,
+            categoria_key = COALESCE($1, categoria_key),
+            categoriaextra = COALESCE($2, categoriaextra),
+            vehiculoclase_key = COALESCE($3, vehiculoclase_key),
+            marca_key = COALESCE($4, marca_key),
+            modelo_key = COALESCE($5, modelo_key),
+            color_key = COALESCE($6, color_key),
+            carroceria_key = COALESCE($7, carroceria_key),
+            nroserie = COALESCE($8, nroserie),
+            aniofabricacion = COALESCE($9, aniofabricacion),
+            combustible_key = COALESCE($10, combustible_key),
+            nrocilindros = COALESCE($11, nrocilindros),
+            kilometraje = COALESCE($12, kilometraje),
+            nroasientos = COALESCE($13, nroasientos),
+            nropasajeros = COALESCE($14, nropasajeros),
+            nropuertas = COALESCE($15, nropuertas),
+            nropisos = COALESCE($16, nropisos),
+            nrosalidaemergencia = COALESCE($17, nrosalidaemergencia),
+            pesoseco = COALESCE($18, pesoseco),
+            cargautil = COALESCE($19, cargautil),
+            pesobruto = COALESCE($20, pesobruto),
+            longitud = COALESCE($21, longitud),
+            ancho = COALESCE($22, ancho),
+            alto = COALESCE($23, alto),
+            nroejes = COALESCE($24, nroejes),
+            nroruedas = COALESCE($25, nroruedas),
             fechmodi = NOW()
-          WHERE nroplacaantigua = $26
+          WHERE nroplacaantigua = $26 OR nromotor = $27
         `, [
-          formCaja?.categoria || null,
-          formVehiculo?.categoriaExtra || null,
-          formVehiculo?.clase || null,
-          formVehiculo?.marca || null,
-          formVehiculo?.modelo || null,
-          formVehiculo?.color || null,
-          formVehiculo?.carroceria || null,
-          formVehiculo?.nroSerie || null,
-          formVehiculo?.anioFabricacion || null,
-          formVehiculo?.combustible || null,
-          formVehiculo?.nroCilindros || null,
-          formVehiculo?.kilometraje || null,
-          formVehiculo?.nroAsientos || null,
-          formVehiculo?.nroPasajeros || null,
-          formVehiculo?.nroPuertas || null,
-          formVehiculo?.nroPisos || null,
-          formVehiculo?.salidasEmergencia || null,
-          formVehiculo?.pesoSeco || null,
-          formVehiculo?.cargaUtil || null,
-          formVehiculo?.pesoBruto || null,
-          formVehiculo?.longitud || null,
-          formVehiculo?.ancho || null,
-          formVehiculo?.altura || null,
-          formVehiculo?.nroEjes || null,
-          formVehiculo?.nroRuedas || null,
-          placa
+          formCaja?.categoria || null, formVehiculo?.categoriaExtra || null, formVehiculo?.clase || null, formVehiculo?.marca || null,
+          formVehiculo?.modelo || null, formVehiculo?.color || null, formVehiculo?.carroceria || null, formVehiculo?.nroSerie || null,
+          formVehiculo?.anioFabricacion || null, formVehiculo?.combustible || null, formVehiculo?.nroCilindros || null,
+          formVehiculo?.kilometraje || null, formVehiculo?.nroAsientos || null, formVehiculo?.nroPasajeros || null,
+          formVehiculo?.nroPuertas || null, formVehiculo?.nroPisos || null, formVehiculo?.salidasEmergencia || null,
+          formVehiculo?.pesoSeco || null, formVehiculo?.cargaUtil || null, formVehiculo?.pesoBruto || null,
+          formVehiculo?.longitud || null, formVehiculo?.ancho || null, formVehiculo?.altura || null,
+          formVehiculo?.nroEjes || null, formVehiculo?.nroRuedas || null, placa, motorAUsar
         ]);
 
-        // Si no se actualizó nada, intentar insertar solo si tenemos nromotor
-        if (upRes.rowCount === 0 && formVehiculo?.nroMotor) {
+        // Si no se actualizó nada, significa que no existe. Lo creamos usando valores por defecto para los NOT NULL.
+        if (upRes.rowCount === 0) {
           try {
             await pool.query(`
               INSERT INTO vehiculo (
                 nroplacaantigua, nromotor, categoria_key, categoriaextra, vehiculoclase_key, marca_key,
                 modelo_key, color_key, carroceria_key, nroserie, aniofabricacion, combustible_key,
                 nrocilindros, kilometraje, nroasientos, nropasajeros, nropuertas, nropisos,
-                nrosalidaemergencia, pesoseco, cargautil, pesobruto, longitud, ancho, alto, nroejes, nroruedas, fechcreacion
+                nrosalidaemergencia, pesoseco, cargautil, pesobruto, longitud, ancho, alto, nroejes, nroruedas, 
+                distanciaeje1, distanciaeje2, distanciaeje3, distanciaeje4, fechcreacion
               ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, NOW()
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                COALESCE($14, 0), $15, $16, $17, $18, $19,
+                COALESCE($20, 0), COALESCE($21, 0), COALESCE($22, 0), COALESCE($23, 0), COALESCE($24, 0), COALESCE($25, 0),
+                $26, $27, 0, 0, 0, 0, NOW()
               )
             `, [
-              placa, formVehiculo?.nroMotor, formCaja?.categoria || null, formVehiculo?.categoriaExtra || null,
+              placa, motorAUsar, formCaja?.categoria || null, formVehiculo?.categoriaExtra || null,
               formVehiculo?.clase || null, formVehiculo?.marca || null, formVehiculo?.modelo || null,
               formVehiculo?.color || null, formVehiculo?.carroceria || null, formVehiculo?.nroSerie || null,
               formVehiculo?.anioFabricacion || null, formVehiculo?.combustible || null, formVehiculo?.nroCilindros || null,
@@ -263,8 +271,11 @@ const guardarBorrador = async (req, res) => {
               formVehiculo?.longitud || null, formVehiculo?.ancho || null, formVehiculo?.altura || null,
               formVehiculo?.nroEjes || null, formVehiculo?.nroRuedas || null
             ]);
+            
+            // Enlazar la inspección a este motor temporal
+            await pool.query(`UPDATE inspeccion SET vehiculo_nromotor = $1 WHERE nrodocumentoinspeccion = $2`, [motorAUsar, nroInspeccion]);
           } catch (e) {
-            console.error('No se pudo insertar vehículo parcial', e.message);
+            console.error('No se pudo insertar vehículo parcial:', e.message);
           }
         }
       }
