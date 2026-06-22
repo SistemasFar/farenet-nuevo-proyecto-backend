@@ -108,18 +108,22 @@ const guardarBorrador = async (req, res) => {
 
       console.log('--- POST BORRADOR --- generated nroInspeccion:', nroInspeccion);
 
+      // Crear JSON para metadatos de interfaz que no pertenecen al modelo
+      const uiMetadata = JSON.stringify({ tipoPlaca: formCaja?.tipoPlaca || '' });
+
       // Insertar en inspeccion con los campos del borrador
       await pool.query(
         `INSERT INTO inspeccion (
           nrodocumentoinspeccion, posicion, estado, fechcreacion, inspeccionestado_key, indicedesaprobado,
-          tipoinspeccion_key, tipocertificado_key, tipoautorizacion_key
-        ) VALUES ($1, $2, true, NOW(), 'PROCESO', 0, $3, $4, $5)`,
+          tipoinspeccion_key, tipocertificado_key, tipoautorizacion_key, ui_metadata
+        ) VALUES ($1, $2, true, NOW(), 'PROCESO', 0, $3, $4, $5, $6)`,
         [
           nroInspeccion, 
           currentStepIndex,
           formCaja?.tipoInspeccion || null,
           formCaja?.tipoCertificado || null,
-          formCaja?.tipoAutorizacion || null
+          formCaja?.tipoAutorizacion || null,
+          uiMetadata
         ]
       );
 
@@ -156,19 +160,22 @@ const guardarBorrador = async (req, res) => {
       );
     } else {
       // Si ya existe, actualizamos posicion, estado y campos básicos de la inspección
+      const uiMetadata = JSON.stringify({ tipoPlaca: formCaja?.tipoPlaca || '' });
       await pool.query(
         `UPDATE inspeccion SET 
           posicion = $1, 
           tipoinspeccion_key = $2, 
           tipocertificado_key = $3, 
           tipoautorizacion_key = $4,
+          ui_metadata = $5,
           fechmodi = NOW() 
-         WHERE nrodocumentoinspeccion = $5`,
+         WHERE nrodocumentoinspeccion = $6`,
         [
           currentStepIndex, 
           formCaja?.tipoInspeccion || null, 
           formCaja?.tipoCertificado || null, 
           formCaja?.tipoAutorizacion || null, 
+          uiMetadata,
           nroInspeccion
         ]
       );
@@ -280,6 +287,109 @@ const guardarBorrador = async (req, res) => {
         }
       }
     }
+
+    // Paso 2: Pagos Agregados
+    const pagosAgregados = req.body.pagosAgregados || [];
+    if (Array.isArray(pagosAgregados)) {
+      const compRes = await pool.query(`SELECT id FROM comprobante WHERE inspeccion_nrodocumentoinspeccion = $1`, [nroInspeccion]);
+      if (compRes.rows.length > 0) {
+        const compId = compRes.rows[0].id;
+        await pool.query(`DELETE FROM pago WHERE comprobante_id = $1`, [compId]);
+        
+        for (const pago of pagosAgregados) {
+          await pool.query(`
+            INSERT INTO pago (
+              comprobante_id, importe, tipocontado_key, tarjeta_key, entidadfinanciera_key, 
+              cuentacorriente_key, nrooperacionbanco, nrooperaciontarjeta, digitotarjeta, fechdeposito, fechacreacion
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+          `, [
+            compId, 
+            pago.importe || 0, 
+            pago.tipo ? pago.tipo.toLowerCase() : null,
+            pago.tarjetaKey || null,
+            pago.entidadFinancieraKey || null,
+            pago.cuentaCorrienteKey || null,
+            pago.tipo === 'BANCO' ? pago.nroOperacion : null,
+            pago.tipo === 'TARJETA' ? pago.nroOperacion : null,
+            pago.digitosTarjeta || null,
+            pago.fechaDeposito || null
+          ]);
+        }
+      }
+    }
+
+    // Paso 3: Datos Adicionales de Vehículo (Propietario y SOAT)
+    if (formVehiculo) {
+      const motorAUsar = formVehiculo.nroMotor || ('TMP-' + nroInspeccion);
+      if (!formVehiculo.sinDni && formVehiculo.nroDocProp) {
+        const perRes = await pool.query(`SELECT nrodocumentoidentidad FROM persona WHERE nrodocumentoidentidad = $1`, [formVehiculo.nroDocProp]);
+        if (perRes.rows.length === 0) {
+          await pool.query(`
+            INSERT INTO persona (
+              nrodocumentoidentidad, tipodocumentoidentidad_key, nombres, apellidos,
+              pais_key, departamento_key, provincia_key, distrito_key, direccion,
+              email, telefono, fechcreacion
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+          `, [
+            formVehiculo.nroDocProp, formVehiculo.tipoDocProp || null, formVehiculo.nombresProp || null, formVehiculo.apellidosProp || null,
+            formVehiculo.paisProp || null, formVehiculo.departamentoProp || null, formVehiculo.provinciaProp || null,
+            formVehiculo.distritoProp || null, formVehiculo.direccionProp || null, formVehiculo.emailProp || null, formVehiculo.telefonoProp || null
+          ]);
+        } else {
+          await pool.query(`
+            UPDATE persona SET
+              tipodocumentoidentidad_key = $1,
+              nombres = $2,
+              apellidos = $3,
+              pais_key = $4,
+              departamento_key = $5,
+              provincia_key = $6,
+              distrito_key = $7,
+              direccion = $8,
+              email = $9,
+              telefono = $10,
+              fechmodi = NOW()
+            WHERE nrodocumentoidentidad = $11
+          `, [
+            formVehiculo.tipoDocProp || null, formVehiculo.nombresProp || null, formVehiculo.apellidosProp || null,
+            formVehiculo.paisProp || null, formVehiculo.departamentoProp || null, formVehiculo.provinciaProp || null,
+            formVehiculo.distritoProp || null, formVehiculo.direccionProp || null, formVehiculo.emailProp || null, formVehiculo.telefonoProp || null,
+            formVehiculo.nroDocProp
+          ]);
+        }
+
+        const placaToUse = formVehiculo.placaNueva || placa || '-';
+        let tpRes = await pool.query(`SELECT id FROM tarjetapropiedad WHERE nroplaca = $1`, [placaToUse]);
+        let tpId = null;
+        if (tpRes.rows.length === 0) {
+          const tpInsert = await pool.query(`
+            INSERT INTO tarjetapropiedad (nroplaca, propietario_nrodocumentoidentidad, fechcreacion)
+            VALUES ($1, $2, NOW()) RETURNING id
+          `, [placaToUse, formVehiculo.nroDocProp]);
+          tpId = tpInsert.rows[0].id;
+        } else {
+          tpId = tpRes.rows[0].id;
+          await pool.query(`
+            UPDATE tarjetapropiedad SET propietario_nrodocumentoidentidad = $1, fechmodi = NOW()
+            WHERE id = $2
+          `, [formVehiculo.nroDocProp, tpId]);
+        }
+
+        await pool.query(`
+          UPDATE vehiculo SET 
+            tarjetapropiedad_id = $1,
+            nrosoat = COALESCE($2, nrosoat),
+            tipopoliza_key = COALESCE($3, tipopoliza_key),
+            aseguradora_key = COALESCE($4, aseguradora_key),
+            fechiniciotarjetapropiedad = COALESCE($5, fechiniciotarjetapropiedad),
+            fechfintarjetapropiedad = COALESCE($6, fechfintarjetapropiedad)
+          WHERE nromotor = $7
+        `, [
+          tpId, formVehiculo.nroSoat || null, formVehiculo.tipoPoliza || null, formVehiculo.aseguradora || null,
+          formVehiculo.fechaEmisionSoat || null, formVehiculo.fechaVencimientoSoat || null, motorAUsar
+        ]);
+      }
+    }
     
     return res.status(200).json({
       status: 'success',
@@ -304,7 +414,7 @@ const obtenerBorrador = async (req, res) => {
     
     // Obtener datos de inspeccion y comprobante
     const insRes = await pool.query(
-      `SELECT i.posicion, i.tipoinspeccion_key, i.tipocertificado_key, i.tipoautorizacion_key,
+      `SELECT i.posicion, i.tipoinspeccion_key, i.tipocertificado_key, i.tipoautorizacion_key, i.ui_metadata,
               c.placamotor, c.conceptoinspeccion_key, c.totalsindscto, c.totaldscto, c.importetotal,
               c.tipodocumento_key, c.cliente_nrodocumentoidentidad, SPLIT_PART(i.nrodocumentoinspeccion, '-', 2) as planta_key
        FROM inspeccion i
@@ -327,9 +437,12 @@ const obtenerBorrador = async (req, res) => {
       if (vehRes.rows.length > 0) veh = vehRes.rows[0];
     }
 
+    // Extraer ui_metadata de inspeccion si existe
+    const uiMetadata = typeof ins.ui_metadata === 'string' ? JSON.parse(ins.ui_metadata) : (ins.ui_metadata || {});
+
     // Reconstruir formCaja
     const formCaja = {
-      tipoPlaca: '', // UI only
+      tipoPlaca: uiMetadata.tipoPlaca || '',
       placa: placa !== '-' ? placa : '',
       concepto: ins.conceptoinspeccion_key || '',
       categoria: veh.categoria_key || '',
@@ -365,15 +478,61 @@ const obtenerBorrador = async (req, res) => {
       ancho: veh.ancho || '',
       altura: veh.alto || '',
       nroEjes: veh.nroejes || '',
-      nroRuedas: veh.nroruedas || ''
+      nroRuedas: veh.nroruedas || '',
+      nroSoat: veh.nrosoat || '',
+      tipoPoliza: veh.tipopoliza_key || '',
+      aseguradora: veh.aseguradora_key || '',
+      fechaEmisionSoat: veh.fechiniciotarjetapropiedad ? veh.fechiniciotarjetapropiedad.toISOString().split('T')[0] : '',
+      fechaVencimientoSoat: veh.fechfintarjetapropiedad ? veh.fechfintarjetapropiedad.toISOString().split('T')[0] : '',
+      sinDni: false,
+      tipoDocProp: '', nroDocProp: '', nombresProp: '', apellidosProp: '', paisProp: '', departamentoProp: '', provinciaProp: '', distritoProp: '', direccionProp: '', emailProp: '', telefonoProp: ''
     };
+
+    if (veh.tarjetapropiedad_id) {
+      const tpRes = await pool.query(`SELECT propietario_nrodocumentoidentidad FROM tarjetapropiedad WHERE id = $1`, [veh.tarjetapropiedad_id]);
+      if (tpRes.rows.length > 0 && tpRes.rows[0].propietario_nrodocumentoidentidad) {
+        const docProp = tpRes.rows[0].propietario_nrodocumentoidentidad;
+        const perRes = await pool.query(`SELECT * FROM persona WHERE nrodocumentoidentidad = $1`, [docProp]);
+        if (perRes.rows.length > 0) {
+          const per = perRes.rows[0];
+          formVehiculo.nroDocProp = per.nrodocumentoidentidad || '';
+          formVehiculo.tipoDocProp = per.tipodocumentoidentidad_key || '';
+          formVehiculo.nombresProp = per.nombres || '';
+          formVehiculo.apellidosProp = per.apellidos || '';
+          formVehiculo.paisProp = per.pais_key || '';
+          formVehiculo.departamentoProp = per.departamento_key || '';
+          formVehiculo.provinciaProp = per.provincia_key || '';
+          formVehiculo.distritoProp = per.distrito_key || '';
+          formVehiculo.direccionProp = per.direccion || '';
+          formVehiculo.emailProp = per.email || '';
+          formVehiculo.telefonoProp = per.telefono || '';
+        }
+      }
+    }
+
+    const compIdRes = await pool.query(`SELECT id FROM comprobante WHERE inspeccion_nrodocumentoinspeccion = $1`, [id]);
+    let pagosRecuperados = [];
+    if (compIdRes.rows.length > 0) {
+      const compId = compIdRes.rows[0].id;
+      const pagosRes = await pool.query(`SELECT * FROM pago WHERE comprobante_id = $1`, [compId]);
+      pagosRecuperados = pagosRes.rows.map(p => ({
+        tipo: p.tipocontado_key ? p.tipocontado_key.toUpperCase() : 'EFECTIVO',
+        importe: p.importe,
+        tarjetaKey: p.tarjeta_key || '',
+        entidadFinancieraKey: p.entidadfinanciera_key || '',
+        cuentaCorrienteKey: p.cuentacorriente_key || '',
+        nroOperacion: p.nrooperaciontarjeta || p.nrooperacionbanco || '',
+        digitosTarjeta: p.digitotarjeta || '',
+        fechaDeposito: p.fechdeposito ? p.fechdeposito.toISOString().split('T')[0] : ''
+      }));
+    }
 
     const data = {
       currentStepIndex: ins.posicion || 0,
       plantaKey: ins.planta_key,
       formCaja,
       formVehiculo,
-      pagosAgregados: [], // No se implementaron pagos parciales en bd según instrucciones
+      pagosAgregados: pagosRecuperados,
       isConsultado: Number(ins.totalsindscto) > 0,
       documentoPago: ins.tipodocumento_key || '',
       precioSubtotal: Number(ins.totalsindscto) || 0,
