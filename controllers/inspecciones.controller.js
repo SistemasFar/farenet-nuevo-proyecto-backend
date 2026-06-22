@@ -299,9 +299,9 @@ const guardarBorrador = async (req, res) => {
         for (const pago of pagosAgregados) {
           await pool.query(`
             INSERT INTO pago (
-              comprobante_id, importe, tipocontado_key, tarjeta_key, entidadfinanciera_key, 
+              id, comprobante_id, importe, tipocontado_key, tarjeta_key, entidadfinanciera_key, 
               cuentacorriente_key, nrooperacionbanco, nrooperaciontarjeta, digitotarjeta, fechdeposito, fechacreacion
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+            ) VALUES ((SELECT COALESCE(MAX(id), 0) + 1 FROM pago), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
           `, [
             compId, 
             pago.importe || 0, 
