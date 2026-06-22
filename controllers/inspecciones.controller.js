@@ -406,6 +406,42 @@ const guardarBorrador = async (req, res) => {
       }
     }
     
+    // --- NUEVO: Guardar en la tabla pago si hay pagos agregados en el borrador ---
+    const pagos = req.body.pagosAgregados || [];
+    if (pagos.length > 0) {
+      const compRes = await pool.query(`SELECT id FROM comprobante WHERE inspeccion_nrodocumentoinspeccion = $1`, [nroInspeccion]);
+      if (compRes.rows.length > 0) {
+        const compId = compRes.rows[0].id;
+        
+        // Limpiar pagos anteriores para este comprobante y reemplazarlos
+        await pool.query(`DELETE FROM pago WHERE comprobante_id = $1`, [compId]);
+        
+        for (const pago of pagos) {
+          const pagoRes = await pool.query(`SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM pago`);
+          const nextPagoId = pagoRes.rows[0].next_id;
+          
+          await pool.query(`
+            INSERT INTO pago (
+              id, comprobante_id, tipocontado_key, importe, tarjeta_key, entidadfinanciera_key, cuentacorriente_key,
+              nrooperaciontarjeta, digitotarjeta, nrooperacionbanco, fechdeposito, fechcreacion
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+          `, [
+            nextPagoId,
+            compId,
+            pago.tipo || 'EFECTIVO',
+            pago.importe || 0,
+            pago.tarjetaKey || null,
+            pago.entidadFinancieraKey || null,
+            pago.cuentaCorrienteKey || null,
+            pago.nroOperacion || null,
+            pago.digitosTarjeta || null,
+            pago.nroOperacion || null,
+            pago.fechaDeposito || null
+          ]);
+        }
+      }
+    }
+
     return res.status(200).json({
       status: 'success',
       message: 'Borrador guardado',
