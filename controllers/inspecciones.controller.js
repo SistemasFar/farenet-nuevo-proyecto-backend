@@ -341,12 +341,12 @@ const guardarBorrador = async (req, res) => {
         if (perRes.rows.length === 0) {
           await pool.query(`
             INSERT INTO persona (
-              nrodocumentoidentidad, tipodocumentoidentidad_key, nombres, apellidos,
+              nrodocumentoidentidad, tipodocumentoidentidad_key, nombrerazonsocial, nombres, apellidos,
               pais_key, departamento_key, provincia_key, distrito_key, direccion,
               email, telefono, fechcreacion
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
           `, [
-            formVehiculo.nroDocProp, formVehiculo.tipoDocProp || null, formVehiculo.nombresProp || null, formVehiculo.apellidosProp || null,
+            formVehiculo.nroDocProp, formVehiculo.tipoDocProp || null, formVehiculo.razonSocialProp || null, formVehiculo.nombresProp || null, formVehiculo.apellidosProp || null,
             formVehiculo.paisProp || null, formVehiculo.departamentoProp || null, formVehiculo.provinciaProp || null,
             formVehiculo.distritoProp || null, formVehiculo.direccionProp || null, formVehiculo.emailProp || null, formVehiculo.telefonoProp || null
           ]);
@@ -354,19 +354,20 @@ const guardarBorrador = async (req, res) => {
           await pool.query(`
             UPDATE persona SET
               tipodocumentoidentidad_key = $1,
-              nombres = $2,
-              apellidos = $3,
-              pais_key = $4,
-              departamento_key = $5,
-              provincia_key = $6,
-              distrito_key = $7,
-              direccion = $8,
-              email = $9,
-              telefono = $10,
+              nombrerazonsocial = $2,
+              nombres = $3,
+              apellidos = $4,
+              pais_key = $5,
+              departamento_key = $6,
+              provincia_key = $7,
+              distrito_key = $8,
+              direccion = $9,
+              email = $10,
+              telefono = $11,
               fechmodi = NOW()
-            WHERE nrodocumentoidentidad = $11
+            WHERE nrodocumentoidentidad = $12
           `, [
-            formVehiculo.tipoDocProp || null, formVehiculo.nombresProp || null, formVehiculo.apellidosProp || null,
+            formVehiculo.tipoDocProp || null, formVehiculo.razonSocialProp || null, formVehiculo.nombresProp || null, formVehiculo.apellidosProp || null,
             formVehiculo.paisProp || null, formVehiculo.departamentoProp || null, formVehiculo.provinciaProp || null,
             formVehiculo.distritoProp || null, formVehiculo.direccionProp || null, formVehiculo.emailProp || null, formVehiculo.telefonoProp || null,
             formVehiculo.nroDocProp
@@ -404,6 +405,50 @@ const guardarBorrador = async (req, res) => {
           formVehiculo.inicioSoat || null, formVehiculo.finSoat || null, motorAUsar
         ]);
       }
+    }
+
+    // Paso 4: Datos de Facturación (Cliente)
+    if (req.body.formFacturacion && req.body.formFacturacion.nroDocFac) {
+      const formFacturacion = req.body.formFacturacion;
+      const cliRes = await pool.query(`SELECT nrodocumentoidentidad FROM persona WHERE nrodocumentoidentidad = $1`, [formFacturacion.nroDocFac]);
+      if (cliRes.rows.length === 0) {
+        await pool.query(`
+          INSERT INTO persona (
+            nrodocumentoidentidad, tipodocumentoidentidad_key, nombrerazonsocial, nombres, apellidos,
+            pais_key, departamento_key, provincia_key, distrito_key, direccion,
+            email, telefono, fechcreacion
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+        `, [
+          formFacturacion.nroDocFac, formFacturacion.tipoDocFac || null, formFacturacion.razonSocialFac || null, formFacturacion.nombresFac || null, formFacturacion.apellidosFac || null,
+          formFacturacion.paisFac || null, formFacturacion.departamentoFac || null, formFacturacion.provinciaFac || null,
+          formFacturacion.distritoFac || null, formFacturacion.direccionFac || null, formFacturacion.emailFac || null, formFacturacion.telefonoFac || null
+        ]);
+      } else {
+        await pool.query(`
+          UPDATE persona SET
+            tipodocumentoidentidad_key = $1,
+            nombrerazonsocial = $2,
+            nombres = $3,
+            apellidos = $4,
+            pais_key = $5,
+            departamento_key = $6,
+            provincia_key = $7,
+            distrito_key = $8,
+            direccion = $9,
+            email = $10,
+            telefono = $11,
+            fechmodi = NOW()
+          WHERE nrodocumentoidentidad = $12
+        `, [
+          formFacturacion.tipoDocFac || null, formFacturacion.razonSocialFac || null, formFacturacion.nombresFac || null, formFacturacion.apellidosFac || null,
+          formFacturacion.paisFac || null, formFacturacion.departamentoFac || null, formFacturacion.provinciaFac || null,
+          formFacturacion.distritoFac || null, formFacturacion.direccionFac || null, formFacturacion.emailFac || null, formFacturacion.telefonoFac || null,
+          formFacturacion.nroDocFac
+        ]);
+      }
+      
+      // Update comprobante with the client's document
+      await pool.query(`UPDATE comprobante SET cliente_nrodocumentoidentidad = $1 WHERE inspeccion_nrodocumentoinspeccion = $2`, [formFacturacion.nroDocFac, nroInspeccion]);
     }
     
     // --- NUEVO: Guardar en la tabla pago si hay pagos agregados en el borrador ---
