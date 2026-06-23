@@ -73,25 +73,25 @@ const guardarInspeccionTransaccion = async (reqBody) => {
           nromotor, nroplacaantigua, nroserie, aniofabricacion, longitud, ancho, alto, 
           nroejes, nroruedas, nroasientos, nropasajeros, nropuertas, pesoseco, pesobruto, cargautil,
           nrosoat, aseguradora_key, tipopoliza_key, combustible_key, carroceria_key, marca_key, modelo_key, 
-          vehiculoclase_key, estado, fechcreacion
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, true, NOW())
+          vehiculoclase_key, estado, fechcreacion, distanciaeje1, distanciaeje2, distanciaeje3, distanciaeje4, kilometraje
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, true, NOW(), 0, 0, 0, 0, 0)
       `, [
         nroMotorFinal,
         placaNueva,
-        formVehiculo.nroSerie || null,
-        formVehiculo.anioFabricacion || null,
-        formVehiculo.longitud || null,
-        formVehiculo.ancho || null,
-        formVehiculo.altura || null,
-        formVehiculo.nroEjes || null,
-        formVehiculo.nroRuedas || null,
-        formVehiculo.nroAsientos || null,
-        formVehiculo.nroPasajeros || null,
-        formVehiculo.nroPuertas || null,
-        formVehiculo.pesoSeco || null,
-        formVehiculo.pesoBruto || null,
-        formVehiculo.cargaUtil || null,
-        formVehiculo.nroSoat || null,
+        formVehiculo.nroSerie || '',
+        formVehiculo.anioFabricacion || 0,
+        formVehiculo.longitud || 0,
+        formVehiculo.ancho || 0,
+        formVehiculo.altura || 0,
+        formVehiculo.nroEjes || 0,
+        formVehiculo.nroRuedas || 0,
+        formVehiculo.nroAsientos || 0,
+        formVehiculo.nroPasajeros || 0,
+        formVehiculo.nroPuertas || 0,
+        formVehiculo.pesoSeco || 0,
+        formVehiculo.pesoBruto || 0,
+        formVehiculo.cargaUtil || 0,
+        formVehiculo.nroSoat || '',
         formVehiculo.aseguradora || null,
         formVehiculo.tipoPoliza || null,
         formVehiculo.combustible || null,
@@ -118,15 +118,37 @@ const guardarInspeccionTransaccion = async (reqBody) => {
       ]);
     }
 
-    // 3. Crear Comprobante
-    // Generar un id (usando sequence o retornando id)
+    // Generar IDs
+    const tsInsp = new Date().getTime().toString().slice(-9);
+    const nroInspeccion = `INS-${tsInsp}`;
     const nroComprobanteTemp = 'BORRADOR-' + new Date().getTime().toString().slice(-9);
+    const nextIdResult = await client.query("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM comprobante");
+    const nextComprobanteId = nextIdResult.rows[0].next_id;
+
+    // 3. Crear Inspeccion (Primero, porque comprobante requiere inspeccion_nrodocumentoinspeccion)
+    await client.query(`
+      INSERT INTO inspeccion (
+        nrodocumentoinspeccion, estado, fechcreacion, indicedesaprobado,
+        tipoautorizacion_key, tipocertificado_key, tipoinspeccion_key, vehiculo_nromotor, ui_metadata
+      ) VALUES ($1, true, NOW(), 0, $2, $3, $4, $5, $6)
+    `, [
+      nroInspeccion,
+      formCaja.tipoAutorizacion || null,
+      formCaja.tipoCertificado || null,
+      formCaja.tipoInspeccion || null,
+      nroMotorFinal,
+      JSON.stringify({ formCaja, formVehiculo, formFacturacion, formVerificacion, pagosAgregados })
+    ]);
+
+    // 4. Crear Comprobante
     const resultComp = await client.query(`
       INSERT INTO comprobante (
-        nrocomprobante, estado, fechcreacion, placamotor, cliente_nrodocumentoidentidad,
-        conceptoinspeccion_key, linea_key, tipodocumento_key, importetotal, baseimponible, igv
-      ) VALUES ($1, true, NOW(), $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id
+        id, nrocomprobante, estado, fechcreacion, placamotor, cliente_nrodocumentoidentidad,
+        conceptoinspeccion_key, linea_key, tipodocumento_key, importetotal, baseimponible, igv,
+        totaldscto, totalsindscto, inspeccion_nrodocumentoinspeccion
+      ) VALUES ($1, $2, true, NOW(), $3, $4, $5, $6, $7, $8, $9, $10, 0, $11, $12) RETURNING id
     `, [
+      nextComprobanteId,
       nroComprobanteTemp,
       placaNueva,
       documentoProp,
@@ -135,28 +157,14 @@ const guardarInspeccionTransaccion = async (reqBody) => {
       formFacturacion?.tipoComprobante || null,
       formFacturacion?.total || 0,
       formFacturacion?.subtotal || 0,
-      formFacturacion?.igv || 0
+      formFacturacion?.igv || 0,
+      formFacturacion?.total || 0,
+      nroInspeccion
     ]);
     const comprobanteId = resultComp.rows[0].id;
 
-    // 4. Crear Inspeccion
-    const tsInsp = new Date().getTime().toString().slice(-9);
-    const nroInspeccion = `INS-${tsInsp}`;
-    
-    await client.query(`
-      INSERT INTO inspeccion (
-        nrodocumentoinspeccion, estado, fechcreacion, indicedesaprobado, comprobante_id,
-        tipoautorizacion_key, tipocertificado_key, tipoinspeccion_key, vehiculo_nromotor, ui_metadata
-      ) VALUES ($1, true, NOW(), 0, $2, $3, $4, $5, $6, $7)
-    `, [
-      nroInspeccion,
-      comprobanteId,
-      formCaja.tipoAutorizacion || null,
-      formCaja.tipoCertificado || null,
-      formCaja.tipoInspeccion || null,
-      nroMotorFinal,
-      JSON.stringify({ formCaja, formVehiculo, formFacturacion, formVerificacion, pagosAgregados })
-    ]);
+    // 5. Actualizar Inspeccion con el comprobante_id
+    await client.query("UPDATE inspeccion SET comprobante_id = $1 WHERE nrodocumentoinspeccion = $2", [comprobanteId, nroInspeccion]);
 
     await client.query('COMMIT');
     return {
