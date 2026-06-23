@@ -1,5 +1,6 @@
 const inspeccionesService = require('../services/inspecciones.service');
 const pool = require('../config/database');
+const { guardarInspeccionTransaccion } = require('../services/guardar_inspeccion.service');
 
 
 const buscarInspecciones = async (req, res) => {
@@ -58,30 +59,23 @@ const vehiculoService = require('../services/vehiculo.service');
 
 const guardarInspeccion = async (req, res) => {
   try {
-    const { formCaja, pagosAgregados, formVehiculo } = req.body;
-    console.log("Datos recibidos para guardar la inspección:", req.body);
+    const bodyData = req.body;
+    console.log("Datos recibidos para guardar la inspección:", Object.keys(bodyData));
     
-    // Procesar cada sección de forma independiente
-    const resCaja = await cajaService.guardarCaja(formCaja);
-    const resPago = await pagoService.guardarPago(pagosAgregados);
-    const resVehiculo = await vehiculoService.guardarVehiculo(formVehiculo, formCaja);
-    
-    // Aquí implementaremos la lógica de guardado de la inspección final
+    // Ejecutar transacción
+    const resultado = await guardarInspeccionTransaccion(bodyData);
     
     return res.status(200).json({
       status: 'success',
-      message: 'Inspección guardada correctamente (Arquitectura desacoplada)',
-      data: {
-        caja: resCaja,
-        pago: resPago,
-        vehiculo: resVehiculo
-      }
+      message: 'Inspección guardada correctamente',
+      data: resultado
     });
   } catch (error) {
     console.error('Error al guardar inspección:', error);
     return res.status(500).json({
       status: 'error',
-      message: 'Error al guardar la inspección en la base de datos'
+      message: 'Error al procesar la inspección',
+      error: error.message
     });
   }
 };
