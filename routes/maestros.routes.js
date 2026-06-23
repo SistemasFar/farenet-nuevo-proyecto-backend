@@ -12,5 +12,7 @@ router.post('/agregar', maestrosController.agregarNuevoMaestro);
 router.get('/propietario', maestrosController.obtenerMaestrosPropietario);
 router.get('/provincias/:departamento_key', maestrosController.obtenerProvincias);
 router.get('/distritos/:provincia_key', maestrosController.obtenerDistritos);
+router.get('/verificacion', maestrosController.obtenerMaestrosVerificacion);
+router.get('/lineas/:planta_key', maestrosController.obtenerLineasPorPlanta);
 
 module.exports = router;

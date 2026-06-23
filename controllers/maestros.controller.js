@@ -312,6 +312,43 @@ const obtenerDistritos = async (req, res) => {
     }
 };
 
+const obtenerMaestrosVerificacion = async (req, res) => {
+    try {
+        const [
+            tiposInspeccion,
+            tiposCertificado,
+            tiposAutorizacion
+        ] = await Promise.all([
+            db.query("SELECT key, nombre FROM tipoinspeccion ORDER BY nombre ASC"),
+            db.query("SELECT key, COALESCE(abreviacion, nombre) AS nombre FROM tipocertificado ORDER BY nombre ASC"),
+            db.query("SELECT key, ambito AS nombre FROM tipoautorizacion ORDER BY ambito ASC")
+        ]);
+
+        return res.status(200).json({
+            status: 'success',
+            data: {
+                tiposInspeccion: tiposInspeccion.rows,
+                tiposCertificado: tiposCertificado.rows,
+                tiposAutorizacion: tiposAutorizacion.rows
+            }
+        });
+    } catch (error) {
+        console.error('Error al obtener maestros para verificacion:', error);
+        return res.status(500).json({ status: 'error', message: 'Error interno del servidor.' });
+    }
+};
+
+const obtenerLineasPorPlanta = async (req, res) => {
+    try {
+        const { planta_key } = req.params;
+        const result = await db.query("SELECT key, nombre FROM linea WHERE planta_key = $1 ORDER BY nombre ASC", [planta_key]);
+        return res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('Error al obtener lineas:', error);
+        return res.status(500).json({ status: 'error', message: 'Error interno del servidor.' });
+    }
+};
+
 module.exports = {
     obtenerMaestrosCaja,
     obtenerPrecioConcepto,
@@ -322,5 +359,7 @@ module.exports = {
     agregarNuevoMaestro,
     obtenerMaestrosPropietario,
     obtenerProvincias,
-    obtenerDistritos
+    obtenerDistritos,
+    obtenerMaestrosVerificacion,
+    obtenerLineasPorPlanta
 };

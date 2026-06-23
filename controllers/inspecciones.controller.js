@@ -93,6 +93,9 @@ const guardarBorrador = async (req, res) => {
     let nroInspeccion = idBorrador;
     const uiMetadata = JSON.stringify(req.body);
 
+    // [BUENA PRÁCTICA] Declarar la placa una sola vez al inicio para que esté disponible en todo el alcance (scope)
+    const placaGlobal = formVehiculo?.placaNueva || formVehiculo?.placa || formCaja?.placa || '-';
+
     // Si no hay idBorrador, generamos uno nuevo y hacemos INSERT
     if (!nroInspeccion) {
       const pKey = plantaKey || '201';
@@ -118,9 +121,9 @@ const guardarBorrador = async (req, res) => {
         [
           nroInspeccion, 
           currentStepIndex,
-          formCaja?.tipoInspeccion || null,
-          formCaja?.tipoCertificado || null,
-          formCaja?.autorizacion || null,
+          req.body.formVerificacion?.tipoInspeccion || formCaja?.tipoInspeccion || null,
+          req.body.formVerificacion?.tipoCertificado || formCaja?.tipoCertificado || null,
+          req.body.formVerificacion?.tipoAutorizacion || formCaja?.tipoAutorizacion || null,
           uiMetadata
         ]
       );
@@ -142,7 +145,6 @@ const guardarBorrador = async (req, res) => {
       const nextCompId = compRes.rows[0].next_id;
 
       // Insertar un comprobante temporal con los campos
-      const placa = formCaja?.placa || formVehiculo?.placaNueva || formVehiculo?.placa || '-';
       await pool.query(
         `INSERT INTO comprobante (
           id, nrocomprobante, inspeccion_nrodocumentoinspeccion, placamotor, cliente_nrodocumentoidentidad, linea_key, fechcreacion,
@@ -152,9 +154,9 @@ const guardarBorrador = async (req, res) => {
           nextCompId, 
           `BORRADOR-${nextNumVal}`, 
           nroInspeccion, 
-          placa, 
+          placaGlobal, 
           req.body.documentoDescuento || '-', 
-          randomLinea,
+          req.body.formVerificacion?.linea || randomLinea,
           req.body.precioTotal || 0,
           req.body.descuento || 0,
           req.body.precioSubtotal || 0,
@@ -175,9 +177,9 @@ const guardarBorrador = async (req, res) => {
          WHERE nrodocumentoinspeccion = $6`,
         [
           currentStepIndex, 
-          formCaja?.tipoInspeccion || null, 
-          formCaja?.tipoCertificado || null, 
-          formCaja?.autorizacion || null, 
+          req.body.formVerificacion?.tipoInspeccion || formCaja?.tipoInspeccion || null, 
+          req.body.formVerificacion?.tipoCertificado || formCaja?.tipoCertificado || null, 
+          req.body.formVerificacion?.tipoAutorizacion || formCaja?.tipoAutorizacion || null, 
           uiMetadata,
           nroInspeccion
         ]
@@ -185,12 +187,11 @@ const guardarBorrador = async (req, res) => {
 
       // Actualizar borrador_estado para mantener compatibilidad con InicioView
       await pool.query(
-        `UPDATE borrador_estado SET estado_json = $1, last_updated = NOW() WHERE inspeccion_id = $2`,
+        `UPDATE borrador_estado SET estado_json = $1 WHERE inspeccion_id = $2`,
         [uiMetadata, nroInspeccion]
       );
       
       // Actualizamos comprobante
-      const placa = formCaja?.placa || formVehiculo?.placaNueva || formVehiculo?.placa || '-';
       await pool.query(
         `UPDATE comprobante SET 
           placamotor = $1, 
@@ -200,22 +201,24 @@ const guardarBorrador = async (req, res) => {
           importetotal = $5,
           tipodocumento_key = $6,
           cliente_nrodocumentoidentidad = $7,
+          linea_key = $8,
           fechmodi = NOW()
-         WHERE inspeccion_nrodocumentoinspeccion = $8`,
+         WHERE inspeccion_nrodocumentoinspeccion = $9`,
         [
-          placa, 
-          formCaja?.concepto || null, 
+          placaGlobal, 
+          formCaja?.concepto || null,
           req.body.precioSubtotal || 0, 
           req.body.descuento || 0, 
           req.body.precioTotal || 0, 
           req.body.documentoPago || null, 
           req.body.documentoDescuento || null,
+          req.body.formVerificacion?.linea || null,
           nroInspeccion
         ]
       );
 
       // Actualizamos vehiculo si hay placa real
-      if (placa && placa !== '-') {
+      if (placaGlobal && placaGlobal !== '-') {
         // En lugar de requerir que el usuario digite el motor, usaremos uno temporal si no lo hay
         const motorAUsar = formVehiculo?.nroMotor || ('TMP-' + nroInspeccion);
         
@@ -261,7 +264,7 @@ const guardarBorrador = async (req, res) => {
           formVehiculo?.pesoSeco || null, formVehiculo?.cargaUtil || null, formVehiculo?.pesoBruto || null,
           formVehiculo?.longitud || null, formVehiculo?.ancho || null, formVehiculo?.altura || null,
           formVehiculo?.nroEjes || null, formVehiculo?.nroRuedas || null, formVehiculo?.marcaCarroceria || null, 
-          formVehiculo?.inicioSoat || null, formVehiculo?.finSoat || null, placa, motorAUsar
+          formVehiculo?.inicioSoat || null, formVehiculo?.finSoat || null, placaGlobal, motorAUsar
         ]);
 
         // Si no se actualizó nada, significa que no existe. Lo creamos usando valores por defecto para los NOT NULL.
@@ -282,7 +285,7 @@ const guardarBorrador = async (req, res) => {
                 $26, $27, 0, 0, 0, 0, $28, $29, $30, NOW()
               )
             `, [
-              placa, motorAUsar, formCaja?.categoria || null, formVehiculo?.categoriaExtra || null,
+              placaGlobal, motorAUsar, formCaja?.categoria || null, formVehiculo?.categoriaExtra || null,
               formVehiculo?.clase || null, formVehiculo?.marca || null, formVehiculo?.modelo || null,
               formVehiculo?.color || null, formVehiculo?.carroceria || null, formVehiculo?.nroSerie || null,
               formVehiculo?.anioFabricacion || null, formVehiculo?.combustible || null, formVehiculo?.nroCilindros || null,
@@ -374,15 +377,18 @@ const guardarBorrador = async (req, res) => {
           ]);
         }
 
-        const placaToUse = formVehiculo.placaNueva || placa || '-';
+        const placaToUse = placaGlobal;
         let tpRes = await pool.query(`SELECT id FROM tarjetapropiedad WHERE nroplaca = $1`, [placaToUse]);
         let tpId = null;
         if (tpRes.rows.length === 0) {
-          const tpInsert = await pool.query(`
-            INSERT INTO tarjetapropiedad (nroplaca, propietario_nrodocumentoidentidad, fechcreacion)
-            VALUES ($1, $2, NOW()) RETURNING id
-          `, [placaToUse, formVehiculo.nroDocProp]);
-          tpId = tpInsert.rows[0].id;
+          const tpResMax = await pool.query(`SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM tarjetapropiedad`);
+          const nextTpId = tpResMax.rows[0].next_id;
+          
+          await pool.query(`
+            INSERT INTO tarjetapropiedad (id, nroplaca, propietario_nrodocumentoidentidad, fechcreacion)
+            VALUES ($1, $2, $3, NOW())
+          `, [nextTpId, placaToUse, formVehiculo.nroDocProp]);
+          tpId = nextTpId;
         } else {
           tpId = tpRes.rows[0].id;
           await pool.query(`
@@ -468,7 +474,7 @@ const guardarBorrador = async (req, res) => {
           await pool.query(`
             INSERT INTO pago (
               id, comprobante_id, tipocontado_key, importe, tarjeta_key, entidadfinanciera_key, cuentacorriente_key,
-              nrooperaciontarjeta, digitotarjeta, nrooperacionbanco, fechdeposito, fechcreacion
+              nrooperaciontarjeta, digitotarjeta, nrooperacionbanco, fechdeposito, fechacreacion
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
           `, [
             nextPagoId,
