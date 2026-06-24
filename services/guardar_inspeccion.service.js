@@ -1,12 +1,22 @@
 const pool = require('../config/database');
 
 const guardarInspeccionTransaccion = async (reqBody) => {
-  const { formCaja, formVehiculo, formFacturacion, formVerificacion } = reqBody;
-  const pagosAgregados = reqBody.pagosAgregados || [];
+  const { 
+    formCaja, formVehiculo, formFacturacion, formVerificacion, 
+    idBorrador, pagosAgregados, documentoPago, isConsultado,
+    precioSubtotal, descuento, precioTotal 
+  } = reqBody;
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    // 0. Eliminar el Borrador Temporal (si existe) para que no quede huérfano
+    if (idBorrador) {
+      await client.query('DELETE FROM borrador_estado WHERE inspeccion_id = $1', [idBorrador]);
+      await client.query('DELETE FROM comprobante WHERE inspeccion_nrodocumentoinspeccion = $1', [idBorrador]);
+      await client.query('DELETE FROM inspeccion WHERE nrodocumentoinspeccion = $1', [idBorrador]);
+    }
 
     // 1. Manejar Persona (Cliente/Propietario)
     const documentoProp = formVehiculo.nroDocProp || '00000000';
@@ -118,10 +128,42 @@ const guardarInspeccionTransaccion = async (reqBody) => {
       ]);
     }
 
-    // Generar IDs
-    const tsInsp = new Date().getTime().toString().slice(-9);
-    const nroInspeccion = `INS-${tsInsp}`;
-    const nroComprobanteTemp = 'BORRADOR-' + new Date().getTime().toString().slice(-9);
+    const plantaKey = formCaja?.plantaKey || '201';
+    
+    // Bloquear y leer la serie de documentos
+    const serieResult = await client.query("SELECT * FROM seriedocumentobase WHERE planta_key = $1 FOR UPDATE", [plantaKey]);
+    if (serieResult.rows.length === 0) {
+      throw new Error(`No se encontró configuración de series para la planta ${plantaKey}`);
+    }
+    const serieDoc = serieResult.rows[0];
+
+    const nroActualInspeccionNum = parseInt(serieDoc.nroidinspeccion || '0');
+    const newNroActualInspeccion = nroActualInspeccionNum + 1;
+    // Formato: INS-201-000157677
+    const nroInspeccion = `INS-${plantaKey}-${String(newNroActualInspeccion).padStart(9, '0')}`;
+
+    let nroComprobanteTemp = '';
+    let newNroBoleta = parseInt(serieDoc.nroactualboleta || '0');
+    let newNroFactura = parseInt(serieDoc.nroactualfactura || '0');
+
+    if (formFacturacion?.tipoComprobante === 'BOLETA') {
+      newNroBoleta++;
+      nroComprobanteTemp = `${serieDoc.serieboleta}-${String(newNroBoleta).padStart(8, '0')}`;
+    } else if (formFacturacion?.tipoComprobante === 'FACTURA') {
+      newNroFactura++;
+      nroComprobanteTemp = `${serieDoc.seriefactura}-${String(newNroFactura).padStart(8, '0')}`;
+    } else {
+      // Fallback
+      nroComprobanteTemp = 'BORRADOR-' + new Date().getTime().toString().slice(-9);
+    }
+
+    // Actualizar seriedocumentobase
+    await client.query(`
+      UPDATE seriedocumentobase 
+      SET nroidinspeccion = $1, nroactualboleta = $2, nroactualfactura = $3 
+      WHERE id = $4
+    `, [newNroActualInspeccion.toString(), newNroBoleta.toString(), newNroFactura.toString(), serieDoc.id]);
+
     const nextIdResult = await client.query("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM comprobante");
     const nextComprobanteId = nextIdResult.rows[0].next_id;
 
@@ -129,15 +171,18 @@ const guardarInspeccionTransaccion = async (reqBody) => {
     await client.query(`
       INSERT INTO inspeccion (
         nrodocumentoinspeccion, estado, fechcreacion, indicedesaprobado,
-        tipoautorizacion_key, tipocertificado_key, tipoinspeccion_key, vehiculo_nromotor, ui_metadata
-      ) VALUES ($1, true, NOW(), 0, $2, $3, $4, $5, $6)
+        tipoautorizacion_key, tipocertificado_key, tipoinspeccion_key, vehiculo_nromotor, ui_metadata, inspeccionestado_key
+      ) VALUES ($1, true, NOW(), 0, $2, $3, $4, $5, $6, 'PROCESO')
     `, [
       nroInspeccion,
       formCaja.tipoAutorizacion || null,
       formCaja.tipoCertificado || null,
       formCaja.tipoInspeccion || null,
       nroMotorFinal,
-      JSON.stringify({ formCaja, formVehiculo, formFacturacion, formVerificacion, pagosAgregados })
+      JSON.stringify({ 
+        formCaja, formVehiculo, formFacturacion, formVerificacion, pagosAgregados,
+        documentoPago, isConsultado, precioSubtotal, descuento, precioTotal
+      })
     ]);
 
     // 4. Crear Comprobante
@@ -153,7 +198,7 @@ const guardarInspeccionTransaccion = async (reqBody) => {
       placaNueva,
       documentoProp,
       formCaja.concepto || null,
-      formCaja.linea || null,
+      formVerificacion?.linea || formCaja?.linea || null,
       formFacturacion?.tipoComprobante || null,
       formFacturacion?.total || 0,
       formFacturacion?.subtotal || 0,
@@ -165,6 +210,39 @@ const guardarInspeccionTransaccion = async (reqBody) => {
 
     // 5. Actualizar Inspeccion con el comprobante_id
     await client.query("UPDATE inspeccion SET comprobante_id = $1 WHERE nrodocumentoinspeccion = $2", [comprobanteId, nroInspeccion]);
+
+    // 6. Insertar Pagos Relacionales
+    for (const pagoItem of (pagosAgregados || [])) {
+      const importePago = parseFloat(pagoItem.importe || '0');
+      if (importePago <= 0) continue;
+      
+      const igvPago = importePago - (importePago / 1.18);
+      const basePago = importePago / 1.18;
+
+      const nextPagoIdResult = await client.query("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM pago");
+      const nextPagoId = nextPagoIdResult.rows[0].next_id;
+
+      await client.query(`
+        INSERT INTO pago (
+          id, fechacreacion, comprobante_id, importe, baseimponible, igv, estado, 
+          tarjeta_key, nrooperacionbanco, nrooperaciontarjeta, digitotarjeta, 
+          cuentacorriente_key, entidadfinanciera_key, moneda_key, fechdeposito
+        ) VALUES ($1, NOW(), $2, $3, $4, $5, true, $6, $7, $8, $9, $10, $11, 'SOL', $12)
+      `, [
+        nextPagoId,
+        comprobanteId,
+        importePago,
+        basePago,
+        igvPago,
+        pagoItem.tipo === 'TARJETA' ? pagoItem.tarjetaKey : null,
+        pagoItem.tipo === 'BANCO' ? pagoItem.nroOperacion : null,
+        pagoItem.tipo === 'TARJETA' ? pagoItem.nroOperacion : null,
+        pagoItem.tipo === 'TARJETA' ? pagoItem.digitosTarjeta : null,
+        pagoItem.tipo === 'BANCO' ? pagoItem.cuentaCorrienteKey : null,
+        pagoItem.tipo === 'BANCO' ? pagoItem.entidadFinancieraKey : null,
+        pagoItem.fechaDeposito || null
+      ]);
+    }
 
     await client.query('COMMIT');
     return {

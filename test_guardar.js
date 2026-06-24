@@ -3,6 +3,7 @@ const pool = require('./config/database');
 
 const testPayload = {
   formCaja: {
+    plantaKey: '201',
     placa: 'TEST1234',
     concepto: '30',
     linea: 'L1_MIXTA',
@@ -29,7 +30,19 @@ const testPayload = {
   formVerificacion: {
     linea: 'L1_MIXTA'
   },
-  pagosAgregados: []
+  pagosAgregados: [
+    {
+      tipo: 'EFECTIVO',
+      importe: '50'
+    },
+    {
+      tipo: 'TARJETA',
+      importe: '50',
+      tarjetaKey: 'VISA', // Ej. 1, 2
+      nroOperacion: '123456',
+      digitosTarjeta: '4321'
+    }
+  ]
 };
 
 async function runTest() {
@@ -55,6 +68,13 @@ async function runTest() {
     // Verificamos persona
     const per = await pool.query("SELECT * FROM persona WHERE nrodocumentoidentidad = $1", [testPayload.formVehiculo.nroDocProp]);
     console.log("Persona insertada:", per.rows[0].nombres, per.rows[0].apellidos);
+    
+    // Verificamos pagos
+    const pagos = await pool.query("SELECT * FROM pago WHERE comprobante_id = $1", [result.comprobanteId]);
+    console.log("\nPagos insertados:", pagos.rows.length);
+    pagos.rows.forEach((p, idx) => {
+      console.log(`Pago ${idx + 1}: S/${p.importe} | Tarjeta: ${p.tarjeta_key} | Nro Op: ${p.nrooperaciontarjeta}`);
+    });
     
   } catch (err) {
     console.error("Error en la prueba:", err);
