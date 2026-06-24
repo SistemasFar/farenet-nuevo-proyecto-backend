@@ -62,29 +62,29 @@ const listarInspecciones = async (req, res) => {
         ? Number(pageSize)
         : 5;
 
-   const resultado =
-  await operacionService.listarInspecciones({
-    plantaKey: String(plantaKey).trim(),
-    fechaInicio: fechaInicioConsulta,
-    fechaFin: fechaFinConsulta,
-    placa: placa
-      ? String(placa).trim()
-      : undefined,
-    estado: estado
-      ? String(estado).trim()
-      : undefined,
-    numeroInspeccion: numeroInspeccion
-      ? String(numeroInspeccion).trim()
-      : undefined,
-    cliente: cliente
-      ? String(cliente).trim()
-      : undefined,
-    lineaKey: lineaKey
-      ? String(lineaKey).trim()
-      : undefined,
-    page: pageNumber,
-    pageSize: pageSizeNumber
-  });
+    const resultado =
+      await operacionService.listarInspecciones({
+        plantaKey: String(plantaKey).trim(),
+        fechaInicio: fechaInicioConsulta,
+        fechaFin: fechaFinConsulta,
+        placa: placa
+          ? String(placa).trim()
+          : undefined,
+        estado: estado
+          ? String(estado).trim()
+          : undefined,
+        numeroInspeccion: numeroInspeccion
+          ? String(numeroInspeccion).trim()
+          : undefined,
+        cliente: cliente
+          ? String(cliente).trim()
+          : undefined,
+        lineaKey: lineaKey
+          ? String(lineaKey).trim()
+          : undefined,
+        page: pageNumber,
+        pageSize: pageSizeNumber
+      });
     return res.status(200).json({
       status: 'success',
       plantaKey: String(plantaKey).trim(),

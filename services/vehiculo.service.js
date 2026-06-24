@@ -11,6 +11,23 @@ const guardarVehiculo = async (dataVehiculo, dataCaja) => {
   return { status: 'success', message: 'Datos de vehiculo procesados' };
 };
 
+const buscarVehiculoPorPlaca = async (placa) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM vehiculo WHERE UPPER(placamotor) = UPPER($1) LIMIT 1`,
+      [placa]
+    );
+    if (result.rows.length > 0) {
+      return result.rows[0];
+    }
+    return null;
+  } catch (error) {
+    console.error('Error al buscar vehiculo por placa:', error);
+    throw error;
+  }
+};
+
 module.exports = {
-  guardarVehiculo
+  guardarVehiculo,
+  buscarVehiculoPorPlaca
 };

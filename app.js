@@ -369,6 +369,12 @@ app.use('/api/inspecciones', inspeccionesRoutes);
 const maestrosRoutes = require('./routes/maestros.routes');
 app.use('/api/maestros', maestrosRoutes);
 
+const vehiculoRoutes = require('./routes/vehiculo.routes');
+app.use('/api/vehiculo', vehiculoRoutes);
+
+const externosRoutes = require('./routes/externos.routes');
+app.use('/api/externos', externosRoutes);
+
 // ==========================
 // HEALTH CHECK
 // ==========================
