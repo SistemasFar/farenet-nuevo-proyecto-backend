@@ -14,7 +14,7 @@ const guardarVehiculo = async (dataVehiculo, dataCaja) => {
 const buscarVehiculoPorPlaca = async (placa) => {
   try {
     const result = await pool.query(
-      `SELECT * FROM vehiculo WHERE UPPER(placamotor) = UPPER($1) LIMIT 1`,
+      `SELECT * FROM vehiculo WHERE UPPER(nroplacaantigua) = UPPER($1) OR UPPER(nromotor) = UPPER($1) LIMIT 1`,
       [placa]
     );
     if (result.rows.length > 0) {

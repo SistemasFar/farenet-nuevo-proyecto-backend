@@ -576,10 +576,75 @@ const eliminarBorrador = async (req, res) => {
   }
 };
 
+const consultarVehiculoYCaja = async (req, res) => {
+  try {
+    const { placa, concepto, categoria, tipoInspeccion, tipoCertificado, tipoAutorizacion, plantaKey } = req.body;
+
+    if (!placa || !concepto || !plantaKey) {
+      return res.status(400).json({ status: 'error', message: 'Placa, concepto y planta son obligatorios' });
+    }
+
+    const resultado = await inspeccionesService.consultarVehiculoYCajaService({
+      placa, concepto, plantaKey
+    });
+
+    res.json({
+      status: 'success',
+      data: resultado
+    });
+  } catch (error) {
+    console.error('Error al consultar vehiculo/caja:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno del servidor', error: error.message });
+  }
+};
+
+const buscarDescuentos = async (req, res) => {
+  try {
+    const { documento, concepto } = req.query;
+
+    if (!documento || !concepto) {
+      return res.status(400).json({ status: 'error', message: 'El documento y el concepto son obligatorios' });
+    }
+
+    const descuentos = await inspeccionesService.buscarDescuentosService({ documento, concepto });
+
+    res.json({
+      status: 'success',
+      data: descuentos
+    });
+  } catch (error) {
+    console.error('Error al buscar descuentos:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno del servidor al buscar descuentos', error: error.message });
+  }
+};
+
+const consumirDescuento = async (req, res) => {
+  try {
+    const { source_table, source_id } = req.body;
+
+    if (!source_table || !source_id) {
+      return res.status(400).json({ status: 'error', message: 'Faltan datos del descuento a consumir' });
+    }
+
+    const resultado = await inspeccionesService.consumirDescuentoService({ source_table, source_id });
+
+    res.json({
+      status: 'success',
+      data: resultado
+    });
+  } catch (error) {
+    console.error('Error al consumir descuento:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno del servidor al consumir descuento', error: error.message });
+  }
+};
+
 module.exports = {
   buscarInspecciones,
   guardarInspeccion,
   guardarBorrador,
   obtenerBorrador,
-  eliminarBorrador
+  eliminarBorrador,
+  consultarVehiculoYCaja,
+  buscarDescuentos,
+  consumirDescuento
 };

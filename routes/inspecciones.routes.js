@@ -8,5 +8,8 @@ router.post('/guardar', inspeccionesController.guardarInspeccion);
 router.post('/borrador', inspeccionesController.guardarBorrador);
 router.get('/borrador/:id', inspeccionesController.obtenerBorrador);
 router.delete('/borrador/:id', inspeccionesController.eliminarBorrador);
+router.post('/consultar', inspeccionesController.consultarVehiculoYCaja);
+router.get('/descuentos', inspeccionesController.buscarDescuentos);
+router.post('/descuentos/consumir', inspeccionesController.consumirDescuento);
 
 module.exports = router;
