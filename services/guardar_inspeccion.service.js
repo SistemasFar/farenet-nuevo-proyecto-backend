@@ -171,8 +171,9 @@ const guardarInspeccionTransaccion = async (reqBody) => {
     await client.query(`
       INSERT INTO inspeccion (
         nrodocumentoinspeccion, estado, fechcreacion, indicedesaprobado,
-        tipoautorizacion_key, tipocertificado_key, tipoinspeccion_key, vehiculo_nromotor, ui_metadata, inspeccionestado_key
-      ) VALUES ($1, true, NOW(), 0, $2, $3, $4, $5, $6, 'PROCESO')
+        tipoautorizacion_key, tipocertificado_key, tipoinspeccion_key, vehiculo_nromotor, ui_metadata, inspeccionestado_key,
+        nrodocumentoreinspeccion
+      ) VALUES ($1, true, NOW(), 0, $2, $3, $4, $5, $6, 'PROCESO', $7)
     `, [
       nroInspeccion,
       formCaja.tipoAutorizacion || null,
@@ -182,30 +183,86 @@ const guardarInspeccionTransaccion = async (reqBody) => {
       JSON.stringify({ 
         formCaja, formVehiculo, formFacturacion, formVerificacion, pagosAgregados,
         documentoPago, isConsultado, precioSubtotal, descuento, precioTotal
-      })
+      }),
+      formCaja.nrodocumentoreinspeccion || null
     ]);
 
     // 4. Crear Comprobante
+    const baseImponible = formFacturacion?.subtotal || (precioTotal / 1.18).toFixed(2);
+    const igv = formFacturacion?.igv || (precioTotal - baseImponible).toFixed(2);
+
     const resultComp = await client.query(`
       INSERT INTO comprobante (
         id, nrocomprobante, estado, fechcreacion, placamotor, cliente_nrodocumentoidentidad,
         conceptoinspeccion_key, linea_key, tipodocumento_key, importetotal, baseimponible, igv,
         totaldscto, totalsindscto, inspeccion_nrodocumentoinspeccion
-      ) VALUES ($1, $2, true, NOW(), $3, $4, $5, $6, $7, $8, $9, $10, 0, $11, $12) RETURNING id
+      ) VALUES ($1, $2, true, NOW(), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id
     `, [
       nextComprobanteId,
       nroComprobanteTemp,
       placaNueva,
-      documentoProp,
-      formCaja.concepto || null,
-      formVerificacion?.linea || formCaja?.linea || null,
-      formFacturacion?.tipoComprobante || null,
-      formFacturacion?.total || 0,
-      formFacturacion?.subtotal || 0,
-      formFacturacion?.igv || 0,
-      formFacturacion?.total || 0,
+      formFacturacion?.documento || null,
+      formCaja.concepto,
+      formFacturacion?.linea || '1',
+      formFacturacion?.tipoComprobante === 'FACTURA' ? '1' : '3', // 1=Factura, 3=Boleta
+      precioTotal || 0,
+      baseImponible,
+      igv,
+      descuento || 0,
+      precioSubtotal || 0,
       nroInspeccion
     ]);
+
+    // 4.5. Copiar Resultados de Maquina si es Reinspeccion (Lógica Clásica Farenet)
+    if (formCaja.nrodocumentoreinspeccion) {
+      const resPrev = await client.query(`
+        SELECT rm.*, m.tipomaquina_key
+        FROM resultado_maquina rm
+        JOIN maquina m ON m.id = rm.maquina_id
+        WHERE rm.inspeccion_nrodocumentoinspeccion = $1
+      `, [formCaja.nrodocumentoreinspeccion]);
+
+      const prevResults = resPrev.rows;
+      let removeTestLine = false;
+      const testLineTypes = ['1', '2', '3']; // Alineamiento, Suspension, Frenometro
+      const fotoTypes = ['11', '12', '13', '14', '15'];
+
+      for (const rm of prevResults) {
+        if (rm.resultado === 'D' && testLineTypes.includes(rm.tipomaquina_key)) {
+          // Si falló alguna prueba de TestLine, en reinspección se repite todo el TestLine
+          removeTestLine = true;
+        }
+      }
+
+      const newResultsToInsert = [];
+      for (const rm of prevResults) {
+        if (rm.resultado === 'A') {
+          if (fotoTypes.includes(rm.tipomaquina_key)) continue;
+          if (removeTestLine && testLineTypes.includes(rm.tipomaquina_key)) continue;
+          newResultsToInsert.push(rm);
+        }
+      }
+
+      if (newResultsToInsert.length > 0) {
+        let nextRmId = parseInt((await client.query("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM resultado_maquina")).rows[0].next_id);
+        for (const rm of newResultsToInsert) {
+          await client.query(`
+            INSERT INTO resultado_maquina (
+              id, manual, postdata, data, f, estado, maquina_id, fechcreacion,
+              insp_visual, inspeccion_nrodocumentoinspeccion, fechafin, fechainicio,
+              foto, resultado, usuariocreacion_username
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, $7, NOW(),
+              $8, $9, $10, $11, $12, $13, $14
+            )
+          `, [
+            nextRmId++, rm.manual, rm.postdata, rm.data, rm.f, rm.estado, rm.maquina_id,
+            rm.insp_visual, nroInspeccion, rm.fechafin, rm.fechainicio,
+            rm.foto, rm.resultado, rm.usuariocreacion_username
+          ]);
+        }
+      }
+    }
     const comprobanteId = resultComp.rows[0].id;
 
     // 5. Actualizar Inspeccion con el comprobante_id

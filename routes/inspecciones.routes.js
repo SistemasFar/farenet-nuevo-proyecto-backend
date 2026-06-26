@@ -11,5 +11,6 @@ router.delete('/borrador/:id', inspeccionesController.eliminarBorrador);
 router.post('/consultar', inspeccionesController.consultarVehiculoYCaja);
 router.get('/descuentos', inspeccionesController.buscarDescuentos);
 router.post('/descuentos/consumir', inspeccionesController.consumirDescuento);
+router.get('/reinspeccion/:placa/:concepto/:planta', inspeccionesController.consultarReinspeccion);
 
 module.exports = router;

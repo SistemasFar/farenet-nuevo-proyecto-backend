@@ -324,9 +324,96 @@ const consumirDescuentoService = async ({ source_table, source_id }) => {
   return { consumido: true, id: result.rows[0].id };
 };
 
+const consultarReinspeccionService = async (placa, concepto_key, planta_key) => {
+  // 1. Buscar la inspección más reciente de esa placa (a través de comprobante o vehiculo)
+  const sqlUltima = `
+    SELECT i.nrodocumentoinspeccion, i.fechconsolidado, i.tipodesaprobado, i.resultado, i.inspeccionestado_key,
+           c.conceptoinspeccion_key, c.formapago_key, i.tipoautorizacion_key, i.tipocertificado_key, i.tipoinspeccion_key
+    FROM inspeccion i
+    JOIN comprobante c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
+    WHERE c.placamotor = $1
+      AND c.conceptoinspeccion_key = $2
+      AND i.fechconsolidado IS NOT NULL
+      AND (i.inspeccionestado_key = 'CON' OR i.inspeccionestado_key IS NULL)
+    ORDER BY i.fechconsolidado DESC
+    LIMIT 1
+  `;
+  const resultUltima = await pool.query(sqlUltima, [placa, concepto_key]);
+
+  if (resultUltima.rows.length === 0) {
+    return null; // No hay inspecciones previas
+  }
+
+  const ultima = resultUltima.rows[0];
+  
+  // Si la ÚLTIMA inspección no fue 'Desaprobado', entonces no aplica reinspección
+  if (ultima.resultado !== 'D') {
+    return null;
+  }
+
+  const fechconsolidado = new Date(ultima.fechconsolidado);
+  const ahora = new Date();
+  
+  // Diferencia en días (Truncar como lo hacía Java con TimeUnit.DAYS)
+  const diffTime = Math.abs(ahora.getTime() - fechconsolidado.getTime());
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+  // 2. Buscar en periodoreinspeccion
+  // El tipo de desaprobado suele ser 'M' (Moderado) o 'D' (Grave) pero en la BD vemos que 
+  // 'tipodesaprobado' en periodoreinspeccion es 'M' o 'D'.
+  // Si i.tipodesaprobado es null, asumimos 'D' (peor caso) por defecto si la lógica lo requiere,
+  // pero usaremos lo que esté en i.tipodesaprobado.
+  
+  const sqlPeriodo = `
+    SELECT porcentajedescuento, tieneporcentajedescuento
+    FROM periodoreinspeccion
+    WHERE planta_key = $1
+      AND dias >= $2
+      AND (tipodesaprobado = $3 OR tipodesaprobado IS NULL)
+    ORDER BY dias ASC
+    LIMIT 1
+  `;
+  const resultPeriodo = await pool.query(sqlPeriodo, [
+    planta_key,
+    diffDays,
+    ultima.tipodesaprobado || 'D'
+  ]);
+
+  if (resultPeriodo.rows.length === 0) {
+    return {
+      aplica: false,
+      mensaje: `La inspección anterior desaprobada tiene ${diffDays} días de antigüedad (Nro: ${ultima.nrodocumentoinspeccion}). El plazo de reinspección ha vencido.`,
+      dias_transcurridos: diffDays
+    }; // Pasó el tiempo límite o no hay regla
+  }
+
+  const regla = resultPeriodo.rows[0];
+  
+  if (regla.tieneporcentajedescuento) {
+    return {
+      aplica: true,
+      nrodocumentoreinspeccion: ultima.nrodocumentoinspeccion,
+      porcentajedescuento: regla.porcentajedescuento,
+      conceptoinspeccion_key: ultima.conceptoinspeccion_key,
+      tipoautorizacion_key: ultima.tipoautorizacion_key,
+      tipocertificado_key: ultima.tipocertificado_key,
+      tipoinspeccion_key: ultima.tipoinspeccion_key,
+      dias_transcurridos: diffDays,
+      mensaje: `¡Aplica a Reinspección! Documento anterior: ${ultima.nrodocumentoinspeccion} de hace ${diffDays} días (${regla.porcentajedescuento}% dscto)`
+    };
+  }
+  
+  return {
+    aplica: false,
+    mensaje: `No hay descuento configurado para reinspección de ${diffDays} días.`,
+    dias_transcurridos: diffDays
+  };
+};
+
 module.exports = {
   buscarInspecciones,
   consultarVehiculoYCajaService,
   buscarDescuentosService,
-  consumirDescuentoService
+  consumirDescuentoService,
+  consultarReinspeccionService
 };

@@ -1,36 +1,37 @@
 const pool = require('./config/database');
 
-async function seedDescuento() {
+async function run() {
+  const client = await pool.connect();
   try {
-    const ruc = '99999999999';
-    const monto = 50.00;
-    
-    // 1. Crear el descuento (Campaña)
-    // El id es un string en esta tabla usualmente, o un serial. Veremos si genera error
-    const descId = Math.floor(Math.random() * 1000000).toString();
-    await pool.query(`
-      INSERT INTO descuento (id, nombre, empresa_nrodocumentoidentidad, estado)
-      VALUES ($1, $2, $3, $4)
-    `, [descId, 'PROMO PRUEBA SUPER DESCUENTO', ruc, true]);
+    await client.query('BEGIN');
 
-    // 2. Obtener todos los conceptos
-    const conceptosRes = await pool.query('SELECT key FROM conceptoinspeccion');
-    
-    // 3. Insertar detalle de descuento para TODOS los conceptos
-    for (const c of conceptosRes.rows) {
-      const ddId = Math.floor(Math.random() * 1000000).toString();
-      await pool.query(`
-        INSERT INTO descuentodetalle (id, monto, descuento_id, conceptoinspeccion_key)
-        VALUES ($1, $2, $3, $4)
-      `, [ddId, monto, descId, c.key]);
-    }
-    
-    console.log(`✅ ¡Descuento de S/ 50.00 insertado para el RUC ${ruc} aplicable a TODOS los conceptos!`);
-  } catch (error) {
-    console.error('Error insertando:', error);
+    // Insertar el maestro del Descuento para el DNI 9999
+    // asumiendo que id=999 no existe
+    await client.query(`
+      INSERT INTO descuento (
+        id, nombre, estado, empresa_nrodocumentoidentidad, fechinicio, fechfin
+      ) VALUES (
+        999, 'CAMPAÑA VERANO AMBULANCIAS', true, '9999', NOW() - INTERVAL '1 day', NOW() + INTERVAL '10 days'
+      ) ON CONFLICT DO NOTHING
+    `);
+
+    // Insertar el detalle del descuento (Concepto 30 - Ambulancia, monto 50 soles)
+    await client.query(`
+      INSERT INTO descuentodetalle (
+        id, descuento_id, conceptoinspeccion_key, monto
+      ) VALUES (
+        999, 999, '30', 50.00
+      ) ON CONFLICT DO NOTHING
+    `);
+
+    await client.query('COMMIT');
+    console.log("¡Descuento promocional para DNI 9999 y concepto Ambulancia creado con éxito!");
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.log(err);
   } finally {
-    process.exit(0);
+    client.release();
   }
+  process.exit(0);
 }
-
-seedDescuento();
+run();

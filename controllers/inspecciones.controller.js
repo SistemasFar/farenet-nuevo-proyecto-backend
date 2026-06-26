@@ -639,6 +639,26 @@ const consumirDescuento = async (req, res) => {
   }
 };
 
+const consultarReinspeccion = async (req, res) => {
+  try {
+    const { placa, concepto, planta } = req.params;
+    
+    if (!placa || !concepto || !planta) {
+      return res.status(400).json({ status: 'error', message: 'Faltan parámetros' });
+    }
+
+    const resultado = await inspeccionesService.consultarReinspeccionService(placa, concepto, planta);
+    
+    res.json({
+      status: 'success',
+      data: resultado
+    });
+  } catch (error) {
+    console.error('Error al consultar reinspección:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno del servidor' });
+  }
+};
+
 module.exports = {
   buscarInspecciones,
   guardarInspeccion,
@@ -647,5 +667,6 @@ module.exports = {
   eliminarBorrador,
   consultarVehiculoYCaja,
   buscarDescuentos,
-  consumirDescuento
+  consumirDescuento,
+  consultarReinspeccion
 };
