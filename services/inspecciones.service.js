@@ -2,6 +2,19 @@ const pool = require('../config/database');
 
 const ESTADOS_PERMITIDOS = ['CON', 'ANULADO', 'RETIRADO', 'PROCESO'];
 
+const consultarVehiculoRapido = async (placa) => {
+  const vehRes = await pool.query(`
+    SELECT categoria_key FROM vehiculo 
+    WHERE nromotor = $1 OR nroplacaantigua = $1 
+    LIMIT 1
+  `, [placa]);
+  
+  if (vehRes.rows.length > 0) {
+    return vehRes.rows[0];
+  }
+  return null;
+};
+
 const buscarInspecciones = async (filtros) => {
   const {
     plantaKey,
@@ -178,7 +191,24 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey }) => 
 
   // 2. Buscar Vehículo en BD Local
   const vehRes = await pool.query(`
-    SELECT * FROM vehiculo WHERE nromotor = $1 OR nroplacaantigua = $1 LIMIT 1
+    SELECT v.*, 
+           p.nrodocumentoidentidad as prop_nrodoc,
+           p.tipodocumentoidentidad_key as prop_tipodoc,
+           p.nombrerazonsocial as prop_razon,
+           p.nombres as prop_nombres,
+           p.apellidos as prop_apellidos,
+           p.pais_key as prop_pais,
+           p.departamento_key as prop_dep,
+           p.provincia_key as prop_prov,
+           p.distrito_key as prop_dist,
+           p.direccion as prop_dir,
+           p.email as prop_email,
+           p.telefono as prop_tel
+    FROM vehiculo v
+    LEFT JOIN tarjetapropiedad tp ON v.tarjetapropiedad_id = tp.id
+    LEFT JOIN persona p ON tp.propietario_nrodocumentoidentidad = p.nrodocumentoidentidad
+    WHERE v.nromotor = $1 OR v.nroplacaantigua = $1 
+    LIMIT 1
   `, [placa]);
 
   if (vehRes.rows.length > 0) {
@@ -415,5 +445,6 @@ module.exports = {
   consultarVehiculoYCajaService,
   buscarDescuentosService,
   consumirDescuentoService,
-  consultarReinspeccionService
+  consultarReinspeccionService,
+  consultarVehiculoRapido
 };

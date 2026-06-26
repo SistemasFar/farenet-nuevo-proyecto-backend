@@ -659,6 +659,20 @@ const consultarReinspeccion = async (req, res) => {
   }
 };
 
+const consultarVehiculoRapido = async (req, res) => {
+  try {
+    const { placa } = req.params;
+    if (!placa) {
+      return res.status(400).json({ status: 'error', message: 'Placa requerida' });
+    }
+    const veh = await inspeccionesService.consultarVehiculoRapido(placa);
+    res.json({ status: 'success', data: veh });
+  } catch (error) {
+    console.error('Error al consultar vehiculo rapido:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno' });
+  }
+};
+
 module.exports = {
   buscarInspecciones,
   guardarInspeccion,
@@ -668,5 +682,6 @@ module.exports = {
   consultarVehiculoYCaja,
   buscarDescuentos,
   consumirDescuento,
-  consultarReinspeccion
+  consultarReinspeccion,
+  consultarVehiculoRapido
 };

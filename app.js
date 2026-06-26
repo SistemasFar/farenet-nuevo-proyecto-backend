@@ -425,6 +425,12 @@ async function setupPostgresListen() {
 setupPostgresListen();
 
 // ==========================
+// CRON JOBS
+// ==========================
+const { startCronJobs } = require('./cron_jobs');
+startCronJobs();
+
+// ==========================
 // START SERVER
 // ==========================
 
