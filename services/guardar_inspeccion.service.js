@@ -71,7 +71,7 @@ const guardarInspeccionTransaccion = async (reqBody) => {
     let nroMotorFinal = formVehiculo.nroMotor;
     if (!nroMotorFinal || nroMotorFinal.trim() === '') {
       const ts = new Date().getTime().toString().slice(-9);
-      nroMotorFinal = `TMP-INS-000-${ts}`;
+      nroMotorFinal = `T-${ts}`;
     }
 
     let vehiculoExist = await client.query('SELECT nromotor FROM vehiculo WHERE nromotor = $1', [nroMotorFinal]);

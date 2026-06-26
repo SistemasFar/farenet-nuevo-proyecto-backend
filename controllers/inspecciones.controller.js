@@ -213,8 +213,8 @@ const guardarBorrador = async (req, res) => {
 
       // Actualizamos vehiculo si hay placa real
       if (placaGlobal && placaGlobal !== '-') {
-        // En lugar de requerir que el usuario digite el motor, usaremos uno temporal si no lo hay
-        const motorAUsar = formVehiculo?.nroMotor || ('TMP-' + nroInspeccion);
+        // En lugar de requerir que el usuario digite el motor, usaremos uno temporal si no lo hay (max 20 chars)
+        const motorAUsar = formVehiculo?.nroMotor || nroInspeccion;
         
         // Intentar actualizar usando la placa o el motor temporal
         const upRes = await pool.query(`
@@ -332,7 +332,7 @@ const guardarBorrador = async (req, res) => {
 
     // Paso 3: Datos Adicionales de Vehículo (Propietario y SOAT)
     if (formVehiculo) {
-      const motorAUsar = formVehiculo.nroMotor || ('TMP-' + nroInspeccion);
+      const motorAUsar = formVehiculo.nroMotor || nroInspeccion;
       if (!formVehiculo.sinDni && formVehiculo.nroDocProp) {
         const perRes = await pool.query(`SELECT nrodocumentoidentidad FROM persona WHERE nrodocumentoidentidad = $1`, [formVehiculo.nroDocProp]);
         if (perRes.rows.length === 0) {
@@ -621,13 +621,14 @@ const buscarDescuentos = async (req, res) => {
 const consumirDescuento = async (req, res) => {
   try {
     const { source_table, source_id } = req.body;
+    console.log(`=== CONSUMIR DESCUENTO === table: ${source_table}, id: ${source_id}`);
 
     if (!source_table || !source_id) {
       return res.status(400).json({ status: 'error', message: 'Faltan datos del descuento a consumir' });
     }
 
     const resultado = await inspeccionesService.consumirDescuentoService({ source_table, source_id });
-
+    console.log('Resultado consumirDescuento:', resultado);
     res.json({
       status: 'success',
       data: resultado

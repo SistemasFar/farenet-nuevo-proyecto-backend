@@ -156,6 +156,25 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey }) => 
   let esReinspeccion = false;
   let vehiculo = null;
   let mensaje = '';
+  let tipoDocumentoSugerido = null;
+
+  // 1.5 Verificar placa duplicada en el día actual
+  const duplicadoRes = await pool.query(`
+    SELECT i.nrodocumentoinspeccion 
+    FROM inspeccion i
+    JOIN comprobante c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
+    JOIN linea l ON c.linea_key = l.key
+    WHERE c.placamotor = $1 
+      AND c.conceptoinspeccion_key = $2 
+      AND l.planta_key = $3
+      AND DATE(i.fechcreacion) = CURRENT_DATE
+      AND UPPER(COALESCE(i.inspeccionestado_key, '')) NOT IN ('ANULADO', 'RETIRADO')
+    LIMIT 1
+  `, [placa, concepto, plantaKey]);
+
+  if (duplicadoRes.rows.length > 0) {
+    throw new Error("PLACA DUPLICADA EN SISTEMA");
+  }
 
   // 2. Buscar Vehículo en BD Local
   const vehRes = await pool.query(`
@@ -185,7 +204,19 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey }) => 
       }
     }
 
+    // 4. Predicción Boleta/Factura
+    const lastComprobanteRes = await pool.query(`
+      SELECT c.tipodocumento_key 
+      FROM inspeccion i
+      JOIN comprobante c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
+      WHERE c.placamotor = $1 
+      ORDER BY i.fechcreacion DESC 
+      LIMIT 1
+    `, [placa]);
 
+    if (lastComprobanteRes.rows.length > 0) {
+      tipoDocumentoSugerido = lastComprobanteRes.rows[0].tipodocumento_key;
+    }
 
   } // Cierre de if (vehRes.rows.length > 0)
 
@@ -205,7 +236,7 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey }) => 
       total: parseFloat(total.toFixed(2)),
       esReinspeccion
     },
-    vehiculo,
+    vehiculo: vehiculo ? { ...vehiculo, tipoDocumentoSugerido } : { tipoDocumentoSugerido },
     mensaje
   };
 };
