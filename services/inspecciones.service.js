@@ -336,7 +336,21 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey, categ
   let baseImponible = total / 1.18;
   let igv = total - baseImponible;
 
+  // 5. AUTO-BUSQUEDA DE DESCUENTOS PARA ESTA PLACA
+  let descuentosDisponibles = [];
+  try {
+    descuentosDisponibles = await buscarDescuentosService({ 
+      documento: placa, 
+      concepto, 
+      placaContexto: placa, 
+      soloDniCodigo: false 
+    });
+  } catch (e) {
+    console.error("Error al buscar descuentos automáticos:", e.message);
+  }
+
   return {
+    status: 'success',
     precios: {
       precioBase: parseFloat(precioBase.toFixed(2)),
       descuento: parseFloat(descuento.toFixed(2)),
@@ -346,18 +360,34 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey, categ
       esReinspeccion
     },
     vehiculo: vehiculo ? { ...vehiculo, tipoDocumentoSugerido } : { tipoDocumentoSugerido },
+    descuentosDisponibles,
     mensaje
   };
 };
 
-async function buscarDescuentosService({ documento, concepto }) {
+async function buscarDescuentosService({ documento, concepto, placaContexto, soloDniCodigo }) {
   if (!documento || !concepto) {
     throw new Error("El documento y el concepto son obligatorios");
   }
 
-  const descRes = await pool.query(`
+  const pContexto = placaContexto || null;
+  const isSoloDni = soloDniCodigo === 'true' || soloDniCodigo === true;
+
+  // Lógica dinámica de WHERE para descuentocliente y descuentomasivocliente
+  // Si isSoloDni es TRUE: no buscamos por placa = $1, solo por uuid = $1. Y obligamos a que dc.placa = pContexto
+  // Si isSoloDni es FALSE: buscamos por placa = $1 o uuid = $1. No aplicamos restricción extra.
+  
+  const vehicularWhere = isSoloDni 
+    ? `(dc.uuid = $1) AND ($3::text IS NULL OR dc.placa = $3)`
+    : `(dc.placa = $1 OR dc.uuid = $1)`;
+    
+  const masivoVehicularWhere = isSoloDni 
+    ? `(dmc.uuid = $1) AND ($3::text IS NULL OR dmc.placa = $3)`
+    : `(dmc.placa = $1 OR dmc.uuid = $1)`;
+
+  const queryStr = `
     -- 1. Busqueda por DNI/RUC directo en la campaña (descuento)
-    SELECT 'descuento' AS source_table, d.id AS source_id, d.nombre as campana, dd.monto, dd.conceptoinspeccion_key
+    SELECT 'descuento' AS source_table, d.id AS source_id, d.nombre as campana, dd.monto, dd.conceptoinspeccion_key, NULL AS uuid
     FROM descuentodetalle dd
     JOIN descuento d ON d.id = dd.descuento_id
     WHERE d.empresa_nrodocumentoidentidad = $1 AND dd.conceptoinspeccion_key = $2
@@ -368,11 +398,12 @@ async function buscarDescuentosService({ documento, concepto }) {
     UNION
 
     -- 2. Busqueda por Placa o Código en descuentocliente
-    SELECT 'descuentocliente' AS source_table, dc.id AS source_id, d.nombre as campana, dd.monto, dd.conceptoinspeccion_key
+    SELECT 'descuentocliente' AS source_table, dc.id AS source_id, d.nombre as campana, dd.monto, dd.conceptoinspeccion_key, dc.uuid
+
     FROM descuentocliente dc
     JOIN descuentodetalle dd ON dd.id = dc.descuentodetalle_id
     JOIN descuento d ON d.id = dd.descuento_id
-    WHERE (dc.placa = $1 OR dc.uuid = $1) AND dd.conceptoinspeccion_key = $2
+    WHERE ${vehicularWhere} AND dd.conceptoinspeccion_key = $2
     AND d.estado = true AND dc.estado = true
     AND (d.fechinicio IS NULL OR CURRENT_TIMESTAMP >= d.fechinicio)
     AND (d.fechfin IS NULL OR CURRENT_TIMESTAMP <= d.fechfin)
@@ -380,7 +411,7 @@ async function buscarDescuentosService({ documento, concepto }) {
     UNION
 
     -- 3. Busqueda por DNI/RUC en descuentomasivo
-    SELECT 'descuentomasivo' AS source_table, dm.id AS source_id, dm.nombre as campana, dmd.monto, dmd.conceptoinspeccion_key
+    SELECT 'descuentomasivo' AS source_table, dm.id AS source_id, dm.nombre as campana, dmd.monto, dmd.conceptoinspeccion_key, NULL AS uuid
     FROM descuentomasivodetalle dmd
     JOIN descuentomasivo dm ON dm.id = dmd.descuentomasivo_id
     WHERE dm.empresa_nrodocumentoidentidad = $1 AND dmd.conceptoinspeccion_key = $2
@@ -391,15 +422,18 @@ async function buscarDescuentosService({ documento, concepto }) {
     UNION
 
     -- 4. Busqueda por Placa o Código en descuentomasivocliente
-    SELECT 'descuentomasivocliente' AS source_table, dmc.id AS source_id, dm.nombre as campana, dmd.monto, dmd.conceptoinspeccion_key
+    SELECT 'descuentomasivocliente' AS source_table, dmc.id AS source_id, dm.nombre as campana, dmd.monto, dmd.conceptoinspeccion_key, dmc.uuid
     FROM descuentomasivocliente dmc
     JOIN descuentomasivodetalle dmd ON dmd.descuentomasivo_id = dmc.descuentomasivo_id
     JOIN descuentomasivo dm ON dm.id = dmd.descuentomasivo_id
-    WHERE (dmc.placa = $1 OR dmc.uuid = $1) AND dmd.conceptoinspeccion_key = $2
+    WHERE ${masivoVehicularWhere} AND dmd.conceptoinspeccion_key = $2
     AND dm.estado = true AND dmc.estado = true
     AND (dm.fechinicio IS NULL OR CURRENT_TIMESTAMP >= dm.fechinicio)
     AND (dm.fechfin IS NULL OR CURRENT_TIMESTAMP <= dm.fechfin)
-  `, [documento, concepto]);
+  `;
+
+  const queryParams = isSoloDni ? [documento, concepto, pContexto] : [documento, concepto];
+  const descRes = await pool.query(queryStr, queryParams);
 
   return descRes.rows.map(row => ({
     source_table: row.source_table,

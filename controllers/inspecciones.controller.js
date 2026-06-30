@@ -603,13 +603,18 @@ const consultarVehiculoYCaja = async (req, res) => {
 
 const buscarDescuentos = async (req, res) => {
   try {
-    const { documento, concepto } = req.query;
+    const { documento, concepto, placaContexto, soloDniCodigo } = req.query;
 
     if (!documento || !concepto) {
       return res.status(400).json({ status: 'error', message: 'El documento y el concepto son obligatorios' });
     }
 
-    const descuentos = await inspeccionesService.buscarDescuentosService({ documento, concepto });
+    const descuentos = await inspeccionesService.buscarDescuentosService({ 
+      documento, 
+      concepto, 
+      placaContexto, 
+      soloDniCodigo 
+    });
 
     res.json({
       status: 'success',
@@ -676,6 +681,41 @@ const consultarVehiculoRapido = async (req, res) => {
   }
 };
 
+const validarCuponidad = async (req, res) => {
+  try {
+    const { codigo } = req.params;
+    if (!codigo) {
+      return res.status(400).json({ status: 'error', message: 'Código de cuponidad requerido' });
+    }
+
+    const pool = require('../config/database');
+    // Verificamos si el código ya existe en un pago de tarjeta '5' (Cuponidad)
+    // asociado a un comprobante que no esté anulado (estado = true)
+    const query = `
+      SELECT p.id, c.nrocomprobante 
+      FROM pago p
+      INNER JOIN comprobante c ON p.comprobante_id = c.id
+      WHERE p.tarjeta_key = '5' 
+        AND p.nrooperaciontarjeta = $1
+        AND c.estado = true
+      LIMIT 1
+    `;
+    const result = await pool.query(query, [codigo]);
+
+    if (result.rows.length > 0) {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: `El código de Cuponidad ya fue canjeado en el comprobante ${result.rows[0].nrocomprobante}` 
+      });
+    }
+
+    res.json({ status: 'success', message: 'Código válido' });
+  } catch (error) {
+    console.error('Error al validar cuponidad:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno al validar cuponidad' });
+  }
+};
+
 module.exports = {
   buscarInspecciones,
   guardarInspeccion,
@@ -686,5 +726,6 @@ module.exports = {
   buscarDescuentos,
   consumirDescuento,
   consultarReinspeccion,
-  consultarVehiculoRapido
+  consultarVehiculoRapido,
+  validarCuponidad
 };
