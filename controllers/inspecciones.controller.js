@@ -585,7 +585,7 @@ const consultarVehiculoYCaja = async (req, res) => {
     }
 
     const resultado = await inspeccionesService.consultarVehiculoYCajaService({
-      placa, concepto, plantaKey
+      placa, concepto, plantaKey, categoria, tipoInspeccion, tipoCertificado, tipoAutorizacion
     });
 
     res.json({
@@ -594,6 +594,9 @@ const consultarVehiculoYCaja = async (req, res) => {
     });
   } catch (error) {
     console.error('Error al consultar vehiculo/caja:', error);
+    if (error.message === 'PLACA DUPLICADA EN SISTEMA') {
+      return res.status(400).json({ status: 'error', message: error.message });
+    }
     res.status(500).json({ status: 'error', message: 'Error interno del servidor', error: error.message });
   }
 };

@@ -1,4 +1,5 @@
 const pool = require('../config/database');
+const mtcService = require('./mtc.service');
 
 const ESTADOS_PERMITIDOS = ['CON', 'ANULADO', 'RETIRADO', 'PROCESO'];
 
@@ -150,7 +151,7 @@ if (fechaInicio || fechaFin) {
   };
 };
 
-const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey }) => {
+const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey, categoria, tipoInspeccion, tipoCertificado, tipoAutorizacion }) => {
   // 1. Obtener Precio Base del Concepto
   const conceptoRes = await pool.query(
     `SELECT cd.valor as precio, c.nombre 
@@ -170,6 +171,15 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey }) => 
   let vehiculo = null;
   let mensaje = '';
   let tipoDocumentoSugerido = null;
+
+  // --- BLOQUE TEMPORAL DE PRUEBAS ---
+  if (placa === 'DUP-123') {
+    throw new Error("PLACA DUPLICADA EN SISTEMA");
+  }
+  if (placa === 'REI-123') {
+    return { precios: { precioBase: 50, descuento: 50, baseImponible: 0, igv: 0, total: 0, esReinspeccion: true }, vehiculo: { marca_key: "NISSAN (MOCK REI)", modelo_key: "SENTRA" }, mensaje: "[Reinspección] Intento 1 de 3 | Te quedan 28 días de vigencia." };
+  }
+  // ----------------------------------
 
   // 1.5 Verificar placa duplicada en el día actual
   const duplicadoRes = await pool.query(`
@@ -215,22 +225,57 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey }) => 
     vehiculo = vehRes.rows[0];
     mensaje = `Vehículo ${vehiculo.marca_key || ''} encontrado en la base de datos.`;
     
-    // 3. Lógica de Reinspección
+    // 3. Lógica de Reinspección (Mejorada: Reglas de 30 días, Mismo Concepto, 3 Oportunidades, Ignorar Anulados)
     const reinspeccionRes = await pool.query(`
-      SELECT i.inspeccionestado_key, i.fechcreacion 
+      SELECT i.inspeccionestado_key, i.fechcreacion, c.conceptoinspeccion_key, c.importetotal 
       FROM inspeccion i
       JOIN comprobante c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
       WHERE c.placamotor = $1 
+        AND i.fechcreacion >= CURRENT_DATE - INTERVAL '30 days'
+        AND UPPER(COALESCE(i.inspeccionestado_key, '')) NOT IN ('ANULADO', 'RETIRADO')
       ORDER BY i.fechcreacion DESC 
-      LIMIT 1
     `, [placa]);
 
     if (reinspeccionRes.rows.length > 0) {
       const ultimaInsp = reinspeccionRes.rows[0];
-      if (ultimaInsp.inspeccionestado_key === 'DESAPROBADO') {
-        esReinspeccion = true;
-        mensaje += ' - ¡Atención! El vehículo tiene una inspección previa DESAPROBADA. Aplica como Reinspección.';
-        descuento = precioBase;
+      
+      // Regla 1: Última inspección desaprobada y MISMO concepto
+      if (ultimaInsp.inspeccionestado_key === 'DESAPROBADO' && ultimaInsp.conceptoinspeccion_key === concepto) {
+        
+        // Contar cuántas reinspecciones gratuitas ya tuvo en esta cadena de 30 días
+        let conteoReinspeccionesGratis = 0;
+        let fechaOriginalPagada = ultimaInsp.fechcreacion;
+
+        for (let j = 0; j < reinspeccionRes.rows.length; j++) {
+          const row = reinspeccionRes.rows[j];
+          if (row.conceptoinspeccion_key !== concepto) {
+            break; // Rompe la cadena si hay otro concepto en medio
+          }
+          if (row.inspeccionestado_key === 'APROBADO') {
+            break; // Si aprobó antes, la cadena de desaprobados termina ahí
+          }
+          if (Number(row.importetotal) === 0) {
+            conteoReinspeccionesGratis++;
+          } else {
+            // Si el monto > 0, significa que fue la inspección original pagada que inició la cadena.
+            fechaOriginalPagada = row.fechcreacion;
+            break; 
+          }
+        }
+
+        // Calcular días restantes (30 días desde la inspección original)
+        const msPorDia = 1000 * 60 * 60 * 24;
+        const diasTranscurridos = Math.floor((new Date() - new Date(fechaOriginalPagada)) / msPorDia);
+        const diasRestantes = Math.max(0, 30 - diasTranscurridos);
+
+        // Regla 3: Hasta 3 oportunidades (3 reinspecciones a costo cero)
+        if (conteoReinspeccionesGratis < 3) {
+          esReinspeccion = true;
+          mensaje += ` | [Reinspección] Intento ${conteoReinspeccionesGratis + 1} de 3 (Te quedan ${diasRestantes} días)`;
+          descuento = precioBase;
+        } else {
+          mensaje += ` - ¡Atención! El vehículo agotó sus 3 oportunidades de reinspección gratuita dentro de los 30 días. Se debe cobrar la tarifa normal.`;
+        }
       }
     }
 
@@ -248,10 +293,44 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey }) => 
       tipoDocumentoSugerido = lastComprobanteRes.rows[0].tipodocumento_key;
     }
 
+  } else {
+    // Si no está localmente, lo buscamos en el MTC (Punto 4)
+    try {
+      const mtcVehiculo = await mtcService.obtenerVehiculo(
+        placa, 
+        plantaKey, 
+        tipoAutorizacion, // Nota: el mapeo de keys del MTC se puede refinar
+        tipoInspeccion, 
+        tipoCertificado, 
+        categoria
+      );
+      if (mtcVehiculo) {
+        vehiculo = mtcVehiculo;
+        mensaje = "Vehículo encontrado en MTC (Datos autocompletados)";
+      }
+    } catch (e) {
+      console.error("Error silencioso MTC:", e.message);
+    }
   } // Cierre de if (vehRes.rows.length > 0)
 
-  // En lugar de descontar automaticamente, el frontend manejara los descuentos adicionales.
-  // Solo aplicamos descuento si es reinspeccion desaprobada
+  // Auto-Búsqueda de Descuentos (Punto 6)
+  // [A PETICIÓN DEL USUARIO] Se desactivó la auto-búsqueda en el botón CONSULTAR.
+  // Ahora el descuento solo se aplica si se busca manualmente en la barra amarilla de la Caja.
+  /*
+  if (!esReinspeccion || descuento === 0) {
+    try {
+      const callCenterDescuentos = await buscarDescuentosService({ documento: placa, concepto: concepto });
+      if (callCenterDescuentos && callCenterDescuentos.length > 0) {
+        // Tomamos el primer descuento por defecto (el más reciente/alto)
+        const mejorDescuento = callCenterDescuentos[0];
+        descuento = parseFloat(mejorDescuento.monto);
+        mensaje += ` (Descuento automático aplicado: ${mejorDescuento.campana})`;
+      }
+    } catch (e) {
+      console.error("Error buscando descuentos auto:", e.message);
+    }
+  }
+  */
   
   let total = precioBase - descuento;
   let baseImponible = total / 1.18;
@@ -271,7 +350,7 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey }) => 
   };
 };
 
-const buscarDescuentosService = async ({ documento, concepto }) => {
+async function buscarDescuentosService({ documento, concepto }) {
   if (!documento || !concepto) {
     throw new Error("El documento y el concepto son obligatorios");
   }
