@@ -74,8 +74,29 @@ const guardarInspeccionTransaccion = async (reqBody) => {
       nroMotorFinal = `T-${ts}`;
     }
 
-    let vehiculoExist = await client.query('SELECT nromotor FROM vehiculo WHERE nromotor = $1', [nroMotorFinal]);
+    let vehiculoExist = await client.query('SELECT nromotor, tarjetapropiedad_id FROM vehiculo WHERE nromotor = $1', [nroMotorFinal]);
     const placaNueva = formVehiculo.placaNueva || formCaja.placa || '';
+
+    // -- LÓGICA DE TARJETA DE PROPIEDAD --
+    let tarjetaPropiedadId = vehiculoExist.rows.length > 0 ? vehiculoExist.rows[0].tarjetapropiedad_id : null;
+    
+    if (tarjetaPropiedadId) {
+      await client.query(`
+        UPDATE tarjetapropiedad SET
+          propietario_nrodocumentoidentidad = COALESCE($2, propietario_nrodocumentoidentidad),
+          nroplaca = COALESCE($3, nroplaca),
+          fechmodi = NOW()
+        WHERE id = $1
+      `, [tarjetaPropiedadId, documentoProp, placaNueva]);
+    } else {
+      let tpIdResult = await client.query("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM tarjetapropiedad");
+      tarjetaPropiedadId = parseInt(tpIdResult.rows[0].next_id);
+      
+      await client.query(`
+        INSERT INTO tarjetapropiedad (id, estado, fechcreacion, fechmodi, nroplaca, propietario_nrodocumentoidentidad)
+        VALUES ($1, true, NOW(), NOW(), $2, $3)
+      `, [tarjetaPropiedadId, placaNueva, documentoProp]);
+    }
 
     if (vehiculoExist.rows.length === 0) {
       await client.query(`
@@ -83,8 +104,8 @@ const guardarInspeccionTransaccion = async (reqBody) => {
           nromotor, nroplacaantigua, nroserie, aniofabricacion, longitud, ancho, alto, 
           nroejes, nroruedas, nroasientos, nropasajeros, nropuertas, pesoseco, pesobruto, cargautil,
           nrosoat, aseguradora_key, tipopoliza_key, combustible_key, carroceria_key, marca_key, modelo_key, 
-          vehiculoclase_key, estado, fechcreacion, distanciaeje1, distanciaeje2, distanciaeje3, distanciaeje4, kilometraje
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, true, NOW(), 0, 0, 0, 0, 0)
+          vehiculoclase_key, estado, fechcreacion, distanciaeje1, distanciaeje2, distanciaeje3, distanciaeje4, kilometraje, tarjetapropiedad_id, fechiniciotarjetapropiedad, fechfintarjetapropiedad
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, true, NOW(), 0, 0, 0, 0, 0, $24, $25, $26)
       `, [
         nroMotorFinal,
         placaNueva,
@@ -108,7 +129,10 @@ const guardarInspeccionTransaccion = async (reqBody) => {
         formVehiculo.carroceria || null,
         formVehiculo.marca || null,
         formVehiculo.modelo || null,
-        formVehiculo.clase || null
+        formVehiculo.clase || null,
+        tarjetaPropiedadId,
+        formVehiculo.fechaEmisionSoat || null,
+        formVehiculo.fechaVencimientoSoat || null
       ]);
     } else {
       await client.query(`
@@ -117,6 +141,9 @@ const guardarInspeccionTransaccion = async (reqBody) => {
           nroserie = COALESCE($3, nroserie),
           aniofabricacion = COALESCE($4, aniofabricacion),
           nrosoat = COALESCE($5, nrosoat),
+          tarjetapropiedad_id = COALESCE($6, tarjetapropiedad_id),
+          fechiniciotarjetapropiedad = COALESCE($7, fechiniciotarjetapropiedad),
+          fechfintarjetapropiedad = COALESCE($8, fechfintarjetapropiedad),
           fechmodi = NOW()
         WHERE nromotor = $1
       `, [
@@ -124,7 +151,10 @@ const guardarInspeccionTransaccion = async (reqBody) => {
         placaNueva,
         formVehiculo.nroSerie || null,
         formVehiculo.anioFabricacion || null,
-        formVehiculo.nroSoat || null
+        formVehiculo.nroSoat || null,
+        tarjetaPropiedadId,
+        formVehiculo.fechaEmisionSoat || null,
+        formVehiculo.fechaVencimientoSoat || null
       ]);
     }
 
