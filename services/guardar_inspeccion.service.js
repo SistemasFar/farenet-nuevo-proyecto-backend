@@ -289,8 +289,8 @@ const guardarInspeccionTransaccion = async (reqBody) => {
         nextPagoId,
         comprobanteId,
         importePago,
-        basePago,
-        igvPago,
+        basePago.toFixed(2),
+        igvPago.toFixed(2),
         pagoItem.tipo === 'TARJETA' ? pagoItem.tarjetaKey : null,
         pagoItem.tipo === 'BANCO' ? pagoItem.nroOperacion : null,
         pagoItem.tipo === 'TARJETA' ? pagoItem.nroOperacion : null,
@@ -299,6 +299,19 @@ const guardarInspeccionTransaccion = async (reqBody) => {
         pagoItem.tipo === 'BANCO' ? pagoItem.entidadFinancieraKey : null,
         pagoItem.fechaDeposito || null
       ]);
+    }
+
+    // 7. QUEMAR (CONSUMIR) EL DESCUENTO SI APLICA
+    if (formCaja && formCaja.descuentoObj && formCaja.descuentoObj.source_table && formCaja.descuentoObj.source_id) {
+      const { source_table, source_id } = formCaja.descuentoObj;
+      const validTables = ['descuento', 'descuentocliente', 'descuentomasivo', 'descuentomasivocliente'];
+      
+      if (validTables.includes(source_table)) {
+        // En descuentocliente y descuentomasivocliente se suele quemar cambiando estado a false
+        if (source_table === 'descuentocliente' || source_table === 'descuentomasivocliente') {
+          await client.query(`UPDATE ${source_table} SET estado = false WHERE id = $1`, [source_id]);
+        }
+      }
     }
 
     await client.query('COMMIT');

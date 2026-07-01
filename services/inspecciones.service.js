@@ -440,7 +440,8 @@ async function buscarDescuentosService({ documento, concepto, placaContexto, sol
     source_id: row.source_id,
     campana: row.campana,
     monto: row.monto,
-    concepto_key: row.conceptoinspeccion_key
+    concepto_key: row.conceptoinspeccion_key,
+    uuid: row.uuid
   }));
 };
 
