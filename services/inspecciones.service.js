@@ -176,9 +176,6 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey, categ
   if (placa === 'DUP-123') {
     throw new Error("PLACA DUPLICADA EN SISTEMA");
   }
-  if (placa === 'REI-123') {
-    return { precios: { precioBase: 50, descuento: 50, baseImponible: 0, igv: 0, total: 0, esReinspeccion: true }, vehiculo: { marca_key: "NISSAN (MOCK REI)", modelo_key: "SENTRA" }, mensaje: "[Reinspección] Intento 1 de 3 | Te quedan 28 días de vigencia." };
-  }
   // ----------------------------------
 
   // 1.5 Verificar placa duplicada en el día actual
@@ -469,33 +466,61 @@ const consumirDescuentoService = async ({ source_table, source_id }) => {
 };
 
 const consultarReinspeccionService = async (placa, concepto_key, planta_key) => {
-  // 1. Buscar la inspección más reciente de esa placa (a través de comprobante o vehiculo)
-  const sqlUltima = `
+  // 1. Buscar el historial de inspecciones recientes de esa placa
+  const sqlHistorial = `
     SELECT i.nrodocumentoinspeccion, i.fechconsolidado, i.tipodesaprobado, i.resultado, i.inspeccionestado_key,
-           c.conceptoinspeccion_key, c.formapago_key, i.tipoautorizacion_key, i.tipocertificado_key, i.tipoinspeccion_key
+           c.conceptoinspeccion_key, c.formapago_key, c.importetotal, i.tipoautorizacion_key, i.tipocertificado_key, i.tipoinspeccion_key
     FROM inspeccion i
     JOIN comprobante c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
     WHERE c.placamotor = $1
-      AND c.conceptoinspeccion_key = $2
       AND i.fechconsolidado IS NOT NULL
       AND (i.inspeccionestado_key = 'CON' OR i.inspeccionestado_key IS NULL)
     ORDER BY i.fechconsolidado DESC
-    LIMIT 1
+    LIMIT 10
   `;
-  const resultUltima = await pool.query(sqlUltima, [placa, concepto_key]);
+  const resultHistorial = await pool.query(sqlHistorial, [placa]);
 
-  if (resultUltima.rows.length === 0) {
+  if (resultHistorial.rows.length === 0) {
     return null; // No hay inspecciones previas
   }
 
-  const ultima = resultUltima.rows[0];
+  const ultima = resultHistorial.rows[0];
   
-  // Si la ÚLTIMA inspección no fue 'Desaprobado', entonces no aplica reinspección
-  if (ultima.resultado !== 'D') {
+  // Si la ÚLTIMA inspección no fue 'Desaprobado' o NO coincide el concepto, entonces no aplica reinspección
+  if (ultima.resultado !== 'D' || ultima.conceptoinspeccion_key?.toString() !== concepto_key?.toString()) {
     return null;
   }
 
-  const fechconsolidado = new Date(ultima.fechconsolidado);
+  // Contar cuántas reinspecciones gratuitas ya tuvo en esta cadena
+  let conteoReinspeccionesGratis = 0;
+  let fechaOriginalPagada = ultima.fechconsolidado;
+
+  for (let j = 0; j < resultHistorial.rows.length; j++) {
+    const row = resultHistorial.rows[j];
+    if (row.conceptoinspeccion_key?.toString() !== concepto_key?.toString()) {
+      break; // Rompe la cadena si hay otro concepto en medio
+    }
+    if (row.resultado === 'A' || row.resultado === 'APROBADO') {
+      break; // Si aprobó antes, la cadena de desaprobados termina ahí
+    }
+    if (Number(row.importetotal) === 0) {
+      conteoReinspeccionesGratis++;
+    } else {
+      // Si el monto > 0, fue la inspección original que inició la cadena.
+      fechaOriginalPagada = row.fechconsolidado;
+      break; 
+    }
+  }
+
+  if (conteoReinspeccionesGratis >= 3) {
+    return {
+      aplica: false,
+      mensaje: `¡Atención! El vehículo agotó sus 3 oportunidades de reinspección gratuita. Se debe cobrar la tarifa normal.`,
+      dias_transcurridos: 0
+    };
+  }
+
+  const fechconsolidado = new Date(fechaOriginalPagada);
   const ahora = new Date();
   
   // Diferencia en días (Truncar como lo hacía Java con TimeUnit.DAYS)
@@ -533,6 +558,8 @@ const consultarReinspeccionService = async (placa, concepto_key, planta_key) => 
 
   const regla = resultPeriodo.rows[0];
   
+  const diasRestantes = Math.max(0, 30 - diffDays);
+
   if (regla.tieneporcentajedescuento) {
     return {
       aplica: true,
@@ -543,7 +570,7 @@ const consultarReinspeccionService = async (placa, concepto_key, planta_key) => 
       tipocertificado_key: ultima.tipocertificado_key,
       tipoinspeccion_key: ultima.tipoinspeccion_key,
       dias_transcurridos: diffDays,
-      mensaje: `¡Aplica a Reinspección! Documento anterior: ${ultima.nrodocumentoinspeccion} de hace ${diffDays} días (${regla.porcentajedescuento}% dscto)`
+      mensaje: `¡Aplica a Reinspección! Documento anterior: ${ultima.nrodocumentoinspeccion} de hace ${diffDays} días. Intento ${conteoReinspeccionesGratis + 1} de 3 (Te quedan ${diasRestantes} días) - ${regla.porcentajedescuento}% dscto`
     };
   }
   
