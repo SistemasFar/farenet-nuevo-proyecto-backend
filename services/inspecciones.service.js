@@ -470,9 +470,11 @@ const consultarReinspeccionService = async (placa, concepto_key, planta_key) => 
   // 1. Buscar el historial de inspecciones recientes de esa placa
   const sqlHistorial = `
     SELECT i.nrodocumentoinspeccion, i.fechconsolidado, i.tipodesaprobado, i.resultado, i.inspeccionestado_key,
-           c.conceptoinspeccion_key, c.formapago_key, c.importetotal, i.tipoautorizacion_key, i.tipocertificado_key, i.tipoinspeccion_key
+           c.conceptoinspeccion_key, c.formapago_key, c.importetotal, i.tipoautorizacion_key, i.tipocertificado_key, i.tipoinspeccion_key,
+           i.ui_metadata, v.categoria_key
     FROM inspeccion i
     JOIN comprobante c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
+    LEFT JOIN vehiculo v ON v.nromotor = i.vehiculo_nromotor
     WHERE c.placamotor = $1
       AND i.fechconsolidado IS NOT NULL
       AND (i.inspeccionestado_key = 'CON' OR i.inspeccionestado_key IS NULL)
@@ -562,6 +564,11 @@ const consultarReinspeccionService = async (placa, concepto_key, planta_key) => 
   const diasRestantes = Math.max(0, 30 - diffDays);
 
   if (regla.tieneporcentajedescuento) {
+    let oldUiMetadata = null;
+    if (ultima.ui_metadata) {
+      try { oldUiMetadata = typeof ultima.ui_metadata === 'string' ? JSON.parse(ultima.ui_metadata) : ultima.ui_metadata; } catch(e){}
+    }
+    
     return {
       aplica: true,
       nrodocumentoreinspeccion: ultima.nrodocumentoinspeccion,
@@ -570,6 +577,8 @@ const consultarReinspeccionService = async (placa, concepto_key, planta_key) => 
       tipoautorizacion_key: ultima.tipoautorizacion_key,
       tipocertificado_key: ultima.tipocertificado_key,
       tipoinspeccion_key: ultima.tipoinspeccion_key,
+      categoria_key: ultima.categoria_key,
+      ui_metadata: oldUiMetadata,
       dias_transcurridos: diffDays,
       mensaje: `¡Aplica a Reinspección! Documento anterior: ${ultima.nrodocumentoinspeccion} de hace ${diffDays} días. Intento ${conteoReinspeccionesGratis + 1} de 3 (Te quedan ${diasRestantes} días) - ${regla.porcentajedescuento}% dscto`
     };
