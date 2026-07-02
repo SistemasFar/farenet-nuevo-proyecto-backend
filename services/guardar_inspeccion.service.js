@@ -130,32 +130,35 @@ const guardarInspeccionTransaccion = async (reqBody) => {
         formVehiculo.marca || null,
         formVehiculo.modelo || null,
         formVehiculo.clase || null,
+        formVehiculo.kilometraje || 0,
         tarjetaPropiedadId,
         formVehiculo.fechaEmisionSoat || null,
         formVehiculo.fechaVencimientoSoat || null
       ]);
     } else {
-      await client.query(`
-        UPDATE vehiculo SET
-          nroplacaantigua = COALESCE($2, nroplacaantigua),
-          nroserie = COALESCE($3, nroserie),
-          aniofabricacion = COALESCE($4, aniofabricacion),
-          nrosoat = COALESCE($5, nrosoat),
-          tarjetapropiedad_id = COALESCE($6, tarjetapropiedad_id),
-          fechiniciotarjetapropiedad = COALESCE($7, fechiniciotarjetapropiedad),
-          fechfintarjetapropiedad = COALESCE($8, fechfintarjetapropiedad),
-          fechmodi = NOW()
-        WHERE nromotor = $1
-      `, [
-        nroMotorFinal,
-        placaNueva,
-        formVehiculo.nroSerie || null,
-        formVehiculo.anioFabricacion || null,
-        formVehiculo.nroSoat || null,
-        tarjetaPropiedadId,
-        formVehiculo.fechaEmisionSoat || null,
-        formVehiculo.fechaVencimientoSoat || null
-      ]);
+        await client.query(`
+          UPDATE vehiculo SET
+            nroplacaantigua = COALESCE($2, nroplacaantigua),
+            nroserie = COALESCE($3, nroserie),
+            aniofabricacion = COALESCE($4, aniofabricacion),
+            nrosoat = COALESCE($5, nrosoat),
+            tarjetapropiedad_id = COALESCE($6, tarjetapropiedad_id),
+            fechiniciotarjetapropiedad = COALESCE($7, fechiniciotarjetapropiedad),
+            fechfintarjetapropiedad = COALESCE($8, fechfintarjetapropiedad),
+            kilometraje = COALESCE($9, kilometraje),
+            fechmodi = NOW()
+          WHERE nromotor = $1
+        `, [
+          nroMotorFinal,
+          placaNueva,
+          formVehiculo.nroSerie || null,
+          formVehiculo.anioFabricacion || null,
+          formVehiculo.nroSoat || null,
+          tarjetaPropiedadId,
+          formVehiculo.fechaEmisionSoat || null,
+          formVehiculo.fechaVencimientoSoat || null,
+          formVehiculo.kilometraje || null
+        ]);
     }
 
     const plantaKey = formCaja?.plantaKey || '201';

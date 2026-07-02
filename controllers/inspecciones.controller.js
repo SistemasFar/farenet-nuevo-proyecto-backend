@@ -716,6 +716,20 @@ const validarCuponidad = async (req, res) => {
   }
 };
 
+const consultarReinspeccionesActivas = async (req, res) => {
+  try {
+    const { placa } = req.params;
+    if (!placa) {
+      return res.status(400).json({ status: 'error', message: 'Placa es obligatoria' });
+    }
+    const activas = await inspeccionesService.consultarReinspeccionesActivasService(placa);
+    res.json({ status: 'success', data: activas });
+  } catch (error) {
+    console.error('Error al consultar reinspecciones activas:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno del servidor', error: error.message });
+  }
+};
+
 module.exports = {
   buscarInspecciones,
   guardarInspeccion,
@@ -727,5 +741,6 @@ module.exports = {
   consumirDescuento,
   consultarReinspeccion,
   consultarVehiculoRapido,
-  validarCuponidad
+  validarCuponidad,
+  consultarReinspeccionesActivas
 };

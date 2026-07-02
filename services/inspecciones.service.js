@@ -375,59 +375,58 @@ async function buscarDescuentosService({ documento, concepto, placaContexto, sol
   // Si isSoloDni es FALSE: buscamos por placa = $1 o uuid = $1. No aplicamos restricción extra.
   
   const vehicularWhere = isSoloDni 
-    ? `(dc.uuid = $1) AND ($3::text IS NULL OR dc.placa = $3)`
+    ? `(dc.uuid = $1) AND ($3::text IS NULL OR dc.placa IS NULL OR dc.placa = $3)`
     : `(dc.placa = $1 OR dc.uuid = $1)`;
     
   const masivoVehicularWhere = isSoloDni 
-    ? `(dmc.uuid = $1) AND ($3::text IS NULL OR dmc.placa = $3)`
+    ? `(dmc.uuid = $1) AND ($3::text IS NULL OR dmc.placa IS NULL OR dmc.placa = $3)`
     : `(dmc.placa = $1 OR dmc.uuid = $1)`;
 
   const queryStr = `
-    -- 1. Busqueda por DNI/RUC directo en la campaña (descuento)
-    SELECT 'descuento' AS source_table, d.id AS source_id, d.nombre as campana, dd.monto, dd.conceptoinspeccion_key, NULL AS uuid
-    FROM descuentodetalle dd
-    JOIN descuento d ON d.id = dd.descuento_id
-    WHERE d.empresa_nrodocumentoidentidad = $1 AND dd.conceptoinspeccion_key = $2
-    AND d.estado = true
-    AND (d.fechinicio IS NULL OR CURRENT_TIMESTAMP >= d.fechinicio)
-    AND (d.fechfin IS NULL OR CURRENT_TIMESTAMP <= d.fechfin)
-
-    UNION
-
-    -- 2. Busqueda por Placa o Código en descuentocliente
-    SELECT 'descuentocliente' AS source_table, dc.id AS source_id, d.nombre as campana, dd.monto, dd.conceptoinspeccion_key, dc.uuid
-
-    FROM descuentocliente dc
-    JOIN descuentodetalle dd ON dd.id = dc.descuentodetalle_id
-    JOIN descuento d ON d.id = dd.descuento_id
-    WHERE ${vehicularWhere} AND dd.conceptoinspeccion_key = $2
-    AND d.estado = true AND dc.estado = true
-    AND (d.fechinicio IS NULL OR CURRENT_TIMESTAMP >= d.fechinicio)
-    AND (d.fechfin IS NULL OR CURRENT_TIMESTAMP <= d.fechfin)
-
-    UNION
-
-    -- 3. Busqueda por DNI/RUC en descuentomasivo
-    SELECT 'descuentomasivo' AS source_table, dm.id AS source_id, dm.nombre as campana, dmd.monto, dmd.conceptoinspeccion_key, NULL AS uuid
-    FROM descuentomasivodetalle dmd
-    JOIN descuentomasivo dm ON dm.id = dmd.descuentomasivo_id
-    WHERE dm.empresa_nrodocumentoidentidad = $1 AND dmd.conceptoinspeccion_key = $2
-    AND dm.estado = true
-    AND (dm.fechinicio IS NULL OR CURRENT_TIMESTAMP >= dm.fechinicio)
-    AND (dm.fechfin IS NULL OR CURRENT_TIMESTAMP <= dm.fechfin)
-
-    UNION
-
-    -- 4. Busqueda por Placa o Código en descuentomasivocliente
-    SELECT 'descuentomasivocliente' AS source_table, dmc.id AS source_id, dm.nombre as campana, dmd.monto, dmd.conceptoinspeccion_key, dmc.uuid
-    FROM descuentomasivocliente dmc
-    JOIN descuentomasivodetalle dmd ON dmd.descuentomasivo_id = dmc.descuentomasivo_id
-    JOIN descuentomasivo dm ON dm.id = dmd.descuentomasivo_id
-    WHERE ${masivoVehicularWhere} AND dmd.conceptoinspeccion_key = $2
-    AND dm.estado = true AND dmc.estado = true
-    AND (dm.fechinicio IS NULL OR CURRENT_TIMESTAMP >= dm.fechinicio)
-    AND (dm.fechfin IS NULL OR CURRENT_TIMESTAMP <= dm.fechfin)
-  `;
+      -- 1. Busqueda por DNI/RUC directo en la campaña (descuento)
+      SELECT 'descuento' AS source_table, d.id AS source_id, d.nombre as campana, dd.monto, dd.conceptoinspeccion_key, NULL AS uuid, d.tipodescuento_key, dd.tipopagodescuento_key
+      FROM descuentodetalle dd
+      JOIN descuento d ON d.id = dd.descuento_id
+      WHERE d.empresa_nrodocumentoidentidad = $1 AND (dd.conceptoinspeccion_key = $2 OR dd.conceptoinspeccion_key IS NULL)
+      AND d.estado = true
+      AND (d.fechinicio IS NULL OR CURRENT_TIMESTAMP >= d.fechinicio)
+      AND (d.fechfin IS NULL OR CURRENT_TIMESTAMP <= d.fechfin)
+  
+      UNION
+  
+      -- 2. Busqueda por Placa o Código en descuentocliente
+      SELECT 'descuentocliente' AS source_table, dc.id AS source_id, d.nombre as campana, dd.monto, dd.conceptoinspeccion_key, dc.uuid, d.tipodescuento_key, dd.tipopagodescuento_key
+      FROM descuentocliente dc
+      JOIN descuentodetalle dd ON dd.id = dc.descuentodetalle_id
+      JOIN descuento d ON d.id = dd.descuento_id
+      WHERE ${vehicularWhere} AND (dd.conceptoinspeccion_key = $2 OR dd.conceptoinspeccion_key IS NULL OR dc.uuid = $1)
+      AND d.estado = true AND dc.estado = true
+      AND (d.fechinicio IS NULL OR CURRENT_TIMESTAMP >= d.fechinicio)
+      AND (d.fechfin IS NULL OR CURRENT_TIMESTAMP <= d.fechfin)
+  
+      UNION
+  
+      -- 3. Busqueda por DNI/RUC en descuentomasivo
+      SELECT 'descuentomasivo' AS source_table, dm.id AS source_id, dm.nombre as campana, dmd.monto, dmd.conceptoinspeccion_key, NULL AS uuid, dm.tipodescuento_key, dmd.tipopagodescuento_key
+      FROM descuentomasivodetalle dmd
+      JOIN descuentomasivo dm ON dm.id = dmd.descuentomasivo_id
+      WHERE dm.empresa_nrodocumentoidentidad = $1 AND (dmd.conceptoinspeccion_key = $2 OR dmd.conceptoinspeccion_key IS NULL)
+      AND dm.estado = true
+      AND (dm.fechinicio IS NULL OR CURRENT_TIMESTAMP >= dm.fechinicio)
+      AND (dm.fechfin IS NULL OR CURRENT_TIMESTAMP <= dm.fechfin)
+  
+      UNION
+  
+      -- 4. Busqueda por Placa o Código en descuentomasivocliente
+      SELECT 'descuentomasivocliente' AS source_table, dmc.id AS source_id, dm.nombre as campana, dmd.monto, dmd.conceptoinspeccion_key, dmc.uuid, dm.tipodescuento_key, dmd.tipopagodescuento_key
+      FROM descuentomasivocliente dmc
+      JOIN descuentomasivodetalle dmd ON dmd.descuentomasivo_id = dmc.descuentomasivo_id
+      JOIN descuentomasivo dm ON dm.id = dmd.descuentomasivo_id
+      WHERE ${masivoVehicularWhere} AND (dmd.conceptoinspeccion_key = $2 OR dmd.conceptoinspeccion_key IS NULL OR dmc.uuid = $1)
+      AND dm.estado = true AND dmc.estado = true
+      AND (dm.fechinicio IS NULL OR CURRENT_TIMESTAMP >= dm.fechinicio)
+      AND (dm.fechfin IS NULL OR CURRENT_TIMESTAMP <= dm.fechfin)
+    `;
 
   const queryParams = isSoloDni ? [documento, concepto, pContexto] : [documento, concepto];
   const descRes = await pool.query(queryStr, queryParams);
@@ -438,7 +437,9 @@ async function buscarDescuentosService({ documento, concepto, placaContexto, sol
     campana: row.campana,
     monto: row.monto,
     concepto_key: row.conceptoinspeccion_key,
-    uuid: row.uuid
+    uuid: row.uuid,
+    tipodescuento_key: row.tipodescuento_key,
+    tipopagodescuento_key: row.tipopagodescuento_key
   }));
 };
 
@@ -581,11 +582,95 @@ const consultarReinspeccionService = async (placa, concepto_key, planta_key) => 
   };
 };
 
+const consultarReinspeccionesActivasService = async (placa) => {
+  const sqlHistorial = `
+    SELECT i.nrodocumentoinspeccion, i.fechconsolidado, i.tipodesaprobado, i.resultado, i.inspeccionestado_key,
+           c.conceptoinspeccion_key, c.formapago_key, c.importetotal, con.nombre as concepto_nombre
+    FROM inspeccion i
+    JOIN comprobante c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
+    LEFT JOIN conceptoinspeccion con ON con.key = c.conceptoinspeccion_key
+    WHERE c.placamotor = $1
+      AND i.fechconsolidado IS NOT NULL
+      AND (i.inspeccionestado_key = 'CON' OR i.inspeccionestado_key IS NULL)
+    ORDER BY i.fechconsolidado DESC
+    LIMIT 50
+  `;
+  const resultHistorial = await pool.query(sqlHistorial, [placa]);
+
+  if (resultHistorial.rows.length === 0) return [];
+
+  const historyByConcept = {};
+  for (const row of resultHistorial.rows) {
+    const concepto = row.conceptoinspeccion_key?.toString();
+    if (!concepto) continue;
+    if (!historyByConcept[concepto]) {
+      historyByConcept[concepto] = [];
+    }
+    historyByConcept[concepto].push(row);
+  }
+
+  const activas = [];
+
+  for (const concepto in historyByConcept) {
+    const inspecciones = historyByConcept[concepto];
+    const ultima = inspecciones[0];
+
+    if (ultima.resultado !== 'D') continue;
+
+    let conteoReinspeccionesGratis = 0;
+    let fechaOriginalPagada = ultima.fechconsolidado;
+
+    for (let j = 0; j < inspecciones.length; j++) {
+      const row = inspecciones[j];
+      if (row.resultado === 'A' || row.resultado === 'APROBADO') break;
+      if (Number(row.importetotal) === 0) {
+        conteoReinspeccionesGratis++;
+      } else {
+        fechaOriginalPagada = row.fechconsolidado;
+        break;
+      }
+    }
+
+    if (conteoReinspeccionesGratis >= 3) continue;
+
+    const fechconsolidado = new Date(fechaOriginalPagada);
+    const ahora = new Date();
+    const diffTime = Math.abs(ahora.getTime() - fechconsolidado.getTime());
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+    const sqlPeriodo = `
+      SELECT dias 
+      FROM periodoreinspeccion 
+      WHERE tipodesaprobado = $1 
+      ORDER BY dias DESC LIMIT 1
+    `;
+    const resPeriodo = await pool.query(sqlPeriodo, [ultima.tipodesaprobado || 'D']);
+    let maxDias = 30;
+    if (resPeriodo.rows.length > 0) {
+        maxDias = Number(resPeriodo.rows[0].dias);
+    }
+
+    if (diffDays <= maxDias) {
+      activas.push({
+        concepto_key: concepto,
+        concepto_nombre: ultima.concepto_nombre || concepto,
+        dias_transcurridos: diffDays,
+        dias_restantes: maxDias - diffDays,
+        intentos_restantes: 3 - conteoReinspeccionesGratis,
+        nrodocumento: ultima.nrodocumentoinspeccion
+      });
+    }
+  }
+
+  return activas;
+};
+
 module.exports = {
   buscarInspecciones,
   consultarVehiculoYCajaService,
   buscarDescuentosService,
   consumirDescuentoService,
   consultarReinspeccionService,
-  consultarVehiculoRapido
+  consultarVehiculoRapido,
+  consultarReinspeccionesActivasService
 };
