@@ -467,7 +467,7 @@ const consumirDescuentoService = async ({ source_table, source_id }) => {
 };
 
 const consultarReinspeccionService = async (placa, concepto_key, planta_key) => {
-  // 1. Buscar el historial de inspecciones recientes de esa placa
+  // 1. Buscar el historial de inspecciones recientes de esa placa para ESE concepto
   const sqlHistorial = `
     SELECT i.nrodocumentoinspeccion, i.fechconsolidado, i.tipodesaprobado, i.resultado, i.inspeccionestado_key,
            c.conceptoinspeccion_key, c.formapago_key, c.importetotal, i.tipoautorizacion_key, i.tipocertificado_key, i.tipoinspeccion_key,
@@ -476,21 +476,22 @@ const consultarReinspeccionService = async (placa, concepto_key, planta_key) => 
     JOIN comprobante c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
     LEFT JOIN vehiculo v ON v.nromotor = i.vehiculo_nromotor
     WHERE c.placamotor = $1
+      AND c.conceptoinspeccion_key = $2
       AND i.fechconsolidado IS NOT NULL
       AND (i.inspeccionestado_key = 'CON' OR i.inspeccionestado_key IS NULL)
     ORDER BY i.fechconsolidado DESC
     LIMIT 10
   `;
-  const resultHistorial = await pool.query(sqlHistorial, [placa]);
+  const resultHistorial = await pool.query(sqlHistorial, [placa, concepto_key]);
 
   if (resultHistorial.rows.length === 0) {
-    return null; // No hay inspecciones previas
+    return null; // No hay inspecciones previas para ese concepto
   }
 
   const ultima = resultHistorial.rows[0];
   
-  // Si la ÚLTIMA inspección no fue 'Desaprobado' o NO coincide el concepto, entonces no aplica reinspección
-  if (ultima.resultado !== 'D' || ultima.conceptoinspeccion_key?.toString() !== concepto_key?.toString()) {
+  // Si la ÚLTIMA inspección de este concepto no fue 'Desaprobado', entonces no aplica reinspección
+  if (ultima.resultado !== 'D') {
     return null;
   }
 
