@@ -14,6 +14,8 @@ const guardarInspeccionTransaccion = async (reqBody) => {
     // 0. Eliminar el Borrador Temporal (si existe) para que no quede huérfano
     if (idBorrador) {
       await client.query('DELETE FROM borrador_estado WHERE inspeccion_id = $1', [idBorrador]);
+      // Remove circular reference before deleting
+      await client.query('UPDATE inspeccion SET comprobante_id = NULL WHERE nrodocumentoinspeccion = $1', [idBorrador]);
       await client.query('DELETE FROM comprobante WHERE inspeccion_nrodocumentoinspeccion = $1', [idBorrador]);
       await client.query('DELETE FROM inspeccion WHERE nrodocumentoinspeccion = $1', [idBorrador]);
     }
@@ -161,7 +163,7 @@ const guardarInspeccionTransaccion = async (reqBody) => {
         ]);
     }
 
-    const plantaKey = formCaja?.plantaKey || '201';
+    const plantaKey = reqBody.plantaKey || formCaja?.plantaKey || '201';
     
     // Bloquear y leer la serie de documentos
     const serieResult = await client.query("SELECT * FROM seriedocumentobase WHERE planta_key = $1 FOR UPDATE", [plantaKey]);
@@ -205,8 +207,8 @@ const guardarInspeccionTransaccion = async (reqBody) => {
       INSERT INTO inspeccion (
         nrodocumentoinspeccion, estado, fechcreacion, indicedesaprobado,
         tipoautorizacion_key, tipocertificado_key, tipoinspeccion_key, vehiculo_nromotor, ui_metadata, inspeccionestado_key,
-        nrodocumentoreinspeccion
-      ) VALUES ($1, true, NOW(), 0, $2, $3, $4, $5, $6, 'PROCESO', $7)
+        nrodocumentoreinspeccion, posicion
+      ) VALUES ($1, true, NOW(), 0, $2, $3, $4, $5, $6, 'PROCESO', $7, 5)
     `, [
       nroInspeccion,
       formCaja.tipoAutorizacion || null,

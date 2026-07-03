@@ -594,7 +594,7 @@ const consultarVehiculoYCaja = async (req, res) => {
     });
   } catch (error) {
     console.error('Error al consultar vehiculo/caja:', error);
-    if (error.message === 'PLACA DUPLICADA EN SISTEMA') {
+    if (error.message && error.message.includes('No puede haber duplicados')) {
       return res.status(400).json({ status: 'error', message: error.message });
     }
     res.status(500).json({ status: 'error', message: 'Error interno del servidor', error: error.message });

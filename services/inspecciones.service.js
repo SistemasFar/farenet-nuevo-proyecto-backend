@@ -178,22 +178,22 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey, categ
   }
   // ----------------------------------
 
-  // 1.5 Verificar placa duplicada en el día actual
-  const duplicadoRes = await pool.query(`
-    SELECT i.nrodocumentoinspeccion 
-    FROM inspeccion i
-    JOIN comprobante c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
-    JOIN linea l ON c.linea_key = l.key
-    WHERE c.placamotor = $1 
-      AND c.conceptoinspeccion_key = $2 
-      AND l.planta_key = $3
-      AND DATE(i.fechcreacion) = CURRENT_DATE
-      AND UPPER(COALESCE(i.inspeccionestado_key, '')) NOT IN ('ANULADO', 'RETIRADO')
-    LIMIT 1
-  `, [placa, concepto, plantaKey]);
+  // 1.5 Verificar placa duplicada en el día actual (EN CUALQUIER SEDE)
+    const duplicadoRes = await pool.query(`
+      SELECT pl.nombre as nombre_sede
+      FROM inspeccion i
+      JOIN comprobante c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
+      LEFT JOIN planta pl ON pl.key = SPLIT_PART(i.nrodocumentoinspeccion, '-', 2)
+      WHERE c.placamotor = $1 
+        AND c.conceptoinspeccion_key = $2 
+        AND DATE(i.fechcreacion) = CURRENT_DATE
+        AND UPPER(COALESCE(i.inspeccionestado_key, '')) NOT IN ('ANULADO', 'RETIRADO')
+      LIMIT 1
+    `, [placa, concepto]);
 
   if (duplicadoRes.rows.length > 0) {
-    throw new Error("PLACA DUPLICADA EN SISTEMA");
+    const sede = duplicadoRes.rows[0].nombre_sede || 'otra sede';
+    throw new Error(`Este vehículo está en proceso de inspección en la sede ${sede}. No puede haber duplicados.`);
   }
 
   // 2. Buscar Vehículo en BD Local
