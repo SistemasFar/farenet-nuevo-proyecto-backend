@@ -106,8 +106,8 @@ const guardarInspeccionTransaccion = async (reqBody) => {
           nromotor, nroplacaantigua, nroserie, aniofabricacion, longitud, ancho, alto, 
           nroejes, nroruedas, nroasientos, nropasajeros, nropuertas, pesoseco, pesobruto, cargautil,
           nrosoat, aseguradora_key, tipopoliza_key, combustible_key, carroceria_key, marca_key, modelo_key, 
-          vehiculoclase_key, estado, fechcreacion, distanciaeje1, distanciaeje2, distanciaeje3, distanciaeje4, kilometraje, tarjetapropiedad_id, fechiniciotarjetapropiedad, fechfintarjetapropiedad
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, true, NOW(), 0, 0, 0, 0, 0, $24, $25, $26)
+          vehiculoclase_key, color_key, estado, fechcreacion, distanciaeje1, distanciaeje2, distanciaeje3, distanciaeje4, kilometraje, tarjetapropiedad_id, fechiniciotarjetapropiedad, fechfintarjetapropiedad
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $27, true, NOW(), 0, 0, 0, 0, 0, $24, $25, $26)
       `, [
         nroMotorFinal,
         placaNueva,
@@ -132,10 +132,10 @@ const guardarInspeccionTransaccion = async (reqBody) => {
         formVehiculo.marca || null,
         formVehiculo.modelo || null,
         formVehiculo.clase || null,
-        formVehiculo.kilometraje || 0,
         tarjetaPropiedadId,
         formVehiculo.fechaEmisionSoat || null,
-        formVehiculo.fechaVencimientoSoat || null
+        formVehiculo.fechaVencimientoSoat || null,
+        formVehiculo.color || null
       ]);
     } else {
         await client.query(`
@@ -148,6 +148,25 @@ const guardarInspeccionTransaccion = async (reqBody) => {
             fechiniciotarjetapropiedad = COALESCE($7, fechiniciotarjetapropiedad),
             fechfintarjetapropiedad = COALESCE($8, fechfintarjetapropiedad),
             kilometraje = COALESCE($9, kilometraje),
+            marca_key = COALESCE($10, marca_key),
+            modelo_key = COALESCE($11, modelo_key),
+            vehiculoclase_key = COALESCE($12, vehiculoclase_key),
+            carroceria_key = COALESCE($13, carroceria_key),
+            combustible_key = COALESCE($14, combustible_key),
+            longitud = COALESCE($15, longitud),
+            ancho = COALESCE($16, ancho),
+            alto = COALESCE($17, alto),
+            nroejes = COALESCE($18, nroejes),
+            nroruedas = COALESCE($19, nroruedas),
+            nroasientos = COALESCE($20, nroasientos),
+            nropasajeros = COALESCE($21, nropasajeros),
+            nropuertas = COALESCE($22, nropuertas),
+            pesoseco = COALESCE($23, pesoseco),
+            pesobruto = COALESCE($24, pesobruto),
+            cargautil = COALESCE($25, cargautil),
+            aseguradora_key = COALESCE($26, aseguradora_key),
+            tipopoliza_key = COALESCE($27, tipopoliza_key),
+            color_key = COALESCE($28, color_key),
             fechmodi = NOW()
           WHERE nromotor = $1
         `, [
@@ -159,7 +178,26 @@ const guardarInspeccionTransaccion = async (reqBody) => {
           tarjetaPropiedadId,
           formVehiculo.fechaEmisionSoat || null,
           formVehiculo.fechaVencimientoSoat || null,
-          formVehiculo.kilometraje || null
+          formVehiculo.kilometraje || null,
+          formVehiculo.marca || null,
+          formVehiculo.modelo || null,
+          formVehiculo.clase || null,
+          formVehiculo.carroceria || null,
+          formVehiculo.combustible || null,
+          formVehiculo.longitud || null,
+          formVehiculo.ancho || null,
+          formVehiculo.altura || null,
+          formVehiculo.nroEjes || null,
+          formVehiculo.nroRuedas || null,
+          formVehiculo.nroAsientos || null,
+          formVehiculo.nroPasajeros || null,
+          formVehiculo.nroPuertas || null,
+          formVehiculo.pesoSeco || null,
+          formVehiculo.pesoBruto || null,
+          formVehiculo.cargaUtil || null,
+          formVehiculo.aseguradora || null,
+          formVehiculo.tipoPoliza || null,
+          formVehiculo.color || null
         ]);
     }
 
