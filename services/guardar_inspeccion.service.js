@@ -276,7 +276,7 @@ const guardarInspeccionTransaccion = async (reqBody) => {
       placaNueva,
       formFacturacion?.nroDocFac || null,
       formCaja.concepto,
-      formFacturacion?.linea || '1',
+      formVerificacion?.linea || null,
       formFacturacion?.tipoComprobante === 'FACTURA' ? '1' : '3', // 1=Factura, 3=Boleta
       precioTotal || 0,
       baseImponible,

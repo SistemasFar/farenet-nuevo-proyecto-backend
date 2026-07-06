@@ -5,8 +5,9 @@ const ESTADOS_PERMITIDOS = ['CON', 'ANULADO', 'RETIRADO', 'PROCESO'];
 
 const consultarVehiculoRapido = async (placa) => {
   const vehRes = await pool.query(`
-    SELECT categoria_key FROM vehiculo 
-    WHERE nromotor = $1 OR nroplacaantigua = $1 
+    SELECT v.categoria_key FROM vehiculo v
+    LEFT JOIN tarjetapropiedad tp ON v.tarjetapropiedad_id = tp.id
+    WHERE v.nromotor = $1 OR v.nroplacaantigua = $1 OR tp.nroplaca = $1
     LIMIT 1
   `, [placa]);
   
@@ -210,11 +211,19 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey, categ
            p.distrito_key as prop_dist,
            p.direccion as prop_dir,
            p.email as prop_email,
-           p.telefono as prop_tel
+           p.telefono as prop_tel,
+           m.nombre as marca_nombre,
+           mo.nombre as modelo_nombre,
+           co.nombre as color_nombre,
+           c.nombre as carroceria_nombre
     FROM vehiculo v
     LEFT JOIN tarjetapropiedad tp ON v.tarjetapropiedad_id = tp.id
     LEFT JOIN persona p ON tp.propietario_nrodocumentoidentidad = p.nrodocumentoidentidad
-    WHERE v.nromotor = $1 OR v.nroplacaantigua = $1 
+    LEFT JOIN marca m ON v.marca_key = m.key
+    LEFT JOIN modelo mo ON v.modelo_key = mo.key
+    LEFT JOIN color co ON v.color_key = co.key
+    LEFT JOIN carroceria c ON v.carroceria_key = c.key
+    WHERE v.nromotor = $1 OR v.nroplacaantigua = $1 OR tp.nroplaca = $1
     LIMIT 1
   `, [placa]);
 
@@ -224,20 +233,30 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey, categ
     
     // 3. Lógica de Reinspección (Mejorada: Reglas de 30 días, Mismo Concepto, 3 Oportunidades, Ignorar Anulados)
     const reinspeccionRes = await pool.query(`
-      SELECT i.inspeccionestado_key, i.fechcreacion, c.conceptoinspeccion_key, c.importetotal 
+      SELECT i.inspeccionestado_key, i.resultado, i.fechcreacion, c.conceptoinspeccion_key, c.importetotal 
       FROM inspeccion i
       JOIN comprobante c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
       WHERE c.placamotor = $1 
         AND i.fechcreacion >= CURRENT_DATE - INTERVAL '30 days'
-        AND UPPER(COALESCE(i.inspeccionestado_key, '')) NOT IN ('ANULADO', 'RETIRADO')
+        AND UPPER(COALESCE(i.inspeccionestado_key, '')) NOT IN ('ANULADO', 'RETIRADO', 'ANU')
       ORDER BY i.fechcreacion DESC 
     `, [placa]);
 
     if (reinspeccionRes.rows.length > 0) {
       const ultimaInsp = reinspeccionRes.rows[0];
       
+      console.log('--- REINSPECCION DEBUG ---');
+      console.log('Placa:', placa);
+      console.log('Concepto enviado por frontend (concepto_id):', concepto);
+      console.log('Concepto guardado en BD:', ultimaInsp.conceptoinspeccion_key);
+      console.log('Resultado en BD:', ultimaInsp.resultado);
+      console.log('Estado en BD:', ultimaInsp.inspeccionestado_key);
+      console.log('Match concepto:', ultimaInsp.conceptoinspeccion_key === concepto);
+      console.log('Match resultado:', ultimaInsp.resultado === 'D');
+      console.log('--------------------------');
+
       // Regla 1: Última inspección desaprobada y MISMO concepto
-      if (ultimaInsp.inspeccionestado_key === 'DESAPROBADO' && ultimaInsp.conceptoinspeccion_key === concepto) {
+      if (ultimaInsp.resultado === 'D' && ultimaInsp.conceptoinspeccion_key == concepto) {
         
         // Contar cuántas reinspecciones gratuitas ya tuvo en esta cadena de 30 días
         let conteoReinspeccionesGratis = 0;
@@ -245,7 +264,7 @@ const consultarVehiculoYCajaService = async ({ placa, concepto, plantaKey, categ
 
         for (let j = 0; j < reinspeccionRes.rows.length; j++) {
           const row = reinspeccionRes.rows[j];
-          if (row.conceptoinspeccion_key !== concepto) {
+          if (row.conceptoinspeccion_key != concepto) {
             break; // Rompe la cadena si hay otro concepto en medio
           }
           if (row.inspeccionestado_key === 'APROBADO') {
@@ -570,6 +589,47 @@ const consultarReinspeccionService = async (placa, concepto_key, planta_key) => 
       try { oldUiMetadata = typeof ultima.ui_metadata === 'string' ? JSON.parse(ultima.ui_metadata) : ultima.ui_metadata; } catch(e){}
     }
     
+    // Buscar vehiculo actual en BD para permitir correcciones manuales
+    let vehiculoActual = null;
+    try {
+      const vehRes = await pool.query(`
+        SELECT v.*, 
+               p.nrodocumentoidentidad as prop_nrodoc,
+               p.tipodocumentoidentidad_key as prop_tipodoc,
+               p.nombrerazonsocial as prop_razon,
+               p.nombres as prop_nombres,
+               p.apellidos as prop_apellidos,
+               p.pais_key as prop_pais,
+               p.departamento_key as prop_dep,
+               p.provincia_key as prop_prov,
+               p.distrito_key as prop_dist,
+               p.direccion as prop_dir,
+               p.email as prop_email,
+               p.telefono as prop_tel,
+               m.nombre as marca_nombre,
+               mo.nombre as modelo_nombre,
+               co.nombre as color_nombre,
+               ca.nombre as carroceria_nombre,
+               vc.nombre as clase_nombre
+        FROM vehiculo v
+        LEFT JOIN tarjetapropiedad tp ON v.tarjetapropiedad_id = tp.id
+        LEFT JOIN persona p ON tp.propietario_nrodocumentoidentidad = p.nrodocumentoidentidad
+        LEFT JOIN marca m ON v.marca_key = m.key
+        LEFT JOIN modelo mo ON v.modelo_key = mo.key
+        LEFT JOIN color co ON v.color_key = co.key
+        LEFT JOIN carroceria ca ON v.carroceria_key = ca.key
+        LEFT JOIN vehiculoclase vc ON v.vehiculoclase_key = vc.key
+        WHERE (v.nromotor = $1 OR v.nroplacaantigua = $1 OR tp.nroplaca = $1)
+        ORDER BY v.fechcreacion DESC NULLS LAST
+        LIMIT 1
+      `, [placa]);
+      if (vehRes.rows.length > 0) {
+        vehiculoActual = vehRes.rows[0];
+      }
+    } catch(e) {
+      console.error('Error fetching vehiculo for reinspeccion:', e);
+    }
+
     return {
       aplica: true,
       nrodocumentoreinspeccion: ultima.nrodocumentoinspeccion,
@@ -580,6 +640,7 @@ const consultarReinspeccionService = async (placa, concepto_key, planta_key) => 
       tipoinspeccion_key: ultima.tipoinspeccion_key,
       categoria_key: ultima.categoria_key,
       ui_metadata: oldUiMetadata,
+      vehiculo_actual: vehiculoActual,
       dias_transcurridos: diffDays,
       mensaje: `¡Aplica a Reinspección! Documento anterior: ${ultima.nrodocumentoinspeccion} de hace ${diffDays} días. Intento ${conteoReinspeccionesGratis + 1} de 3 (Te quedan ${diasRestantes} días) - ${regla.porcentajedescuento}% dscto`
     };

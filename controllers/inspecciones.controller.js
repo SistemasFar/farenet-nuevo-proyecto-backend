@@ -96,7 +96,9 @@ const guardarBorrador = async (req, res) => {
       
       const numResult = await pool.query(
         `SELECT COALESCE(MAX(SPLIT_PART(nrodocumentoinspeccion, '-', 3)::INTEGER), 0) + 1 AS next_num
-         FROM inspeccion WHERE SPLIT_PART(nrodocumentoinspeccion, '-', 2) = $1`,
+         FROM inspeccion 
+         WHERE SPLIT_PART(nrodocumentoinspeccion, '-', 2) = $1 
+           AND SPLIT_PART(nrodocumentoinspeccion, '-', 3) ~ '^[0-9]+$'`,
         [pKey]
       );
       
