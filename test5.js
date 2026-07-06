@@ -1,9 +1,1 @@
-const controller = require('./controllers/inspecciones.controller');
-const req = {
-  body: { placa: 'TEST01', concepto: '213', categoria: 'L1', tipoInspeccion: '3', tipoCertificado: '2', tipoAutorizacion: '6', plantaKey: '203' }
-};
-const res = {
-  status: function(code) { this.statusCode = code; return this; },
-  json: function(data) { console.log(JSON.stringify(data, null, 2)); process.exit(0); }
-};
-controller.consultarVehiculoYCaja(req, res);
+const db = require('./config/database'); db.query('SELECT c.nombre FROM descuentomasivocliente dmc JOIN descuentomasivodetalle dmd ON dmd.descuentomasivo_id = dmc.descuentomasivo_id JOIN conceptoinspeccion c ON c.key = dmd.conceptoinspeccion_key WHERE dmc.uuid = ''7KHUWP0CCR'' ').then(r => {console.log(r.rows); process.exit(0);});

@@ -418,7 +418,7 @@ async function buscarDescuentosService({ documento, concepto, placaContexto, sol
       FROM descuentocliente dc
       JOIN descuentodetalle dd ON dd.id = dc.descuentodetalle_id
       JOIN descuento d ON d.id = dd.descuento_id
-      WHERE ${vehicularWhere} AND (dd.conceptoinspeccion_key = $2 OR dd.conceptoinspeccion_key IS NULL OR dc.uuid = $1)
+      WHERE ${vehicularWhere} AND (dd.conceptoinspeccion_key = $2 OR dd.conceptoinspeccion_key IS NULL)
       AND d.estado = true AND dc.estado = true
       AND (d.fechinicio IS NULL OR CURRENT_TIMESTAMP >= d.fechinicio)
       AND (d.fechfin IS NULL OR CURRENT_TIMESTAMP <= d.fechfin)
@@ -441,7 +441,7 @@ async function buscarDescuentosService({ documento, concepto, placaContexto, sol
       FROM descuentomasivocliente dmc
       JOIN descuentomasivodetalle dmd ON dmd.descuentomasivo_id = dmc.descuentomasivo_id
       JOIN descuentomasivo dm ON dm.id = dmd.descuentomasivo_id
-      WHERE ${masivoVehicularWhere} AND (dmd.conceptoinspeccion_key = $2 OR dmd.conceptoinspeccion_key IS NULL OR dmc.uuid = $1)
+      WHERE ${masivoVehicularWhere} AND (dmd.conceptoinspeccion_key = $2 OR dmd.conceptoinspeccion_key IS NULL)
       AND dm.estado = true AND dmc.estado = true
       AND (dm.fechinicio IS NULL OR CURRENT_TIMESTAMP >= dm.fechinicio)
       AND (dm.fechfin IS NULL OR CURRENT_TIMESTAMP <= dm.fechfin)
