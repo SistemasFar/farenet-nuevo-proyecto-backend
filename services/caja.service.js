@@ -1,10 +1,9 @@
-const pool = require('../config/database');
+const cajaModel = require('../models/caja.model');
 
 const guardarCaja = async (dataCaja) => {
-  // Lógica para guardar la información de la caja (Paso 1)
+  // Lógica de negocio (Paso 1)
   console.log("Guardando datos de caja:", dataCaja);
-  // Por ahora, solo retornamos éxito simulado
-  return { status: 'success', message: 'Datos de caja procesados' };
+  return await cajaModel.guardarCaja(dataCaja);
 };
 
 module.exports = {

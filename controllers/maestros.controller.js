@@ -349,6 +349,45 @@ const obtenerLineasPorPlanta = async (req, res) => {
     }
 };
 
+const obtenerIngenieros = async (req, res) => {
+    try {
+        const { planta_key } = req.params;
+        
+        if (!planta_key) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Se requiere planta_key.'
+            });
+        }
+
+        // Query engineers assigned to this plant with role 'INGENIERO' or similar. 
+        // In Farenet legacy, they are users with a specific role.
+        const result = await db.query(
+            `SELECT u.username, u.nombres, u.apellidos 
+             FROM usuario u
+             JOIN rol r ON u.rol_key = r.key
+             JOIN usuario_planta up ON u.id = up.usuario_id
+             JOIN planta p ON up.plantas_key = p.key
+             WHERE p.key = $1 AND r.key = 'ING' AND u.estado = true`,
+            [planta_key]
+        );
+
+        return res.status(200).json({
+            status: 'success',
+            data: result.rows.map(row => ({
+                id: row.username,
+                nombre: `${row.nombres} ${row.apellidos}`.trim()
+            }))
+        });
+    } catch (error) {
+        console.error('Error al obtener ingenieros:', error);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Error interno del servidor al consultar ingenieros.'
+        });
+    }
+};
+
 module.exports = {
     obtenerMaestrosCaja,
     obtenerPrecioConcepto,
@@ -361,5 +400,6 @@ module.exports = {
     obtenerProvincias,
     obtenerDistritos,
     obtenerMaestrosVerificacion,
-    obtenerLineasPorPlanta
+    obtenerLineasPorPlanta,
+    obtenerIngenieros
 };
