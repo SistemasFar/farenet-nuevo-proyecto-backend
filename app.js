@@ -14,6 +14,7 @@ const authRoutes = require('./routes/auth.routes');
 const usuarioRoutes = require('./routes/usuario.routes');
 const operacionRoutes = require('./routes/operacion.routes');
 const inspeccionesRoutes = require('./routes/inspecciones.routes');
+const lineaRoutes = require('./routes/linea.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -366,6 +367,7 @@ app.use('/api/auditoria', auditoriaRoutes);
 app.use('/api/usuarios', usuarioRoutes);
 app.use('/api/operacion', operacionRoutes);
 app.use('/api/inspecciones', inspeccionesRoutes);
+app.use('/api/linea', lineaRoutes);
 const maestrosRoutes = require('./routes/maestros.routes');
 app.use('/api/maestros', maestrosRoutes);
 

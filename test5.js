@@ -1,1 +1,0 @@
-const db = require('./config/database'); db.query('SELECT c.nombre FROM descuentomasivocliente dmc JOIN descuentomasivodetalle dmd ON dmd.descuentomasivo_id = dmc.descuentomasivo_id JOIN conceptoinspeccion c ON c.key = dmd.conceptoinspeccion_key WHERE dmc.uuid = ''7KHUWP0CCR'' ').then(r => {console.log(r.rows); process.exit(0);});
