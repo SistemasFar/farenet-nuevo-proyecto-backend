@@ -24,6 +24,29 @@ class LineaController {
       res.status(500).json({ message: 'Error al guardar paso' });
     }
   }
+
+  async consolidar(req, res) {
+    try {
+      const { nroInspeccion } = req.params;
+      const payload = req.body;
+      const updated = await LineaService.consolidarInspeccion(nroInspeccion, payload);
+      res.json({ status: 'success', data: updated });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: error.message || 'Error al consolidar la inspección' });
+    }
+  }
+
+  async soporteAction(req, res) {
+    try {
+      const { nroInspeccion, accion } = req.params;
+      // Aquí se simularía la acción de soporte (Ej. Registro MTC)
+      res.json({ status: 'success', message: `Acción ${accion} ejecutada simuladamente para ${nroInspeccion}` });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: 'Error al ejecutar acción de soporte' });
+    }
+  }
 }
 
 module.exports = new LineaController();
