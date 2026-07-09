@@ -206,7 +206,7 @@ const guardarProceso = async (reqBody) => {
 
 
 
-    const inspExist = await client.query('SELECT nrodocumentoinspeccion, comprobante_id, inspeccionestado_key, posicion FROM inspeccion WHERE nrodocumentoinspeccion = $1', [nrodocumentoinspeccion]);
+    const inspExist = await client.query('SELECT nrodocumentoinspeccion, comprobante_id, inspeccionestado_key, posicion, fechaenlinea FROM inspeccion WHERE nrodocumentoinspeccion = $1', [nrodocumentoinspeccion]);
     
     let comprobanteId = inspExist.rows.length > 0 ? inspExist.rows[0].comprobante_id : null;
     const posicionBD = inspExist.rows.length > 0 ? parseInt(inspExist.rows[0].posicion || 0) : 0;
@@ -256,6 +256,12 @@ const guardarProceso = async (reqBody) => {
       posicionFinal = posicionBD;
     }
 
+    // Regla FINALIZAR -> GASES (posicion 5): setear fechaenlinea
+    let isPaseALinea = false;
+    if (posicionFinal >= 5 && posicionBD === 4) {
+      isPaseALinea = true;
+    }
+
     const nrodocumentoreinspeccion = formCaja?.nrodocumentoreinspeccion || null;
 
     if (inspExist.rows.length === 0) {
@@ -279,6 +285,7 @@ const guardarProceso = async (reqBody) => {
           vehiculo_nromotor = COALESCE($5, vehiculo_nromotor),
           nrodocumentoreinspeccion = COALESCE($6, nrodocumentoreinspeccion),
           posicion = COALESCE($7, posicion),
+          ${isPaseALinea ? "fechaenlinea = COALESCE(fechaenlinea, NOW())," : ""}
           fechmodi = NOW()
         WHERE nrodocumentoinspeccion = $1
       `, [
