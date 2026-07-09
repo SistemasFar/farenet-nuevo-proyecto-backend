@@ -41,7 +41,9 @@ const generarNroInspeccion = async (plantaKey) => {
 const guardarProceso = async (reqBody) => {
   const { 
     nrodocumentoinspeccion, // Enviado por el frontend (generado previamente)
-    posicion, // 0: CAJA, 1: PAGO, 2: VEHICULO, 3: CLIENTE, 4: VERIFICACION...
+    posicionActual, 
+    siguientePosicion,
+    posicion, // legacy support if some code still sends it
     formCaja, formVehiculo, formFacturacion, formVerificacion, pagosAgregados,
     documentoPago, isConsultado, precioSubtotal, descuento, precioTotal,
     plantaKey
@@ -49,6 +51,13 @@ const guardarProceso = async (reqBody) => {
 
   if (!nrodocumentoinspeccion) {
     throw new Error('nrodocumentoinspeccion es obligatorio para el guardado progresivo.');
+  }
+
+  const posicionActualReq = Number(posicionActual ?? posicion ?? 0);
+  const siguientePosicionReq = Number(siguientePosicion ?? posicionActualReq);
+
+  if (posicionActualReq === 0 && (!documentoPago || documentoPago === '' || documentoPago === 'Seleccione...')) {
+    throw new Error('Debe seleccionar el documento de pago antes de continuar.');
   }
 
   const client = await pool.connect();
@@ -78,15 +87,14 @@ const guardarProceso = async (reqBody) => {
         
         const checkPosResult = await client.query('SELECT posicion FROM inspeccion WHERE nrodocumentoinspeccion = $1', [nrodocumentoinspeccion]);
         const currentPos = checkPosResult.rows.length > 0 ? checkPosResult.rows[0].posicion : 0;
-        const reqPosicion = parseInt(posicion || 0);
 
         if (nuevoKm > 0) {
           if (nuevoKm < ultimoKmValido) {
             throw new Error(`El kilometraje ingresado (${nuevoKm}) debe ser mayor al último kilometraje válido registrado (${ultimoKmValido}).`);
           }
-          // Si son iguales, bloqueamos SOLO si estamos en el paso VEHÍCULO (reqPosicion === 2)
+          // Si son iguales, bloqueamos SOLO si estamos en el paso VEHÍCULO (posicionActualReq === 2)
           // y es la primera vez que se avanza desde este paso (currentPos < 2)
-          if (nuevoKm === ultimoKmValido && reqPosicion === 2 && currentPos < 2) {
+          if (nuevoKm === ultimoKmValido && posicionActualReq === 2 && currentPos < 2) {
             throw new Error(`El kilometraje ingresado (${nuevoKm}) debe ser mayor al último kilometraje válido registrado (${ultimoKmValido}).`);
           }
         }
@@ -198,9 +206,10 @@ const guardarProceso = async (reqBody) => {
 
 
 
-    const inspExist = await client.query('SELECT nrodocumentoinspeccion, comprobante_id, inspeccionestado_key FROM inspeccion WHERE nrodocumentoinspeccion = $1', [nrodocumentoinspeccion]);
+    const inspExist = await client.query('SELECT nrodocumentoinspeccion, comprobante_id, inspeccionestado_key, posicion FROM inspeccion WHERE nrodocumentoinspeccion = $1', [nrodocumentoinspeccion]);
     
     let comprobanteId = inspExist.rows.length > 0 ? inspExist.rows[0].comprobante_id : null;
+    const posicionBD = inspExist.rows.length > 0 ? parseInt(inspExist.rows[0].posicion || 0) : 0;
 
     let estadoAntes = null;
     if (inspExist.rows.length > 0) {
@@ -210,6 +219,41 @@ const guardarProceso = async (reqBody) => {
       }
     } else {
       estadoAntes = 'NO_EXISTIA';
+    }
+
+    // Validar el avance de posición
+    let posicionFinal = posicionBD;
+
+    console.log('[CHECK POSICION]', {
+      nrodocumentoinspeccion,
+      posicionBD,
+      posicionActualReq,
+      siguientePosicionReq
+    });
+    
+    if (posicionActualReq !== posicionBD) {
+      if (siguientePosicionReq === posicionBD) {
+        // Doble request de avance detectada, el paso ya estaba guardado
+        return {
+          ok: true,
+          message: "El paso ya estaba guardado.",
+          nrodocumentoinspeccion,
+          posicionAnterior: posicionBD,
+          posicionActual: posicionBD,
+          datosGuardados: true
+        };
+      }
+      throw new Error('La posición enviada no coincide con la posición actual de la inspección.');
+    }
+
+    if (siguientePosicionReq === posicionBD + 1) {
+      // Avance permitido
+      posicionFinal = siguientePosicionReq;
+    } else if (siguientePosicionReq > posicionBD + 1) {
+      throw new Error('Avance de posición no permitido. No se pueden saltar pasos.');
+    } else {
+      // Idempotencia o regresión (solo lectura/guardado parcial)
+      posicionFinal = posicionBD;
     }
 
     const nrodocumentoreinspeccion = formCaja?.nrodocumentoreinspeccion || null;
@@ -224,7 +268,7 @@ const guardarProceso = async (reqBody) => {
       `, [
         nrodocumentoinspeccion,
         formCaja?.tipoAutorizacion || null, formCaja?.tipoCertificado || null, formCaja?.tipoInspeccion || null,
-        nroMotorFinal, nrodocumentoreinspeccion, posicion || 0
+        nroMotorFinal, nrodocumentoreinspeccion, posicionFinal
       ]);
     } else {
       await client.query(`
@@ -240,14 +284,14 @@ const guardarProceso = async (reqBody) => {
       `, [
         nrodocumentoinspeccion,
         formCaja?.tipoAutorizacion || null, formCaja?.tipoCertificado || null, formCaja?.tipoInspeccion || null,
-        nroMotorFinal, nrodocumentoreinspeccion, posicion || 0
+        nroMotorFinal, nrodocumentoreinspeccion, posicionFinal
       ]);
     }
 
     try {
       const qDespues = await client.query('SELECT inspeccionestado_key FROM inspeccion WHERE nrodocumentoinspeccion = $1', [nrodocumentoinspeccion]);
       const estadoDespues = qDespues.rows.length > 0 ? qDespues.rows[0].inspeccionestado_key : 'NO_EXISTE';
-      console.log(`[DEBUG Node] endpoint: guardar-proceso (posicion ${posicion}) - params: nro=${nrodocumentoinspeccion}`);
+      console.log(`[DEBUG Node] endpoint: guardar-proceso (posicionActual: ${posicionActualReq}, siguiente: ${siguientePosicionReq}) - params: nro=${nrodocumentoinspeccion}`);
       console.log(`[DEBUG Node] -> Estado ANTES: ${estadoAntes}`);
       console.log(`[DEBUG Node] -> Estado DESPUES: ${estadoDespues}`);
     } catch(e){}
@@ -328,7 +372,15 @@ const guardarProceso = async (reqBody) => {
     }
 
     await client.query('COMMIT');
-    return { status: 'success', nrodocumentoinspeccion };
+    const result = { 
+      ok: true, 
+      nrodocumentoinspeccion,
+      posicionAnterior: posicionBD,
+      posicionActual: posicionFinal,
+      datosGuardados: true
+    };
+    console.log('[BACK guardarProceso result]', result);
+    return result;
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Error en guardarProceso:', error);
@@ -527,6 +579,8 @@ const obtenerProceso = async (nrodocumentoinspeccion) => {
     const precioSubtotal = comp ? comp.totalsindscto : 0;
     const descuento = comp ? comp.totaldscto : 0;
     const precioTotal = comp ? comp.importetotal : 0;
+    
+    const documentoPago = comp ? comp.tipodocumento_key : '';
 
     // Recuperar el kilometraje de la última inspección válida anterior
     if (ins.vehiculo_nromotor) {
@@ -558,7 +612,6 @@ const obtenerProceso = async (nrodocumentoinspeccion) => {
         isConsultado: true,
         puedeModificarFlujo1,
         debeAbrirFlujo2,
-        documentoPago: comp ? comp.nrocomprobante : null,
         formCaja,
         formVehiculo,
         formFacturacion,
@@ -567,8 +620,10 @@ const obtenerProceso = async (nrodocumentoinspeccion) => {
         precioSubtotal,
         descuento,
         precioTotal,
-        isConsultado: ins.posicion >= 1,
-        documentoPago: comp ? comp.tipodocumento_key : ''
+        documentoPago,
+        posicion: ins.posicion || 0,
+        estado: ins.inspeccionestado_key,
+        fechaenlinea: ins.fechaenlinea
       } 
     };
   } catch (error) {

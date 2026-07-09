@@ -102,7 +102,7 @@ const guardarProceso = async (req, res) => {
     res.json(resultado);
   } catch (error) {
     console.error('Error guardarProceso:', error);
-    res.status(500).json({ status: 'error', message: 'Error al guardar proceso de inspección', error: error.message });
+    res.status(200).json({ ok: false, message: error.message, status: 'error', posicionActual: req.body.posicionActual });
   }
 };
 
