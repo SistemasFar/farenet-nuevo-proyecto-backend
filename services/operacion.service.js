@@ -22,14 +22,13 @@ const listarInspecciones = async ({
 
   if (lineaKey && lineaKey.trim() !== '' && lineaKey.trim().toUpperCase() !== 'TODOS') {
     values.push(lineaKey.trim());
-    conditions.push(`l.key = $${values.length}`);
+    conditions.push(`(l.key = $${values.length} OR COALESCE(i.posicion, 0) <= 4)`);
   }
 
   if (placa && placa.trim() !== '') {
     values.push(`%${placa.trim().toUpperCase()}%`);
     conditions.push(`
-      UPPER(COALESCE(c.placamotor, ''))
-      LIKE $${values.length}
+      (UPPER(COALESCE(c.placamotor, '')) LIKE $${values.length} OR UPPER(COALESCE(i.vehiculo_nromotor, '')) LIKE $${values.length} OR COALESCE(i.posicion, 0) <= 4)
     `);
   }
 
@@ -48,27 +47,24 @@ const listarInspecciones = async ({
           COALESCE(p.nombres, '') || ' ' || COALESCE(p.apellidos, '')
         )
       ) LIKE $${values.length}
+      OR COALESCE(i.posicion, 0) <= 4
     )
   `);
   }
 
 
   if (estado && estado.trim() !== '') {
-    const estadoNormalizado =
-      estado.trim().toUpperCase() === 'EN_PROCESO'
-        ? 'PROCESO'
-        : estado.trim().toUpperCase();
-
-    values.push(estadoNormalizado);
-
-    conditions.push(`
-      UPPER(
-        COALESCE(
-          i.inspeccionestado_key,
-          ''
-        )
-      ) = $${values.length}
-    `);
+    let estadoNormalizado = estado.trim().toUpperCase();
+    if (estadoNormalizado === 'EN_PROCESO' || estadoNormalizado === 'PROCESO' || estadoNormalizado === 'PEN') {
+      conditions.push(`
+        UPPER(COALESCE(i.inspeccionestado_key, '')) IN ('PROCESO', 'PEN')
+      `);
+    } else {
+      values.push(estadoNormalizado);
+      conditions.push(`
+        UPPER(COALESCE(i.inspeccionestado_key, '')) = $${values.length}
+      `);
+    }
   } else {
     conditions.push(`
     UPPER(
@@ -76,7 +72,7 @@ const listarInspecciones = async ({
         i.inspeccionestado_key,
         ''
       )
-    ) = 'PROCESO'
+    ) IN ('PROCESO', 'PEN')
   `);
   }
 

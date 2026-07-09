@@ -48,29 +48,9 @@ const obtenerPermisosBasePorPerfil = async (perfilId) => {
         .filter(Boolean);
 };
 
-const obtenerOverridesUsuario = async (username, plantaKey = null) => {
-    const cleanUsername = normalizarTexto(username);
-    const cleanPlantaKey = plantaKey ? normalizarTexto(plantaKey) : null;
 
-    const query = `
-        SELECT 
-            TRIM(permiso_clave) AS permiso_clave,
-            concedido
-        FROM usuario_permiso_override
-        WHERE TRIM(usuario_username) = $1
-          AND (
-                planta_key IS NULL
-                OR TRIM(planta_key) = $2
-              )
-        ORDER BY creado_utc ASC
-    `;
 
-    const result = await db.query(query, [cleanUsername, cleanPlantaKey]);
-
-    return result.rows.filter((row) => row.permiso_clave);
-};
-
-const obtenerPermisosPorUsuario = async (username, plantaKey = null) => {
+const obtenerPermisosPorUsuario = async (username) => {
     const user = await obtenerUsuarioPorUsername(username);
 
     if (!user) {
@@ -78,19 +58,7 @@ const obtenerPermisosPorUsuario = async (username, plantaKey = null) => {
     }
 
     const permisosBase = await obtenerPermisosBasePorPerfil(user.perfil_id);
-    const permisosFinales = new Set(permisosBase);
-
-    const overrides = await obtenerOverridesUsuario(username, plantaKey);
-
-    overrides.forEach((override) => {
-        if (override.concedido === true) {
-            permisosFinales.add(override.permiso_clave);
-        } else {
-            permisosFinales.delete(override.permiso_clave);
-        }
-    });
-
-    return Array.from(permisosFinales).sort();
+    return permisosBase.sort();
 };
 
 const validarPassword = (passwordPlano, hashBD) => {
@@ -175,6 +143,5 @@ module.exports = {
     obtenerUsuarioPorUsername,
     obtenerPermisosPorUsuario,
     obtenerPermisosBasePorPerfil,
-    obtenerOverridesUsuario,
     actualizarContrasena
 };

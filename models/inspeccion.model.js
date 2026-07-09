@@ -79,7 +79,7 @@ const verificarPlacaDuplicada = async (placa, concepto) => {
     WHERE c.placamotor = $1 
       AND c.conceptoinspeccion_key = $2 
       AND DATE(i.fechcreacion) = CURRENT_DATE
-      AND UPPER(COALESCE(i.inspeccionestado_key, '')) NOT IN ('ANULADO', 'RETIRADO')
+      AND UPPER(COALESCE(i.inspeccionestado_key, '')) NOT IN ('ANULADO', 'RETIRADO', 'ANU')
     LIMIT 1
   `, [placa, concepto]);
   return duplicadoRes.rows.length > 0 ? duplicadoRes.rows[0] : null;

@@ -111,7 +111,7 @@ router.post('/cambiar-planta', authController.cambiarPlanta);
  * /auth/logout:
  * post:
  * summary: Cerrar sesión del operador (HU002)
- * description: Realiza el cierre lógico cambiando el estado de 'activo' a false en la tabla 'sesion_usuario'.
+ * description: Realiza el cierre lógico cambiando el estado de 'isactive' a false en la tabla 'usuario_sesion'.
  * requestBody:
  * required: true
  * content:

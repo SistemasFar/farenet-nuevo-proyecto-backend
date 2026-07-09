@@ -1,0 +1,1997 @@
+
+
+=== TABLAS CANDIDATAS ===
+[
+  {
+    "table_name": "alerta_inspeccion"
+  },
+  {
+    "table_name": "alerta_inspeccion_aud"
+  },
+  {
+    "table_name": "borrador_estado"
+  },
+  {
+    "table_name": "comprobanteestado"
+  },
+  {
+    "table_name": "conceptoinspeccion"
+  },
+  {
+    "table_name": "conceptoinspecciondetalle"
+  },
+  {
+    "table_name": "descuento_cliente_inspecciones"
+  },
+  {
+    "table_name": "descuento_masivo_cliente_inspecciones"
+  },
+  {
+    "table_name": "descuentocliente_inspecciones"
+  },
+  {
+    "table_name": "descuentomasivocliente_inspecciones"
+  },
+  {
+    "table_name": "etapa"
+  },
+  {
+    "table_name": "inspeccion"
+  },
+  {
+    "table_name": "inspeccion_aud"
+  },
+  {
+    "table_name": "inspeccionestado"
+  },
+  {
+    "table_name": "linea"
+  },
+  {
+    "table_name": "linea_estado"
+  },
+  {
+    "table_name": "linea_etapa"
+  },
+  {
+    "table_name": "linea_etapa_maquina"
+  },
+  {
+    "table_name": "lineascorporativa"
+  },
+  {
+    "table_name": "maquina"
+  },
+  {
+    "table_name": "maquina_aud"
+  },
+  {
+    "table_name": "maquina_maquina_parametros"
+  },
+  {
+    "table_name": "maquina_maquina_parametros_aud"
+  },
+  {
+    "table_name": "maquina_parametros"
+  },
+  {
+    "table_name": "maquina_parametros_aud"
+  },
+  {
+    "table_name": "periodoreinspeccion"
+  },
+  {
+    "table_name": "reglaalineacion"
+  },
+  {
+    "table_name": "resultado_maquina"
+  },
+  {
+    "table_name": "resultado_maquina_aud"
+  },
+  {
+    "table_name": "resultado_maquina_defecto"
+  },
+  {
+    "table_name": "resultado_maquina_defectos"
+  },
+  {
+    "table_name": "tinspeccion"
+  },
+  {
+    "table_name": "tipoinspeccion"
+  },
+  {
+    "table_name": "tipomaquina"
+  },
+  {
+    "table_name": "tmp_inspeccion"
+  }
+]
+
+=== COLUMNAS CANDIDATAS ===
+[
+  {
+    "table_name": "alerta_inspeccion",
+    "column_name": "id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "alerta_inspeccion",
+    "column_name": "certificado_gas",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "alerta_inspeccion",
+    "column_name": "conversion_gas",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "alerta_inspeccion_aud",
+    "column_name": "id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "alerta_inspeccion_aud",
+    "column_name": "rev",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "alerta_inspeccion_aud",
+    "column_name": "revtype",
+    "data_type": "smallint"
+  },
+  {
+    "table_name": "alerta_inspeccion_aud",
+    "column_name": "certificado_gas",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "alerta_inspeccion_aud",
+    "column_name": "conversion_gas",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "borrador_estado",
+    "column_name": "inspeccion_id",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "borrador_estado",
+    "column_name": "estado_json",
+    "data_type": "text"
+  },
+  {
+    "table_name": "comprobanteestado",
+    "column_name": "key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "comprobanteestado",
+    "column_name": "nombre",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "conceptoinspeccion",
+    "column_name": "key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "conceptoinspeccion",
+    "column_name": "abreviatura",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "conceptoinspeccion",
+    "column_name": "nombre",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "conceptoinspeccion",
+    "column_name": "pasaporlinea",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "conceptoinspeccion",
+    "column_name": "estado",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "conceptoinspeccion",
+    "column_name": "fechcreacion",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "conceptoinspeccion",
+    "column_name": "fechmodi",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "conceptoinspeccion",
+    "column_name": "usuariocreacion_username",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "conceptoinspeccion",
+    "column_name": "usuariomodi_id",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "conceptoinspeccion",
+    "column_name": "solofotos",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "conceptoinspecciondetalle",
+    "column_name": "id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "conceptoinspecciondetalle",
+    "column_name": "valor",
+    "data_type": "double precision"
+  },
+  {
+    "table_name": "conceptoinspecciondetalle",
+    "column_name": "conceptoinspeccion_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "conceptoinspecciondetalle",
+    "column_name": "planta_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "descuento_cliente_inspecciones",
+    "column_name": "descuento_cliente_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "descuento_cliente_inspecciones",
+    "column_name": "inspecciones",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "descuento_masivo_cliente_inspecciones",
+    "column_name": "descuento_masivo_cliente_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "descuento_masivo_cliente_inspecciones",
+    "column_name": "inspecciones",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "descuentocliente_inspecciones",
+    "column_name": "descuentocliente_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "descuentocliente_inspecciones",
+    "column_name": "inspecciones",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "descuentomasivocliente_inspecciones",
+    "column_name": "descuentomasivocliente_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "descuentomasivocliente_inspecciones",
+    "column_name": "inspecciones",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "etapa",
+    "column_name": "key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "etapa",
+    "column_name": "nombre",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "nrodocumentoinspeccion",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "estado",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "fechcreacion",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "fechmodi",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "fechaenlinea",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "fechanulacion",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "fechconsolidado",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "fechvencimiento",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "indicedesaprobado",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "nrodocumentoinforme",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "observacion",
+    "data_type": "text"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "observacionretirado",
+    "data_type": "text"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "resultado",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "tipodesaprobado",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "vigencia",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "usuariocreacion_username",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "usuariomodi_id",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "comprobante_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "inspeccionestado_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "tipoautorizacion_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "tipocertificado_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "tipoinspeccion_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "usuarioanulacion_username",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "usuariocaja_username",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "usuarioconsolidado_username",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "usuarioingcertificador_username",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "observacionanulado",
+    "data_type": "text"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "posicion",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "fechiniciovigencia",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "nrodocumentoreinspeccion",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "vehiculo_nromotor",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "tipoerror",
+    "data_type": "text"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "nps",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "g_conformidad",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "fe_conformidad",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "alerta_inspeccion_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "o_conversion",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "inspeccion",
+    "column_name": "ui_metadata",
+    "data_type": "jsonb"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "nrodocumentoinspeccion",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "rev",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "revtype",
+    "data_type": "smallint"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "fechaenlinea",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "fechanulacion",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "fechconsolidado",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "fechiniciovigencia",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "fechvencimiento",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "indicedesaprobado",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "inspeccionparaanularduplicado",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "nrodocumentoinforme",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "nrodocumentomtc",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "nrodocumentoreinspeccion",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "observacion",
+    "data_type": "text"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "observacionanulado",
+    "data_type": "text"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "observacionretirado",
+    "data_type": "text"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "posicion",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "resultado",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "tipodesaprobado",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "vigencia",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "vehiculo_nromotor",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "inspeccionestado_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "tipoautorizacion_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "tipoformato_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "tipoinspeccion_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "usuariocaja_username",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "usuarioconsolidado_username",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "usuarioingcertificador_username",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "tipocertificado_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "usuarioanulacion_username",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "tipoerror",
+    "data_type": "text"
+  },
+  {
+    "table_name": "inspeccion_aud",
+    "column_name": "indice_desaprobado",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "inspeccionestado",
+    "column_name": "key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "inspeccionestado",
+    "column_name": "nombre",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "linea",
+    "column_name": "key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "linea",
+    "column_name": "nombre",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "linea",
+    "column_name": "tipo",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "linea",
+    "column_name": "planta_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "linea_estado",
+    "column_name": "linea_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "linea_estado",
+    "column_name": "planta_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "linea_estado",
+    "column_name": "estado",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "linea_etapa",
+    "column_name": "id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "linea_etapa",
+    "column_name": "pc_cod",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "linea_etapa",
+    "column_name": "etapa_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "linea_etapa",
+    "column_name": "linea_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "linea_etapa_maquina",
+    "column_name": "linea_etapa_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "linea_etapa_maquina",
+    "column_name": "maquinas_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "lineascorporativa",
+    "column_name": "id",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "lineascorporativa",
+    "column_name": "num_telefono",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "lineascorporativa",
+    "column_name": "pers_asignado",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "lineascorporativa",
+    "column_name": "puesto",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina",
+    "column_name": "id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "maquina",
+    "column_name": "descripcion",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina",
+    "column_name": "generaarchivo",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "maquina",
+    "column_name": "modelo",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina",
+    "column_name": "nombreequipo",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina",
+    "column_name": "serie",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina",
+    "column_name": "linea_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina",
+    "column_name": "tipomaquina_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina_aud",
+    "column_name": "id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "maquina_aud",
+    "column_name": "rev",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "maquina_aud",
+    "column_name": "revtype",
+    "data_type": "smallint"
+  },
+  {
+    "table_name": "maquina_aud",
+    "column_name": "descripcion",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina_aud",
+    "column_name": "generaarchivo",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "maquina_aud",
+    "column_name": "modelo",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina_aud",
+    "column_name": "nombreequipo",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina_aud",
+    "column_name": "serie",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina_aud",
+    "column_name": "linea_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina_aud",
+    "column_name": "tipomaquina_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina_maquina_parametros",
+    "column_name": "maquina_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "maquina_maquina_parametros",
+    "column_name": "parametros_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "maquina_maquina_parametros_aud",
+    "column_name": "rev",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "maquina_maquina_parametros_aud",
+    "column_name": "maquina_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "maquina_maquina_parametros_aud",
+    "column_name": "parametros_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "maquina_maquina_parametros_aud",
+    "column_name": "revtype",
+    "data_type": "smallint"
+  },
+  {
+    "table_name": "maquina_parametros",
+    "column_name": "id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "maquina_parametros",
+    "column_name": "key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina_parametros",
+    "column_name": "value",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "maquina_parametros_aud",
+    "column_name": "rev",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "maquina_parametros_aud",
+    "column_name": "maquina_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "maquina_parametros_aud",
+    "column_name": "parametros_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "maquina_parametros_aud",
+    "column_name": "revtype",
+    "data_type": "smallint"
+  },
+  {
+    "table_name": "periodoreinspeccion",
+    "column_name": "id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "periodoreinspeccion",
+    "column_name": "porcentajedescuento",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "periodoreinspeccion",
+    "column_name": "tieneporcentajedescuento",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "periodoreinspeccion",
+    "column_name": "tipodesaprobado",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "periodoreinspeccion",
+    "column_name": "planta_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "periodoreinspeccion",
+    "column_name": "dias",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "reglaalineacion",
+    "column_name": "id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "reglaalineacion",
+    "column_name": "condicion1",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "reglaalineacion",
+    "column_name": "condicion2",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "reglaalineacion",
+    "column_name": "estado",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "reglaalineacion",
+    "column_name": "valor1",
+    "data_type": "real"
+  },
+  {
+    "table_name": "reglaalineacion",
+    "column_name": "valor1f",
+    "data_type": "real"
+  },
+  {
+    "table_name": "reglaalineacion",
+    "column_name": "valor2",
+    "data_type": "real"
+  },
+  {
+    "table_name": "reglaalineacion",
+    "column_name": "valor2f",
+    "data_type": "real"
+  },
+  {
+    "table_name": "reglaalineacion",
+    "column_name": "norma_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "estado",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "fechcreacion",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "fechmodi",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "data",
+    "data_type": "json"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "f",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "fechafin",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "fechainicio",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "foto",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "insp_visual",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "manual",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "postdata",
+    "data_type": "json"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "resultado",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "usuariocreacion_username",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "usuariomodi_id",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "maquina_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "resultado_maquina",
+    "column_name": "inspeccion_nrodocumentoinspeccion",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "resultado_maquina_aud",
+    "column_name": "id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "resultado_maquina_aud",
+    "column_name": "rev",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "resultado_maquina_aud",
+    "column_name": "revtype",
+    "data_type": "smallint"
+  },
+  {
+    "table_name": "resultado_maquina_aud",
+    "column_name": "data",
+    "data_type": "json"
+  },
+  {
+    "table_name": "resultado_maquina_aud",
+    "column_name": "fechafin",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "resultado_maquina_aud",
+    "column_name": "fechainicio",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "resultado_maquina_aud",
+    "column_name": "insp_visual",
+    "data_type": "integer"
+  },
+  {
+    "table_name": "resultado_maquina_aud",
+    "column_name": "manual",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "resultado_maquina_aud",
+    "column_name": "postdata",
+    "data_type": "json"
+  },
+  {
+    "table_name": "resultado_maquina_aud",
+    "column_name": "resultado",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "resultado_maquina_aud",
+    "column_name": "maquina_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "resultado_maquina_aud",
+    "column_name": "inspeccion_nrodocumentoinspeccion",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "resultado_maquina_defecto",
+    "column_name": "resultado_maquina_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "resultado_maquina_defecto",
+    "column_name": "defectos_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "resultado_maquina_defectos",
+    "column_name": "resultado_maquina_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "resultado_maquina_defectos",
+    "column_name": "defectos_id",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "tinspeccion",
+    "column_name": "fechaenlinea",
+    "data_type": "text"
+  },
+  {
+    "table_name": "tinspeccion",
+    "column_name": "placa",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tinspeccion",
+    "column_name": "fechapago",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "tinspeccion",
+    "column_name": "fechaconsolidado",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "tinspeccion",
+    "column_name": "diafpago",
+    "data_type": "double precision"
+  },
+  {
+    "table_name": "tinspeccion",
+    "column_name": "mesfpago",
+    "data_type": "double precision"
+  },
+  {
+    "table_name": "tinspeccion",
+    "column_name": "anofpago",
+    "data_type": "double precision"
+  },
+  {
+    "table_name": "tinspeccion",
+    "column_name": "planta",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tinspeccion",
+    "column_name": "linea",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tinspeccion",
+    "column_name": "cel",
+    "data_type": "text"
+  },
+  {
+    "table_name": "tinspeccion",
+    "column_name": "cajero",
+    "data_type": "text"
+  },
+  {
+    "table_name": "tinspeccion",
+    "column_name": "certificador",
+    "data_type": "text"
+  },
+  {
+    "table_name": "tinspeccion",
+    "column_name": "ingeniero",
+    "data_type": "text"
+  },
+  {
+    "table_name": "tinspeccion",
+    "column_name": "codigo",
+    "data_type": "text"
+  },
+  {
+    "table_name": "tipoinspeccion",
+    "column_name": "key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tipoinspeccion",
+    "column_name": "codigosunat",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tipoinspeccion",
+    "column_name": "nombre",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tipoinspeccion",
+    "column_name": "keymtc",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tipomaquina",
+    "column_name": "key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tipomaquina",
+    "column_name": "descripcion",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tipomaquina",
+    "column_name": "isfoto",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "tmp_inspeccion",
+    "column_name": "id",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tmp_inspeccion",
+    "column_name": "dniruc",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tmp_inspeccion",
+    "column_name": "fechavencimiento",
+    "data_type": "timestamp without time zone"
+  },
+  {
+    "table_name": "tmp_inspeccion",
+    "column_name": "placa",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tmp_inspeccion",
+    "column_name": "conceptoinspeccion_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tmp_inspeccion",
+    "column_name": "planta_key",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tmp_inspeccion",
+    "column_name": "aniofabricacion",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tmp_inspeccion",
+    "column_name": "kilometraje",
+    "data_type": "bigint"
+  },
+  {
+    "table_name": "tmp_inspeccion",
+    "column_name": "marca",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tmp_inspeccion",
+    "column_name": "modelo",
+    "data_type": "character varying"
+  },
+  {
+    "table_name": "tmp_inspeccion",
+    "column_name": "fechaultimainspeccion",
+    "data_type": "timestamp without time zone"
+  }
+]
+
+=== linea_etapa DATA ===
+[
+  {
+    "id": "263303",
+    "pc_cod": "GASES01",
+    "etapa_key": "gases",
+    "linea_key": "L1_JICAMARCA_PJICAMARCA"
+  },
+  {
+    "id": "263304",
+    "pc_cod": "LUCES01",
+    "etapa_key": "luces",
+    "linea_key": "L1_JICAMARCA_PJICAMARCA"
+  },
+  {
+    "id": "263305",
+    "pc_cod": "SUSPENSION01",
+    "etapa_key": "suspencion",
+    "linea_key": "L1_JICAMARCA_PJICAMARCA"
+  },
+  {
+    "id": "263306",
+    "pc_cod": "FRENOS01",
+    "etapa_key": "frenos",
+    "linea_key": "L1_JICAMARCA_PJICAMARCA"
+  },
+  {
+    "id": "263307",
+    "pc_cod": "GASES01",
+    "etapa_key": "gases",
+    "linea_key": "L1_MIXTA_PCHORILLOS"
+  },
+  {
+    "id": "263308",
+    "pc_cod": "LUCES01",
+    "etapa_key": "luces",
+    "linea_key": "L1_MIXTA_PCHORILLOS"
+  },
+  {
+    "id": "263309",
+    "pc_cod": "SUSPENSION01",
+    "etapa_key": "suspencion",
+    "linea_key": "L1_MIXTA_PCHORILLOS"
+  },
+  {
+    "id": "263310",
+    "pc_cod": "FRENOS01",
+    "etapa_key": "frenos",
+    "linea_key": "L1_MIXTA_PCHORILLOS"
+  },
+  {
+    "id": "263311",
+    "pc_cod": "GASES02",
+    "etapa_key": "gases",
+    "linea_key": "L2_COMBINADA_PCHORILLOS"
+  },
+  {
+    "id": "263312",
+    "pc_cod": "LUCES02",
+    "etapa_key": "luces",
+    "linea_key": "L2_COMBINADA_PCHORILLOS"
+  },
+  {
+    "id": "263313",
+    "pc_cod": "TESTLINE02",
+    "etapa_key": "testline",
+    "linea_key": "L2_COMBINADA_PCHORILLOS"
+  },
+  {
+    "id": "263314",
+    "pc_cod": "GASES01",
+    "etapa_key": "gases",
+    "linea_key": "L1_MIXTA_PSJL"
+  },
+  {
+    "id": "263315",
+    "pc_cod": "LUCES01",
+    "etapa_key": "luces",
+    "linea_key": "L1_MIXTA_PSJL"
+  },
+  {
+    "id": "263316",
+    "pc_cod": "SUSPENSION01",
+    "etapa_key": "suspencion",
+    "linea_key": "L1_MIXTA_PSJL"
+  },
+  {
+    "id": "263317",
+    "pc_cod": "FRENOS01",
+    "etapa_key": "frenos",
+    "linea_key": "L1_MIXTA_PSJL"
+  },
+  {
+    "id": "263318",
+    "pc_cod": "GASES02",
+    "etapa_key": "gases",
+    "linea_key": "L2_COMBINADA_PSJL"
+  },
+  {
+    "id": "263319",
+    "pc_cod": "LUCES02",
+    "etapa_key": "luces",
+    "linea_key": "L2_COMBINADA_PSJL"
+  },
+  {
+    "id": "263320",
+    "pc_cod": "TESTLINE02",
+    "etapa_key": "testline",
+    "linea_key": "L2_COMBINADA_PSJL"
+  },
+  {
+    "id": "263331",
+    "pc_cod": "GASES04",
+    "etapa_key": "gases",
+    "linea_key": "L4_COMBINADAS_PSURCO"
+  },
+  {
+    "id": "263280",
+    "pc_cod": "LUCES02",
+    "etapa_key": "luces",
+    "linea_key": "L2_LIVIANOS_PVICTORIA"
+  },
+  {
+    "id": "263279",
+    "pc_cod": "GASES02",
+    "etapa_key": "gases",
+    "linea_key": "L2_LIVIANOS_PVICTORIA"
+  },
+  {
+    "id": "263281",
+    "pc_cod": "TESTLINE02",
+    "etapa_key": "testline",
+    "linea_key": "L2_LIVIANOS_PVICTORIA"
+  },
+  {
+    "id": "263283",
+    "pc_cod": "LUCES01",
+    "etapa_key": "luces",
+    "linea_key": "L1_MIXTA_PVICTORIA"
+  },
+  {
+    "id": "263284",
+    "pc_cod": "SUSPENSION01",
+    "etapa_key": "suspencion",
+    "linea_key": "L1_MIXTA_PVICTORIA"
+  },
+  {
+    "id": "263285",
+    "pc_cod": "FRENOS01",
+    "etapa_key": "frenos",
+    "linea_key": "L1_MIXTA_PVICTORIA"
+  },
+  {
+    "id": "263282",
+    "pc_cod": "GASES01",
+    "etapa_key": "gases",
+    "linea_key": "L1_MIXTA_PVICTORIA"
+  },
+  {
+    "id": "137719",
+    "pc_cod": "FRENOS01",
+    "etapa_key": "frenos",
+    "linea_key": "L1_PESADOS_PARG"
+  },
+  {
+    "id": "137717",
+    "pc_cod": "LUCES01",
+    "etapa_key": "luces",
+    "linea_key": "L1_PESADOS_PARG"
+  },
+  {
+    "id": "137716",
+    "pc_cod": "GASES01",
+    "etapa_key": "gases",
+    "linea_key": "L1_PESADOS_PARG"
+  },
+  {
+    "id": "137718",
+    "pc_cod": "SUSPENSION01",
+    "etapa_key": "suspencion",
+    "linea_key": "L1_PESADOS_PARG"
+  },
+  {
+    "id": "238107",
+    "pc_cod": "GASES01",
+    "etapa_key": "gases",
+    "linea_key": "L1_LIVIANOS_PCOLINA"
+  },
+  {
+    "id": "238108",
+    "pc_cod": "LUCES01",
+    "etapa_key": "luces",
+    "linea_key": "L1_LIVIANOS_PCOLINA"
+  },
+  {
+    "id": "238109",
+    "pc_cod": "TESTLINE01",
+    "etapa_key": "testline",
+    "linea_key": "L1_LIVIANOS_PCOLINA"
+  },
+  {
+    "id": "238110",
+    "pc_cod": "GASES02",
+    "etapa_key": "gases",
+    "linea_key": "L2_LIVIANOS_PCOLINA"
+  },
+  {
+    "id": "238111",
+    "pc_cod": "LUCES02",
+    "etapa_key": "luces",
+    "linea_key": "L2_LIVIANOS_PCOLINA"
+  },
+  {
+    "id": "238112",
+    "pc_cod": "TESTLINE02",
+    "etapa_key": "testline",
+    "linea_key": "L2_LIVIANOS_PCOLINA"
+  },
+  {
+    "id": "238113",
+    "pc_cod": "GASES03",
+    "etapa_key": "gases",
+    "linea_key": "L3_LIVIANOS_PCOLINA"
+  },
+  {
+    "id": "238114",
+    "pc_cod": "LUCES03",
+    "etapa_key": "luces",
+    "linea_key": "L3_LIVIANOS_PCOLINA"
+  },
+  {
+    "id": "238115",
+    "pc_cod": "TESTLINE03",
+    "etapa_key": "testline",
+    "linea_key": "L3_LIVIANOS_PCOLINA"
+  },
+  {
+    "id": "263332",
+    "pc_cod": "LUCES04",
+    "etapa_key": "luces",
+    "linea_key": "L4_COMBINADAS_PSURCO"
+  },
+  {
+    "id": "263334",
+    "pc_cod": "GASES03",
+    "etapa_key": "gases",
+    "linea_key": "L3_COMBINADA_PVICTORIA"
+  },
+  {
+    "id": "263335",
+    "pc_cod": "LUCES03",
+    "etapa_key": "luces",
+    "linea_key": "L3_COMBINADA_PVICTORIA"
+  },
+  {
+    "id": "263336",
+    "pc_cod": "TESTLINE03",
+    "etapa_key": "testline",
+    "linea_key": "L3_COMBINADA_PVICTORIA"
+  },
+  {
+    "id": "263296",
+    "pc_cod": "GASES01",
+    "etapa_key": "gases",
+    "linea_key": "L1_MIXTA_PTRENEMAN"
+  },
+  {
+    "id": "263297",
+    "pc_cod": "LUCES01",
+    "etapa_key": "luces",
+    "linea_key": "L1_MIXTA_PTRENEMAN"
+  },
+  {
+    "id": "263298",
+    "pc_cod": "SUSPENSION01",
+    "etapa_key": "suspencion",
+    "linea_key": "L1_MIXTA_PTRENEMAN"
+  },
+  {
+    "id": "263299",
+    "pc_cod": "FRENOS01",
+    "etapa_key": "frenos",
+    "linea_key": "L1_MIXTA_PTRENEMAN"
+  },
+  {
+    "id": "263300",
+    "pc_cod": "GASES02",
+    "etapa_key": "gases",
+    "linea_key": "L2_COMBINADA_PTRENEMAN"
+  },
+  {
+    "id": "263301",
+    "pc_cod": "LUCES02",
+    "etapa_key": "luces",
+    "linea_key": "L2_COMBINADA_PTRENEMAN"
+  },
+  {
+    "id": "263302",
+    "pc_cod": "TESTLINE02",
+    "etapa_key": "testline",
+    "linea_key": "L2_COMBINADA_PTRENEMAN"
+  }
+]
+
+=== linea_etapa COLUMNS ===
+[
+  {
+    "column_name": "id",
+    "data_type": "bigint"
+  },
+  {
+    "column_name": "pc_cod",
+    "data_type": "character varying"
+  },
+  {
+    "column_name": "etapa_key",
+    "data_type": "character varying"
+  },
+  {
+    "column_name": "linea_key",
+    "data_type": "character varying"
+  }
+]
+
+=== ETAPA TABLE ===
+[
+  {
+    "key": "gases",
+    "nombre": "GASES"
+  },
+  {
+    "key": "luces",
+    "nombre": "LUCES"
+  },
+  {
+    "key": "suspencion",
+    "nombre": "SUSPENCION"
+  },
+  {
+    "key": "frenos",
+    "nombre": "FRENOS"
+  },
+  {
+    "key": "testline",
+    "nombre": "TEST LINE"
+  }
+]
+
+=== AGRUPACION LEGACY ===
+[
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "1",
+    "categoria_key": "10",
+    "combustible_key": "2",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "7"
+  },
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "2",
+    "categoria_key": "1",
+    "combustible_key": "2",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "6"
+  },
+  {
+    "tipoinspeccion_key": "7",
+    "conceptoinspeccion_key": "30",
+    "categoria_key": "1",
+    "combustible_key": "2",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 5,
+    "cantidad": "3"
+  },
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "1",
+    "categoria_key": "10",
+    "combustible_key": "2",
+    "linea_key": "L1_MIXTA_PVICTORIABR",
+    "planta_key_doc": "100",
+    "posicion": 5,
+    "cantidad": "2"
+  },
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "2",
+    "categoria_key": "228952953",
+    "combustible_key": "35",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "2"
+  },
+  {
+    "tipoinspeccion_key": "2",
+    "conceptoinspeccion_key": "3",
+    "categoria_key": "1",
+    "combustible_key": "35",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "2"
+  },
+  {
+    "tipoinspeccion_key": "2",
+    "conceptoinspeccion_key": "3",
+    "categoria_key": "1",
+    "combustible_key": "36",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "2"
+  },
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "2",
+    "categoria_key": "1",
+    "combustible_key": "2",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 12,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "2",
+    "categoria_key": "1",
+    "combustible_key": "2",
+    "linea_key": "L1_MIXTA_PVICTORIABR",
+    "planta_key_doc": "100",
+    "posicion": 7,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "2",
+    "categoria_key": "1",
+    "combustible_key": "35",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "2",
+    "categoria_key": "1",
+    "combustible_key": "35",
+    "linea_key": "L1_MIXTA_PTRENEMAN",
+    "planta_key_doc": "133",
+    "posicion": 13,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "2",
+    "conceptoinspeccion_key": "23",
+    "categoria_key": "11",
+    "combustible_key": "35",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "2",
+    "conceptoinspeccion_key": "23",
+    "categoria_key": "11",
+    "combustible_key": "5",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "2",
+    "conceptoinspeccion_key": "3",
+    "categoria_key": "1",
+    "combustible_key": "35",
+    "linea_key": "L1_MIXTA_PATE",
+    "planta_key_doc": "140",
+    "posicion": 5,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "2",
+    "conceptoinspeccion_key": "31",
+    "categoria_key": "4",
+    "combustible_key": "5",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "2",
+    "conceptoinspeccion_key": "34",
+    "categoria_key": "4",
+    "combustible_key": "5",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "2",
+    "conceptoinspeccion_key": "77",
+    "categoria_key": "9",
+    "combustible_key": "5",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "2",
+    "conceptoinspeccion_key": "77",
+    "categoria_key": "9",
+    "combustible_key": "5",
+    "linea_key": "L1_MIXTA_PSJL",
+    "planta_key_doc": "138",
+    "posicion": 12,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "2",
+    "conceptoinspeccion_key": "9",
+    "categoria_key": "omnibus",
+    "combustible_key": "5",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "1",
+    "categoria_key": "1",
+    "combustible_key": "2",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "7",
+    "conceptoinspeccion_key": "43",
+    "categoria_key": "9",
+    "combustible_key": "5",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "1",
+    "categoria_key": "10",
+    "combustible_key": "2",
+    "linea_key": "L1_COMBINADA_PSURQUILLO",
+    "planta_key_doc": "160",
+    "posicion": 9,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "1",
+    "categoria_key": "10",
+    "combustible_key": "2",
+    "linea_key": "L1_COMBINADA_SANMIGUEL",
+    "planta_key_doc": "102",
+    "posicion": 7,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "1",
+    "categoria_key": "10",
+    "combustible_key": "36",
+    "linea_key": "L1_COMBINADA_SANMIGUEL",
+    "planta_key_doc": "102",
+    "posicion": 5,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "1",
+    "categoria_key": "10",
+    "combustible_key": "36",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "1",
+    "categoria_key": "228952953",
+    "combustible_key": "36",
+    "linea_key": "L1_MIXTA_PINDEPENDENCIA",
+    "planta_key_doc": "201",
+    "posicion": 8,
+    "cantidad": "1"
+  },
+  {
+    "tipoinspeccion_key": "1",
+    "conceptoinspeccion_key": "2",
+    "categoria_key": "1",
+    "combustible_key": "2",
+    "linea_key": "L1_LIVIANOS_PFAUCETT",
+    "planta_key_doc": "150",
+    "posicion": 12,
+    "cantidad": "1"
+  }
+]
+
+=== FECHAS EN ESTADO CON ===
+[
+  {
+    "inspeccionestado_key": "CON",
+    "posicion": 5,
+    "tiene_fechaenlinea": false,
+    "tiene_fechconsolidado": true,
+    "count": "3"
+  },
+  {
+    "inspeccionestado_key": "CON",
+    "posicion": 5,
+    "tiene_fechaenlinea": true,
+    "tiene_fechconsolidado": true,
+    "count": "4"
+  },
+  {
+    "inspeccionestado_key": "CON",
+    "posicion": 7,
+    "tiene_fechaenlinea": true,
+    "tiene_fechconsolidado": true,
+    "count": "2"
+  },
+  {
+    "inspeccionestado_key": "CON",
+    "posicion": 8,
+    "tiene_fechaenlinea": true,
+    "tiene_fechconsolidado": true,
+    "count": "30"
+  },
+  {
+    "inspeccionestado_key": "CON",
+    "posicion": 9,
+    "tiene_fechaenlinea": true,
+    "tiene_fechconsolidado": true,
+    "count": "1"
+  },
+  {
+    "inspeccionestado_key": "CON",
+    "posicion": 12,
+    "tiene_fechaenlinea": true,
+    "tiene_fechconsolidado": true,
+    "count": "3"
+  },
+  {
+    "inspeccionestado_key": "CON",
+    "posicion": 13,
+    "tiene_fechaenlinea": true,
+    "tiene_fechconsolidado": true,
+    "count": "1"
+  },
+  {
+    "inspeccionestado_key": "CON",
+    "posicion": 14,
+    "tiene_fechaenlinea": true,
+    "tiene_fechconsolidado": true,
+    "count": "45919"
+  },
+  {
+    "inspeccionestado_key": "CON",
+    "posicion": 14,
+    "tiene_fechaenlinea": false,
+    "tiene_fechconsolidado": true,
+    "count": "101"
+  },
+  {
+    "inspeccionestado_key": "CON",
+    "posicion": 16,
+    "tiene_fechaenlinea": true,
+    "tiene_fechconsolidado": true,
+    "count": "1"
+  },
+  {
+    "inspeccionestado_key": "CON",
+    "posicion": 18,
+    "tiene_fechaenlinea": true,
+    "tiene_fechconsolidado": true,
+    "count": "1"
+  }
+]

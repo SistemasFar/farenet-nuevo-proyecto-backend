@@ -5,9 +5,10 @@ const inspeccionesController = require('../controllers/inspecciones.controller')
 
 router.get('/buscar', inspeccionesController.buscarInspecciones);
 router.post('/guardar', inspeccionesController.guardarInspeccion);
-router.post('/borrador', inspeccionesController.guardarBorrador);
-router.get('/borrador/:id', inspeccionesController.obtenerBorrador);
-router.delete('/borrador/:id', inspeccionesController.eliminarBorrador);
+router.get('/generar-nro/:plantaKey', inspeccionesController.generarNroInspeccion);
+router.post('/guardar/proceso', inspeccionesController.guardarProceso);
+router.get('/proceso/:nrodocumentoinspeccion', inspeccionesController.obtenerProceso);
+router.post('/anular/guardar', inspeccionesController.anularInspeccion);
 router.post('/consultar', inspeccionesController.consultarVehiculoYCaja);
 router.get('/vehiculo-rapido/:placa', inspeccionesController.consultarVehiculoRapido);
 router.get('/descuentos', inspeccionesController.buscarDescuentos);

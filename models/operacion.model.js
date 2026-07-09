@@ -56,7 +56,6 @@ ${whereClause}
       ) AS "comprobante",
        COALESCE(
   NULLIF(c.cliente_nrodocumentoidentidad, '-'),
-  be.estado_json::json->'formVehiculo'->>'nroDocProp',
   ''
 ) AS "clienteDocumento",
 
@@ -68,16 +67,11 @@ COALESCE(
     END, 
     ' '
   ),
-  NULLIF(
-    CONCAT(COALESCE(be.estado_json::json->'formVehiculo'->>'nombresProp', ''), ' ', COALESCE(be.estado_json::json->'formVehiculo'->>'apellidosProp', '')),
-    ' '
-  ),
   ''
 ) AS "clienteNombre",
    
 COALESCE(
   ci.abreviatura,
-  (SELECT ci2.abreviatura FROM conceptoinspeccion ci2 WHERE ci2.key::text = (be.estado_json::json->'formCaja'->>'concepto') LIMIT 1),
   ''
 ) AS "conceptoVehicular",
       COALESCE(
@@ -92,31 +86,102 @@ COALESCE(
             THEN 'ANULADO'
           ELSE 'PENDIENTE'
         END
-      ) AS "estado",
-       i.posicion AS "posicion",
+      ) AS "estadoRaw",
 
-CASE i.posicion
-  WHEN 0 THEN 'CAJA'
-  WHEN 1 THEN 'PAGO'
-  WHEN 2 THEN 'VEHICULO'
-  WHEN 3 THEN 'CLIENTE'
-  WHEN 4 THEN 'VERIFICACION'
-  WHEN 5 THEN 'GASES'
-  WHEN 6 THEN 'OPACIDAD'
-  WHEN 7 THEN 'LUCES'
-  WHEN 8 THEN 'INSPECCION VISUAL'
-  WHEN 9 THEN 'SONOMETRO'
-  WHEN 10 THEN 'PROFUNDIMETRO'
-  WHEN 11 THEN 'FRENOMETRO'
-  WHEN 12 THEN 'ALINEACION'
-  WHEN 13 THEN 'SUSPENSION'
-  WHEN 14 THEN 'CONSOLIDACION'
-  WHEN 15 THEN 'FOTO'
-  WHEN 16 THEN 'FOTO'
-  WHEN 17 THEN 'SERVICIO'
-  WHEN 18 THEN 'DUPLICADO'
-  ELSE 'SIN ESTADO'
-END AS "estadoActual",
+      CASE
+        WHEN COALESCE(i.inspeccionestado_key, '') = 'ANULADO' OR i.estado = false THEN 'ANULADO'
+        WHEN COALESCE(i.inspeccionestado_key, '') IN ('ANU') THEN 'ANULADO'
+        ELSE COALESCE(i.inspeccionestado_key, 'PENDIENTE')
+      END AS "estado",
+      
+      COALESCE(i.posicion, 0) AS "posicion",
+
+      CASE COALESCE(i.posicion, 0)
+        WHEN 0 THEN 'CAJA'
+        WHEN 1 THEN 'PAGO'
+        WHEN 2 THEN 'VEHICULO'
+        WHEN 3 THEN 'CLIENTE'
+        WHEN 4 THEN 'VERIFICACION'
+        WHEN 5 THEN 'GASES'
+        WHEN 6 THEN 'OPACIDAD'
+        WHEN 7 THEN 'LUCES'
+        WHEN 8 THEN 'INSPECCION VISUAL'
+        WHEN 9 THEN 'SONOMETRO'
+        WHEN 10 THEN 'PROFUNDIMETRO'
+        WHEN 11 THEN 'FRENOMETRO'
+        WHEN 12 THEN 'ALINEACION'
+        WHEN 13 THEN 'SUSPENSION'
+        WHEN 14 THEN 'CONSOLIDACION'
+        WHEN 15 THEN 'FOTO'
+        WHEN 16 THEN 'FOTO'
+        WHEN 17 THEN 'SERVICIO'
+        WHEN 18 THEN 'DUPLICADO'
+        ELSE 'SIN ESTADO'
+      END AS "etapa",
+
+      CASE 
+        WHEN (COALESCE(i.posicion, 0) < 4 OR (COALESCE(i.posicion, 0) = 4 AND i.fechaenlinea IS NULL))
+             AND COALESCE(i.inspeccionestado_key, '') NOT IN ('ANULADO', 'ANU') 
+             AND i.estado = true THEN true
+        ELSE false
+      END AS "puedeContinuar",
+
+      CASE 
+        WHEN (COALESCE(i.posicion, 0) < 4 OR (COALESCE(i.posicion, 0) = 4 AND i.fechaenlinea IS NULL))
+             AND COALESCE(i.inspeccionestado_key, '') NOT IN ('ANULADO', 'ANU') 
+             AND i.estado = true THEN true
+        ELSE false
+      END AS "puedeContinuarFlujo1",
+
+      CASE 
+        WHEN COALESCE(i.posicion, 0) < 4 
+             AND COALESCE(i.inspeccionestado_key, '') NOT IN ('ANULADO', 'ANU') 
+             AND i.estado = true THEN true
+        ELSE false
+      END AS "puedeModificarFlujo1",
+
+      CASE 
+        WHEN COALESCE(i.posicion, 0) < 4 
+             AND COALESCE(i.inspeccionestado_key, '') NOT IN ('ANULADO', 'ANU') 
+             AND i.estado = true THEN true
+        ELSE false
+      END AS "puedeAnular",
+
+      CASE 
+        WHEN COALESCE(i.posicion, 0) = 4 
+             AND i.fechaenlinea IS NULL
+             AND COALESCE(i.inspeccionestado_key, '') NOT IN ('ANULADO', 'ANU') 
+             AND i.estado = true THEN true
+        ELSE false
+      END AS "puedeFinalizarVerificacion",
+
+      CASE 
+        WHEN i.fechaenlinea IS NOT NULL OR COALESCE(i.posicion, 0) > 4 OR COALESCE(i.inspeccionestado_key, '') = 'CON' THEN true
+        ELSE false
+      END AS "debeAbrirFlujo2",
+
+      CASE
+        WHEN i.fechaenlinea IS NOT NULL OR COALESCE(i.posicion, 0) > 4 OR COALESCE(i.inspeccionestado_key, '') = 'CON' THEN 'LINEA_INSPECCION'
+        ELSE 'NUEVA_INSPECCION'
+      END AS "flujoActual",
+      
+      TO_CHAR(i.fechaenlinea, 'YYYY-MM-DD HH24:MI:SS') AS "fechaenlinea",
+
+      CASE 
+        WHEN COALESCE(i.posicion, 0) BETWEEN 0 AND 3 THEN 'GRIS'
+        WHEN COALESCE(i.posicion, 0) BETWEEN 4 AND 7 THEN 'ROJO'
+        WHEN COALESCE(i.posicion, 0) BETWEEN 8 AND 11 THEN 'AMARILLO'
+        WHEN COALESCE(i.posicion, 0) BETWEEN 12 AND 18 THEN 'VERDE'
+        ELSE 'GRIS'
+      END AS "colorGrupo",
+
+      CASE 
+        WHEN COALESCE(i.posicion, 0) BETWEEN 0 AND 3 THEN (COALESCE(i.posicion, 0) - 0 + 1)
+        WHEN COALESCE(i.posicion, 0) BETWEEN 4 AND 7 THEN (COALESCE(i.posicion, 0) - 4 + 1)
+        WHEN COALESCE(i.posicion, 0) BETWEEN 8 AND 11 THEN (COALESCE(i.posicion, 0) - 8 + 1)
+        WHEN COALESCE(i.posicion, 0) BETWEEN 12 AND 18 THEN (COALESCE(i.posicion, 0) - 12 + 1)
+        ELSE 1
+      END AS "colorIntensidad",
 
       COALESCE(
         cert.nrodocumentocertificado,
@@ -170,8 +235,7 @@ END AS "resultado",
       ON cert.inspeccion_nrodocumentoinspeccion =
          i.nrodocumentoinspeccion
 
-    LEFT JOIN borrador_estado be
-      ON be.inspeccion_id = i.nrodocumentoinspeccion
+
 
     ${whereClause}
 
@@ -192,8 +256,7 @@ const listarLineas = async (plantaKey) => {
   const query = `
     SELECT l.key, l.nombre
     FROM linea l
-    LEFT JOIN linea_estado le ON l.key = le.linea_key AND l.planta_key = le.planta_key
-    WHERE l.planta_key = $1 AND COALESCE(le.estado, true) = true
+    WHERE l.planta_key = $1
     ORDER BY l.nombre ASC
   `;
   const result = await db.query(query, [plantaKey]);

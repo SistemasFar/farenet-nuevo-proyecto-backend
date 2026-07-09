@@ -9,12 +9,6 @@ const startCronJobs = () => {
     try {
       await client.query('BEGIN');
       
-      // Borrar registros temporales (borrador_estado) de más de 24 horas
-      const delBorradorEstado = await client.query(`
-        DELETE FROM borrador_estado 
-        WHERE fecha_actualizacion < NOW() - INTERVAL '1 day'
-      `);
-      console.log(`[CRON] ${delBorradorEstado.rowCount} estados de borradores (JSON) eliminados.`);
 
       // Buscar inspecciones en PROCESO que tengan más de 24 horas y anularlas (ANU) o eliminarlas.
       // Para replicar el comportamiento antiguo limpio, las marcaremos como ANU.

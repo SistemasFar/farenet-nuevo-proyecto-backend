@@ -363,12 +363,12 @@ const obtenerIngenieros = async (req, res) => {
         // Query engineers assigned to this plant with role 'INGENIERO' or similar. 
         // In Farenet legacy, they are users with a specific role.
         const result = await db.query(
-            `SELECT u.username, u.nombres, u.apellidos 
+            `SELECT u.username, p.nombres, p.apellidos 
              FROM usuario u
-             JOIN rol r ON u.rol_key = r.key
-             JOIN usuario_planta up ON u.id = up.usuario_id
-             JOIN planta p ON up.plantas_key = p.key
-             WHERE p.key = $1 AND r.key = 'ING' AND u.estado = true`,
+             JOIN persona p ON u.persona_nrodocumentoidentidad = p.nrodocumentoidentidad
+             JOIN perfil_rol pr ON u.perfil_id = pr.perfil_clave
+             JOIN usuario_planta up ON u.username = up.usuario_username
+             WHERE up.plantas_key = $1 AND pr.roles_clave = 'ING' AND u.estado = true`,
             [planta_key]
         );
 

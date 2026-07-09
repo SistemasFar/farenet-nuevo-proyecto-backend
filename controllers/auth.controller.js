@@ -78,10 +78,10 @@ const validarAccesoPlanta = async (username, plantaKey) => {
 const cerrarSesionesActivas = async (username) => {
     await db.query(
         `
-        UPDATE sesion_usuario
-        SET activo = false
-        WHERE TRIM(username) = $1
-          AND activo = true
+        UPDATE usuario_sesion
+        SET isactive = false, logouttime_utc = NOW()
+        WHERE TRIM(usuario_username) = $1
+          AND isactive = true
         `,
         [normalizarTexto(username)]
     );
@@ -90,13 +90,16 @@ const cerrarSesionesActivas = async (username) => {
 const registrarSesion = async (username, plantaKey, refreshToken) => {
     await db.query(
         `
-        INSERT INTO sesion_usuario
+        INSERT INTO usuario_sesion
         (
-            username,
-            refresh_token,
+            usuario_username,
+            refresh_token_hash,
             planta_key,
-            activo,
-            fechexpiracion
+            isactive,
+            logintime_utc,
+            refresh_expires_utc,
+            session_jti,
+            jwt_jti
         )
         VALUES
         (
@@ -104,7 +107,10 @@ const registrarSesion = async (username, plantaKey, refreshToken) => {
             $2,
             $3,
             true,
-            NOW() + INTERVAL '12 hours'
+            NOW(),
+            NOW() + INTERVAL '12 hours',
+            gen_random_uuid(),
+            gen_random_uuid()
         )
         `,
         [
@@ -401,15 +407,15 @@ const validarSesion = async (req, res) => {
             `
             SELECT
                 id,
-                username,
+                usuario_username AS username,
                 planta_key,
-                activo,
-                fechcreacion,
-                fechexpiracion
-            FROM sesion_usuario
-            WHERE TRIM(username) = $1
-              AND activo = true
-            ORDER BY fechcreacion DESC
+                isactive AS activo,
+                logintime_utc AS fechcreacion,
+                refresh_expires_utc AS fechexpiracion
+            FROM usuario_sesion
+            WHERE TRIM(usuario_username) = $1
+              AND isactive = true
+            ORDER BY logintime_utc DESC
             LIMIT 1
             `,
             [normalizarTexto(username)]
@@ -461,18 +467,18 @@ const refrescarSesion = async (req, res) => {
 
         const result = await db.query(
             `
-            UPDATE sesion_usuario
-            SET fechexpiracion = NOW() + INTERVAL '12 hours'
-            WHERE TRIM(username) = $1
-              AND activo = true
-              AND fechexpiracion > NOW()
+            UPDATE usuario_sesion
+            SET refresh_expires_utc = NOW() + INTERVAL '12 hours'
+            WHERE TRIM(usuario_username) = $1
+              AND isactive = true
+              AND refresh_expires_utc > NOW()
             RETURNING
                 id,
-                username,
+                usuario_username AS username,
                 planta_key,
-                activo,
-                fechcreacion,
-                fechexpiracion
+                isactive AS activo,
+                logintime_utc AS fechcreacion,
+                refresh_expires_utc AS fechexpiracion
             `,
             [normalizarTexto(username)]
         );

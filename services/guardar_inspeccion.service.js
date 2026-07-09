@@ -1,5 +1,4 @@
 const pool = require('../config/database');
-
 const guardarInspeccionTransaccion = async (reqBody) => {
   const { 
     formCaja, formVehiculo, formFacturacion, formVerificacion, 
@@ -11,14 +10,7 @@ const guardarInspeccionTransaccion = async (reqBody) => {
   try {
     await client.query('BEGIN');
 
-    // 0. Eliminar el Borrador Temporal (si existe) para que no quede huérfano
-    if (idBorrador) {
-      await client.query('DELETE FROM borrador_estado WHERE inspeccion_id = $1', [idBorrador]);
-      // Remove circular reference before deleting
-      await client.query('UPDATE inspeccion SET comprobante_id = NULL WHERE nrodocumentoinspeccion = $1', [idBorrador]);
-      await client.query('DELETE FROM comprobante WHERE inspeccion_nrodocumentoinspeccion = $1', [idBorrador]);
-      await client.query('DELETE FROM inspeccion WHERE nrodocumentoinspeccion = $1', [idBorrador]);
-    }
+
 
     // 1. Manejar Persona (Cliente/Propietario)
     const documentoProp = formVehiculo.nroDocProp || '00000000';
@@ -210,10 +202,27 @@ const guardarInspeccionTransaccion = async (reqBody) => {
     }
     const serieDoc = serieResult.rows[0];
 
-    const nroActualInspeccionNum = parseInt(serieDoc.nroidinspeccion || '0');
-    const newNroActualInspeccion = nroActualInspeccionNum + 1;
-    // Formato: INS-201-000157677
-    const nroInspeccion = `INS-${plantaKey}-${String(newNroActualInspeccion).padStart(9, '0')}`;
+    let nroInspeccion = reqBody.nrodocumentoinspeccion;
+    let updateSerieInspeccion = false;
+
+    if (!nroInspeccion) {
+      let nroActualInspeccionNum = parseInt(serieDoc.nroidinspeccion || '0');
+
+      while (true) {
+        nroActualInspeccionNum++;
+        nroInspeccion = `INS-${plantaKey}-${String(nroActualInspeccionNum).padStart(9, '0')}`;
+        const exists = await client.query('SELECT 1 FROM inspeccion WHERE nrodocumentoinspeccion = $1', [nroInspeccion]);
+        if (exists.rows.length === 0) {
+          break;
+        }
+      }
+      
+      await client.query(`
+        UPDATE seriedocumentobase 
+        SET nroidinspeccion = $1
+        WHERE id = $2
+      `, [nroActualInspeccionNum.toString(), serieDoc.id]);
+    }
 
     let nroComprobanteTemp = '';
     let newNroBoleta = parseInt(serieDoc.nroactualboleta || '0');
@@ -226,65 +235,140 @@ const guardarInspeccionTransaccion = async (reqBody) => {
       newNroFactura++;
       nroComprobanteTemp = `${serieDoc.seriefactura}-${String(newNroFactura).padStart(8, '0')}`;
     } else {
-      // Fallback
       nroComprobanteTemp = 'BORRADOR-' + new Date().getTime().toString().slice(-9);
     }
 
-    // Actualizar seriedocumentobase
+    // Actualizar seriedocumentobase facturas/boletas
     await client.query(`
       UPDATE seriedocumentobase 
-      SET nroidinspeccion = $1, nroactualboleta = $2, nroactualfactura = $3 
-      WHERE id = $4
-    `, [newNroActualInspeccion.toString(), newNroBoleta.toString(), newNroFactura.toString(), serieDoc.id]);
+      SET nroactualboleta = $1, nroactualfactura = $2 
+      WHERE id = $3
+    `, [newNroBoleta.toString(), newNroFactura.toString(), serieDoc.id]);
 
     const nextIdResult = await client.query("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM comprobante");
     const nextComprobanteId = nextIdResult.rows[0].next_id;
 
-    // 3. Crear Inspeccion (Primero, porque comprobante requiere inspeccion_nrodocumentoinspeccion)
-    await client.query(`
-      INSERT INTO inspeccion (
-        nrodocumentoinspeccion, estado, fechcreacion, indicedesaprobado,
-        tipoautorizacion_key, tipocertificado_key, tipoinspeccion_key, vehiculo_nromotor, ui_metadata, inspeccionestado_key,
-        nrodocumentoreinspeccion, posicion
-      ) VALUES ($1, true, NOW(), 0, $2, $3, $4, $5, $6, 'PROCESO', $7, 5)
-    `, [
-      nroInspeccion,
-      formCaja.tipoAutorizacion || null,
-      formCaja.tipoCertificado || null,
-      formCaja.tipoInspeccion || null,
-      nroMotorFinal,
-      JSON.stringify({ 
-        formCaja, formVehiculo, formFacturacion, formVerificacion, pagosAgregados,
-        documentoPago, isConsultado, precioSubtotal, descuento, precioTotal
-      }),
-      formCaja.nrodocumentoreinspeccion || null
-    ]);
+    // 3. Crear o Actualizar Inspeccion (Primero, porque comprobante requiere inspeccion_nrodocumentoinspeccion)
+    const inspExist = await client.query('SELECT nrodocumentoinspeccion, inspeccionestado_key FROM inspeccion WHERE nrodocumentoinspeccion = $1', [nroInspeccion]);
 
-    // 4. Crear Comprobante
+    let estadoAntes = null;
+    if (inspExist.rows.length > 0) {
+      estadoAntes = inspExist.rows[0].inspeccionestado_key;
+      if (estadoAntes === 'ANULADO' || estadoAntes === 'ANU') {
+        throw new Error('RECHAZADO: No se puede guardar ni modificar una inspección que ya se encuentra en estado ANULADO.');
+      }
+    } else {
+      estadoAntes = 'NO_EXISTIA';
+    }
+
+    if (inspExist.rows.length === 0) {
+      await client.query(`
+        INSERT INTO inspeccion (
+          nrodocumentoinspeccion, estado, fechcreacion, indicedesaprobado,
+          tipoautorizacion_key, tipocertificado_key, tipoinspeccion_key, vehiculo_nromotor, inspeccionestado_key,
+          nrodocumentoreinspeccion, posicion, fechaenlinea
+        ) VALUES ($1, true, NOW(), 0, $2, $3, $4, $5, 'PROCESO', $6, 4, NOW())
+      `, [
+        nroInspeccion,
+        formCaja.tipoAutorizacion || null,
+        formCaja.tipoCertificado || null,
+        formCaja.tipoInspeccion || null,
+        nroMotorFinal,
+        formCaja.nrodocumentoreinspeccion || null
+      ]);
+    } else {
+      await client.query(`
+        UPDATE inspeccion SET
+          tipoautorizacion_key = COALESCE($2, tipoautorizacion_key),
+          tipocertificado_key = COALESCE($3, tipocertificado_key),
+          tipoinspeccion_key = COALESCE($4, tipoinspeccion_key),
+          vehiculo_nromotor = COALESCE($5, vehiculo_nromotor),
+          inspeccionestado_key = 'PROCESO',
+          fechaenlinea = COALESCE(fechaenlinea, NOW()),
+          nrodocumentoreinspeccion = COALESCE($6, nrodocumentoreinspeccion),
+          posicion = 4,
+          fechmodi = NOW()
+        WHERE nrodocumentoinspeccion = $1
+      `, [
+        nroInspeccion,
+        formCaja.tipoAutorizacion || null,
+        formCaja.tipoCertificado || null,
+        formCaja.tipoInspeccion || null,
+        nroMotorFinal,
+        formCaja.nrodocumentoreinspeccion || null
+      ]);
+    }
+
+    try {
+      const qDespues = await client.query('SELECT inspeccionestado_key FROM inspeccion WHERE nrodocumentoinspeccion = $1', [nroInspeccion]);
+      const estadoDespues = qDespues.rows.length > 0 ? qDespues.rows[0].inspeccionestado_key : 'NO_EXISTE';
+      console.log(`[DEBUG Node] endpoint: FINALIZAR/guardarInspeccionTransaccion - params: nro=${nroInspeccion}`);
+      console.log(`[DEBUG Node] -> Estado ANTES: ${estadoAntes}`);
+      console.log(`[DEBUG Node] -> Estado DESPUES: ${estadoDespues}`);
+    } catch(e){}
+
+    // 4. Crear o Actualizar Comprobante
+    let comprobanteId = null;
+    const compExist = await client.query('SELECT id FROM comprobante WHERE inspeccion_nrodocumentoinspeccion = $1', [nroInspeccion]);
+    
     const baseImponible = formFacturacion?.subtotal || (precioTotal / 1.18).toFixed(2);
     const igv = formFacturacion?.igv || (precioTotal - baseImponible).toFixed(2);
 
-    const resultComp = await client.query(`
-      INSERT INTO comprobante (
-        id, nrocomprobante, estado, fechcreacion, placamotor, cliente_nrodocumentoidentidad,
-        conceptoinspeccion_key, linea_key, tipodocumento_key, importetotal, baseimponible, igv,
-        totaldscto, totalsindscto, inspeccion_nrodocumentoinspeccion
-      ) VALUES ($1, $2, true, NOW(), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id
-    `, [
-      nextComprobanteId,
-      nroComprobanteTemp,
-      placaNueva,
-      formFacturacion?.nroDocFac || null,
-      formCaja.concepto,
-      formVerificacion?.linea || null,
-      formFacturacion?.tipoComprobante === 'FACTURA' ? '1' : '3', // 1=Factura, 3=Boleta
-      precioTotal || 0,
-      baseImponible,
-      igv,
-      descuento || 0,
-      precioSubtotal || 0,
-      nroInspeccion
-    ]);
+    if (compExist.rows.length === 0) {
+      const resultComp = await client.query(`
+        INSERT INTO comprobante (
+          id, nrocomprobante, estado, fechcreacion, placamotor, cliente_nrodocumentoidentidad,
+          conceptoinspeccion_key, linea_key, tipodocumento_key, importetotal, baseimponible, igv,
+          totaldscto, totalsindscto, inspeccion_nrodocumentoinspeccion
+        ) VALUES ($1, $2, true, NOW(), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id
+      `, [
+        nextComprobanteId,
+        nroComprobanteTemp,
+        placaNueva,
+        formFacturacion?.nroDocFac || null,
+        formCaja.concepto,
+        formVerificacion?.linea || null,
+        formFacturacion?.tipoComprobante === 'FACTURA' ? '1' : '3', // 1=Factura, 3=Boleta
+        precioTotal || 0,
+        baseImponible,
+        igv,
+        descuento || 0,
+        precioSubtotal || 0,
+        nroInspeccion
+      ]);
+      comprobanteId = resultComp.rows[0].id;
+    } else {
+      comprobanteId = compExist.rows[0].id;
+      await client.query(`
+        UPDATE comprobante SET
+          nrocomprobante = COALESCE($2, nrocomprobante),
+          placamotor = COALESCE($3, placamotor),
+          cliente_nrodocumentoidentidad = COALESCE($4, cliente_nrodocumentoidentidad),
+          conceptoinspeccion_key = COALESCE($5, conceptoinspeccion_key),
+          linea_key = COALESCE($6, linea_key),
+          tipodocumento_key = COALESCE($7, tipodocumento_key),
+          importetotal = COALESCE($8, importetotal),
+          baseimponible = COALESCE($9, baseimponible),
+          igv = COALESCE($10, igv),
+          totaldscto = COALESCE($11, totaldscto),
+          totalsindscto = COALESCE($12, totalsindscto),
+          fechmodi = NOW()
+        WHERE id = $1
+      `, [
+        comprobanteId,
+        nroComprobanteTemp,
+        placaNueva,
+        formFacturacion?.nroDocFac || null,
+        formCaja.concepto,
+        formVerificacion?.linea || null,
+        formFacturacion?.tipoComprobante === 'FACTURA' ? '1' : '3',
+        precioTotal || 0,
+        baseImponible,
+        igv,
+        descuento || 0,
+        precioSubtotal || 0
+      ]);
+    }
 
     // 4.5. Copiar Resultados de Maquina si es Reinspeccion (Lógica Clásica Farenet)
     if (formCaja.nrodocumentoreinspeccion) {
@@ -336,12 +420,14 @@ const guardarInspeccionTransaccion = async (reqBody) => {
         }
       }
     }
-    const comprobanteId = resultComp.rows[0].id;
 
     // 5. Actualizar Inspeccion con el comprobante_id
     await client.query("UPDATE inspeccion SET comprobante_id = $1 WHERE nrodocumentoinspeccion = $2", [comprobanteId, nroInspeccion]);
 
     // 6. Insertar Pagos Relacionales
+    // Borrar pagos anteriores si es una actualización
+    await client.query("DELETE FROM pago WHERE comprobante_id = $1", [comprobanteId]);
+
     for (const pagoItem of (pagosAgregados || [])) {
       const importePago = parseFloat(pagoItem.importe || '0');
       if (importePago <= 0) continue;
