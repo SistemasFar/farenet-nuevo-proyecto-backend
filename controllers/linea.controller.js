@@ -78,16 +78,35 @@ class LineaController {
       
       const insp = await LineaService.getInspeccionLinea(nroInspeccion);
       
+      let modo = 'LINEA_EN_PROCESO';
+      if (insp) {
+        if (insp.inspeccionestado_key === 'CON') modo = 'HISTORICO_CONSOLIDADO';
+        else if (insp.inspeccionestado_key === 'ANU') modo = 'HISTORICO_ANULADO';
+        else if (insp.inspeccionestado_key === 'RETIRADO') modo = 'HISTORICO_RETIRADO';
+        else if (insp.posicion === 14) modo = 'LISTA_PARA_CONSOLIDAR';
+      }
+
+      const isHistorico = modo.startsWith('HISTORICO_');
+
+      // Si es histórico, lo que rige es lo que hay, no lo que falta
+      const recibidasReales = isHistorico ? validacionEtapa.recibidas : validacionEtapa.recibidas;
+      const faltantesReales = isHistorico ? [] : validacionEtapa.faltantes;
+
       res.json({
         ok: true,
         nrodocumentoinspeccion: nroInspeccion,
         posicionActual: insp ? insp.posicion : null,
-        obligatorias: validacionEtapa.obligatorias,
-        recibidas: validacionEtapa.recibidas,
-        faltantes: validacionEtapa.faltantes,
+        inspeccionestado_key: insp ? insp.inspeccionestado_key : null,
+        modo,
+        resultado: insp ? (insp.resultado || validacionEtapa.resultadoPreliminar) : validacionEtapa.resultadoPreliminar,
+        fechconsolidado: insp ? insp.fechconsolidado : null,
+        fechiniciovigencia: insp ? insp.fechiniciovigencia : null,
+        obligatorias: isHistorico ? recibidasReales : validacionEtapa.obligatorias,
+        recibidas: recibidasReales,
+        faltantes: faltantesReales,
         noAplicables: validacionEtapa.noAplicables,
         etapaCompleta: validacionEtapa.etapaCompleta,
-        puedeConsolidar: validacionEtapa.etapaCompleta,
+        puedeConsolidar: isHistorico ? false : validacionEtapa.etapaCompleta,
         resultadoPreliminar: validacionEtapa.resultadoPreliminar
       });
     } catch (error) {
@@ -151,6 +170,19 @@ class LineaController {
         });
       }
       return res.status(500).json({ ok: false, message: err.message || 'Error interno al guardar consolidación.' });
+    }
+  }
+  async getWizardModel(req, res) {
+    try {
+      const { nroInspeccion } = req.params;
+      const data = await LineaService.getWizardModel(nroInspeccion);
+      res.json({ ok: true, ...data });
+    } catch (error) {
+      console.error('Error al obtener wizard model:', error);
+      res.status(500).json({ 
+        ok: false, 
+        message: error.message || 'Error al obtener los datos del wizard.'
+      });
     }
   }
 }

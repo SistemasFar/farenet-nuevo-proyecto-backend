@@ -5,7 +5,7 @@ class LineaService {
   async getInspeccionLinea(nroInspeccion) {
     const query = `
       SELECT nrodocumentoinspeccion as nroinspeccion, inspeccionestado_key,
-             vehiculo_nromotor, posicion
+             vehiculo_nromotor, posicion, resultado, fechconsolidado, fechiniciovigencia
       FROM inspeccion
       WHERE nrodocumentoinspeccion = $1
     `;
@@ -58,17 +58,21 @@ class LineaService {
     const inspeccion = inspeccionRes.rows[0];
 
     const vehiculoRes = await db.query(
-      `SELECT v.nroplacaantigua as placa, c.nombre as categoria, comb.nombre as combustible
+      `SELECT c.nombre as categoria, comb.nombre as combustible, m.nombre as marca, mod.nombre as modelo
        FROM vehiculo v 
        JOIN categoria c ON v.categoria_key = c.key
        JOIN combustible comb ON v.combustible_key = comb.key
+       LEFT JOIN marca m ON v.marca_key = m.key
+       LEFT JOIN modelo mod ON v.modelo_key = mod.key
        WHERE v.nromotor = $1`,
       [inspeccion.vehiculo_nromotor]
     );
 
     const comprobanteRes = await db.query(
-      `SELECT c.nrocomprobante, c.cliente_nrodocumentoidentidad as nrodoc, c.linea_key
+      `SELECT c.nrocomprobante, c.cliente_nrodocumentoidentidad as nrodoc, c.linea_key, c.placamotor, 
+              c.importetotal, ci.nombre as concepto_nombre
        FROM comprobante c
+       LEFT JOIN conceptoinspeccion ci ON c.conceptoinspeccion_key = ci.key
        WHERE c.inspeccion_nrodocumentoinspeccion = $1
        ORDER BY c.fechcreacion DESC LIMIT 1`,
       [nroInspeccion]
@@ -123,7 +127,10 @@ class LineaService {
 
     return {
       inspeccion,
-      vehiculo: vehiculoRes.rows[0] || {},
+      vehiculo: {
+        ...(vehiculoRes.rows[0] || {}),
+        placa: comprobanteRes.rows[0]?.placamotor || null
+      },
       cliente: {
         nombre: ((clienteData.nombres || '') + ' ' + (clienteData.apellidos || '')).trim() || 'Desconocido',
         nroDocumento: clienteData.nrodocumentoidentidad
@@ -139,6 +146,50 @@ class LineaService {
         totalDefectosMuyGraves,
         resultadoPorDefectos,
         resultadoSugerido
+      }
+    };
+  }
+
+  async getWizardModel(nroInspeccion) {
+    const data = await this.obtenerDatosConsolidacion(nroInspeccion);
+    
+    // Obtener información de la etapa y pruebas faltantes
+    const ValidarEtapaService = require('./validar_etapa.service');
+    const validacionEtapa = await ValidarEtapaService.validarEtapa(nroInspeccion);
+    
+    let modo = 'LINEA_EN_PROCESO';
+    if (data.inspeccion.inspeccionestado_key === 'CON') modo = 'HISTORICO_CONSOLIDADO';
+    else if (data.inspeccion.inspeccionestado_key === 'ANU') modo = 'HISTORICO_ANULADO';
+    else if (data.inspeccion.inspeccionestado_key === 'RETIRADO') modo = 'HISTORICO_RETIRADO';
+    else if (data.inspeccion.posicion === 14) modo = 'LISTA_PARA_CONSOLIDAR';
+
+    const isHistorico = modo.startsWith('HISTORICO_');
+    const recibidasReales = isHistorico ? validacionEtapa.recibidas : validacionEtapa.recibidas;
+    const faltantesReales = isHistorico ? [] : validacionEtapa.faltantes;
+
+    const estado = {
+      nrodocumentoinspeccion: nroInspeccion,
+      posicionActual: data.inspeccion.posicion,
+      inspeccionestado_key: data.inspeccion.inspeccionestado_key,
+      resultado: data.inspeccion.resultado || validacionEtapa.resultadoPreliminar,
+      fechconsolidado: data.inspeccion.fechconsolidado,
+      fechiniciovigencia: data.inspeccion.fechiniciovigencia,
+      obligatorias: isHistorico ? recibidasReales : validacionEtapa.obligatorias,
+      recibidas: recibidasReales,
+      faltantes: faltantesReales,
+      noAplicables: validacionEtapa.noAplicables,
+      etapaCompleta: validacionEtapa.etapaCompleta,
+      puedeConsolidar: isHistorico ? false : validacionEtapa.etapaCompleta,
+      resultadoPreliminar: validacionEtapa.resultadoPreliminar
+    };
+    
+    return {
+      ...estado,
+      ...data,
+      modo,
+      vehiculo: {
+        ...estado.vehiculo,
+        ...data.vehiculo,
       }
     };
   }

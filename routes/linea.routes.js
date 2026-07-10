@@ -12,6 +12,7 @@ router.post('/appresultado', lineaController.appresultado);
 router.get('/pruebas-obligatorias/:nroInspeccion', lineaController.getPruebasObligatorias);
 router.get('/estado/:nroInspeccion', lineaController.getEstado);
 router.get('/consolidacion/:nroInspeccion', lineaController.getConsolidacionDatos);
+router.get('/wizard/:nroInspeccion', lineaController.getWizardModel);
 
 // Rutas genéricas (van al final)
 router.get('/:nroInspeccion', lineaController.getInspeccion);
