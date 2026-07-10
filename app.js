@@ -369,6 +369,7 @@ app.use('/api/usuarios', usuarioRoutes);
 app.use('/api/operacion', operacionRoutes);
 app.use('/api/inspecciones', inspeccionesRoutes);
 app.use('/api/linea', lineaRoutes);
+app.use('/linea', lineaRoutes); // Compatibilidad con legacy
 app.use('/api/descuentos', campanaRoutes);
 const maestrosRoutes = require('./routes/maestros.routes');
 app.use('/api/maestros', maestrosRoutes);

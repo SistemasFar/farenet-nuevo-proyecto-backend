@@ -360,23 +360,33 @@ const obtenerIngenieros = async (req, res) => {
             });
         }
 
-        // Query engineers assigned to this plant with role 'INGENIERO' or similar. 
-        // In Farenet legacy, they are users with a specific role.
         const result = await db.query(
-            `SELECT u.username, p.nombres, p.apellidos 
+            `SELECT 
+               u.username as id, 
+               u.username,
+               p.nombres, 
+               p.apellidos,
+               perf.clave as perfil,
+               CASE WHEN u.firmacertificador IS NOT NULL AND u.firmacertificador != '' THEN true ELSE false END as tiene_firma
              FROM usuario u
-             JOIN persona p ON u.persona_nrodocumentoidentidad = p.nrodocumentoidentidad
-             JOIN perfil_rol pr ON u.perfil_id = pr.perfil_clave
+             JOIN perfil perf ON u.perfil_id = perf.clave
              JOIN usuario_planta up ON u.username = up.usuario_username
-             WHERE up.plantas_key = $1 AND pr.roles_clave = 'ING' AND u.estado = true`,
+             LEFT JOIN persona p ON u.persona_nrodocumentoidentidad = p.nrodocumentoidentidad
+             WHERE perf.clave = 'ing_certificador' 
+               AND up.plantas_key = $1 
+               AND u.estado = true`,
             [planta_key]
         );
 
         return res.status(200).json({
-            status: 'success',
-            data: result.rows.map(row => ({
-                id: row.username,
-                nombre: `${row.nombres} ${row.apellidos}`.trim()
+            ok: true,
+            planta: planta_key,
+            ingenieros: result.rows.map(row => ({
+                id: row.id,
+                username: row.username,
+                nombre: `${row.nombres || ''} ${row.apellidos || ''}`.trim(),
+                perfil: row.perfil,
+                tieneFirma: row.tiene_firma
             }))
         });
     } catch (error) {
