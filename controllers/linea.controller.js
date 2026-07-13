@@ -47,6 +47,28 @@ class LineaController {
     }
   }
 
+  async cambiarObservacion(req, res) {
+    try {
+      const { nroInspeccion } = req.params;
+      const { observacion } = req.body;
+      
+      if (typeof observacion !== 'string') {
+        return res.status(400).json({ message: 'La observación debe ser un texto válido' });
+      }
+
+      if (observacion.length > 1000) {
+        return res.status(400).json({ message: 'La observación no puede superar los 1000 caracteres' });
+      }
+
+      const result = await LineaService.cambiarObservacion(nroInspeccion, observacion);
+      res.json({ status: 'success', data: result });
+    } catch (error) {
+      console.error(error);
+      const status = error.statusCode || 500;
+      res.status(status).json({ message: error.message || 'Error al cambiar observación' });
+    }
+  }
+
   async appresultado(req, res) {
     try {
       const payload = req.body;
@@ -54,7 +76,8 @@ class LineaController {
       res.json({ status: 'success', data: result });
     } catch (error) {
       console.error(error);
-      res.status(500).json({ message: error.message || 'Error en appresultado' });
+      const status = error.statusCode || 500;
+      res.status(status).json({ message: error.message || 'Error en appresultado' });
     }
   }
 
@@ -148,9 +171,13 @@ class LineaController {
       if (!payload.ingenieroCertificadorUsername) {
         return res.status(400).json({ ok: false, message: 'Se requiere ingenieroCertificadorUsername.' });
       }
-      if (!payload.usuarioConsolidadorUsername) {
-        return res.status(400).json({ ok: false, message: 'Se requiere usuarioConsolidadorUsername. (Provisional hasta JWT)' });
-      }
+      
+      const usuarioConsolidadorUsername = req.user.username;
+      
+      // Ignorar cualquier usuario en el body maliciosamente enviado
+      delete payload.usuarioConsolidadorUsername;
+      
+      payload.usuarioConsolidadorUsername = usuarioConsolidadorUsername;
 
       const resultado = await LineaService.guardarConsolidacion(nroInspeccion, payload);
       return res.status(200).json(resultado);

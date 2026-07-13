@@ -2,12 +2,24 @@ const authService = require('../services/auth.service');
 const auditoriaService = require('../services/auditoria.service');
 const db = require('../config/database');
 
+const jwt = require('jsonwebtoken');
+
 const crearRefreshToken = (prefijo = 'REFRESH_TOKEN_FARENET') => {
     return `${prefijo}_${Date.now()}`;
 };
 
-const crearAccessTokenTemporal = () => {
-    return `ACCESS_TOKEN_JWT_VALIDO_${Date.now()}`;
+const crearAccessTokenJWT = (usuario, sessionJti, jwtJti, plantaKey) => {
+    if (!process.env.JWT_SECRET) {
+        throw new Error("JWT_SECRET no está configurado en el entorno.");
+    }
+    const payload = {
+        username: usuario.username,
+        perfilId: usuario.perfil_id || usuario.perfilId,
+        plantaKey: plantaKey,
+        sessionJti: sessionJti,
+        jti: jwtJti
+    };
+    return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
 };
 
 const normalizarTexto = (valor) => {
@@ -88,7 +100,7 @@ const cerrarSesionesActivas = async (username) => {
 };
 
 const registrarSesion = async (username, plantaKey, refreshToken) => {
-    await db.query(
+    const result = await db.query(
         `
         INSERT INTO usuario_sesion
         (
@@ -112,6 +124,7 @@ const registrarSesion = async (username, plantaKey, refreshToken) => {
             gen_random_uuid(),
             gen_random_uuid()
         )
+        RETURNING session_jti, jwt_jti
         `,
         [
             normalizarTexto(username),
@@ -119,6 +132,7 @@ const registrarSesion = async (username, plantaKey, refreshToken) => {
             normalizarTexto(plantaKey)
         ]
     );
+    return result.rows[0];
 };
 
 const login = async (req, res) => {
@@ -145,7 +159,7 @@ const login = async (req, res) => {
             const refreshToken = crearRefreshToken();
 
             await cerrarSesionesActivas(dataAuth.user.username);
-            await registrarSesion(dataAuth.user.username, planta.key, refreshToken);
+            const sesionDB = await registrarSesion(dataAuth.user.username, planta.key, refreshToken);
             await auditoriaService.registrarAuditoriaAcceso({
                 req,
                 username: dataAuth.user.username,
@@ -160,10 +174,12 @@ const login = async (req, res) => {
                 planta.key
             );
 
+            const accessToken = crearAccessTokenJWT(dataAuth.user, sesionDB.session_jti, sesionDB.jwt_jti, planta.key);
+
             return res.status(200).json({
                 status: "success",
                 requiereSeleccionarPlanta: false,
-                accessToken: dataAuth.token,
+                accessToken,
                 refreshToken,
                 user: construirUsuarioResponse(dataAuth.user),
                 plantaSeleccionada: planta,
@@ -243,7 +259,7 @@ const confirmarPlanta = async (req, res) => {
 
         const refreshToken = crearRefreshToken();
 
-        await registrarSesion(username, plantaKey, refreshToken);
+        const sesionDB = await registrarSesion(username, plantaKey, refreshToken);
         await auditoriaService.registrarAuditoriaAcceso({
             req,
             username,
@@ -255,9 +271,11 @@ const confirmarPlanta = async (req, res) => {
 
         const permisos = await authService.obtenerPermisosPorUsuario(username, plantaKey);
 
+        const accessToken = crearAccessTokenJWT(user, sesionDB.session_jti, sesionDB.jwt_jti, plantaKey);
+
         return res.status(200).json({
             status: 'success',
-            accessToken: crearAccessTokenTemporal(),
+            accessToken,
             refreshToken,
             user: construirUsuarioResponse(user),
             plantaSeleccionada: planta,

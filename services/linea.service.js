@@ -45,9 +45,13 @@ class LineaService {
       `SELECT i.nrodocumentoinspeccion, i.posicion, i.inspeccionestado_key, 
               i.resultado, i.fechconsolidado, i.vehiculo_nromotor, i.nrodocumentoinforme,
               i.usuarioconsolidado_username, i.usuarioingcertificador_username, i.observacion,
-              cert.nrodocumentocertificado
+              cert.nrodocumentocertificado,
+              ti.nombre as tipo_inspeccion, tc.nombre as tipo_certificado, ta.ambito as tipo_autorizacion
        FROM inspeccion i
        LEFT JOIN certificado cert ON cert.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
+       LEFT JOIN tipoinspeccion ti ON i.tipoinspeccion_key = ti.key
+       LEFT JOIN tipocertificado tc ON i.tipocertificado_key = tc.key
+       LEFT JOIN tipoautorizacion ta ON i.tipoautorizacion_key = ta.key
        WHERE i.nrodocumentoinspeccion = $1`,
       [nroInspeccion]
     );
@@ -58,21 +62,28 @@ class LineaService {
     const inspeccion = inspeccionRes.rows[0];
 
     const vehiculoRes = await db.query(
-      `SELECT c.nombre as categoria, comb.nombre as combustible, m.nombre as marca, mod.nombre as modelo
+      `SELECT c.nombre as categoria, comb.nombre as combustible, m.nombre as marca, mod.nombre as modelo,
+              p.nombres as prop_nombres, p.apellidos as prop_apellidos, tp.propietario_nrodocumentoidentidad as prop_nrodoc
        FROM vehiculo v 
        JOIN categoria c ON v.categoria_key = c.key
        JOIN combustible comb ON v.combustible_key = comb.key
        LEFT JOIN marca m ON v.marca_key = m.key
        LEFT JOIN modelo mod ON v.modelo_key = mod.key
+       LEFT JOIN tarjetapropiedad tp ON v.tarjetapropiedad_id = tp.id
+       LEFT JOIN persona p ON tp.propietario_nrodocumentoidentidad = p.nrodocumentoidentidad
        WHERE v.nromotor = $1`,
       [inspeccion.vehiculo_nromotor]
     );
 
     const comprobanteRes = await db.query(
       `SELECT c.nrocomprobante, c.cliente_nrodocumentoidentidad as nrodoc, c.linea_key, c.placamotor, 
-              c.importetotal, ci.nombre as concepto_nombre
+              c.importetotal, ci.nombre as concepto_nombre,
+              l.nombre as linea_nombre, l.tipo as linea_tipo, l.planta_key,
+              pl.nombre as planta_nombre
        FROM comprobante c
        LEFT JOIN conceptoinspeccion ci ON c.conceptoinspeccion_key = ci.key
+       LEFT JOIN linea l ON c.linea_key = l.key
+       LEFT JOIN planta pl ON l.planta_key = pl.key
        WHERE c.inspeccion_nrodocumentoinspeccion = $1
        ORDER BY c.fechcreacion DESC LIMIT 1`,
       [nroInspeccion]
@@ -131,10 +142,32 @@ class LineaService {
         ...(vehiculoRes.rows[0] || {}),
         placa: comprobanteRes.rows[0]?.placamotor || null
       },
-      cliente: {
+      clienteRecibo: {
         nombre: ((clienteData.nombres || '') + ' ' + (clienteData.apellidos || '')).trim() || 'Desconocido',
-        nroDocumento: clienteData.nrodocumentoidentidad
+        nroDocumento: clienteData.nrodocumentoidentidad || null
       },
+      propietarioCertificado: vehiculoRes.rows[0] && vehiculoRes.rows[0].prop_nrodoc ? {
+        nombre: ((vehiculoRes.rows[0].prop_nombres || '') + ' ' + (vehiculoRes.rows[0].prop_apellidos || '')).trim() || 'Desconocido',
+        nroDocumento: vehiculoRes.rows[0].prop_nrodoc
+      } : null,
+      certificacion: {
+        tipoInspeccion: inspeccion.tipo_inspeccion || null,
+        tipoCertificado: inspeccion.tipo_certificado || null,
+        tipoAutorizacion: inspeccion.tipo_autorizacion || null,
+        ingenieroCertificadorUsername: inspeccion.usuarioingcertificador_username || null,
+        usuarioCertifica: inspeccion.usuarioconsolidado_username || null,
+        observacion: inspeccion.observacion || null
+      },
+      lineaInfo: comprobanteRes.rows[0] && comprobanteRes.rows[0].linea_key ? {
+        key: comprobanteRes.rows[0].linea_key,
+        nombre: comprobanteRes.rows[0].linea_nombre || null,
+        tipo: comprobanteRes.rows[0].linea_tipo || null,
+        plantaKey: comprobanteRes.rows[0].planta_key || null
+      } : null,
+      planta: comprobanteRes.rows[0] && comprobanteRes.rows[0].planta_key ? {
+        key: comprobanteRes.rows[0].planta_key,
+        nombre: comprobanteRes.rows[0].planta_nombre || null
+      } : null,
       comprobante: comprobanteRes.rows[0] || {},
       resultadosMaquina: resultadosMaquinaRes.rows,
       defectos: defectosRes.rows,
@@ -450,10 +483,208 @@ class LineaService {
     }
   }
 
-  // Stub — Este método es llamado por el controller de /appresultado (legacy de máquinas).
-  // La lógica real está en el endpoint de recepción de máquinas existente.
   async guardarResultadoMaquina(payload) {
-    throw new Error('guardarResultadoMaquina: método no implementado en este service. Usar el endpoint de recepción de máquinas.');
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 5. Normalización y validación básica
+      const nroInspeccion = payload.nroInspeccion;
+      const resMaq = payload.resultadoMaquina;
+      if (!nroInspeccion || !resMaq || !resMaq.maquina || !resMaq.maquina.id) {
+        throw Object.assign(new Error('Payload incompleto: nroInspeccion o maquina.id faltante.'), { statusCode: 400 });
+      }
+      
+      const maquinaId = resMaq.maquina.id;
+      const resultado = resMaq.resultado;
+      
+      // 6. Validar resultado
+      if (resultado !== 'A' && resultado !== 'D') {
+        throw Object.assign(new Error('Resultado inválido. Solo se permite A o D.'), { statusCode: 400 });
+      }
+
+      // 2. Buscar inspección con bloqueo
+      const inspRes = await client.query(`
+        SELECT nrodocumentoinspeccion, posicion, inspeccionestado_key, fechconsolidado 
+        FROM inspeccion 
+        WHERE nrodocumentoinspeccion = $1 
+        FOR UPDATE
+      `, [nroInspeccion]);
+
+      if (inspRes.rows.length === 0) {
+        throw Object.assign(new Error('Inspección no encontrada.'), { statusCode: 404 });
+      }
+      const insp = inspRes.rows[0];
+
+      // 3. Validaciones de inspección
+      if (insp.inspeccionestado_key === 'CON' || insp.inspeccionestado_key === 'ANU' || insp.inspeccionestado_key === 'RETIRADO') {
+        throw Object.assign(new Error(`Inspección no válida para recibir máquinas (Estado actual: ${insp.inspeccionestado_key}).`), { statusCode: 409 });
+      }
+      if (insp.fechconsolidado !== null) {
+        throw Object.assign(new Error('Inspección ya consolidada (fechconsolidado no es null).'), { statusCode: 409 });
+      }
+      if (insp.posicion < 5) {
+        throw Object.assign(new Error(`Posición inválida para recibir máquinas. Posición actual: ${insp.posicion}`), { statusCode: 409 });
+      }
+      if (insp.posicion >= 14) {
+        throw Object.assign(new Error('La inspección ya está en posición 14 o superior (lista para consolidar).'), { statusCode: 409 });
+      }
+
+      // 7. Validar máquina
+      const maqRes = await client.query('SELECT tipomaquina_key FROM maquina WHERE id = $1', [maquinaId]);
+      if (maqRes.rows.length === 0) {
+        throw Object.assign(new Error('Máquina no encontrada.'), { statusCode: 404 });
+      }
+
+      // 8. Upsert sin UNIQUE
+      const existRes = await client.query(`
+        SELECT id 
+        FROM resultado_maquina 
+        WHERE inspeccion_nrodocumentoinspeccion = $1 
+          AND maquina_id = $2 
+        FOR UPDATE
+      `, [nroInspeccion, maquinaId]);
+
+      if (existRes.rows.length > 0) {
+        const oldId = existRes.rows[0].id;
+        await client.query('DELETE FROM resultado_maquina_defecto WHERE resultado_maquina_id = $1', [oldId]);
+        await client.query('DELETE FROM resultado_maquina WHERE id = $1', [oldId]);
+      }
+
+      // 9. Insert resultado_maquina
+      const nextIdRes = await client.query("SELECT nextval('hibernate_sequence') AS id");
+      const nextId = nextIdRes.rows[0].id;
+
+      const fechainicio = resMaq.fechainicio || new Date();
+      const fechafin = resMaq.fechafin || new Date();
+      const data = resMaq.data || null;
+      const postdata = resMaq.postdata || null;
+      const foto = resMaq.foto || null;
+      const defectos = resMaq.defectos || [];
+
+      await client.query(`
+        INSERT INTO resultado_maquina (
+          id, estado, fechcreacion, fechmodi, data, postdata, f,
+          fechafin, fechainicio, foto, insp_visual, manual, resultado,
+          usuariocreacion_username, usuariomodi_id, maquina_id, inspeccion_nrodocumentoinspeccion
+        ) VALUES (
+          $1, true, NOW(), NOW(), $2, $3, false,
+          $4, $5, $6, 0, false, $7,
+          'sistema', null, $8, $9
+        )
+      `, [
+        nextId, data, postdata, fechafin, fechainicio, foto, resultado, maquinaId, nroInspeccion
+      ]);
+
+      // 10. Defectos
+      if (Array.isArray(defectos) && defectos.length > 0) {
+        for (const def of defectos) {
+          const defId = typeof def === 'object' ? def.id : def;
+          if (!defId) continue;
+          
+          const defRes = await client.query('SELECT id FROM defecto WHERE id = $1', [defId]);
+          if (defRes.rows.length > 0) {
+            await client.query(`
+              INSERT INTO resultado_maquina_defecto (resultado_maquina_id, defectos_id)
+              VALUES ($1, $2)
+            `, [nextId, defId]);
+          }
+        }
+      }
+
+      // 11. Revalidar etapa
+      const validacion = await ValidarEtapaService.validarEtapa(nroInspeccion, client);
+
+      // 12. Si aún faltan pruebas
+      if (validacion.faltantes.length > 0) {
+        await client.query('COMMIT');
+        return {
+          ok: true,
+          nrodocumentoinspeccion: nroInspeccion,
+          resultadoMaquinaId: nextId,
+          posicionActual: insp.posicion,
+          modo: 'LINEA_EN_PROCESO',
+          recibidas: validacion.recibidas,
+          faltantes: validacion.faltantes,
+          noAplicables: validacion.noAplicables,
+          puedeConsolidar: false
+        };
+      }
+
+      // 13. Si ya no faltan pruebas
+      const hasD = validacion.recibidas.some(r => r.resultado === 'D');
+      const resultadoPreliminar = hasD ? 'D' : 'A';
+
+      await client.query(`
+        UPDATE inspeccion 
+        SET posicion = 14, 
+            resultado = $1, 
+            fechmodi = NOW() 
+        WHERE nrodocumentoinspeccion = $2
+      `, [resultadoPreliminar, nroInspeccion]);
+
+      await client.query('COMMIT');
+
+      // 14. Respuesta esperada (posición 14)
+      return {
+        ok: true,
+        nrodocumentoinspeccion: nroInspeccion,
+        resultadoMaquinaId: nextId,
+        posicionActual: 14,
+        modo: 'LISTA_PARA_CONSOLIDAR',
+        faltantes: [],
+        puedeConsolidar: true
+      };
+
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async cambiarObservacion(nroInspeccion, observacion) {
+    const inspeccionRes = await db.query(
+      `SELECT nrodocumentoinspeccion, posicion, inspeccionestado_key
+       FROM inspeccion
+       WHERE nrodocumentoinspeccion = $1`,
+      [nroInspeccion]
+    );
+
+    if (inspeccionRes.rows.length === 0) {
+      const error = new Error('Inspección no encontrada');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const inspeccion = inspeccionRes.rows[0];
+
+    // Validar estado y posición
+    if (inspeccion.posicion < 14) {
+      const error = new Error('No se puede cambiar observación de una inspección en proceso');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (inspeccion.inspeccionestado_key !== 'CON') {
+      const error = new Error('Solo se puede cambiar la observación de inspecciones consolidadas (CON)');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    // Actualizar observación
+    await db.query(
+      `UPDATE inspeccion
+       SET observacion = $1, fechmodi = NOW()
+       WHERE nrodocumentoinspeccion = $2`,
+      [observacion || '', nroInspeccion]
+    );
+
+    return {
+      nrodocumentoinspeccion: nroInspeccion,
+      observacion: observacion || ''
+    };
   }
 }
 
