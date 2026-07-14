@@ -37,6 +37,20 @@ class LineaController {
     }
   }
 
+  async anularInspeccion(req, res) {
+    try {
+      const { nroInspeccion } = req.params;
+      const { motivo } = req.body;
+      
+      const updated = await LineaService.anularInspeccion(nroInspeccion, motivo, req.user.username);
+      res.json({ status: 'success', data: updated });
+    } catch (error) {
+      console.error(error);
+      const status = error.statusCode || 500;
+      res.status(status).json({ message: error.message || 'Error al anular la inspección' });
+    }
+  }
+
   async soporteAction(req, res) {
     try {
       const { nroInspeccion, accion } = req.params;
@@ -199,6 +213,16 @@ class LineaController {
       return res.status(500).json({ ok: false, message: err.message || 'Error interno al guardar consolidación.' });
     }
   }
+  async obtenerRecibo(req, res, next) {
+    try {
+      const { nroInspeccion } = req.params;
+      const recibo = await LineaService.obtenerRecibo(nroInspeccion);
+      res.json({ ok: true, recibo });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getWizardModel(req, res) {
     try {
       const { nroInspeccion } = req.params;
@@ -209,6 +233,40 @@ class LineaController {
       res.status(500).json({ 
         ok: false, 
         message: error.message || 'Error al obtener los datos del wizard.'
+      });
+    }
+  }
+
+  async getPropietario(req, res) {
+    try {
+      const { nroInspeccion } = req.params;
+      const propietario = await LineaService.obtenerPropietario(nroInspeccion);
+      res.json({ ok: true, propietario });
+    } catch (error) {
+      console.error('Error al obtener propietario:', error);
+      const status = error.statusCode || 500;
+      res.status(status).json({ 
+        ok: false, 
+        message: error.message || 'Error al obtener los datos del propietario.'
+      });
+    }
+  }
+
+  async modificarPropietario(req, res) {
+    try {
+      const { nroInspeccion } = req.params;
+      const payload = req.body;
+      const usuarioActualUsername = req.user?.username || 'sistema';
+
+      const result = await LineaService.modificarPropietario(nroInspeccion, payload, usuarioActualUsername);
+
+      res.json({ ok: true, propietario: result });
+    } catch (error) {
+      console.error('Error al modificar propietario:', error);
+      const status = error.statusCode || 500;
+      res.status(status).json({ 
+        ok: false, 
+        message: error.message || 'Error al modificar los datos del propietario.'
       });
     }
   }

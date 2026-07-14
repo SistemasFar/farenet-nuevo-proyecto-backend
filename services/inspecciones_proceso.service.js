@@ -56,7 +56,10 @@ const guardarProceso = async (reqBody) => {
   const posicionActualReq = Number(posicionActual ?? posicion ?? 0);
   const siguientePosicionReq = Number(siguientePosicion ?? posicionActualReq);
 
-  if (posicionActualReq === 0 && (!documentoPago || documentoPago === '' || documentoPago === 'Seleccione...')) {
+  const isReinspeccionGratuita = Boolean(formCaja?.nrodocumentoreinspeccion && Number(precioTotal || 0) === 0);
+  const requiereDocumentoPago = !isReinspeccionGratuita && Number(precioTotal || 0) > 0;
+
+  if (posicionActualReq === 0 && requiereDocumentoPago && (!documentoPago || documentoPago === '' || documentoPago === 'Seleccione...')) {
     throw new Error('Debe seleccionar el documento de pago antes de continuar.');
   }
 

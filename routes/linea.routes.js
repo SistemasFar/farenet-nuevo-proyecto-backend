@@ -8,10 +8,14 @@ const validarAccesoPlantaInspeccion = require('../middlewares/planta.auth.middle
 // RUTAS MÁS ESPECÍFICAS PRIMERO (para evitar que /:nroInspeccion capture todo)
 
 // FASE 9.5 — Guardado transaccional de consolidación
+router.get('/recibo/:nroInspeccion', authMiddleware, validarAccesoPlantaInspeccion, lineaController.obtenerRecibo);
 router.post('/consolidacion/:nroInspeccion/guardar', authMiddleware, validarAccesoPlantaInspeccion, lineaController.guardarConsolidacion);
 
 // TAREA 11 — Cambiar Observación
 router.patch('/consolidacion/:nroInspeccion/observacion', authMiddleware, validarAccesoPlantaInspeccion, lineaController.cambiarObservacion);
+
+// TAREA Anular Inspección
+router.patch('/consolidacion/:nroInspeccion/anular', authMiddleware, validarAccesoPlantaInspeccion, lineaController.anularInspeccion);
 
 // Rutas de lectura específicas (van antes del wildcard /:nroInspeccion)
 router.post('/appresultado', machineAuthMiddleware, lineaController.appresultado);
@@ -19,7 +23,8 @@ router.get('/pruebas-obligatorias/:nroInspeccion', authMiddleware, validarAcceso
 router.get('/estado/:nroInspeccion', authMiddleware, validarAccesoPlantaInspeccion, lineaController.getEstado);
 router.get('/consolidacion/:nroInspeccion', authMiddleware, validarAccesoPlantaInspeccion, lineaController.getConsolidacionDatos);
 router.get('/wizard/:nroInspeccion', authMiddleware, validarAccesoPlantaInspeccion, lineaController.getWizardModel);
-
+router.get('/propietario/:nroInspeccion', authMiddleware, validarAccesoPlantaInspeccion, lineaController.getPropietario);
+router.patch('/propietario/:nroInspeccion', authMiddleware, validarAccesoPlantaInspeccion, lineaController.modificarPropietario);
 // Rutas genéricas (van al final)
 router.get('/:nroInspeccion', authMiddleware, validarAccesoPlantaInspeccion, lineaController.getInspeccion);
 router.post('/:nroInspeccion/paso', lineaController.savePaso);

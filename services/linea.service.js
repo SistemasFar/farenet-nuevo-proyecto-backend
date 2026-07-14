@@ -2,6 +2,58 @@ const db = require('../config/database');
 const ValidarEtapaService = require('./validar_etapa.service');
 
 class LineaService {
+  async obtenerRecibo(nroInspeccion) {
+    const compRes = await db.query(`
+      SELECT 
+        c.id, c.nrocomprobante, c.fechcreacion, c.cliente_nrodocumentoidentidad, 
+        c.nombrerazonsocial, c.placamotor, c.importetotal, c.comprobanteestado_key as estado,
+        p.nombres, p.apellidos,
+        ci.nombre as concepto_nombre,
+        l.key as linea_key, l.planta_key
+      FROM comprobante c
+      LEFT JOIN persona p ON c.cliente_nrodocumentoidentidad = p.nrodocumentoidentidad
+      LEFT JOIN conceptoinspeccion ci ON c.conceptoinspeccion_key = ci.key
+      LEFT JOIN linea l ON c.linea_key = l.key
+      WHERE c.inspeccion_nrodocumentoinspeccion = $1
+      ORDER BY c.fechcreacion DESC NULLS LAST
+      LIMIT 1
+    `, [nroInspeccion]);
+
+    if (compRes.rows.length === 0) {
+      const error = new Error('Recibo no encontrado para esta inspección');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const c = compRes.rows[0];
+    const pagosRes = await db.query(`
+      SELECT 
+        id, baseimponible, igv, importe, moneda_key, estado, fechcreacion
+      FROM pago 
+      WHERE comprobante_id = $1
+      ORDER BY fechcreacion ASC NULLS LAST, id ASC
+    `, [c.id]);
+
+    return {
+      nroInspeccion: nroInspeccion,
+      nroComprobante: c.nrocomprobante || 'Pendiente',
+      fecha: c.fechcreacion,
+      cliente: {
+        nrodocumento: c.cliente_nrodocumentoidentidad,
+        nombre: c.nombrerazonsocial || `${c.nombres || ''} ${c.apellidos || ''}`.trim()
+      },
+      vehiculo: {
+        placa: c.placamotor
+      },
+      concepto: c.concepto_nombre,
+      importeTotal: c.importetotal,
+      linea: c.linea_key,
+      planta: c.planta_key,
+      estado: c.estado,
+      pagos: pagosRes.rows
+    };
+  }
+
   async getInspeccionLinea(nroInspeccion) {
     const query = `
       SELECT nrodocumentoinspeccion as nroinspeccion, inspeccionestado_key,
@@ -39,6 +91,51 @@ class LineaService {
     const res = await db.query(queryUpdate, [ingenieroSeleccionado, nroInspeccion]);
     return res.rows[0];
   }
+  async anularInspeccion(nroInspeccion, motivo, usuario) {
+    const inspeccion = await this.getInspeccionLinea(nroInspeccion);
+    if (!inspeccion) {
+      const error = new Error('Inspección no encontrada');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const invalidStates = ['CON', 'ANU', 'RET', 'RETIRADO'];
+    if (invalidStates.includes(inspeccion.inspeccionestado_key) || inspeccion.fechconsolidado) {
+      const error = new Error('No se puede anular esta inspección por su estado actual.');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      
+      const checkQuery = `SELECT nrodocumentoinspeccion FROM inspeccion WHERE nrodocumentoinspeccion = $1 FOR UPDATE`;
+      await client.query(checkQuery, [nroInspeccion]);
+
+      const updateQuery = `
+        UPDATE inspeccion
+        SET 
+          inspeccionestado_key = 'ANU',
+          fechmodi = NOW(),
+          fechanulacion = NOW(),
+          usuarioanulacion_username = $1,
+          usuariomodi_id = $2,
+          observacionanulado = $3
+        WHERE nrodocumentoinspeccion = $4
+        RETURNING *
+      `;
+      const res = await client.query(updateQuery, [usuario, usuario, motivo, nroInspeccion]);
+      
+      await client.query('COMMIT');
+      return res.rows[0];
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
 
   async obtenerDatosConsolidacion(nroInspeccion) {
     const inspeccionRes = await db.query(
@@ -63,7 +160,7 @@ class LineaService {
 
     const vehiculoRes = await db.query(
       `SELECT c.nombre as categoria, comb.nombre as combustible, m.nombre as marca, mod.nombre as modelo,
-              p.nombres as prop_nombres, p.apellidos as prop_apellidos, tp.propietario_nrodocumentoidentidad as prop_nrodoc
+              p.nombres as prop_nombres, p.apellidos as prop_apellidos, p.nombrerazonsocial as prop_razonsocial, tp.propietario_nrodocumentoidentidad as prop_nrodoc
        FROM vehiculo v 
        JOIN categoria c ON v.categoria_key = c.key
        JOIN combustible comb ON v.combustible_key = comb.key
@@ -92,7 +189,7 @@ class LineaService {
     let clienteData = {};
     if (comprobanteRes.rows.length > 0) {
        const clienteRes = await db.query(
-         `SELECT p.nombres, p.apellidos, p.nrodocumentoidentidad
+         `SELECT p.nombres, p.apellidos, p.nombrerazonsocial, p.nrodocumentoidentidad
           FROM persona p
           WHERE p.nrodocumentoidentidad = $1`,
          [comprobanteRes.rows[0].nrodoc]
@@ -143,12 +240,18 @@ class LineaService {
         placa: comprobanteRes.rows[0]?.placamotor || null
       },
       clienteRecibo: {
+        nombrerazonsocial: clienteData.nombrerazonsocial || null,
+        nombres: clienteData.nombres || null,
+        apellidos: clienteData.apellidos || null,
         nombre: ((clienteData.nombres || '') + ' ' + (clienteData.apellidos || '')).trim() || 'Desconocido',
-        nroDocumento: clienteData.nrodocumentoidentidad || null
+        nrodocumento: clienteData.nrodocumentoidentidad || null
       },
       propietarioCertificado: vehiculoRes.rows[0] && vehiculoRes.rows[0].prop_nrodoc ? {
+        nombrerazonsocial: vehiculoRes.rows[0].prop_razonsocial || null,
+        nombres: vehiculoRes.rows[0].prop_nombres || null,
+        apellidos: vehiculoRes.rows[0].prop_apellidos || null,
         nombre: ((vehiculoRes.rows[0].prop_nombres || '') + ' ' + (vehiculoRes.rows[0].prop_apellidos || '')).trim() || 'Desconocido',
-        nroDocumento: vehiculoRes.rows[0].prop_nrodoc
+        nrodocumento: vehiculoRes.rows[0].prop_nrodoc
       } : null,
       certificacion: {
         tipoInspeccion: inspeccion.tipo_inspeccion || null,

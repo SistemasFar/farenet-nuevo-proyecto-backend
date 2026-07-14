@@ -19,7 +19,7 @@ const crearAccessTokenJWT = (usuario, sessionJti, jwtJti, plantaKey) => {
         sessionJti: sessionJti,
         jti: jwtJti
     };
-    return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
+    return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '12h' });
 };
 
 const normalizarTexto = (valor) => {
@@ -321,7 +321,7 @@ const cambiarPlanta = async (req, res) => {
 
         const refreshToken = crearRefreshToken('REFRESH_TOKEN_CAMBIO');
 
-        await registrarSesion(username, plantaKey, refreshToken);
+        const sesionDB = await registrarSesion(username, plantaKey, refreshToken);
         await auditoriaService.registrarAuditoriaAcceso({
             req,
             username,
@@ -332,9 +332,12 @@ const cambiarPlanta = async (req, res) => {
         });
 
         const permisos = await authService.obtenerPermisosPorUsuario(username, plantaKey);
+        const user = await authService.obtenerUsuarioPorUsername(username);
+        const accessToken = crearAccessTokenJWT(user, sesionDB.session_jti, sesionDB.jwt_jti, plantaKey);
 
         return res.status(200).json({
             status: 'success',
+            accessToken,
             refreshToken,
             plantaSeleccionada: planta,
             permisos

@@ -3,6 +3,23 @@ const db = require('../config/database');
 
 const authMiddleware = async (req, res, next) => {
     try {
+        const authDisabled = process.env.AUTH_DISABLED === 'true';
+
+        if (authDisabled) {
+            req.user = {
+                username: process.env.TEST_USERNAME || 'mchavez',
+                perfilId: process.env.TEST_PERFIL || 'administrador',
+                plantaKey: process.env.TEST_PLANTA || '201',
+                isTestAuth: true
+            };
+
+            console.warn(
+                `[AUTH_DISABLED] Autenticación humana desactivada en entorno de pruebas. Usuario=${req.user.username}, Planta=${req.user.plantaKey}`
+            );
+
+            return next();
+        }
+
         const authHeader = req.headers.authorization;
         
         if (!authHeader || !authHeader.startsWith('Bearer ')) {

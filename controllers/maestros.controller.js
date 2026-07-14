@@ -385,6 +385,7 @@ const obtenerIngenieros = async (req, res) => {
                 id: row.id,
                 username: row.username,
                 nombre: `${row.nombres || ''} ${row.apellidos || ''}`.trim(),
+                nombreCompleto: `${row.nombres || ''} ${row.apellidos || ''}`.trim(),
                 perfil: row.perfil,
                 tieneFirma: row.tiene_firma
             }))
