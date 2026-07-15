@@ -318,10 +318,35 @@ class LineaService {
       puedeConsolidar: isHistorico ? false : validacionEtapa.etapaCompleta,
       resultadoPreliminar: validacionEtapa.resultadoPreliminar
     };
+
+    // Agregar resultadosMaquinaRaw explícitos
+    const queryRaw = `
+      SELECT
+        rm.id,
+        rm.inspeccion_nrodocumentoinspeccion AS "inspeccionNrodocumentoinspeccion",
+        m.tipomaquina_key AS "tipoMaquinaKey",
+        rm.resultado,
+        rm.maquina_id AS "maquinaId",
+        rm.data,
+        rm.fechcreacion AS "fechaCreacion",
+        rm.fechmodi AS "fechaModificacion"
+      FROM resultado_maquina rm
+      JOIN maquina m ON m.id = rm.maquina_id
+      WHERE rm.inspeccion_nrodocumentoinspeccion LIKE $1 || '%'
+      ORDER BY m.tipomaquina_key, rm.id;
+    `;
+    let resultadosMaquinaRaw = [];
+    try {
+      const { rows } = await db.query(queryRaw, [nroInspeccion]);
+      resultadosMaquinaRaw = rows;
+    } catch (e) {
+      console.error("Error obteniendo resultadosMaquinaRaw:", e);
+    }
     
     return {
       ...estado,
       ...data,
+      resultadosMaquinaRaw,
       modo,
       vehiculo: {
         ...estado.vehiculo,

@@ -184,11 +184,12 @@ class ValidarEtapaService {
         rm.fechcreacion,
         rm.fechainicio,
         rm.fechafin,
-        rm.foto
+        rm.foto,
+        rm.data
       FROM resultado_maquina rm
       JOIN maquina m ON m.id = rm.maquina_id
       JOIN tipomaquina tm ON tm.key = m.tipomaquina_key
-      WHERE rm.inspeccion_nrodocumentoinspeccion = $1
+      WHERE rm.inspeccion_nrodocumentoinspeccion LIKE $1 || '%'
     `;
     const resRecibidas = await client.query(queryRecibidas, [nrodocumentoinspeccion]);
     const recibidas = resRecibidas.rows;
