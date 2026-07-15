@@ -127,6 +127,28 @@ const guardarProceso = async (reqBody) => {
           formVehiculo.emailProp || null, formVehiculo.telefonoProp || null, formVehiculo.departamentoProp || null,
           formVehiculo.provinciaProp || null, formVehiculo.distritoProp || null, formVehiculo.paisProp || null
         ]);
+      } else {
+        await client.query(`
+          UPDATE persona SET
+            tipodocumentoidentidad_key = COALESCE($2, tipodocumentoidentidad_key),
+            nombrerazonsocial = COALESCE($3, nombrerazonsocial),
+            nombres = COALESCE($4, nombres),
+            apellidos = COALESCE($5, apellidos),
+            direccion = COALESCE($6, direccion),
+            email = COALESCE($7, email),
+            telefono = COALESCE($8, telefono),
+            departamento_key = COALESCE($9, departamento_key),
+            provincia_key = COALESCE($10, provincia_key),
+            distrito_key = COALESCE($11, distrito_key),
+            pais_key = COALESCE($12, pais_key),
+            fechmodi = NOW()
+          WHERE nrodocumentoidentidad = $1
+        `, [
+          documentoProp, formVehiculo.tipoDocProp || null, formVehiculo.razonSocialProp || null,
+          formVehiculo.nombresProp || null, formVehiculo.apellidosProp || null, formVehiculo.direccionProp || null,
+          formVehiculo.emailProp || null, formVehiculo.telefonoProp || null, formVehiculo.departamentoProp || null,
+          formVehiculo.provinciaProp || null, formVehiculo.distritoProp || null, formVehiculo.paisProp || null
+        ]);
       }
 
       let vehiculoExist = await client.query('SELECT nromotor, tarjetapropiedad_id FROM vehiculo WHERE nromotor = $1', [nroMotorFinal]);
@@ -306,6 +328,45 @@ const guardarProceso = async (reqBody) => {
       console.log(`[DEBUG Node] -> Estado DESPUES: ${estadoDespues}`);
     } catch(e){}
     if (formFacturacion || formCaja?.concepto) {
+      if (formFacturacion && formFacturacion.nroDocFac) {
+        let facPersonaExist = await client.query('SELECT nrodocumentoidentidad FROM persona WHERE nrodocumentoidentidad = $1', [formFacturacion.nroDocFac]);
+        if (facPersonaExist.rows.length === 0) {
+          await client.query(`
+            INSERT INTO persona (
+              nrodocumentoidentidad, tipodocumentoidentidad_key, nombrerazonsocial, nombres, apellidos,
+              direccion, email, telefono, departamento_key, provincia_key, distrito_key, pais_key, fechcreacion, estado
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), true)
+          `, [
+            formFacturacion.nroDocFac, formFacturacion.tipoDocFac || null, formFacturacion.razonSocialFac || null,
+            formFacturacion.nombresFac || null, formFacturacion.apellidosFac || null, formFacturacion.direccionFac || null,
+            formFacturacion.emailFac || null, formFacturacion.telefonoFac || null, formFacturacion.departamentoFac || null,
+            formFacturacion.provinciaFac || null, formFacturacion.distritoFac || null, formFacturacion.paisFac || null
+          ]);
+        } else {
+          await client.query(`
+            UPDATE persona SET
+              tipodocumentoidentidad_key = COALESCE($2, tipodocumentoidentidad_key),
+              nombrerazonsocial = COALESCE($3, nombrerazonsocial),
+              nombres = COALESCE($4, nombres),
+              apellidos = COALESCE($5, apellidos),
+              direccion = COALESCE($6, direccion),
+              email = COALESCE($7, email),
+              telefono = COALESCE($8, telefono),
+              departamento_key = COALESCE($9, departamento_key),
+              provincia_key = COALESCE($10, provincia_key),
+              distrito_key = COALESCE($11, distrito_key),
+              pais_key = COALESCE($12, pais_key),
+              fechmodi = NOW()
+            WHERE nrodocumentoidentidad = $1
+          `, [
+            formFacturacion.nroDocFac, formFacturacion.tipoDocFac || null, formFacturacion.razonSocialFac || null,
+            formFacturacion.nombresFac || null, formFacturacion.apellidosFac || null, formFacturacion.direccionFac || null,
+            formFacturacion.emailFac || null, formFacturacion.telefonoFac || null, formFacturacion.departamentoFac || null,
+            formFacturacion.provinciaFac || null, formFacturacion.distritoFac || null, formFacturacion.paisFac || null
+          ]);
+        }
+      }
+
       const placaNueva = formVehiculo?.placaNueva || formCaja?.placa || '';
       const baseImponible = formFacturacion?.subtotal || (precioTotal ? (precioTotal / 1.18).toFixed(2) : 0);
       const igv = formFacturacion?.igv || (precioTotal ? (precioTotal - baseImponible).toFixed(2) : 0);
