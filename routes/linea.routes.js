@@ -14,6 +14,13 @@ router.post('/consolidacion/:nroInspeccion/guardar', authMiddleware, validarAcce
 // TAREA 11 — Cambiar Observación
 router.patch('/consolidacion/:nroInspeccion/observacion', authMiddleware, validarAccesoPlantaInspeccion, lineaController.cambiarObservacion);
 
+// Acciones de Consolidación (Autoguardado y Modales de Soporte)
+router.patch('/consolidacion/:nroInspeccion/datos', authMiddleware, validarAccesoPlantaInspeccion, lineaController.guardarDatosConsolidacion);
+router.patch('/consolidacion/:nroInspeccion/poliza', authMiddleware, validarAccesoPlantaInspeccion, lineaController.registrarPoliza);
+router.patch('/consolidacion/:nroInspeccion/linea', authMiddleware, validarAccesoPlantaInspeccion, lineaController.cambiarLinea);
+router.patch('/consolidacion/:nroInspeccion/motor', authMiddleware, validarAccesoPlantaInspeccion, lineaController.cambiarMotor);
+router.patch('/consolidacion/:nroInspeccion/firma', authMiddleware, validarAccesoPlantaInspeccion, lineaController.cambiarFirma);
+
 // TAREA Anular Inspección
 router.patch('/consolidacion/:nroInspeccion/anular', authMiddleware, validarAccesoPlantaInspeccion, lineaController.anularInspeccion);
 

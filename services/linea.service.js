@@ -789,6 +789,148 @@ class LineaService {
       observacion: observacion || ''
     };
   }
+
+  async guardarDatosConsolidacion(nroInspeccion, ingenieroCertificadorUsername, observacion) {
+    await db.query(
+      `UPDATE inspeccion
+       SET usuarioingcertificador_username = $1,
+           observacion = COALESCE($2, observacion),
+           fechmodi = NOW()
+       WHERE nrodocumentoinspeccion = $3`,
+      [ingenieroCertificadorUsername || null, observacion, nroInspeccion]
+    );
+    return { success: true };
+  }
+
+  async modificarPropietario(nroInspeccion, payload, usuario) {
+    const {
+      sinDni, nroDocumento, nombres, apellidos, razonSocial,
+      pais, departamento, provincia, distrito, direccion, email, telefono
+    } = payload;
+
+    const docFinal = sinDni ? '00000000' : (nroDocumento || '00000000');
+
+    // UPSERT persona
+    const queryPersona = `
+      INSERT INTO persona (
+        nrodocumentoidentidad, nombrerazonsocial, nombres, apellidos,
+        pais_key, departamento_key, provincia_key, distrito_key,
+        direccion, email, telefono, fechcreacion, estado
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), true)
+      ON CONFLICT (nrodocumentoidentidad) 
+      DO UPDATE SET 
+        nombrerazonsocial = COALESCE(EXCLUDED.nombrerazonsocial, persona.nombrerazonsocial),
+        nombres = COALESCE(EXCLUDED.nombres, persona.nombres),
+        apellidos = COALESCE(EXCLUDED.apellidos, persona.apellidos),
+        pais_key = EXCLUDED.pais_key,
+        departamento_key = EXCLUDED.departamento_key,
+        provincia_key = EXCLUDED.provincia_key,
+        distrito_key = EXCLUDED.distrito_key,
+        direccion = EXCLUDED.direccion,
+        email = EXCLUDED.email,
+        telefono = EXCLUDED.telefono,
+        fechmodi = NOW()
+    `;
+
+    await db.query(queryPersona, [
+      docFinal,
+      (sinDni ? 'CLIENTES VARIOS' : (razonSocial || null)),
+      (sinDni ? 'CLIENTES VARIOS' : (nombres || null)),
+      apellidos || null,
+      pais || null, departamento || null, provincia || null, distrito || null,
+      direccion || null, email || null, telefono || null
+    ]);
+
+    // Obtener tarjetapropiedad_id para actualizar
+    const checkQuery = `
+      SELECT v.tarjetapropiedad_id
+      FROM inspeccion i
+      LEFT JOIN vehiculo v ON i.vehiculo_nromotor = v.nromotor
+      WHERE i.nrodocumentoinspeccion = $1
+    `;
+    const check = await db.query(checkQuery, [nroInspeccion]);
+    if (check.rows.length === 0) throw new Error('Inspección no encontrada');
+    
+    const tpId = check.rows[0].tarjetapropiedad_id;
+    if (tpId) {
+      await db.query(`
+        UPDATE tarjetapropiedad 
+        SET propietario_nrodocumentoidentidad = $1
+        WHERE id = $2
+      `, [docFinal, tpId]);
+    }
+
+    return { success: true, docFinal };
+  }
+
+  async registrarPoliza(nroInspeccion, data) {
+    // 1. Obtener nromotor
+    const checkQuery = `SELECT vehiculo_nromotor FROM inspeccion WHERE nrodocumentoinspeccion = $1`;
+    const check = await db.query(checkQuery, [nroInspeccion]);
+    if (check.rows.length === 0) throw new Error('Inspección no encontrada');
+    const nroMotor = check.rows[0].vehiculo_nromotor;
+
+    // 2. Actualizar vehículo (soat, aseguradora, tipopoliza)
+    // data must have { aseguradora, tipoPoliza, nroPoliza, fechaInicio, fechaFin }
+    await db.query(
+      `UPDATE vehiculo
+       SET nrosoat = $1,
+           aseguradora_key = $2,
+           tipopoliza_key = $3,
+           fechfinsoat = $4,
+           fechainiciosoat = $5
+       WHERE nromotor = $6`,
+      [data.nroPoliza || null, data.aseguradora || null, data.tipoPoliza || null, data.fechaFin || null, data.fechaInicio || null, nroMotor]
+    );
+
+    // 3. También actualizar en inspeccion (si es necesario)
+    // inspeccion has tipopoliza_key, tipoautorizacion_key, etc.
+    await db.query(
+      `UPDATE inspeccion SET tipopoliza_key = $1 WHERE nrodocumentoinspeccion = $2`,
+      [data.tipoPoliza || null, nroInspeccion]
+    );
+
+    return { success: true };
+  }
+
+  async cambiarLinea(nroInspeccion, lineaKey) {
+    if (!lineaKey) throw new Error('Debe proporcionar la nueva línea');
+    await db.query(
+      `UPDATE comprobante
+       SET linea_key = $1
+       WHERE inspeccion_nrodocumentoinspeccion = $2`,
+      [lineaKey, nroInspeccion]
+    );
+    return { success: true, lineaKey };
+  }
+
+  async cambiarMotor(nroInspeccion, nroMotor) {
+    if (!nroMotor) throw new Error('Debe proporcionar el nuevo motor');
+    const checkQuery = `SELECT vehiculo_nromotor FROM inspeccion WHERE nrodocumentoinspeccion = $1`;
+    const check = await db.query(checkQuery, [nroInspeccion]);
+    if (check.rows.length === 0) throw new Error('Inspección no encontrada');
+    
+    const oldMotor = check.rows[0].vehiculo_nromotor;
+
+    // If changing engine, we might need to update vehiculo table or just change the reference
+    // Let's assume the user means "corregir el número de motor" of the current vehicle.
+    await db.query(`UPDATE vehiculo SET nromotor = $1 WHERE nromotor = $2`, [nroMotor, oldMotor]);
+    await db.query(`UPDATE inspeccion SET vehiculo_nromotor = $1 WHERE nrodocumentoinspeccion = $2`, [nroMotor, nroInspeccion]);
+    
+    return { success: true, nroMotor };
+  }
+
+  async cambiarFirma(nroInspeccion, ingenieroCertificadorUsername) {
+    if (!ingenieroCertificadorUsername) throw new Error('Debe proporcionar el ingeniero certificador');
+    await db.query(
+      `UPDATE inspeccion
+       SET usuarioingcertificador_username = $1,
+           fechmodi = NOW()
+       WHERE nrodocumentoinspeccion = $2`,
+      [ingenieroCertificadorUsername, nroInspeccion]
+    );
+    return { success: true, ingenieroCertificadorUsername };
+  }
 }
 
 module.exports = new LineaService();

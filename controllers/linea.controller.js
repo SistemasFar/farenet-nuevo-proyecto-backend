@@ -83,6 +83,71 @@ class LineaController {
     }
   }
 
+  async guardarDatosConsolidacion(req, res) {
+    try {
+      const { nroInspeccion } = req.params;
+      const { ingenieroCertificadorUsername, observacion } = req.body;
+      const result = await LineaService.guardarDatosConsolidacion(nroInspeccion, ingenieroCertificadorUsername, observacion);
+      res.json({ status: 'success', data: result });
+    } catch (error) {
+      console.error(error);
+      const status = error.statusCode || 500;
+      res.status(status).json({ message: error.message || 'Error al guardar datos de consolidación' });
+    }
+  }
+
+  async registrarPoliza(req, res) {
+    try {
+      const { nroInspeccion } = req.params;
+      const data = req.body;
+      const result = await LineaService.registrarPoliza(nroInspeccion, data);
+      res.json({ status: 'success', data: result });
+    } catch (error) {
+      console.error(error);
+      const status = error.statusCode || 500;
+      res.status(status).json({ message: error.message || 'Error al registrar póliza' });
+    }
+  }
+
+  async cambiarLinea(req, res) {
+    try {
+      const { nroInspeccion } = req.params;
+      const { lineaKey } = req.body;
+      const result = await LineaService.cambiarLinea(nroInspeccion, lineaKey);
+      res.json({ status: 'success', data: result });
+    } catch (error) {
+      console.error(error);
+      const status = error.statusCode || 500;
+      res.status(status).json({ message: error.message || 'Error al cambiar línea' });
+    }
+  }
+
+  async cambiarMotor(req, res) {
+    try {
+      const { nroInspeccion } = req.params;
+      const { nroMotor } = req.body;
+      const result = await LineaService.cambiarMotor(nroInspeccion, nroMotor);
+      res.json({ status: 'success', data: result });
+    } catch (error) {
+      console.error(error);
+      const status = error.statusCode || 500;
+      res.status(status).json({ message: error.message || 'Error al cambiar motor' });
+    }
+  }
+
+  async cambiarFirma(req, res) {
+    try {
+      const { nroInspeccion } = req.params;
+      const { ingenieroCertificadorUsername } = req.body;
+      const result = await LineaService.cambiarFirma(nroInspeccion, ingenieroCertificadorUsername);
+      res.json({ status: 'success', data: result });
+    } catch (error) {
+      console.error(error);
+      const status = error.statusCode || 500;
+      res.status(status).json({ message: error.message || 'Error al cambiar firma' });
+    }
+  }
+
   async appresultado(req, res) {
     try {
       const payload = req.body;

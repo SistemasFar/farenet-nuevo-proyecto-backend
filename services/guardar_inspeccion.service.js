@@ -25,8 +25,8 @@ const guardarInspeccionTransaccion = async (reqBody) => {
       `, [
         documentoProp,
         formVehiculo.tipoDocProp || null,
-        formVehiculo.razonSocialProp || null,
-        formVehiculo.nombresProp || null,
+        (formVehiculo.sinDni ? 'CLIENTES VARIOS' : (formVehiculo.razonSocialProp || null)),
+        (formVehiculo.sinDni ? 'CLIENTES VARIOS' : (formVehiculo.nombresProp || null)),
         formVehiculo.apellidosProp || null,
         formVehiculo.direccionProp || null,
         formVehiculo.emailProp || null,
