@@ -1,5 +1,8 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage() });
+
 const lineaController = require('../controllers/linea.controller');
 const authMiddleware = require('../middlewares/auth.middleware');
 const machineAuthMiddleware = require('../middlewares/machine.auth.middleware');
@@ -23,6 +26,11 @@ router.patch('/consolidacion/:nroInspeccion/firma', authMiddleware, validarAcces
 
 // TAREA Anular Inspección
 router.patch('/consolidacion/:nroInspeccion/anular', authMiddleware, validarAccesoPlantaInspeccion, lineaController.anularInspeccion);
+
+// TAREA Reiniciar Prueba/Foto y Cambiar Foto
+router.post('/foto/:nroInspeccion/cambiar', authMiddleware, validarAccesoPlantaInspeccion, upload.single('file'), lineaController.cambiarFoto);
+router.post('/foto/:nroInspeccion/reiniciar', authMiddleware, validarAccesoPlantaInspeccion, lineaController.reiniciarFoto);
+router.post('/prueba/:nroInspeccion/reiniciar', authMiddleware, validarAccesoPlantaInspeccion, lineaController.reiniciarPrueba);
 
 // Rutas de lectura específicas (van antes del wildcard /:nroInspeccion)
 router.post('/appresultado', machineAuthMiddleware, lineaController.appresultado);

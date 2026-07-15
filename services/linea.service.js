@@ -956,6 +956,172 @@ class LineaService {
     );
     return { success: true, ingenieroCertificadorUsername };
   }
+
+  async cambiarFoto(nroInspeccion, tipoFoto, file, username) {
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      const tipoMaquinaMap = { 'GASES': '11', 'LUCES': '12', 'FRENOS': '13' }; // Podría ser 15 también, pero 13 es estándar
+      const tipoMaquinaKey = tipoMaquinaMap[tipoFoto] || '11';
+      
+      const hexFoto = file.buffer.toString('hex');
+
+      // Buscar si existe el resultado exacto (ignorar sufijo M para la inserción, usar el real)
+      const resQuery = await client.query(`
+        SELECT rm.id, rm.data, rm.inspeccion_nrodocumentoinspeccion 
+        FROM resultado_maquina rm
+        JOIN maquina m ON m.id = rm.maquina_id
+        WHERE rm.inspeccion_nrodocumentoinspeccion LIKE $1 || '%' AND m.tipomaquina_key IN ('11','12','13','15')
+      `, [nroInspeccion]);
+      
+      let rmToUpdate = resQuery.rows.find(r => 
+        (tipoFoto === 'GASES' && r.data && r.data.tipoMaquina === '11') ||
+        (tipoFoto === 'LUCES' && r.data && r.data.tipoMaquina === '12') ||
+        (tipoFoto === 'FRENOS' && r.data && (r.data.tipoMaquina === '13' || r.data.tipoMaquina === '15'))
+      );
+      
+      // Si el JSON no tiene tipoMaquina, filtramos por la BD
+      if (!rmToUpdate && resQuery.rows.length > 0) {
+          const rmCheck = await client.query(`
+            SELECT rm.id, rm.data, rm.inspeccion_nrodocumentoinspeccion 
+            FROM resultado_maquina rm
+            JOIN maquina m ON m.id = rm.maquina_id
+            WHERE rm.inspeccion_nrodocumentoinspeccion LIKE $1 || '%' AND m.tipomaquina_key = $2
+          `, [nroInspeccion, tipoMaquinaKey]);
+          if(rmCheck.rows.length > 0) rmToUpdate = rmCheck.rows[0];
+      }
+
+      if (rmToUpdate) {
+        // UPDATE
+        let dataJson = rmToUpdate.data || {};
+        dataJson.foto = hexFoto;
+        
+        await client.query(`
+          UPDATE resultado_maquina
+          SET data = $1, fechainicio = NOW(), fechafin = NOW(), resultado = 'A',
+              estado = true, manual = true, fechmodi = NOW()
+          WHERE id = $2
+        `, [dataJson, rmToUpdate.id]);
+      } else {
+        // INSERT
+        // Obtener la línea de la inspección
+        const compRes = await client.query(`SELECT linea_key FROM comprobante WHERE inspeccion_nrodocumentoinspeccion = $1 ORDER BY id DESC LIMIT 1`, [nroInspeccion]);
+        const lineaKey = compRes.rows.length > 0 ? compRes.rows[0].linea_key : null;
+        
+        // Obtener un maquina_id válido
+        const maqRes = await client.query(`
+          SELECT m.id FROM maquina m
+          JOIN linea_etapa_maquina lem ON lem.maquinas_id = m.id
+          JOIN linea_etapa le ON le.id = lem.lineaetapa_id
+          WHERE m.tipomaquina_key = $1 AND le.linea_key = $2 LIMIT 1
+        `, [tipoMaquinaKey, lineaKey]);
+        
+        if (maqRes.rows.length === 0) throw new Error('No se encontró máquina configurada para este tipo y línea.');
+        const maquinaId = maqRes.rows[0].id;
+        
+        const nextIdRes = await client.query(`SELECT nextval('hibernate_sequence') as id`);
+        const newId = nextIdRes.rows[0].id;
+        
+        const dataJson = { foto: hexFoto, tipoMaquina: tipoMaquinaKey };
+        
+        await client.query(`
+          INSERT INTO resultado_maquina (
+            id, inspeccion_nrodocumentoinspeccion, maquina_id, fechainicio, fechafin,
+            data, resultado, estado, manual, fechcreacion
+          ) VALUES ($1, $2, $3, NOW(), NOW(), $4, 'A', true, true, NOW())
+        `, [newId, nroInspeccion, maquinaId, dataJson]);
+      }
+      
+      // Actualizar inspección a FOTO (16) y PROCESO
+      await client.query(`
+        UPDATE inspeccion 
+        SET posicion = 16, resultado = null, inspeccionestado_key = 'PROCESO', fechmodi = NOW()
+        WHERE nrodocumentoinspeccion = $1
+      `, [nroInspeccion]);
+      
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async reiniciarFoto(nroInspeccion, tipoFoto) {
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      const tipoMaquinaMap = { 'GASES': '11', 'LUCES': '12', 'FRENOS': '13' };
+      const tipoMaquinaKey = tipoMaquinaMap[tipoFoto] || '11';
+      
+      // Encontrar el ID
+      const resQuery = await client.query(`
+        SELECT rm.id FROM resultado_maquina rm
+        JOIN maquina m ON m.id = rm.maquina_id
+        WHERE rm.inspeccion_nrodocumentoinspeccion LIKE $1 || '%' AND m.tipomaquina_key IN ($2, '15')
+      `, [nroInspeccion, tipoMaquinaKey]);
+      
+      for (let row of resQuery.rows) {
+        // FK constraint safe delete
+        await client.query(`DELETE FROM resultado_maquina_defecto WHERE resultado_maquina_id = $1`, [row.id]);
+        await client.query(`DELETE FROM resultado_maquina WHERE id = $1`, [row.id]);
+      }
+      
+      // Mapear posición (GASES -> 5, LUCES -> 7, FRENOS -> 11)
+      const posMap = { 'GASES': 5, 'LUCES': 7, 'FRENOS': 11 };
+      const posicion = posMap[tipoFoto] || 16;
+      
+      await client.query(`
+        UPDATE inspeccion 
+        SET posicion = $1, resultado = null, inspeccionestado_key = 'PROCESO', fechmodi = NOW()
+        WHERE nrodocumentoinspeccion = $2
+      `, [posicion, nroInspeccion]);
+      
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async reiniciarPrueba(nroInspeccion, resultadoMaquinaId, tipoMaquinaKey) {
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      await client.query(`DELETE FROM resultado_maquina_defecto WHERE resultado_maquina_id = $1`, [resultadoMaquinaId]);
+      await client.query(`DELETE FROM resultado_maquina WHERE id = $1`, [resultadoMaquinaId]);
+      
+      // Mapeo legacy
+      let posicion = 11; // FRENOMETRO por defecto
+      if (['4', '5'].includes(tipoMaquinaKey)) posicion = 5; // GASES
+      else if (['6'].includes(tipoMaquinaKey)) posicion = 9; // SONOMETRO
+      else if (['7'].includes(tipoMaquinaKey)) posicion = 7; // LUCES
+      else if (['9'].includes(tipoMaquinaKey)) posicion = 8; // INSPECCION_VISUAL
+      else if (['10'].includes(tipoMaquinaKey)) posicion = 10; // PROFUNDIMETRO
+      
+      await client.query(`
+        UPDATE inspeccion 
+        SET posicion = $1, resultado = null, inspeccionestado_key = 'PROCESO', fechmodi = NOW()
+        WHERE nrodocumentoinspeccion = $2
+      `, [posicion, nroInspeccion]);
+      
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
 }
 
 module.exports = new LineaService();
