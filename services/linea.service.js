@@ -1,4 +1,7 @@
 const db = require('../config/database');
+const fs = require('fs');
+const path = require('path');
+const cheerio = require('cheerio');
 const ValidarEtapaService = require('./validar_etapa.service');
 
 class LineaService {
@@ -1121,6 +1124,289 @@ class LineaService {
     } finally {
       client.release();
     }
+  }
+
+  async generarPreVisualizacionHtml(nroInspeccion) {
+    const data = await this.getWizardModel(nroInspeccion);
+    if (!data || !data.vehiculo) {
+      throw new Error("No se encontró data de la inspección.");
+    }
+
+    const { inspeccion, vehiculo, propietario, resultadosMaquinaRaw } = data;
+
+    // 1. Obtener imagen de vehículo (Foto) de los resultados (PASO A)
+    let base64Photo = '';
+    try {
+      if (resultadosMaquinaRaw && resultadosMaquinaRaw.length > 0) {
+        for (const rm of resultadosMaquinaRaw) {
+          if (rm.tipoMaquinaKey === '13' || rm.tipoMaquinaKey === '15') {
+            if (rm.data && rm.data.foto) {
+               const hex = rm.data.foto;
+               const b64 = Buffer.from(hex, 'hex').toString('base64');
+               base64Photo = `data:image/jpeg;base64,${b64}`;
+               break;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[PREVIEW_FOTO_VEHICULO_WARN]', e.message);
+      base64Photo = '';
+    }
+
+    // 2. Obtener firma con query pequeño (PASO B)
+    let firmaBase64 = '';
+    try {
+      if (inspeccion && inspeccion.usuarioingcertificador_username) {
+        const firmaRes = await db.query(
+           `SELECT firmacertificador FROM usuario WHERE username = $1`, 
+           [inspeccion.usuarioingcertificador_username]
+        );
+        if (firmaRes.rows.length > 0 && firmaRes.rows[0].firmacertificador) {
+           firmaBase64 = firmaRes.rows[0].firmacertificador;
+           if (!firmaBase64.startsWith('data:')) {
+              firmaBase64 = `data:image/png;base64,${firmaBase64}`;
+           }
+        }
+      }
+    } catch (e) {
+      console.warn('[PREVIEW_FIRMA_WARN]', e.message);
+      firmaBase64 = '';
+    }
+
+    // 3. Cargar el template HTML robustamente
+    const templatePath = path.resolve(process.cwd(), 'templates', 'certificado_inspeccion.html');
+    if (!fs.existsSync(templatePath)) {
+      throw new Error(`Template no encontrado en la ruta: ${templatePath}`);
+    }
+    let htmlTemplate = fs.readFileSync(templatePath, 'utf8');
+
+    // 4. Inyectar imágenes dinámicas en el HTML crudo antes de limpiar Freemarker
+    if (base64Photo) {
+       htmlTemplate = htmlTemplate.replace(/\$\{image\}/g, base64Photo);
+    } else {
+       // Si no hay foto, reemplazamos el tag de img con vacio para que no quede roto
+       htmlTemplate = htmlTemplate.replace(/<img[^>]*src="\$\{image\}"[^>]*>/g, '');
+    }
+
+    if (firmaBase64) {
+       htmlTemplate = htmlTemplate.replace(/\$\{firmaCertificador\}/g, firmaBase64);
+    } else {
+       htmlTemplate = htmlTemplate.replace(/<img[^>]*src="\$\{firmaCertificador\}"[^>]*>/g, '');
+    }
+
+    // Convertir imágenes de assets a inline base64 con validación (PASO C)
+    const getAssetBase64 = (filename) => {
+      try {
+        const filepath = path.resolve(process.cwd(), 'templates', 'img', filename);
+        const exists = fs.existsSync(filepath);
+        if (!exists) {
+           console.warn('[PREVIEW_ASSET_MISSING]', filepath);
+           return '';
+        }
+        const ext = path.extname(filename).replace('.', '');
+        const mime = ext === 'jpg' ? 'jpeg' : ext;
+        const b64 = fs.readFileSync(filepath, 'base64');
+        return `data:image/${mime};base64,${b64}`;
+      } catch (e) {
+        console.warn('[PREVIEW_ASSET_WARN]', filename, e.message);
+        return '';
+      }
+    };
+
+    htmlTemplate = htmlTemplate.replace(/\.\.\/img\/sello_resolucion\.png/g, getAssetBase64('sello_resolucion.png'));
+    htmlTemplate = htmlTemplate.replace(/\.\.\/img\/sello_farenet\.png/g, getAssetBase64('sello_farenet.png'));
+    htmlTemplate = htmlTemplate.replace(/\.\.\/img\/sello_retica\.png/g, getAssetBase64('sello_retica.png'));
+    htmlTemplate = htmlTemplate.replace(/\.\.\/img\/fondo_cert2\.png/g, getAssetBase64('fondo_cert2.png'));
+    htmlTemplate = htmlTemplate.replace(/\.\.\/img\/fondocert_U\.png/g, getAssetBase64('fondocert_U.png'));
+
+    // Remover directivas Freemarker sobrantes
+    htmlTemplate = htmlTemplate
+      .replace(/<#assign[\s\S]*?>/g, '')
+      .replace(/<#if[\s\S]*?>/g, '')
+      .replace(/<#else>/g, '')
+      .replace(/<\/#if>/g, '')
+      .replace(/<#list[\s\S]*?>/g, '')
+      .replace(/<\/#list>/g, '')
+      .replace(/\$\{[^}]+\}/g, '');
+
+    const $ = cheerio.load(htmlTemplate);
+
+    // Inyectar CSS override al HTML antes de devolverlo
+    const styleOverride = `
+      <style>
+        html, body {
+          margin: 0 !important;
+          padding: 0 !important;
+          background: white !important;
+          width: 100% !important;
+          min-width: 1800px !important;
+          overflow: auto !important;
+        }
+
+        table {
+          border-collapse: collapse;
+        }
+
+        .certificado-inspeccion {
+          width: 1800px !important;
+          height: auto !important;
+          margin: 0 !important;
+          padding: 20px !important;
+          max-width: none !important;
+        }
+
+        .certificate-preview-root {
+          width: 1800px !important;
+          min-width: 1800px !important;
+        }
+      </style>
+    `;
+    if ($('head').length > 0) {
+      $('head').append(styleOverride);
+    } else {
+      $('body').prepend(styleOverride);
+    }
+
+    // Helpers
+    const safe = (value) => {
+      if (value === null || value === undefined) return '';
+      return String(value);
+    };
+
+    const setLocation = ($, location, value) => {
+      const el = $(`[location="${location}"]`);
+      if (el.length > 0) {
+        el.html(safe(value));
+      }
+    };
+
+    const isAprobado = inspeccion?.resultado === 'A';
+    
+    // Formateadores
+    const formatD = (d) => d ? new Date(d).toLocaleDateString('es-PE', { day:'2-digit', month:'2-digit', year:'numeric'}) : '';
+    const formatT = (d) => d ? new Date(d).toLocaleTimeString('en-US', { hour: 'numeric', minute: 'numeric', hour12: true }) : '';
+
+    // CAPA 3 y 5: Llenar campos básicos (Sin queries gigantes)
+    setLocation($, 'nroDocu', isAprobado ? "Certificado N°: " : "Informe N°: ");
+    setLocation($, 'fecha', formatD(inspeccion?.fechiniciovigencia || inspeccion?.fechcreacion));
+    setLocation($, 'hora', formatT(inspeccion?.fechiniciovigencia || inspeccion?.fechcreacion));
+    setLocation($, 'resultadoCertificado', isAprobado ? "APROBADO" : "DESAPROBADO");
+    
+    // Fallbacks si falta data para que no rompa
+    setLocation($, 'nroHojaValorada', ''); // Oculto por ahora sin query
+    setLocation($, 'vigenciaCertificado', inspeccion?.vigencia || '');
+    setLocation($, 'fechaProximaInspeccion', '');
+    setLocation($, 'tipocertificado', '');
+    setLocation($, 'tipoautorizacion', '');
+    setLocation($, 'tipocertificadocuerpo', '');
+    setLocation($, 'informeInspeccionNro', safe(inspeccion?.nrodocumentoinforme));
+    setLocation($, 'direccionPlLugar', '');
+    setLocation($, 'empresa', '');
+    setLocation($, 'telefonoEmpresa', '');
+    setLocation($, 'claseautorizacionText', "CLASE DE AUTORIZACIÓN");
+    setLocation($, 'strFechInspeccion', "Fecha Inspección:");
+    setLocation($, 'fechaInicioVigencia', formatD(inspeccion?.fechiniciovigencia || inspeccion?.fechcreacion));
+    setLocation($, 'certificadoStr', isAprobado ? "CERTIFICADO DE INSPECCIÓN TÉCNICA VEHICULAR" : "");
+    setLocation($, 'informeStr', !isAprobado ? "INFORME DE INSPECCIÓN TÉCNICA VEHICULAR" : "");
+    setLocation($, 'tituloExtraordinario', ''); 
+    setLocation($, 'observacionExtraordinario', ''); 
+    setLocation($, 'resolucion', ''); // El sello está de background
+    setLocation($, 'costo', '');
+
+    if (propietario) {
+      setLocation($, 'propietario', propietario.nombrecompleto);
+    }
+    
+    if (vehiculo) {
+      setLocation($, 'placa', vehiculo.placa);
+      setLocation($, 'combustible', vehiculo.combustible);
+      setLocation($, 'asientos-pasajeros', `${safe(vehiculo.nroasientos)}/${safe(vehiculo.nropasajeros)}`);
+      setLocation($, 'categoria', vehiculo.categoria);
+      setLocation($, 'marca', vehiculo.marca);
+      setLocation($, 'modelo', vehiculo.modelo);
+      setLocation($, 'motor', vehiculo.nromotor);
+      setLocation($, 'nroserie', vehiculo.nroserie);
+      setLocation($, 'pesoneto', vehiculo.pesoseco);
+      setLocation($, 'pesobruto', vehiculo.pesobruto);
+      setLocation($, 'cargautil', vehiculo.cargautil);
+      setLocation($, 'aniofabricacion', vehiculo.aniofabricacion);
+      setLocation($, 'kilometraje', vehiculo.kilometraje);
+      setLocation($, 'dimensiones', `${safe(vehiculo.longitud)} / ${safe(vehiculo.ancho)} / ${safe(vehiculo.alto)}`);
+      setLocation($, 'nroejes-nroruedas', `${safe(vehiculo.nroejes)} / ${safe(vehiculo.nroruedas)}`);
+    }
+
+    // CAPA 4: Resultados técnicos (Equipos y Resultados de máquina)
+    if (data.resultadosMaquinaRaw && data.resultadosMaquinaRaw.length > 0) {
+      for (const rm of data.resultadosMaquinaRaw) {
+        const t = String(rm.tipoMaquinaKey);
+        let prefix = null;
+        const equipoNombre = rm.maquina?.nombreequipo || '';
+        const equipoSerie = rm.maquina?.serie || '';
+        const equipoDisplay = (equipoNombre || equipoSerie) ? `${equipoNombre}/${equipoSerie}` : '';
+
+        // Asignación de Prefijos y Datos de Equipo
+        if (t === '3') {
+          prefix = 'frenos-';
+          setLocation($, 'frenometro', equipoDisplay);
+        }
+        if (t === '1') {
+          prefix = 'alineamiento-';
+          setLocation($, 'alineador', equipoDisplay);
+        }
+        if (t === '4') { 
+          prefix = 'analizador-'; 
+          setLocation($, 'analizador', equipoDisplay);
+          setLocation($, 'analizador-resultado-final', rm.resultado);
+        }
+        if (t === '5') { 
+          prefix = 'opacimetro-'; 
+          setLocation($, 'opacimetro', equipoDisplay);
+          setLocation($, 'opacimetro-resultado-final', rm.resultado);
+        }
+        if (t === '7') {
+          prefix = 'luxometro-';
+          setLocation($, 'luxometro', equipoDisplay);
+        }
+        if (t === '2') { 
+          prefix = 'suspension-'; 
+          setLocation($, 'suspension', equipoDisplay);
+          setLocation($, 'suspencion-resultado-final', rm.resultado); // Nota: suspencion- en legacy template
+        }
+        if (t === '6') { 
+          prefix = 'sonometro-'; 
+          setLocation($, 'sonometro-resultado-final', rm.resultado);
+        }
+        if (t === '10') {
+          prefix = 'profundimetro-';
+        }
+
+        // Parseo e Inyección de la Data Técnica
+        if (prefix && rm.data) {
+          let jsonData = rm.data;
+          if (typeof jsonData === 'string') {
+            try {
+              jsonData = JSON.parse(jsonData);
+            } catch (e) {
+              continue; // Saltar si falla el parseo, no romper todo
+            }
+          }
+
+          if (typeof jsonData === 'object') {
+            for (const [key, val] of Object.entries(jsonData)) {
+              let strVal = String(val);
+              // Para redondear decimales o dejarlos enteros
+              if (typeof val === 'number') {
+                strVal = Number.isInteger(val) ? strVal : Number(val).toFixed(2);
+              }
+              setLocation($, `${prefix}${key}`, strVal);
+            }
+          }
+        }
+      }
+    }
+
+    return $.html();
   }
 }
 

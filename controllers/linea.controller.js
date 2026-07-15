@@ -402,6 +402,31 @@ class LineaController {
       });
     }
   }
+
+  async obtenerPreVisualizacion(req, res) {
+    try {
+      const { nroInspeccion } = req.params;
+      
+      const html = await LineaService.generarPreVisualizacionHtml(nroInspeccion);
+
+      return res.json({
+        ok: true,
+        html
+      });
+
+    } catch (error) {
+      console.error('[PREVISUALIZACION_ERROR]', {
+        nroInspeccion: req.params.nroInspeccion,
+        message: error.message,
+        stack: error.stack
+      });
+      res.status(500).json({ 
+        ok: false,
+        message: 'Error al generar la previsualización del certificado.',
+        detail: error.message
+      });
+    }
+  }
 }
 
 module.exports = new LineaController();

@@ -32,6 +32,8 @@ router.post('/foto/:nroInspeccion/cambiar', authMiddleware, validarAccesoPlantaI
 router.post('/foto/:nroInspeccion/reiniciar', authMiddleware, validarAccesoPlantaInspeccion, lineaController.reiniciarFoto);
 router.post('/prueba/:nroInspeccion/reiniciar', authMiddleware, validarAccesoPlantaInspeccion, lineaController.reiniciarPrueba);
 
+router.get('/previsualizacion/:nroInspeccion', authMiddleware, validarAccesoPlantaInspeccion, lineaController.obtenerPreVisualizacion);
+
 // Rutas de lectura específicas (van antes del wildcard /:nroInspeccion)
 router.post('/appresultado', machineAuthMiddleware, lineaController.appresultado);
 router.get('/pruebas-obligatorias/:nroInspeccion', authMiddleware, validarAccesoPlantaInspeccion, lineaController.getPruebasObligatorias);

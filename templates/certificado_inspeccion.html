@@ -1,0 +1,1012 @@
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">
+	<style type="text/css">
+		.farenet.v-app, .farenet.v-app-loading {
+			font-family: serif !important;
+			color: black !important;
+		}
+
+		.v-generated-body {
+			background-color: white;
+		}
+
+		.farenet.v-app, .farenet.v-app-loading {
+			color: #000000 !important;
+		}
+
+.body-certificadoinspeccion {
+	width: 100% !important;
+	background-color: white !important;
+	background: url('https://planta.farenet.net/sede/VAADIN/themes/farenet/img/fondocert_U.png');
+	background-repeat:no-repeat;
+	background-position: top center;
+	}
+
+	.body-certificadoinspeccion33 {
+	width: 100% !important;
+	background-color: white !important;
+	background: url('https://planta.farenet.net/sede/VAADIN/themes/farenet/img/fondo_cert2.png');
+	background-repeat:no-repeat;
+	background-position: top center;
+	}
+
+
+	.body-certificadoinspeccion2 {
+	width: 100% !important;
+	background-color: white !important;
+
+	}
+		.body-certificadoinspeccion table tr td {
+			padding: 0px 2px;
+			font-size: 7px;
+		}
+
+		/* .body-certificadoinspeccion table tr td table tr td table tr td { */
+		/* 	padding: 0px 0px; */
+		/* 	border: 1px solid black; */
+		/*     color: black; */
+		/* } */
+		.body-certificadoinspeccion table tr>td {
+			color: black;
+			border: 1px solid black;
+		}
+
+		.body-certificadoinspeccion table tr td table tr td table {
+			width: 100%;
+		}
+
+		.body-certificadoinspeccion table {
+			width: 100%;
+			border-collapse: collapse;
+		}
+
+		.body-certificadoinspeccion table tr td table {
+			width: 100%;
+		}
+
+	.body-certificadoinspeccion33 table tr td {
+			padding: 0px 2px;
+			font-size: 7px;
+		}
+
+		/* .body-certificadoinspeccion33 table tr td table tr td table tr td { */
+		/* 	padding: 0px 0px; */
+		/* 	border: 1px solid black; */
+		/*     color: black; */
+		/* } */
+		.body-certificadoinspeccion33 table tr>td {
+			color: black;
+			border: 1px solid black;
+		}
+
+		.body-certificadoinspeccion33 table tr td table tr td table {
+			width: 100%;
+		}
+
+		.body-certificadoinspeccion33 table {
+			width: 100%;
+			border-collapse: collapse;
+		}
+
+		.body-certificadoinspeccion33 table tr td table {
+			width: 100%;
+		}
+		.certificado-inspeccion {
+			width: 720px;
+			overflow: auto;
+			margin: 80px auto 0px auto;
+			background: transparent;
+			padding: 0px 3px;
+			height: 980px;
+		}
+
+		.certificado-inspeccion div {
+			font-family: serif !important;
+		}
+
+		.pull-right {
+			float: right;
+		}
+
+		.pull-left {
+			float: left;
+		}
+
+		.clearfix {
+			clear: both;
+		}
+
+		.titulocert span div {
+			margin: 0px !important;
+			font-size: 13px !important;
+			text-align: center;
+		}
+
+		.titulo span div {
+			margin: 0px !important;
+			font-size: 13px !important;
+			text-align: center;
+		}
+
+		.body-certificadoinspeccion table tr td>div.v-label {
+			text-align: center;
+		}
+
+		.page-breaker {
+			page-break-before: always;
+		}
+
+		.farenet h4, .farenet .v-label-h4 {
+			color: black !important;
+		}
+
+		@media print {
+			.certificado-inspeccion {
+				/* 		height: 875px; */
+
+			}
+			.farenet.v-app {
+				height: auto !important;
+			}
+			@page {
+				size: auto; /* auto is the current printer page size */
+				margin: 0mm; /* this affects the margin in the printer settings */
+			}
+			body {
+				border: solid 1px black;
+				margin: 0px; /* the margin on the content before printing */
+			}
+			/* 	.v-scrollable { */
+			/* 		overflow: hidden !important; */
+			/* 	} */
+		}
+	</style>
+</head>
+
+<div class="certificado-inspeccion page-breaker "${widthCertificado} >
+	<div class="cabecera" >
+		<div style="padding-top:12px;">
+			<div style="font-size: 7px; margin-left: 45%" class="pull-left">
+				<div class="pull-left" location="empresa"></div>
+				<div class="clearfix"></div>
+
+				<div class="pull-left" location="direccionPlLugar"></div>
+				<div class="clearfix"></div>
+				<div class="pull-left">Tel&eacute;fono :&nbsp;&nbsp;&nbsp;&nbsp;</div>
+				<div class="pull-left" location="telefonoEmpresa"></div>
+			</div>
+
+			<div style="font-size: 12px;margin-top: 15px;" class="pull-right">
+				<div class="clearfix"></div>
+				<div class="clearfix"></div>
+				<div class="clearfix"></div>
+				<div class="pull-left">
+					<span location="fecha" class="pull-left"></span> <span>:&nbsp;&nbsp;&nbsp;&nbsp;</span>
+				</div>
+				<div class="pull-left" location="hora"></div>
+			</div>
+			<div class="clearfix"></div>
+			<hr size="1px" style="color: #000000;margin-left: 35%;">
+		</div>
+
+		<h4 class="titulo" style="padding-left:110px">
+			<#if hasInspeccion == true><span location="certificadoStr"></span></#if>
+			<#if hasInspeccion == false><span location="informeStr"></span></#if>
+			<#if hasInspeccion == true><span style="font-weight: bold;" location="nroDocu"></span></#if>
+		</h4>
+		<div>
+
+			<div class="pull-left">
+				<span
+						style="font-style: oblique; font-size: 9px; font-weight: bold; margin-bottom: -5px"
+						location="nroHojaValorada"><span>
+			</div>
+
+			<div class="clearfix"></div>
+		</div>
+
+
+	</div>
+	<div class="body-certificadoinspeccion2" style="overflow-y:hidden;" scroll="no">
+		<div style="margin-bottom: 5px">
+			<div style="width: 30%; margin-right: 5%; margin-left: 3px"
+				 class="pull-left">
+				<table border="1" cellpadding="5" cellspacing="0" style="">
+					<tbody>
+					<tr>
+						<td style="" width="58" align="center">Tipo de Inspecci&oacute;n:</td>
+						<td style="font-size: 9px">${inspeccion.tipoinspeccion.nombre}</td>
+					</tr>
+					</tbody>
+				</table>
+			</div>
+			<div style="width: 30%; margin-right: 3%" class="pull-left">
+				<table border="1" cellpadding="5" cellspacing="0" style="">
+					<tbody>
+					<tr>
+						<td style="" width="60" align="center">Fecha de Inspecci&oacute;n:</td>
+						<td style="font-size: 11px" location="fechaInspeccion"></td>
+					</tr>
+					</tbody>
+				</table>
+			</div>
+			<div style="width: 30%; margin-right: 3px" class="pull-right">
+				<table border="1" cellpadding="5" cellspacing="0" style="">
+					<tbody>
+					<tr>
+						<td style="" width="60" align="center">Informe de Inspecci&oacute;n
+							N&deg;:</td>
+						<td style="font-size: 12px" location="informeInspeccionNro"></td>
+					</tr>
+					</tbody>
+				</table>
+			</div>
+			<div class="clearfix"></div>
+		</div>
+		<table width="100%">
+			<tbody>
+			<tr>
+				<td style="border: none">
+					<table border="1" cellpadding="5" cellspacing="0" style="">
+						<tbody>
+						<tr>
+							<td align="center" bgcolor="Silver" style="" width="50"><span
+									style="font-weight: bold;">I.</span></td>
+							<td bgcolor="Silver" colspan="8" style=""><span
+									style="font-weight: bold;">CARACTERISTICAS DEL VEHICULO</span></td>
+						</tr>
+						<tr>
+							<td align="center" style=""><span
+									style="font-weight: bold;">1</span></td>
+							<td style="" width="14%"><span>Placa</span></td>
+							<td style="" width="14%"><span location="placa"></span></td>
+							<td align="center" style="" width="50"><span
+									style="font-weight: bold;">7</span></td>
+							<td style="" width="14%"><span>Combustible</span></td>
+							<td style="" width="14%"><span location="combustible"></span></td>
+							<td align="center" style="" width="50"><span
+									style="font-weight: bold;">13</span></td>
+							<td style="" width="14%"><span>N&deg; Asientos /
+											Pasajeros</span></td>
+							<td style="" width="14%"><span
+									location="asientos-pasajeros"></span></td>
+						</tr>
+						<tr>
+							<td align="center" style=""><span
+									style="font-weight: bold;">2</span></td>
+							<td style=""><span>Categor&iacute;a</span></td>
+							<td style=""><span location="categoria"></span></td>
+							<td align="center" style=""><span
+									style="font-weight: bold;">8</span></td>
+							<td style=""><span>VIN / N&deg; Serie</span></td>
+							<td style=""><span location="nroserie">BU910005414</span></td>
+							<td align="center" style=""><span
+									style="font-weight: bold;">14</span></td>
+							<td style=""><span>Largo / Ancho / Alto (m)</span></td>
+							<td style=""><span location="dimensiones"></span></td>
+						</tr>
+						<tr>
+							<td align="center" style=""><span
+									style="font-weight: bold;">3</span></td>
+							<td style=""><span>Marca</span></td>
+							<td style=""><span location="marca"></span></td>
+							<td align="center" style=""><span
+									style="font-weight: bold;">9</span></td>
+							<td style=""><span>N&deg; Motor</span></td>
+							<td style=""><span location="motor"></span></td>
+							<td align="center" style=""><span
+									style="font-weight: bold;">15</span></td>
+							<td style=""><span>Color(es)</span></td>
+							<td style=""><span location="colores"></span></td>
+						</tr>
+						<tr>
+							<td align="center" style=""><span
+									style="font-weight: bold;">4</span></td>
+							<td style=""><span>Modelo</span></td>
+							<td style=""><span location="modelo"></span></td>
+							<td align="center" style=""><span
+									style="font-weight: bold;">10</span></td>
+							<td style=""><span>Carrocer&iacute;a</span></td>
+							<td style=""><span location="carroceria"></span></td>
+							<td align="center" style=""><span
+									style="font-weight: bold;">16</span></td>
+							<td style=""><span>Peso Neto (Kg.)</span></td>
+							<td style=""><span location="pesoneto"></span></td>
+						</tr>
+						<tr>
+							<td align="center" style=""><span
+									style="font-weight: bold;">5</span></td>
+							<td style=""><span>A&ntilde;o de Fabricaci&oacute;n</span></td>
+							<td style=""><span location="aniofabricacion"></span></td>
+							<td align="center" style=""><span
+									style="font-weight: bold;">11</span></td>
+							<td style=""><span>Marca de Carrocer&iacute;a</span></td>
+							<td style=""><span location="marcacarroceria"></span></td>
+							<td align="center" style=""><span
+									style="font-weight: bold;">17</span></td>
+							<td style=""><span>Peso Bruto (Kg.)</span></td>
+							<td style=""><span location="pesobruto"></span></td>
+						</tr>
+						<tr>
+							<td align="center" style=""><span
+									style="font-weight: bold;">6</span></td>
+							<td style=""><span>Kilometraje</span></td>
+							<td style=""><span location="kilometraje"></span></td>
+							<td align="center" style=""><span
+									style="font-weight: bold;">12</span></td>
+							<td style=""><span>N&deg; Ejes / N&deg; Ruedas</span></td>
+							<td style=""><span location="nroejes-nroruedas"></span></td>
+							<td align="center" style=""><span
+									style="font-weight: bold;">18</span></td>
+							<td style=""><span>Carga Util (Kg.)</span></td>
+							<td style=""><span location="cargautil"></span></td>
+						</tr>
+						</tbody>
+					</table>
+				</td>
+			</tr>
+			<tr>
+				<td style="border: none">&nbsp;</td>
+			</tr>
+			<tr>
+				<td style="border: none">
+					<table border="1" cellpadding="5" cellspacing="0" style=""
+						   width="100%">
+						<tbody>
+						<tr>
+							<td align="center" bgcolor="Silver" style="" width="5%"><span
+									style="font-weight: bold;">II.</span></td>
+							<td align="left" bgcolor="Silver" colspan="11" style=""><span
+									style="font-weight: bold;">DATOS DE LOS EQUIPOS</span></td>
+						</tr>
+						<tr>
+							<td align="center" style=""><span>CITV</span></td>
+							<td align="center" style="" width="10%"><span>FARENET</span></td>
+
+							<td align="center" colspan="2" style="" width="16%"><span>Fren&oacute;metro</span></td>
+
+							<td align="center" colspan="2" style="" width="16%"><span>Alineador</span></td>
+
+							<td align="center" colspan="2" style="" width="21%"><span>Analizador
+											u Opac&iacute;metro</span></td>
+
+							<td align="center" colspan="2" style="" width="16%"><span>Regloscopio
+											Lux&oacute;metro</span></td>
+
+							<td align="center" colspan="2" style="" width="16%"><span>Banco
+											de Suspensi&oacute;n</span></td>
+
+						</tr>
+						<tr>
+							<td align="center" style=""><span>L&iacute;nea</span></td>
+							<td align="center" style=""><span location="linea">L1_PESADOS</span></td>
+
+							<td align="center" style=""><span>Equipo N&deg;</span></td>
+							<td align="center" style=""><span location="frenometro"></span></td>
+
+							<td align="center" style=""><span>Equipo N&deg;</span></td>
+							<td align="center" style=""><span location="alineador"></span></td>
+
+							<td align="center" style=""><span>Equipo N&deg;</span></td>
+							<td align="center" style=""><span location="analizador"></span>
+								<span location="opacimetro"></span></td>
+
+							<td align="center" style=""><span>Equipo N&deg;</span></td>
+							<td align="center" style=""><span location="luxometro"></span></td>
+
+							<td align="center" style=""><span>Equipo N&deg;</span></td>
+							<td align="center" style=""><span location="suspension"></span></td>
+
+						</tr>
+						</tbody>
+					</table>
+				</td>
+			</tr>
+			<tr>
+				<td style="border: none">&nbsp;</td>
+			</tr>
+			<tr>
+				<td style="border: none">
+					<table border="1" cellpadding="5" cellspacing="0" style=""
+						   width="100%">
+						<tbody>
+						<tr>
+							<td align="center" bgcolor="Silver" style="" width="5%"><span
+									style="font-weight: bold;">III.</span></td>
+							<td bgcolor="Silver" colspan="19" style=""><span
+									style="font-weight: bold;">RESULTADOS OBTENIDOS</span></td>
+						</tr>
+						<tr>
+							<td align="center" colspan="20" style=""><span
+									style="font-weight: bold;">PRUEBA DE FRENOS</span></td>
+						</tr>
+						<tr>
+							<td align="center" rowspan="3" style=""><span>Ejes</span></td>
+							<td align="center" rowspan="3" style="" width="50"><span
+									tabindex="2">PESO (Kg.)</span></td>
+							<td align="center" colspan="6" style=""><span>FRENO
+											DE SERVICIO</span></td>
+							<td align="center" colspan="6" style=""><span>FRENO
+											DE ESTACIONAMIENTO</span></td>
+							<td align="center" colspan="6" style=""><span>FRENO
+											DE EMERGENCIA</span></td>
+						</tr>
+						<tr>
+							<td align="center" colspan="2" style=""><span>Fuerza
+											de Frenado (kN)</span></td>
+							<td align="center" rowspan="2" style=""><span>Desequilibrio
+											(%)</span></td>
+							<td align="center" rowspan="2" style=""><span>Resultado</span>
+							</td>
+							<td align="center" rowspan="2" style=""><span>Eficiencia
+											(%)</span></td>
+							<td align="center" rowspan="2" style=""><span>Resultado</span>
+							</td>
+							<td align="center" colspan="2" style=""><span>Fuerza
+											de Frenado (kN)</span></td>
+							<td align="center" rowspan="2" style=""><span>Desequilibrio
+											(%)</span></td>
+							<td align="center" rowspan="2" style=""><span>Resultado</span>
+							</td>
+							<td align="center" rowspan="2" style=""><span>Eficiencia
+											(%)</span></td>
+							<td align="center" rowspan="2" style=""><span>Resultado</span>
+							</td>
+							<td align="center" colspan="2" style=""><span>Fuerza
+											de Frenado (kN)</span></td>
+							<td align="center" rowspan="2" style=""><span>Desequilibrio
+											(%)</span></td>
+							<td align="center" rowspan="2" style=""><span>Resultado</span>
+							</td>
+							<td align="center" rowspan="2" style=""><span>Eficiencia
+											(%)</span></td>
+							<td align="center" rowspan="2" style=""><span>Resultado</span>
+							</td>
+						</tr>
+						<tr>
+							<td align="center" style=""><span>Der.</span></td>
+							<td align="center" style=""><span>Izq.</span></td>
+							<td align="center" style=""><span>Der.</span></td>
+							<td align="center" style=""><span>Izq.</span></td>
+							<td align="center" style=""><span>Der.</span></td>
+							<td align="center" style=""><span>Izq.</span></td>
+						</tr>
+						<#assign myRange = 1..cantEjes > <#list myRange as i>
+							<tr>
+								<td align="center" style=""><span
+										style="font-weight: bold;">${i}&deg;</span></td>
+								<td align="center" style="" location="frenos-pesoEje${i}"></td>
+								<td align="center" style=""
+									location="frenos-fuerzaFrenadoEjeDerecho${i}"></td>
+								<td align="center" style=""
+									location="frenos-fuerzaFrenadoEjeIzquierdo${i}"></td>
+								<td align="center" style=""
+									location="frenos-desequilibroServicioEje${i}"></td>
+								<td align="center" style=""
+									location="frenos-resultadoDesequilibrioEje${i}"></td> <#if i
+									== 1>
+								<td align="center" rowspan="${cantEjes}" style=""
+									location="frenos-eficienciaServicio"></td> </#if> <#if i == 1>
+								<td align="center" rowspan="${cantEjes}" style=""
+									location="frenos-resultadoEficienciaFrenosServicio"></td>
+							</#if>
+								<td align="center" style=""
+									location="frenos-fuerzaEstacionamientoEjeDerecho${i}"></td>
+								<td align="center" style=""
+									location="frenos-fuerzaEstacionamientoEjeIzquierdo${i}"></td>
+								<td align="center" style=""
+									location="frenos-desequilibroEstacionamientoEje${i}"></td>
+								<td align="center" style=""
+									location="frenos-resultadoDesequilibrioEstacionamientoEje${i}"></td>
+								<#if i == 1>
+									<td align="center" rowspan="${cantEjes}" style=""
+										location="frenos-eficienciaEstacionamiento"></td> </#if> <#if
+									i == 1>
+								<td align="center" rowspan="${cantEjes}" style=""
+									location="frenos-resultadoEficienciaFrenosEstacionamiento">
+
+								</td> </#if>
+								<td align="center" style=""></td>
+								<td align="center" style=""></td>
+								<td align="center" style=""></td>
+								<td align="center" style=""></td> <#if i == 1>
+								<td align="center" rowspan="${cantEjes}" style=""></td> </#if>
+								<#if i == 1>
+									<td align="center" rowspan="${cantEjes}" style=""></td> </#if>
+							</tr>
+						</#list>
+						</tbody>
+					</table>
+				</td>
+			</tr>
+			<tr>
+				<td style="border: none">&nbsp;</td>
+			</tr>
+			<tr>
+				<td style="border: none">
+					<table cellpadding="0" cellspacing="0" width="100%">
+						<tbody>
+						<tr>
+							<td style="border: none" valign="top" width="35.09%">
+								<table border="1" cellpadding="5" cellspacing="0"
+									   style="height: 120px;" width="100%">
+									<tbody>
+									<tr>
+										<td align="center" style="" colspan="3"><span
+												style="font-weight: bold;">PRUEBA DE ALINEAMIENTO</span></td>
+										<td align="center" colspan="2" style=""><span
+												style="font-weight: bold;">PROF. DE NEUMATICOS</span></td>
+									</tr>
+									<tr>
+										<td align="center" style=""><span>Ejes</span></td>
+										<td align="center" style="" width="23%"><span>DESVIACION
+															(m/Km)</span></td>
+										<td align="center" style="" width="23%"><span>RESULTADO</span></td>
+										<td align="center" style="" width="23%"><span>MEDIDAS
+															OBTENIDAS (mm)</span></td>
+										<td align="center" style="" width="23%"><span>RESULTADO</span></td>
+									</tr>
+									<#assign myRange = 1..cantEjes > <#list myRange as i>
+										<tr>
+											<td align="center" style=""><span
+													style="font-weight: bold;">${i}&deg;</span></td>
+											<td align="center" style="" location="alineamiento-eje${i}"></td>
+											<td align="center" style=""
+												location="alineamiento-resultadoEje${i}"><span>A</span></td>
+											<td align="center" style=""
+												location="profundimetro-eje${i}"><span>5.68</span></td>
+											<td align="center" style=""
+												location="profundimetro-resultadoEje${i}"></td>
+										</tr>
+									</#list>
+									</tbody>
+								</table>
+							</td>
+							<td style="border: none" width="1.755%">&nbsp;</td>
+							<td style="border: none" valign="top" width="43.27%">
+								<table border="1" cellpadding="5" cellspacing="0"
+									   style="height: 120px" width="100%">
+									<tbody>
+									<tr>
+										<td align="center" colspan="5" style=""><span
+												style="font-weight: bold;">PRUEBA DE LUCES</span></td>
+									</tr>
+									<tr>
+										<td align="center" rowspan="2" style=""><span>TIPO
+															DE LUZ</span></td>
+										<td align="center" colspan="2" style=""><span>MEDIDA
+															OBTENIDA (LUX o C)</span></td>
+										<td align="center" rowspan="2" style=""><span>Alineamiento</span>
+										</td>
+										<td align="center" rowspan="2" style=""><span>RESULTADO</span>
+										</td>
+									</tr>
+									<tr>
+										<td align="center" style="" class="style6"><span>DER.</span></td>
+										<td align="center" style="" class="style6"><span>IZQ.</span></td>
+									</tr>
+
+									<tr>
+										<td style=""><span>BAJAS</span></td>
+										<td align="center" style=""
+											location="luxometro-bajaDerecha">4</td>
+										<td align="center" style=""
+											location="luxometro-bajaIzquierda">6</td>
+										<td align="center" style=""
+											location="luxometro-bajaAlineamiento">OK</td>
+										<td align="center" style=""
+											location="luxometro-resultadoBajas">A</td>
+									</tr>
+									<tr>
+										<td style=""><span>ALTAS</span></td>
+										<td align="center" style=""
+											location="luxometro-altaDerecha">8</td>
+										<td align="center" style=""
+											location="luxometro-altaIzquierda">8</td>
+										<td align="center" style=""
+											location="luxometro-altaAlineamiento">OK</td>
+										<td align="center" style=""
+											location="luxometro-resultadoAltas"><span>A</span></td>
+									</tr>
+									<tr>
+										<td style=""><span>ALTA ADICIONAL</span></td>
+										<td align="center" style="">&nbsp;</td>
+										<td align="center" style="">&nbsp;</td>
+										<td align="center" style="">&nbsp;</td>
+										<td align="center" style="">&nbsp;</td>
+									</tr>
+									<tr>
+										<td style=""><span>NEBLINERAS</span></td>
+										<td align="center" style=""></td>
+										<td align="center" style="">&nbsp;</td>
+										<td align="center" style="">&nbsp;</td>
+										<td align="center" style="" location="">&nbsp;</td>
+									</tr>
+									<tr>
+										<td colspan="5" style=""><span
+												style="font-size: 7px; font-style: italic;">(1):
+															Indicar la desviaci&oacute;n del haz de luz a la IZQ-/DER+
+															/INF-/SUP+</span></td>
+									</tr>
+									</tbody>
+								</table>
+							</td>
+							<td style="border: none" width="1.755%">&nbsp;</td>
+							<td style="border: none" valign="top" width="18.13%">
+								<table border="1" cellpadding="5" cellspacing="0"
+									   style="height: 120px; margin-right: 2px" width="100%">
+									<tbody>
+									<tr>
+										<td align="center" colspan="4" style=""><span
+												style="font-weight: bold;">SUSPENSION</span></td>
+									</tr>
+									<tr>
+										<td align="center" colspan="2" style=""><span>DELANTERA
+															(%)</span></td>
+										<td align="center" colspan="2" style=""><span>POSTERIOR
+															(%)</span></td>
+									</tr>
+									<tr>
+										<td style=""><span>IZQ.</span></td>
+										<td align="center" style="width: 10px"
+											location="suspension-delanteraIzquierda"></td>
+										<td style=""><span>IZQ.</span></td>
+										<td align="center" style="width: 10px"
+											location="suspension-posteriorIzquierda"></td>
+									</tr>
+									<tr>
+										<td style=""><span>DER.</span></td>
+										<td align="center" style=""
+											location="suspension-delanteraDerecha"></td>
+										<td style=""><span>DER.</span></td>
+										<td align="center" style=""
+											location="suspension-posteriorDerecha"></td>
+									</tr>
+									<tr>
+										<td style=""><span>DESV.</span></td>
+										<td align="center" style="">&nbsp;</td>
+										<td style=""><span>DESV.</span></td>
+										<td align="center" style="">&nbsp;</td>
+									</tr>
+									<tr>
+										<td style=""><span>RESULTADO</span></td>
+										<td align="center" style=""
+											location="suspension-resultadoDelantera"></td>
+										<td style=""><span>RESULTADO</span></td>
+										<td align="center" style=""
+											location="suspension-resultadoPosterior"></td>
+									</tr>
+									<tr>
+										<td colspan="2" style=""><span>RESULTADO FINAL</span></td>
+										<td align="center" colspan="2" style=""
+											location="suspencion-resultado-final"></td>
+									</tr>
+									</tbody>
+								</table>
+							</td>
+						</tr>
+						</tbody>
+					</table>
+				</td>
+			</tr>
+			<tr>
+				<td style="border: none">&nbsp;</td>
+			</tr>
+			<tr>
+				<td style="border: none">
+					<table cellpadding="0" cellspacing="0" width="100%">
+						<tbody>
+						<tr>
+							<td style="border: none" valign="top" width="62%">
+								<table border="1" cellpadding="5" cellspacing="0"
+									   style="height: 38px;" width="100%">
+									<tbody>
+									<tr>
+										<td align="center" rowspan="3" style="" width="90"><span
+												style="font-weight: bold;">EMISIONES DE GASES</span></td>
+										<td align="center" style=""><span
+												style="font-weight: bold;">T&deg; Aceite (&deg;C)</span></td>
+										<td align="center" style="width: 10px"><span
+												location="analizador-tmp"></span><span
+												location="opacimetro-tmp"></span></td>
+										<td align="center" style=""><span
+												style="font-weight: bold;">CO Ralenti (%)</span></td>
+										<td align="center" style="width: 10px"
+											location="analizador-co_r"></td>
+										<td align="center" style=""><span
+												style="font-weight: bold;">CO Acel (%)</span></td>
+										<td align="center" style="width: 10px"
+											location="analizador-co_c"></td>
+										<td align="center" style=""><span
+												style="font-weight: bold;">RESULTADO</span></td>
+									</tr>
+									<tr>
+										<td align="center" style=""><span
+												style="font-weight: bold;">RPM</span></td>
+										<td align="center" style=""><span
+												location="analizador-rpm">2512</span> <span
+												location="opacimetro-rpm">2512</span></td>
+										<td align="center" style=""><span
+												style="font-weight: bold;">CO + CO2 Ralenti (%)</span></td>
+										<td align="center" style="" location="analizador-coco2_r"></td>
+										<td align="center" style=""><span
+												style="font-weight: bold;">CO + CO2 Acel (%)</span></td>
+										<td align="center" style="" location="analizador-coco2_c"></td>
+										<td align="center" rowspan="2" style=""><span
+												location="analizador-resultado-final"
+												style="display: block; width: 6px; margin: auto;"></span>
+											<span location="opacimetro-resultado-final"
+												  style="display: block; width: 6px; margin: auto;"></span>
+										</td>
+									</tr>
+									<tr>
+										<td align="center" style=""><span
+												style="font-weight: bold;">Opacidad (m-1)</span></td>
+										<td align="center" style="" location="opacimetro-opaProm"></td>
+										<td align="center" style=""><span
+												style="font-weight: bold;">HC Ralenti (ppm)</span></td>
+										<td align="center" style="" location="analizador-hc_r"></td>
+										<td align="center" style=""><span
+												style="font-weight: bold;">HC Acel (ppm)</span></td>
+										<td align="center" style="" location="analizador-hc_c"></td>
+									</tr>
+									</tbody>
+								</table>
+							</td>
+							<td style="border: none" width="5%">&nbsp;</td>
+							<td style="border: none" valign="top">
+								<table border="1" cellpadding="5" cellspacing="0"
+									   style="height: 38px;" width="100%">
+									<tbody>
+									<tr>
+										<td align="center" rowspan="2" style="" width="90"><span
+												style="font-weight: bold;">EMISIONES SONORAS</span></td>
+										<td align="center" style=""><span
+												style="font-weight: bold;">Son&oacute;metro (dB)</span></td>
+										<td align="center" style=""><span
+												style="font-weight: bold;">RESULTADO</span></td>
+									</tr>
+									<tr>
+										<td align="center" style="" valign="middle"
+											location="sonometro-db"></td>
+										<td align="center" style=""
+											location="sonometro-resultado-final"></td>
+									</tr>
+									</tbody>
+								</table>
+							</td>
+						</tr>
+						</tbody>
+					</table>
+				</td>
+			</tr>
+			<tr>
+				<td style="border: none">&nbsp;</td>
+			</tr>
+			<tr>
+				<td style="border: none">
+					<table border="1" cellpadding="5" cellspacing="0" style=""
+						   width="100%">
+						<tbody>
+						<tr>
+							<td align="center" bgcolor="Silver" style="" width="5%"><span
+									style="font-weight: bold;">IV.</span></td>
+							<td bgcolor="Silver" class="style5" style=""><span
+									style="font-weight: bold;">OBSERVACIONES DETECTADAS</span></td>
+						</tr>
+						<#assign i = 0> <#list defectos as defecto> <#assign i = i + 1>
+						</#list> <#if i gt 0>
+							<tr>
+								<td colspan="2" style="padding-bottom: 4px; padding-top: 4px">
+
+									<table class="gridDefecto" cellspacing="0" rules="all"
+										   border="1" style="width: 100%; border-collapse: collapse;">
+										<thead>
+										<tr>
+											<td align="center" bgcolor="Silver" style="" width="20%"><span
+													style="font-weight: bold;">C&Oacute;DIGO</span></td>
+											<td align="center" bgcolor="Silver" style="" width="60%"><span
+													style="font-weight: bold;">INTERPRETACI&Oacute;N DE
+															DEFECTOS</span></td>
+											<td align="center" bgcolor="Silver" style="" width="20%"><span
+													style="font-weight: bold;">CALIFICACI&Oacute;N</span></td>
+										</tr>
+										</thead>
+										<tbody>
+										<!-- aqui din�mico -->
+										<#assign i = 0> <#list defectos as defecto>
+											<tr>
+												<td align="center" style="width: 20%;">
+													${defecto.codigovalor}</td>
+												<td align="left" style="width: 60%;">
+													${defecto.nombrevalor}</td>
+												<td align="center" style="width: 20%;">
+													${defecto.nivelpeligro}</td>
+											</tr>
+											<#assign i = i + 1> </#list>
+										</tbody>
+									</table>
+								</td>
+							</tr>
+						</#if>
+						</tbody>
+					</table>
+				</td>
+			</tr>
+			<tr>
+				<td style="border: none;"><table>
+					<tbody>
+					<tr>
+						<td><span style="font-size: 7px; font-style: italic;">
+											Nota: Las observaciones efectuadas deben ser subsanadas antes
+											de la siguiente Inspecci&oacute;n T&eacute;cnica Vehicular.</span></td>
+					</tr>
+					</tbody>
+				</table></td>
+			</tr>
+			<tr>
+				<td style="border: none">&nbsp;</td>
+			</tr>
+			<tr>
+				<td style="border: none">
+					<table border="1" cellpadding="5" cellspacing="0" style=""
+						   width="100%">
+						<tbody>
+						<tr>
+							<td bgcolor="Silver" colspan="4" style=""><span
+									style="font-weight: bold;">
+											<div style="float: left; margin-left: 15px">V.</div>
+											<div style="float: left; margin-left: 15px">RESULTADO
+												DE LA INSPECCI&Oacute;N T&Eacute;CNICA VEHICULAR</div>
+									</span></td>
+						</tr>
+						<tr>
+							<td align="center" style=""><span
+									style="font-weight: bold;">RESULTADO DE LA INSPECCI&Oacute;N</span></td>
+							<#if hasInspeccion == true>
+								<td align="center" style=""><span> VIGENCIA DEL
+											CERTIFICADO </span></td>
+								<td align="center" style=""><span> FECHA DE LA
+											PROXIMA INSPECCI&Oacute;N </span></td> </#if>
+							<td align="center" style=""><span> <img
+									src="${firmaCertificador}"
+									style="height: 50px; width: 150px;">
+									</span></td>
+						</tr>
+						<tr>
+							<td align="center" style="font-size: 12px" location="resultadoCertificado"></td>
+							<#if hasInspeccion == true>
+								<td align="center" style="font-size: 12px" location="vigenciaCertificado"></td>
+								<td align="center" style="font-size: 12px" location="fechaProximaInspeccion"></td>
+							</#if>
+							<td align="center" style="font-size: 12px">FIRMA DEL INGENIERO SUPERVISOR</td>
+						</tr>
+						</tbody>
+					</table>
+				</td>
+			</tr>
+			<tr>
+				<td style="border: none">&nbsp;</td>
+			</tr>
+			</tbody>
+		</table>
+
+		<div style="margin-bottom: 5px">
+
+		<div style="width: 35%; margin-right: 5%; margin-left: 3px"
+				 class="pull-left">
+			<#if mostrar2daCara == false>
+				<#if hasSello == true>
+
+					 <div style="background:url(../img/sello_resolucion.png) no-repeat center center;background-size:250px;height:150px;text-align:center;-webkit-print-color-adjust: exact;">
+						<h2 location="resolucion" style="display:inline-block;padding-top:60px;font-family: capture"></h2>
+					</div>
+				</#if>
+			</#if>
+			<#if mostrar2daCara == true>
+				<br>
+			</#if>
+		</div>
+
+<#if hasCosto == true>
+
+<div style="width: 30%; margin-right: 5%; margin-left: 3px"
+	 class="pull-left">
+	<div style="background:url(../img/sello_farenet.png) no-repeat center center;background-size:150px;height:150px;text-align:center;transform: rotate(-30deg);-webkit-print-color-adjust: exact;">
+		<h2 location="costo" style="display:inline-block;padding-top:60px;font-family: capture"></h2>
+	</div>
+</div>
+
+</#if>
+
+<#if hasSelloGZ == true>
+
+<div style="width: 30%; margin-right: 5%; margin-left: 3px"
+	 class="pull-left">
+	<div style="background:url(../img/sello_retica.png) no-repeat center center;background-size:150px;height:150px;text-align:center;transform: rotate(-30deg);-webkit-print-color-adjust: exact;">
+		<h2 location="costo" style="display:inline-block;padding-top:60px;font-family: capture"></h2>
+	</div>
+</div>
+
+</#if>
+
+
+
+		</div>
+
+	</div>
+</div>
+<#if mostrar2daCara == true>
+	<div class="certificado-inspeccion page-breaker"${widthCertificado}>
+		<table style="margin-top: 30px">
+			<tr>
+				<#if esExtraordinario == true>
+					<td style="padding: 20px 50px; font-size: 18px;"
+						location="tituloExtraordinario"></td> </#if> <#if esExtraordinario
+					== false>
+				<td style="padding: 20px 50px; font-size: 18px;"
+					location="tipocertificado"></td> </#if>
+			</tr>
+		</table>
+		<table style="margin-top: 10px">
+			<tr>
+				<td style="font-size: 14px; width: 190px; font-style: oblique;"><span
+						location="claseautorizacionText"></span></td>
+				<td style="width: 10px; font-size: 14px;">:</td>
+
+				<td style="font-size: 12px; padding: 0px 5px;"><span
+						location="tipoautorizacion"></span></td>
+			</tr>
+		</table>
+		<div align="center" style="margin-top: 20px">
+			<div location="image"></div>
+			<img src="${image}" />
+
+		</div>
+		<div location="tipocertificadocuerpo"
+			 style="margin-top: 20px; font-size: 11px;"></div>
+		<#if esExtraordinario == true>
+			<div style="margin-top: 20px; font-size: 11px;">
+				<div style="font-weight: bold; font-size: 10px;">OBSERVACIONES:</div>
+				<#if esExtraordinario == false> </#if> <span
+					location="observacionExtraordinario"></span>
+			</div>
+		</#if>
+		<div style="margin-top: 155px; margin-bottom: 0px">
+			<div style="float: left; width: 50%; font-size: 12px;">
+				<div style="border: 1px solid black; width: 174px; padding-top: 10px">
+					<div style="float: left; margin-left: 10px; height: 28px">
+						<span location="strFechInspeccion"></span> &nbsp;
+					</div>
+					<div style="float: left">
+						<span location="fechaInicioVigencia"></span>
+					</div>
+
+					<div style="clear: both"></div>
+				</div>
+			</div>
+			<div style="float: right; width: 50%">
+				<div align="center" style="margin-bottom: -20px;">
+					<img src="${firmaCertificador}" style="height: 50px; width: 150px;">
+				</div>
+				<div align="center">___________________________________</div>
+				<div align="center" style="font-size: 11px;">Firma del
+					Ingeniero Supervisor</div>
+
+			</div>
+			<div style="clear: both"></div>
+		</div>
+
+		<div style="width: 35%; margin-right: 5%; margin-left: 3px"
+				 class="pull-left">
+			<#if hasSello == true>
+
+				 <div style="background:url(../img/sello_resolucion.png) no-repeat center center;background-size:250px;height:150px;text-align:center;-webkit-print-color-adjust: exact;">
+					<h2 location="resolucion" style="display:inline-block;padding-top:60px;font-family: capture"></h2>
+				</div>
+			</#if>
+		</div>
+	</div>
+</#if>
+</html>
