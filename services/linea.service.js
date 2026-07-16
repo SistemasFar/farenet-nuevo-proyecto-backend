@@ -1209,6 +1209,7 @@ class LineaService {
     }
 
     if (firmaBase64) {
+       htmlTemplate = htmlTemplate.replace(/\$\{widthCertificado\}/g, 'style="width: 100% !important; max-width: none !important; margin-top: 20px;"');
        htmlTemplate = htmlTemplate.replace(/\$\{firmaCertificador\}/g, firmaBase64);
     } else {
        htmlTemplate = htmlTemplate.replace(/<img[^>]*src="\$\{firmaCertificador\}"[^>]*>/g, '');
@@ -1428,6 +1429,208 @@ class LineaService {
         }
       }
     }
+
+    return $.html();
+  }
+  async generarPreVisualizacionHtml(nroInspeccion) {
+    const templatePath = path.resolve(process.cwd(), 'templates', 'certificado_inspeccion.html');
+    if (!fs.existsSync(templatePath)) {
+      throw new Error(`Plantilla no encontrada: ${templatePath}`);
+    }
+
+    let htmlTemplate = fs.readFileSync(templatePath, 'utf8');
+
+    // PASO 5: Condicionales mínimos con parser seguro
+    const renderFreemarkerCondition = (html, conditionName, value) => {
+      const openTagStart = '<#if ';
+      const elseTag = '<#else>';
+      const closeTag = '</#if>';
+      
+      let out = "";
+      let i = 0;
+      while(i < html.length) {
+        let nextOpen = html.indexOf(openTagStart, i);
+        if (nextOpen === -1) {
+           out += html.slice(i);
+           break;
+        }
+        
+        let tagEnd = html.indexOf(">", nextOpen);
+        if (tagEnd === -1) {
+           out += html.slice(i);
+           break;
+        }
+        
+        let tagContent = html.slice(nextOpen + 5, tagEnd).trim();
+        let isOurCondition = tagContent.startsWith(conditionName);
+        
+        if (!isOurCondition) {
+           out += html.slice(i, tagEnd + 1);
+           i = tagEnd + 1;
+           continue;
+        }
+        
+        let isCheckingFalse = tagContent.includes("false");
+        let matches = isCheckingFalse ? !value : !!value;
+        
+        let nest = 1;
+        let j = tagEnd + 1;
+        let endIfPos = -1;
+        let elsePos = -1;
+        
+        while (j < html.length) {
+           let nOpen = html.indexOf(openTagStart, j);
+           let nElse = html.indexOf(elseTag, j);
+           let nClose = html.indexOf(closeTag, j);
+           
+           if (nClose === -1) break;
+           
+           let nextEvents = [];
+           if (nOpen !== -1) nextEvents.push({type: 'open', pos: nOpen});
+           if (nElse !== -1) nextEvents.push({type: 'else', pos: nElse});
+           if (nClose !== -1) nextEvents.push({type: 'close', pos: nClose});
+           
+           nextEvents.sort((a,b) => a.pos - b.pos);
+           let ev = nextEvents[0];
+           
+           if (ev.type === 'open') {
+             nest++;
+             j = ev.pos + 5;
+           } else if (ev.type === 'close') {
+             nest--;
+             if (nest === 0) {
+               endIfPos = ev.pos;
+               break;
+             }
+             j = ev.pos + 6;
+           } else if (ev.type === 'else') {
+             if (nest === 1) {
+               elsePos = ev.pos;
+             }
+             j = ev.pos + 7;
+           }
+        }
+        
+        if (endIfPos !== -1) {
+           out += html.slice(i, nextOpen);
+           let trueBlock = html.slice(tagEnd + 1, elsePos !== -1 ? elsePos : endIfPos);
+           let falseBlock = elsePos !== -1 ? html.slice(elsePos + 7, endIfPos) : "";
+           
+           let chosenBlock = matches ? trueBlock : falseBlock;
+           out += renderFreemarkerCondition(chosenBlock, conditionName, value);
+           i = endIfPos + 6;
+        } else {
+           out += html.slice(i, tagEnd + 1);
+           i = tagEnd + 1;
+        }
+      }
+      return out;
+    };
+
+    // Queries base
+    const inspQ = await db.query('SELECT resultado, fechiniciovigencia FROM inspeccion WHERE nrodocumentoinspeccion = $1', [nroInspeccion]);
+    const inspeccion = inspQ.rows[0] || {};
+    
+    // Obtener data extra basica de vehículo y empresa
+    const dataExtraQ = await db.query(`
+      SELECT 
+        c.nrohojavalorada,
+        c.nrodocumentocertificado,
+        i.nrodocumentoinforme,
+        p.nombre as empresanombre,
+        p.telefono as empresatelefono,
+        pl.direccion as plantadireccion,
+        comp.placamotor as placa, cat.nombre as categoria, m.nombre as marca, mod.nombre as modelo, v.aniofabricacion, v.kilometraje, comb.nombre as combustible, v.nroserie, v.nromotor,
+        v.nroejes, v.nroruedas, v.nroasientos, v.nropasajeros, v.longitud, v.ancho, v.alto, v.pesoseco, v.pesobruto, v.cargautil,
+        col.nombre as color, carr.nombre as carrocerianombre, v.marcacarroceria as marcacarrocerianombre,
+        ti.nombre as tipoinspeccionnombre
+      FROM inspeccion i
+      LEFT JOIN certificado c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
+      LEFT JOIN comprobante comp ON comp.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
+      LEFT JOIN linea l ON l.key = comp.linea_key
+      LEFT JOIN planta pl ON pl.key = l.planta_key
+      LEFT JOIN empresa p ON p.key = pl.empresacertificadora_key
+      LEFT JOIN vehiculo v ON v.nromotor = i.vehiculo_nromotor
+      LEFT JOIN categoria cat ON v.categoria_key = cat.key
+      LEFT JOIN marca m ON v.marca_key = m.key
+      LEFT JOIN modelo mod ON v.modelo_key = mod.key
+      LEFT JOIN combustible comb ON v.combustible_key = comb.key
+      LEFT JOIN color col ON v.color_key = col.key
+      LEFT JOIN carroceria carr ON v.carroceria_key = carr.key
+      LEFT JOIN tipoinspeccion ti ON i.tipoinspeccion_key = ti.key
+      WHERE i.nrodocumentoinspeccion = $1
+      ORDER BY comp.id DESC NULLS LAST LIMIT 1
+    `, [nroInspeccion]);
+    const extra = dataExtraQ.rows[0] || {};
+
+    const isAprobado = inspeccion.resultado === 'A';
+    const hasInspeccion = (isAprobado || extra.nrodocumentocertificado) ? true : false;
+    
+    // Procesar ramas de Freemarker (para no limpiar a lo bruto y evitar mezcla)
+    htmlTemplate = renderFreemarkerCondition(htmlTemplate, 'hasInspeccion', hasInspeccion);
+    htmlTemplate = renderFreemarkerCondition(htmlTemplate, 'mostrar2daCara', false);
+    
+    // Limpiar restos de freemarker sin borrar contenido (solo limpiar variables)
+    htmlTemplate = htmlTemplate.replace(/<#if[\s\S]*?>/gi, '');
+    htmlTemplate = htmlTemplate.replace(/<\/#if>/gi, '');
+    htmlTemplate = htmlTemplate.replace(/<#else>/gi, '');
+    htmlTemplate = htmlTemplate.replace(/<#assign[\s\S]*?>/gi, '');
+    htmlTemplate = htmlTemplate.replace(/<#list[\s\S]*?>/gi, '');
+    htmlTemplate = htmlTemplate.replace(/<\/#list>/gi, '');
+    // Inyectar el ancho horizontal del certificado
+    htmlTemplate = htmlTemplate.replace(/\$\{widthCertificado\}/g, 'style="width: 100% !important; max-width: none !important; margin-top: 20px;"');
+
+    // Quitar la doble barra de desplazamiento (el height fijo y overflow auto original)
+    htmlTemplate = htmlTemplate.replace('</head>', '<style>.certificado-inspeccion { overflow: hidden !important; height: auto !important; }</style></head>');
+
+    // Limpiar el resto de variables Freemarker
+    htmlTemplate = htmlTemplate.replace(/\$\{[^}]+\}/g, '');
+
+    const $ = cheerio.load(htmlTemplate);
+
+    const safe = (value) => {
+      if (value === null || value === undefined) return '';
+      return String(value);
+    };
+
+    const setLocation = ($, location, value) => {
+      const el = $(`[location="${location}"]`);
+      if (el.length > 0) el.html(safe(value));
+    };
+
+    const formatD = (d) => d ? new Date(d).toLocaleDateString('es-PE', { day:'2-digit', month:'2-digit', year:'numeric'}) : '';
+
+    // Cabecera principal
+    setLocation($, 'empresa', extra.empresanombre);
+    setLocation($, 'direccionPlLugar', extra.plantadireccion ? 'Domicilio Local: ' + extra.plantadireccion : '');
+    setLocation($, 'telefonoEmpresa', extra.empresatelefono ? 'Teléfono: ' + extra.empresatelefono : '');
+    setLocation($, 'certificadoStr', hasInspeccion ? "CERTIFICADO DE INSPECCIÓN TÉCNICA VEHICULAR" : "");
+    setLocation($, 'informeStr', !hasInspeccion ? "INFORME DE INSPECCIÓN TÉCNICA VEHICULAR" : "");
+    setLocation($, 'nroDocu', hasInspeccion ? `Certificado N°: ${extra.nrodocumentocertificado || ''}` : `Informe N°: ${extra.nrodocumentoinforme || ''}`);
+    setLocation($, 'nroHojaValorada', extra.nrohojavalorada ? 'Hoja Valorada: ' + extra.nrohojavalorada : '');
+    setLocation($, 'fechaInicioVigencia', formatD(inspeccion.fechiniciovigencia));
+    setLocation($, 'tipoInspeccion', extra.tipoinspeccionnombre);
+    setLocation($, 'informeInspeccionNro', extra.nrodocumentoinforme);
+
+    // Datos de vehículo
+    setLocation($, 'placa', extra.placa);
+    setLocation($, 'categoria', extra.categoria);
+    setLocation($, 'marca', extra.marca);
+    setLocation($, 'modelo', extra.modelo);
+    setLocation($, 'aniofabricacion', extra.aniofabricacion);
+    setLocation($, 'kilometraje', extra.kilometraje);
+    setLocation($, 'combustible', extra.combustible);
+    setLocation($, 'nroserie', extra.nroserie);
+    setLocation($, 'motor', extra.nromotor);
+    setLocation($, 'carroceria', extra.carrocerianombre); 
+    setLocation($, 'marcacarroceria', extra.marcacarrocerianombre); 
+    setLocation($, 'nroejes-nroruedas', `${safe(extra.nroejes)} / ${safe(extra.nroruedas)}`);
+    setLocation($, 'asientos-pasajeros', `${safe(extra.nroasientos)}/${safe(extra.nropasajeros)}`);
+    setLocation($, 'dimensiones', `${safe(extra.longitud)} / ${safe(extra.ancho)} / ${safe(extra.alto)}`);
+    setLocation($, 'colores', extra.color); 
+    setLocation($, 'pesoneto', extra.pesoseco);
+    setLocation($, 'pesobruto', extra.pesobruto);
+    setLocation($, 'cargautil', extra.cargautil);
 
     return $.html();
   }
