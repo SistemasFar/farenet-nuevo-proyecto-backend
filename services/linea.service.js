@@ -1540,10 +1540,31 @@ class LineaService {
         p.nombre as empresanombre,
         p.telefono as empresatelefono,
         pl.direccion as plantadireccion,
-        comp.placamotor as placa, cat.nombre as categoria, m.nombre as marca, mod.nombre as modelo, v.aniofabricacion, v.kilometraje, comb.nombre as combustible, v.nroserie, v.nromotor,
-        v.nroejes, v.nroruedas, v.nroasientos, v.nropasajeros, v.longitud, v.ancho, v.alto, v.pesoseco, v.pesobruto, v.cargautil,
-        col.nombre as color, carr.nombre as carrocerianombre, v.marcacarroceria as marcacarrocerianombre,
-        ti.nombre as tipoinspeccionnombre
+        comp.placamotor as placa, 
+        cat.nombre as categoria, 
+        v.categoriaextra,
+        m.nombre as marca, 
+        mod.nombre as modelo, 
+        v.aniofabricacion, 
+        v.kilometraje, 
+        comb.nombre as combustible, 
+        v.nroserie, 
+        v.nromotor,
+        v.nroejes, 
+        v.nroruedas, 
+        v.nroasientos, 
+        v.nropasajeros, 
+        v.longitud, 
+        v.ancho, 
+        v.alto, 
+        v.pesoseco, 
+        v.pesobruto, 
+        v.cargautil,
+        col.nombre as color, 
+        carr.nombre as carrocerianombre, 
+        v.marcacarroceria as marcacarrocerianombre,
+        ti.nombre as tipoinspeccionnombre,
+        COALESCE(prop.nombrerazonsocial, trim(COALESCE(prop.nombres,'') || ' ' || COALESCE(prop.apellidos,''))) as propietarionombre
       FROM inspeccion i
       LEFT JOIN certificado c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
       LEFT JOIN comprobante comp ON comp.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
@@ -1558,6 +1579,8 @@ class LineaService {
       LEFT JOIN color col ON v.color_key = col.key
       LEFT JOIN carroceria carr ON v.carroceria_key = carr.key
       LEFT JOIN tipoinspeccion ti ON i.tipoinspeccion_key = ti.key
+      LEFT JOIN tarjetapropiedad tp ON v.tarjetapropiedad_id = tp.id
+      LEFT JOIN persona prop ON tp.propietario_nrodocumentoidentidad = prop.nrodocumentoidentidad
       WHERE i.nrodocumentoinspeccion = $1
       ORDER BY comp.id DESC NULLS LAST LIMIT 1
     `, [nroInspeccion]);
@@ -1613,8 +1636,9 @@ class LineaService {
     setLocation($, 'informeInspeccionNro', extra.nrodocumentoinforme);
 
     // Datos de vehículo
+    setLocation($, 'propietario', extra.propietarionombre);
     setLocation($, 'placa', extra.placa);
-    setLocation($, 'categoria', extra.categoria);
+    setLocation($, 'categoria', `${extra.categoria}${extra.categoriaextra ? extra.categoriaextra : ''}`);
     setLocation($, 'marca', extra.marca);
     setLocation($, 'modelo', extra.modelo);
     setLocation($, 'aniofabricacion', extra.aniofabricacion);

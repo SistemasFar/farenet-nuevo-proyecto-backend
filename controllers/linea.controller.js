@@ -1,4 +1,5 @@
 const LineaService = require('../services/linea.service');
+const CertificadoPreviewService = require('../services/certificadoPreview.service');
 
 class LineaController {
   async getInspeccion(req, res) {
@@ -406,12 +407,13 @@ class LineaController {
   async obtenerPreVisualizacion(req, res) {
     try {
       const { nroInspeccion } = req.params;
+      const user = req.user;
       
-      const html = await LineaService.generarPreVisualizacionHtml(nroInspeccion);
+      const html = await CertificadoPreviewService.generarHtmlPrevisualizacion(nroInspeccion, user);
 
       return res.json({
         ok: true,
-        html
+        html: html
       });
 
     } catch (error) {
