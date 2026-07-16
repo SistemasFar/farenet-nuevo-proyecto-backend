@@ -1154,24 +1154,43 @@ class LineaService {
       base64Photo = '';
     }
 
-    // 2. Obtener firma con query pequeño (PASO B)
+    // 2. Obtener firma y datos extra con query aislado (PASO B)
     let firmaBase64 = '';
+    let extra = {};
     try {
-      if (inspeccion && inspeccion.usuarioingcertificador_username) {
-        const firmaRes = await db.query(
-           `SELECT firmacertificador FROM usuario WHERE username = $1`, 
-           [inspeccion.usuarioingcertificador_username]
-        );
-        if (firmaRes.rows.length > 0 && firmaRes.rows[0].firmacertificador) {
-           firmaBase64 = firmaRes.rows[0].firmacertificador;
-           if (!firmaBase64.startsWith('data:')) {
-              firmaBase64 = `data:image/png;base64,${firmaBase64}`;
-           }
-        }
+      const extraRes = await db.query(`
+         SELECT i.vigencia, i.fechvencimiento, i.nrodocumentoinforme, 
+                tc.nombre as tipocertificadonombre, tc.cuerpocertificado, ta.ambito,
+                cert.nrohojavalorada, u.firmacertificador,
+                pl.direccion as plantadireccion, emp.nombre as empresanombre, emp.telefono as empresatelefono,
+                c.importetotal,
+                v.color, carr.nombre as carrocerianombre, mcarr.nombre as marcacarrocerianombre
+         FROM inspeccion i
+         LEFT JOIN tipocertificado tc ON i.tipocertificado_key = tc.key
+         LEFT JOIN tipoautorizacion ta ON i.tipoautorizacion_key = ta.key
+         LEFT JOIN certificado cert ON cert.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
+         LEFT JOIN usuario u ON u.username = i.usuarioingcertificador_username
+         LEFT JOIN comprobante c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
+         LEFT JOIN linea l ON l.key = c.linea_key
+         LEFT JOIN planta pl ON pl.key = l.planta_key
+         LEFT JOIN empresacertificadora emp ON emp.key = pl.empresacertificadora_key
+         LEFT JOIN vehiculo v ON v.nromotor = i.vehiculo_nromotor
+         LEFT JOIN carroceria carr ON v.carroceria_key = carr.key
+         LEFT JOIN marcacarroceria mcarr ON v.marcacarroceria_key = mcarr.key
+         WHERE i.nrodocumentoinspeccion = $1
+         ORDER BY c.id DESC NULLS LAST LIMIT 1
+      `, [nroInspeccion]);
+      if (extraRes.rows.length > 0) {
+         extra = extraRes.rows[0];
+         if (extra.firmacertificador) {
+            firmaBase64 = extra.firmacertificador;
+            if (!firmaBase64.startsWith('data:')) {
+               firmaBase64 = `data:image/png;base64,${firmaBase64}`;
+            }
+         }
       }
     } catch (e) {
-      console.warn('[PREVIEW_FIRMA_WARN]', e.message);
-      firmaBase64 = '';
+      console.warn('[PREVIEW_EXTRA_WARN]', e.message);
     }
 
     // 3. Cargar el template HTML robustamente
@@ -1294,16 +1313,17 @@ class LineaService {
     setLocation($, 'resultadoCertificado', isAprobado ? "APROBADO" : "DESAPROBADO");
     
     // Fallbacks si falta data para que no rompa
-    setLocation($, 'nroHojaValorada', ''); // Oculto por ahora sin query
-    setLocation($, 'vigenciaCertificado', inspeccion?.vigencia || '');
-    setLocation($, 'fechaProximaInspeccion', '');
-    setLocation($, 'tipocertificado', '');
-    setLocation($, 'tipoautorizacion', '');
-    setLocation($, 'tipocertificadocuerpo', '');
-    setLocation($, 'informeInspeccionNro', safe(inspeccion?.nrodocumentoinforme));
-    setLocation($, 'direccionPlLugar', '');
-    setLocation($, 'empresa', '');
-    setLocation($, 'telefonoEmpresa', '');
+    setLocation($, 'nroHojaValorada', extra.nrohojavalorada ? `Hoja Valorada: ${extra.nrohojavalorada}` : '');
+    setLocation($, 'vigenciaCertificado', extra.vigencia || inspeccion?.vigencia || '');
+    setLocation($, 'fechaProximaInspeccion', formatD(extra.fechvencimiento));
+    setLocation($, 'tipocertificado', extra.tipocertificadonombre || '');
+    setLocation($, 'tipoautorizacion', extra.ambito || '');
+    const cuerpo = `${safe(extra.ambito)} ${safe(extra.cuerpocertificado)} ${safe(extra.nrodocumentoinforme)}`.trim();
+    setLocation($, 'tipocertificadocuerpo', cuerpo);
+    setLocation($, 'informeInspeccionNro', extra.nrodocumentoinforme || safe(inspeccion?.nrodocumentoinforme));
+    setLocation($, 'direccionPlLugar', extra.plantadireccion ? `Domicilio Local: ${extra.plantadireccion}` : '');
+    setLocation($, 'empresa', extra.empresanombre || '');
+    setLocation($, 'telefonoEmpresa', extra.empresatelefono ? `Teléfono: ${extra.empresatelefono}` : '');
     setLocation($, 'claseautorizacionText', "CLASE DE AUTORIZACIÓN");
     setLocation($, 'strFechInspeccion', "Fecha Inspección:");
     setLocation($, 'fechaInicioVigencia', formatD(inspeccion?.fechiniciovigencia || inspeccion?.fechcreacion));
@@ -1312,7 +1332,7 @@ class LineaService {
     setLocation($, 'tituloExtraordinario', ''); 
     setLocation($, 'observacionExtraordinario', ''); 
     setLocation($, 'resolucion', ''); // El sello está de background
-    setLocation($, 'costo', '');
+    if (extra.importetotal) setLocation($, 'costo', `S/ ${Number(extra.importetotal).toFixed(2)}`);
 
     if (propietario) {
       setLocation($, 'propietario', propietario.nombrecompleto);
@@ -1334,6 +1354,9 @@ class LineaService {
       setLocation($, 'kilometraje', vehiculo.kilometraje);
       setLocation($, 'dimensiones', `${safe(vehiculo.longitud)} / ${safe(vehiculo.ancho)} / ${safe(vehiculo.alto)}`);
       setLocation($, 'nroejes-nroruedas', `${safe(vehiculo.nroejes)} / ${safe(vehiculo.nroruedas)}`);
+      setLocation($, 'colores', extra.color || '');
+      setLocation($, 'carroceria', extra.carrocerianombre || '');
+      setLocation($, 'marcacarroceria', extra.marcacarrocerianombre || '');
     }
 
     // CAPA 4: Resultados técnicos (Equipos y Resultados de máquina)
