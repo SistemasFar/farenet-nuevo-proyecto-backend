@@ -84,17 +84,15 @@ class CertificadoPreviewService {
     try {
       const resultados = await this.getResultadosMaquina(nroInspeccion);
       resultados.forEach(rm => {
-        if (!rm.data) return;
-        let parsedData = rm.data;
-        if (typeof parsedData === 'string') {
-          try {
-            parsedData = JSON.parse(rm.data);
-          } catch (e) {
-            console.warn('[PREVISUALIZACION] Error parseando data de maquina tipo', rm.tipomaquina_key);
-            return;
-          }
-        }
+        const safeParse = (str) => {
+          if (!str) return null;
+          if (typeof str === 'object') return str;
+          try { return JSON.parse(str); } catch (e) { return null; }
+        };
 
+        const parsedData = safeParse(rm.data);
+        const parsedPostdata = safeParse(rm.postdata);
+        
         let prefix = null;
         switch(String(rm.tipomaquina_key)) {
           case '3': prefix = 'frenos-'; break;
@@ -107,17 +105,40 @@ class CertificadoPreviewService {
           case '10': prefix = 'profundimetro-'; break;
         }
 
-        if (prefix && typeof parsedData === 'object') {
-          vm.resultadosMaquinaInfo = vm.resultadosMaquinaInfo || [];
-          vm.resultadosMaquinaInfo.push({
-            tipoMaquina: rm.tipomaquina_key,
-            prefix,
-            keys: Object.keys(parsedData)
-          });
+        if (prefix) {
+          const processObj = (obj) => {
+            if (!obj) return;
+            Object.keys(obj).forEach(k => {
+              let val = obj[k];
+              if (val !== null && val !== undefined) {
+                 if (typeof val === 'number' || (!isNaN(Number(val)) && String(val).trim() !== '')) {
+                    let num = Number(val);
+                    // Reglas legacy
+                    if (prefix === 'frenos-' && k.toLowerCase().includes('peso')) {
+                       val = Math.round(num).toString();
+                    } else if ((prefix === 'analizador-' || prefix === 'opacimetro-') && (k.toLowerCase().includes('tmp') || k.toLowerCase().includes('rpm'))) {
+                       val = Math.round(num).toString();
+                    } else {
+                       val = num.toFixed(2);
+                    }
+                 } else {
+                    val = String(val);
+                 }
+                 vm.resultados[prefix + k] = val;
+              }
+            });
+          };
+
+          processObj(parsedData);
+          processObj(parsedPostdata);
           
-          Object.keys(parsedData).forEach(k => {
-            vm.resultados[prefix + k] = parsedData[k];
-          });
+          if (rm.resultado) {
+             if (prefix === 'analizador-') {
+                vm.resultados['analizador-resultado-final'] = rm.resultado;
+             } else if (prefix === 'opacimetro-') {
+                vm.resultados['opacimetro-resultado-final'] = rm.resultado;
+             }
+          }
         }
 
         // Buscar Foto (tipo 15, 13 o 11)
@@ -177,7 +198,7 @@ class CertificadoPreviewService {
   async getResultadosMaquina(nroInspeccion) {
     if (!nroInspeccion) return [];
     const q = `
-      SELECT rm.data, m.tipomaquina_key
+      SELECT rm.id, rm.resultado, rm.data, rm.postdata, m.tipomaquina_key
       FROM resultado_maquina rm
       JOIN maquina m ON rm.maquina_id = m.id
       WHERE rm.inspeccion_nrodocumentoinspeccion = $1
@@ -317,65 +338,40 @@ class CertificadoPreviewService {
       const comp = viewModel.cabecera.comprobante || {};
 
       const hasInspeccion = (insp.resultado === 'A' || !!cert.nrodocumentocertificado);
-      const mostrar2daCara = false;
-      const hasCosto = false;
+      const tipoInspeccionNombre = (insp.tipoinspeccionnombre || '');
       
-      // Lógica de Sello (Legacy)
-      let hasSello = true;
-      let hasSelloGZ = false;
+      const mostrar2daCara = (
+        tipoInspeccionNombre.trim().toLowerCase().includes('complement') || 
+        tipoInspeccionNombre.trim().toLowerCase().includes('extraordinari')
+      );
       
-      const nroDoc = insp.nrodocumentoinspeccion || '';
       const empresaKey = comp.empresacertificadora_key || '';
+      
+      const hasSello = (mostrar2daCara === true && empresaKey !== 'BUCK');
 
-      if (viewModel.defectos && viewModel.defectos.length > 2) {
-        hasSello = false;
-        hasSelloGZ = false;
-      }
+      // Limpieza conservadora de Freemarker para permitir que Cheerio lea el DOM intacto
+      rawHtml = rawHtml.replace(/<#assign[^>]*>/gi, '');
+      rawHtml = rawHtml.replace(/<#list[^>]*>/gi, '');
+      rawHtml = rawHtml.replace(/<\/#list>/gi, '');
+      rawHtml = rawHtml.replace(/<#if[^>]*>/gi, '');
+      rawHtml = rawHtml.replace(/<\/#if>/gi, '');
 
-      if (nroDoc.includes('INS-25')) {
-        hasSelloGZ = true;
-      }
+      // Tarea 1 - Mapear texto crudo de Freemarker que no usaba location
+      rawHtml = rawHtml.replace(/\$\{inspeccion\.tipoinspeccion\.nombre\}/g, (insp.tipoinspeccionnombre || ''));
 
-      if (empresaKey === 'BUCK' || empresaKey === 'MALONGO') {
-        hasSelloGZ = false;
-      }
-
-      if (empresaKey === 'BUCK') {
-        hasSello = false;
-      }
-
-      const evaluateCondition = (htmlStr, flagName, value) => {
-        const trueRegex = new RegExp(`<#if\\s+${flagName}\\s*==\\s*true\\s*>([\\s\\S]*?)<\\/#if>`, 'gi');
-        const falseRegex = new RegExp(`<#if\\s+${flagName}\\s*==\\s*false\\s*>([\\s\\S]*?)<\\/#if>`, 'gi');
-
-        if (value) {
-            htmlStr = htmlStr.replace(trueRegex, '$1');
-            htmlStr = htmlStr.replace(falseRegex, '');
-        } else {
-            htmlStr = htmlStr.replace(trueRegex, '');
-            htmlStr = htmlStr.replace(falseRegex, '$1');
-        }
-        return htmlStr;
-      };
-
-      rawHtml = evaluateCondition(rawHtml, 'hasInspeccion', hasInspeccion);
-      rawHtml = evaluateCondition(rawHtml, 'hasCertificado', hasInspeccion);
-      rawHtml = evaluateCondition(rawHtml, 'mostrar2daCara', mostrar2daCara);
-      rawHtml = evaluateCondition(rawHtml, 'hasCosto', hasCosto);
-      rawHtml = evaluateCondition(rawHtml, 'hasSello', hasSello);
-      rawHtml = evaluateCondition(rawHtml, 'hasSelloGZ', hasSelloGZ);
-
-      // Inyectar Firma
+      // Tarea 2 - Restaurar inyección de firma original sin lógica nueva
       if (viewModel.imagenes && viewModel.imagenes.firmaCertificador) {
-        rawHtml = rawHtml.replace(/\$\{firmaCertificador\}/g, viewModel.imagenes.firmaCertificador);
+        let firma = viewModel.imagenes.firmaCertificador;
+        if (!firma.startsWith('data:image')) {
+           firma = 'data:image/png;base64,' + firma; // Restaurando fallback
+        }
+        rawHtml = rawHtml.replace(/\$\{firmaCertificador\}/g, firma);
       }
 
       // Inyectar formato horizontal
       rawHtml = rawHtml.replace(/\$\{widthCertificado\}/g, "style='width: 100% !important; min-width: 100%; height: auto !important;'");
-      // rawHtml = rawHtml.replace(/background:\s*url\([^)]+\)/g, "background: none !important");
-      // rawHtml = rawHtml.replace(/background-image:\s*url\([^)]+\)/g, "background: none !important");
 
-      // Inyectar imágenes locales como base64
+      // Inyectar imágenes locales como base64 (sello, logos, etc)
       rawHtml = rawHtml.replace(/url\(\.\.\/img\/([^)]+)\)/g, (match, filename) => {
          const imgPath = path.resolve(process.cwd(), 'templates', 'img', filename);
          if (fs.existsSync(imgPath)) {
@@ -386,15 +382,31 @@ class CertificadoPreviewService {
          return 'none';
       });
 
-      // Limpiar restos Freemarker
-      rawHtml = rawHtml.replace(/<#assign[^>]*>/gi, '');
-      rawHtml = rawHtml.replace(/<#list[^>]*>/gi, '');
-      rawHtml = rawHtml.replace(/<\/#list>/gi, '');
-      rawHtml = rawHtml.replace(/<#if[^>]*>/gi, '');
-      rawHtml = rawHtml.replace(/<\/#if>/gi, '');
-      rawHtml = rawHtml.replace(/\$\{[^}]+\}/g, '');
-
       const $ = cheerio.load(rawHtml);
+
+      // Procesar mostrar2daCara
+      if (mostrar2daCara) {
+         // Conservar el bloque inferior completo
+         // Borramos el sello de la 1ra cara para no duplicarlo si hay 2da cara
+         $('.certificado-inspeccion.page-breaker').first().find('.pull-left').remove();
+      } else {
+         // Ocultar el bloque inferior, igual que legacy
+         $('.certificado-inspeccion.page-breaker').last().remove();
+      }
+
+      // Procesar hasSello
+      if (!hasSello) {
+         $('[location="resolucion"]').parent().remove();
+      }
+
+      // No debe aparecer ícono roto para las imágenes pendientes
+      $('img').each((i, el) => {
+         const src = $(el).attr('src');
+         if (src && src.includes('${')) {
+             $(el).attr('src', '');
+             $(el).css('display', 'none');
+         }
+      });
 
       const safe = (value) => {
         if (value === null || value === undefined) return '';
@@ -456,7 +468,11 @@ class CertificadoPreviewService {
       const ambito = insp.tipoautorizacion_ambito || '';
       const cuerpo = insp.cuerpocertificado || '';
       const nroInforme = insp.nrodocumentoinforme || '';
-      setLocation($, 'tipocertificadocuerpo', `${ambito} ${cuerpo} ${nroInforme}`);
+      if (cuerpo && cuerpo !== '.') {
+         setLocation($, 'tipocertificadocuerpo', `${ambito} ${cuerpo} ${nroInforme}`);
+      } else {
+         setLocation($, 'tipocertificadocuerpo', '');
+      }
 
       // Resultados finales
       setLocation($, 'resultadoCertificado', vm.cabecera.resultadoCertificado);
@@ -517,6 +533,15 @@ class CertificadoPreviewService {
       const resData = viewModel.resultados || {};
       Object.keys(resData).forEach(key => {
         setLocation($, key, resData[key]);
+      });
+
+      // Corregir la variable Freemarker ${i}° (o ${i}&deg;) que quedó en el span
+      $('span').each((i, el) => {
+        const html = $(el).html();
+        if (html && (html.includes('${i}&deg;') || html.includes('${i}°'))) {
+           // Como quitamos el <#list>, solo queda 1 fila. Asignamos 1°.
+           $(el).html('1&deg;');
+        }
       });
 
       // IV: DEFECTOS
