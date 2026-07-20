@@ -110,8 +110,8 @@ class CertificadoPreviewService {
             if (!obj) return;
             Object.keys(obj).forEach(k => {
               let val = obj[k];
-              if (val !== null && val !== undefined) {
-                 if (typeof val === 'number' || (!isNaN(Number(val)) && String(val).trim() !== '')) {
+              if (val !== null && val !== undefined && String(val).trim() !== '') {
+                 if (typeof val === 'number' || !isNaN(Number(val))) {
                     let num = Number(val);
                     // Reglas legacy
                     if (prefix === 'frenos-' && k.toLowerCase().includes('peso')) {
@@ -119,7 +119,8 @@ class CertificadoPreviewService {
                     } else if ((prefix === 'analizador-' || prefix === 'opacimetro-') && (k.toLowerCase().includes('tmp') || k.toLowerCase().includes('rpm'))) {
                        val = Math.round(num).toString();
                     } else {
-                       val = num.toFixed(2);
+                       const rounded = Math.round((num + Number.EPSILON) * 100) / 100;
+                       val = String(rounded);
                     }
                  } else {
                     val = String(val);
@@ -129,6 +130,7 @@ class CertificadoPreviewService {
             });
           };
 
+          // Postdata sobrescribe a data según CertificadoLayout.java
           processObj(parsedData);
           processObj(parsedPostdata);
           
@@ -139,12 +141,13 @@ class CertificadoPreviewService {
                 vm.resultados['opacimetro-resultado-final'] = rm.resultado;
              }
           }
+
         }
 
         // Buscar Foto (tipo 15, 13 o 11)
         if (String(rm.tipomaquina_key) === '15' || String(rm.tipomaquina_key) === '13' || String(rm.tipomaquina_key) === '11') {
-          if (typeof parsedData === 'object' && parsedData.foto) {
-            vm.imagenes = vm.imagenes || {};
+          if (parsedData && typeof parsedData === 'object' && parsedData.foto) {
+             vm.imagenes = vm.imagenes || {};
             vm.imagenes.fotoVehiculo = 'data:image/png;base64,' + Buffer.from(parsedData.foto, 'hex').toString('base64');
           }
         }
@@ -155,6 +158,20 @@ class CertificadoPreviewService {
 
     try {
       vm.defectos = await this.getDefectos(nroInspeccion);
+      
+      // Agregar observación manual segura, después de deduplicar y sin volver a deduplicar
+      const observacion = vm.cabecera?.inspeccion?.observacion;
+      const obs = observacion === null || observacion === undefined
+        ? ''
+        : String(observacion).trim();
+      
+      if (obs.length > 0) {
+        vm.defectos.push({
+          codigovalor: '',
+          nombrevalor: obs,
+          nivelpeligro: ''
+        });
+      }
     } catch (e) {
       console.warn('[PREVISUALIZACION WARNING] getDefectos falló:', e.message);
     }
@@ -183,16 +200,74 @@ class CertificadoPreviewService {
 
   async getDefectos(nroInspeccion) {
     if (!nroInspeccion) return [];
-    const q = `
-      SELECT DISTINCT d.codigovalor, d.nombrevalor, d.nivelpeligro 
+    
+    // Obtener defectos vinculados directamente (resultado_maquina_defecto) conservando orden BD
+    const qDefectos = `
+      SELECT d.codigovalor, d.nombrevalor, d.nivelpeligro 
       FROM resultado_maquina rm 
-      JOIN resultado_maquina_defectos rmd ON rmd.resultado_maquina_id = rm.id 
+      JOIN resultado_maquina_defecto rmd ON rmd.resultado_maquina_id = rm.id 
       JOIN defecto d ON d.id = rmd.defectos_id 
-      WHERE rm.inspeccion_nrodocumentoinspeccion = $1
-      ORDER BY d.codigovalor ASC
+      WHERE rm.inspeccion_nrodocumentoinspeccion LIKE $1
     `;
-    const res = await db.query(q, [nroInspeccion]);
-    return res.rows;
+    const res = await db.query(qDefectos, [`${nroInspeccion}%`]);
+    const listaDefectos = res.rows || [];
+
+    // Obtener defectos desde mapaNormas (solo data)
+    const normalizarJson = (value) => {
+      if (value == null) return {};
+      if (typeof value === 'object' && !Array.isArray(value)) return value;
+      if (typeof value === 'string' && value.trim() !== '') {
+        try {
+          const parsed = JSON.parse(value);
+          return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch { return {}; }
+      }
+      return {};
+    };
+
+    const qResultados = `SELECT data FROM resultado_maquina WHERE inspeccion_nrodocumentoinspeccion LIKE $1`;
+    const resultados = await db.query(qResultados, [`${nroInspeccion}%`]);
+    
+    const normaIdsMap = new Map(); // id -> severidad
+    for (const row of resultados.rows) {
+       const parsedData = normalizarJson(row.data);
+       if (parsedData.mapaNormas) {
+           for (const [normaIdStr, severidad] of Object.entries(parsedData.mapaNormas)) {
+               const nId = Number(normaIdStr);
+               if (Number.isSafeInteger(nId) && nId > 0) {
+                   normaIdsMap.set(nId, severidad);
+               }
+           }
+       }
+    }
+
+    if (normaIdsMap.size > 0) {
+       const ids = Array.from(normaIdsMap.keys());
+       const qNormas = `SELECT id, codigovalor, nombrevalor FROM norma WHERE id = ANY($1::bigint[])`;
+       const resNormas = await db.query(qNormas, [ids]);
+       
+       // Agregar a la lista conservando el orden original y asignando severidad
+       for (const nId of ids) {
+          const severidad = normaIdsMap.get(nId);
+          const normaBD = resNormas.rows.find(n => n.id == nId);
+          if (normaBD) {
+              listaDefectos.push({
+                 codigovalor: normaBD.codigovalor,
+                 nombrevalor: normaBD.nombrevalor,
+                 nivelpeligro: severidad ?? ''
+              });
+          }
+       }
+    }
+
+    // Deduplicación exacta replicando LinkedHashMap (último insertado sobreescribe anterior)
+    const cleanMap = new Map();
+    for (const d of listaDefectos) {
+       cleanMap.set(d.codigovalor, d);
+    }
+    const deduplicados = Array.from(cleanMap.values());
+
+    return deduplicados;
   }
 
   async getResultadosMaquina(nroInspeccion) {
@@ -201,9 +276,9 @@ class CertificadoPreviewService {
       SELECT rm.id, rm.resultado, rm.data, rm.postdata, m.tipomaquina_key
       FROM resultado_maquina rm
       JOIN maquina m ON rm.maquina_id = m.id
-      WHERE rm.inspeccion_nrodocumentoinspeccion = $1
+      WHERE rm.inspeccion_nrodocumentoinspeccion LIKE $1
     `;
-    const res = await db.query(q, [nroInspeccion]);
+    const res = await db.query(q, [`${nroInspeccion}%`]);
     return res.rows;
   }
 
@@ -349,12 +424,69 @@ class CertificadoPreviewService {
       
       const hasSello = (mostrar2daCara === true && empresaKey !== 'BUCK');
 
-      // Limpieza conservadora de Freemarker para permitir que Cheerio lea el DOM intacto
-      rawHtml = rawHtml.replace(/<#assign[^>]*>/gi, '');
-      rawHtml = rawHtml.replace(/<#list[^>]*>/gi, '');
-      rawHtml = rawHtml.replace(/<\/#list>/gi, '');
-      rawHtml = rawHtml.replace(/<#if[^>]*>/gi, '');
-      rawHtml = rawHtml.replace(/<\/#if>/gi, '');
+      const safe = (value) => {
+        if (value === null || value === undefined) return '';
+        return String(value);
+      };
+
+      // Tarea 0 - Expansión manual de FreeMarker (cantEjes = 5)
+      const cantEjes = 5;
+      const regexRangeList = /<#assign myRange = 1\.\.cantEjes\s*>\s*<#list myRange as i>([\s\S]*?)<\/#list>/gi;
+      rawHtml = rawHtml.replace(regexRangeList, (match, innerContent) => {
+        let expanded = '';
+        for (let i = 1; i <= cantEjes; i++) {
+          let row = innerContent.replace(/\$\{i\}/g, i).replace(/\$\{cantEjes\}/g, cantEjes);
+          
+          row = row.replace(/<#if\s+i\s*==\s*1\s*>([\s\S]*?)<\/#if>/gi, (_, content) => {
+             return (i === 1) ? content : '';
+          });
+          
+          expanded += row + '\n';
+        }
+        return expanded;
+      });
+
+      // Tarea 0.1 - Procesamiento de Defectos (Fase 2)
+      
+      const escapeHtml = (value) => {
+          if (value === null || value === undefined) return '';
+          return String(value)
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;')
+              .replace(/'/g, '&#39;');
+      };
+
+      const contieneListaContadora = /<#assign i = 0>\s*<#list defectos as defecto>\s*<#assign i = i \+ 1>\s*<\/#list>/i.test(rawHtml);
+      const contieneSeccionDefectos = /<#if\s+i\s+gt\s+0\s*>/i.test(rawHtml);
+
+      if (contieneListaContadora && contieneSeccionDefectos) {
+         const regexListaContadora = /<#assign i = 0>\s*<#list defectos as defecto>\s*<#assign i = i \+ 1>\s*<\/#list>/gi;
+         rawHtml = rawHtml.replace(regexListaContadora, '');
+
+         rawHtml = rawHtml.replace(/<#if\s+i\s+gt\s+0\s*>([\s\S]*?)<\/#if>/gi, (match, sectionContent) => {
+            if (!vm.defectos || vm.defectos.length === 0) {
+               return '';
+            }
+
+            // Expandimos únicamente la lista que contiene ${defecto.codigovalor}
+            const regexFilaDefectos = /<#assign i = 0>\s*<#list defectos as defecto>([\s\S]*?)<#assign i = i \+ 1>\s*<\/#list>/gi;
+            const sectionContentProcesado = sectionContent.replace(regexFilaDefectos, (matchList, filaContent) => {
+               let filas = '';
+               vm.defectos.forEach(d => {
+                  filas += filaContent.replace(/\$\{defecto\.codigovalor\}/g, escapeHtml(d.codigovalor))
+                                      .replace(/\$\{defecto\.nombrevalor\}/g, escapeHtml(d.nombrevalor))
+                                      .replace(/\$\{defecto\.nivelpeligro\}/g, escapeHtml(d.nivelpeligro));
+               });
+               return filas;
+            });
+
+            return sectionContentProcesado;
+         });
+      } else {
+         console.warn('[PREVISUALIZACION WARNING] No se encontró la estructura esperada de defectos en la plantilla. Se ignora el procesamiento de observaciones.');
+      }
 
       // Tarea 1 - Mapear texto crudo de Freemarker que no usaba location
       rawHtml = rawHtml.replace(/\$\{inspeccion\.tipoinspeccion\.nombre\}/g, (insp.tipoinspeccionnombre || ''));
@@ -384,6 +516,18 @@ class CertificadoPreviewService {
 
       const $ = cheerio.load(rawHtml);
 
+      // Limpieza estricta de valores predeterminados (ficticios) técnicos
+      const technicalPrefixes = [
+         'frenos-', 'alineamiento-', 'analizador-', 'opacimetro-',
+         'luxometro-', 'suspension-', 'sonometro-', 'profundimetro-'
+      ];
+      $('[location]').each((idx, el) => {
+         const loc = $(el).attr('location');
+         if (loc && technicalPrefixes.some(p => loc.startsWith(p))) {
+             $(el).empty();
+         }
+      });
+
       // Procesar mostrar2daCara
       if (mostrar2daCara) {
          // Conservar el bloque inferior completo
@@ -407,11 +551,6 @@ class CertificadoPreviewService {
              $(el).css('display', 'none');
          }
       });
-
-      const safe = (value) => {
-        if (value === null || value === undefined) return '';
-        return String(value);
-      };
 
       const setLocation = ($, location, value) => {
         const el = $(`[location="${location}"]`);
@@ -535,31 +674,14 @@ class CertificadoPreviewService {
         setLocation($, key, resData[key]);
       });
 
-      // Corregir la variable Freemarker ${i}° (o ${i}&deg;) que quedó en el span
-      $('span').each((i, el) => {
-        const html = $(el).html();
-        if (html && (html.includes('${i}&deg;') || html.includes('${i}°'))) {
-           // Como quitamos el <#list>, solo queda 1 fila. Asignamos 1°.
-           $(el).html('1&deg;');
-        }
+      // Limpieza final de spans que no encontraron match
+      $('span[location]').each((i, el) => {
+         if ($(el).html() === '') {
+             // Dejar vacío, legacy ya lo dejó vacío
+         }
       });
 
-      // IV: DEFECTOS
-      const tbodyDefectos = $('.gridDefecto tbody');
-      if (tbodyDefectos.length > 0) {
-        tbodyDefectos.empty();
-        if (viewModel.defectos && viewModel.defectos.length > 0) {
-          viewModel.defectos.forEach(d => {
-            tbodyDefectos.append(`
-              <tr>
-                <td align="center" style="width: 20%;">${safe(d.codigovalor)}</td>
-                <td align="left" style="width: 60%;">${safe(d.nombrevalor)}</td>
-                <td align="center" style="width: 20%;">${safe(d.nivelpeligro)}</td>
-              </tr>
-            `);
-          });
-        }
-      }
+      // IV: DEFECTOS (Ya fueron expandidos antes de Cheerio)
 
       return $.html();
     } else {
