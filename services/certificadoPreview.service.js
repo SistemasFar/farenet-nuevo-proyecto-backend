@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../config/database');
 const cheerio = require('cheerio');
+const reglasEvaluacionService = require('./reglasEvaluacion.service.js');
 
 function formatDate(date) {
   if (!date) return '';
@@ -135,11 +136,7 @@ class CertificadoPreviewService {
           processObj(parsedPostdata);
           
           if (rm.resultado) {
-             if (prefix === 'analizador-') {
-                vm.resultados['analizador-resultado-final'] = rm.resultado;
-             } else if (prefix === 'opacimetro-') {
-                vm.resultados['opacimetro-resultado-final'] = rm.resultado;
-             }
+             vm.resultados[prefix + 'resultado-final'] = rm.resultado;
           }
 
         }
@@ -225,10 +222,16 @@ class CertificadoPreviewService {
       return {};
     };
 
-    const qResultados = `SELECT data FROM resultado_maquina WHERE inspeccion_nrodocumentoinspeccion LIKE $1`;
+    const qResultados = `
+      SELECT rm.data, rm.postdata, m.tipomaquina_key 
+      FROM resultado_maquina rm
+      JOIN maquina m ON rm.maquina_id = m.id
+      WHERE rm.inspeccion_nrodocumentoinspeccion LIKE $1
+    `;
     const resultados = await db.query(qResultados, [`${nroInspeccion}%`]);
     
     const normaIdsMap = new Map(); // id -> severidad
+    
     for (const row of resultados.rows) {
        const parsedData = normalizarJson(row.data);
        if (parsedData.mapaNormas) {
@@ -241,6 +244,12 @@ class CertificadoPreviewService {
        }
     }
 
+    // --- MOTOR DE REGLAS DINÁMICAS (Cálculos matemáticos) ---
+    const dynamicDefectCodes = await reglasEvaluacionService.evaluarDefectosTecnicos(nroInspeccion);
+
+
+
+    // Resolver defectos visuales (mapaNormas)
     if (normaIdsMap.size > 0) {
        const ids = Array.from(normaIdsMap.keys());
        const qNormas = `SELECT id, codigovalor, nombrevalor FROM norma WHERE id = ANY($1::bigint[])`;
@@ -257,6 +266,24 @@ class CertificadoPreviewService {
                  nivelpeligro: severidad ?? ''
               });
           }
+       }
+    }
+
+    // Resolver defectos dinámicos calculados
+    if (dynamicDefectCodes.length > 0) {
+       // Obtenemos los textos reales de la base de datos para no hardcodearlos
+       const qDynamic = `SELECT codigovalor, nombrevalor, nivelpeligro FROM defecto WHERE codigovalor = ANY($1) GROUP BY codigovalor, nombrevalor, nivelpeligro`;
+       const resDynamic = await db.query(qDynamic, [dynamicDefectCodes]);
+       
+       for (const code of dynamicDefectCodes) {
+           const defBD = resDynamic.rows.find(d => d.codigovalor === code);
+           if (defBD) {
+               listaDefectos.push({
+                   codigovalor: defBD.codigovalor,
+                   nombrevalor: defBD.nombrevalor,
+                   nivelpeligro: defBD.nivelpeligro ?? ''
+               });
+           }
        }
     }
 
@@ -431,7 +458,7 @@ class CertificadoPreviewService {
 
       // Tarea 0 - Expansión manual de FreeMarker (cantEjes = 5)
       const cantEjes = 5;
-      const regexRangeList = /<#assign myRange = 1\.\.cantEjes\s*>\s*<#list myRange as i>([\s\S]*?)<\/#list>/gi;
+      const regexRangeList = /<#assign\s+myRange\s*=\s*1\.\.cantEjes\s*>\s*<#list\s+myRange\s+as\s+i>([\s\S]*?)<\/#list>/gi;
       rawHtml = rawHtml.replace(regexRangeList, (match, innerContent) => {
         let expanded = '';
         for (let i = 1; i <= cantEjes; i++) {
@@ -458,11 +485,11 @@ class CertificadoPreviewService {
               .replace(/'/g, '&#39;');
       };
 
-      const contieneListaContadora = /<#assign i = 0>\s*<#list defectos as defecto>\s*<#assign i = i \+ 1>\s*<\/#list>/i.test(rawHtml);
+      const contieneListaContadora = /<#assign\s*i\s*=\s*0>\s*<#list\s*defectos\s*as\s*defecto>\s*<#assign\s*i\s*=\s*i\s*\+\s*1>\s*<\/#list>/i.test(rawHtml);
       const contieneSeccionDefectos = /<#if\s+i\s+gt\s+0\s*>/i.test(rawHtml);
 
       if (contieneListaContadora && contieneSeccionDefectos) {
-         const regexListaContadora = /<#assign i = 0>\s*<#list defectos as defecto>\s*<#assign i = i \+ 1>\s*<\/#list>/gi;
+         const regexListaContadora = /<#assign\s*i\s*=\s*0>\s*<#list\s*defectos\s*as\s*defecto>\s*<#assign\s*i\s*=\s*i\s*\+\s*1>\s*<\/#list>/gi;
          rawHtml = rawHtml.replace(regexListaContadora, '');
 
          rawHtml = rawHtml.replace(/<#if\s+i\s+gt\s+0\s*>([\s\S]*?)<\/#if>/gi, (match, sectionContent) => {
@@ -471,7 +498,7 @@ class CertificadoPreviewService {
             }
 
             // Expandimos únicamente la lista que contiene ${defecto.codigovalor}
-            const regexFilaDefectos = /<#assign i = 0>\s*<#list defectos as defecto>([\s\S]*?)<#assign i = i \+ 1>\s*<\/#list>/gi;
+            const regexFilaDefectos = /<#assign\s*i\s*=\s*0>\s*<#list\s*defectos\s*as\s*defecto>([\s\S]*?)<#assign\s*i\s*=\s*i\s*\+\s*1>\s*<\/#list>/gi;
             const sectionContentProcesado = sectionContent.replace(regexFilaDefectos, (matchList, filaContent) => {
                let filas = '';
                vm.defectos.forEach(d => {
@@ -514,6 +541,22 @@ class CertificadoPreviewService {
          return 'none';
       });
 
+      // Evaluar tags estáticos de FreeMarker booleanos
+      const evalTag = (html, varName, varValue) => {
+          let res = html.replace(new RegExp(`<#if\\s+${varName}\\s*==\\s*true\\s*>([\\s\\S]*?)<\\/#if>`, 'gi'), (match, content) => varValue ? content : '');
+          res = res.replace(new RegExp(`<#if\\s+${varName}\\s*==\\s*false\\s*>([\\s\\S]*?)<\\/#if>`, 'gi'), (match, content) => !varValue ? content : '');
+          return res;
+      };
+
+      rawHtml = evalTag(rawHtml, 'hasInspeccion', hasInspeccion);
+      rawHtml = evalTag(rawHtml, 'mostrar2daCara', mostrar2daCara);
+      rawHtml = evalTag(rawHtml, 'hasSello', hasSello);
+      // Configurar costo basado en comprobante
+      const importe = comp && comp.importetotal ? Number(comp.importetotal).toFixed(2) : '50.00';
+      rawHtml = evalTag(rawHtml, 'hasCosto', true);
+      rawHtml = evalTag(rawHtml, 'hasSelloGZ', false);
+      rawHtml = evalTag(rawHtml, 'esExtraordinario', tipoInspeccionNombre.trim().toLowerCase().includes('extraordinari'));
+
       const $ = cheerio.load(rawHtml);
 
       // Limpieza estricta de valores predeterminados (ficticios) técnicos
@@ -531,8 +574,10 @@ class CertificadoPreviewService {
       // Procesar mostrar2daCara
       if (mostrar2daCara) {
          // Conservar el bloque inferior completo
-         // Borramos el sello de la 1ra cara para no duplicarlo si hay 2da cara
-         $('.certificado-inspeccion.page-breaker').first().find('.pull-left').remove();
+         // Borramos los sellos de resolucion de la 1ra cara para no duplicarlos si hay 2da cara
+         const primeraCara = $('.certificado-inspeccion.page-breaker').first();
+         primeraCara.find('[location="resolucion"]').closest('.pull-left').remove();
+         // IMPORTANTE: NO eliminamos 'costo' de la primera cara porque no existe en la segunda cara
       } else {
          // Ocultar el bloque inferior, igual que legacy
          $('.certificado-inspeccion.page-breaker').last().remove();
@@ -557,10 +602,21 @@ class CertificadoPreviewService {
         if (el.length > 0) el.html(safe(value));
       };
 
-      // Empresa
-      setLocation($, 'empresa', comp.empresanombre);
-      setLocation($, 'direccionPlLugar', comp.plantadireccion ? `Domicilio Local: ${comp.plantadireccion}` : '');
-      setLocation($, 'telefonoEmpresa', comp.empresatelefono);
+      // Empresa y Planta (fallback a ITV CAMBRIDGE si falta data, como pidió el user)
+      const empNombre = comp.empresanombre || 'ITV CAMBRIDGE S.A.C.';
+      const plDireccion = comp.plantadireccion || 'AV ALFREDO MENDIOLA NO. 5900 URB. HABILITACION INDUSTRIAL P - INDEPENDENCIA LIMA LIMA';
+      const empTelefono = comp.empresatelefono || '717-3131';
+
+      setLocation($, 'empresa', empNombre);
+      setLocation($, 'direccionPlLugar', `Domicilio Local: ${plDireccion}`);
+      setLocation($, 'telefonoEmpresa', empTelefono);
+      setLocation($, 'linea', comp.lineanombre || '');
+
+      // Inspección Info (Tipo, Nro Informe)
+      setLocation($, 'informeInspeccionNro', insp.nrodocumentoinforme || '');
+      // El tipo de inspección se llena por replace de texto directo en rawHtml más abajo,
+      // pero también lo intentamos llenar por location si el layout cambió
+      setLocation($, 'tipoInspeccion', insp.tipoinspeccionnombre || '');
 
       // Fechas
       const formatHora = (d) => {
@@ -568,35 +624,42 @@ class CertificadoPreviewService {
         const dt = new Date(d);
         let h = dt.getHours();
         const m = String(dt.getMinutes()).padStart(2, '0');
+        const s = String(dt.getSeconds()).padStart(2, '0');
         const ampm = h >= 12 ? 'PM' : 'AM';
         h = h % 12;
         h = h ? h : 12;
-        return `${String(h).padStart(2, '0')}:${m} ${ampm}`;
+        return `${String(h).padStart(2, '0')}:${m}:${s} ${ampm}`;
       };
 
-      vm.cabecera.hora = formatHora(cert.fechcreacion);
+      const dateToUse = cert.fechcreacion || insp.fechiniciovigencia || insp.fechcreacion || new Date();
+      setLocation($, 'fecha', formatDate(dateToUse));
+      setLocation($, 'hora', formatHora(dateToUse));
+      setLocation($, 'fechaInspeccion', formatDate(dateToUse));
+
+      setLocation($, 'certificadoStr', 'CERTIFICADO DE INSPECCIÓN TÉCNICA VEHICULAR');
+      setLocation($, 'informeStr', 'INFORME DE INSPECCIÓN TÉCNICA VEHICULAR');
       
       // Documentos
       const nroImpresion = hasInspeccion ? cert.nrodocumentocertificado : insp.nrodocumentoinforme;
-      vm.cabecera.nroDocu = hasInspeccion ? `Certificado N°: ${safe(nroImpresion)}` : `Informe N°: ${safe(nroImpresion)}`;
+      setLocation($, 'nroDocu', hasInspeccion ? `CERTIFICADO N°: ${nroImpresion || ''}` : `INFORME N°: ${nroImpresion || ''}`);
       vm.cabecera.nroHojaValorada = (hasInspeccion && cert.nrohojavalorada) ? `Hoja Valorada: ${cert.nrohojavalorada}` : '';
       vm.cabecera.informeInspeccionNro = insp.nrodocumentoinforme;
 
       // Tipo (Usando tipoinspeccion por ahora como fallback)
       vm.cabecera.tipocertificado = insp.tipoinspeccionnombre || '';
-      vm.cabecera.tipoautorizacion = insp.tipoautorizacion_key || '';
+      vm.cabecera.tipoautorizacion = insp.tipoautorizacion_ambito || insp.tipoautorizacion_key || '';
       vm.cabecera.fechaInspeccion = insp.fechiniciovigencia ? formatDate(insp.fechiniciovigencia) : 'Aún no se consolida';
 
       // I: CARACTERÍSTICAS DEL VEHÍCULO
       const veh = viewModel.vehiculo || {};
       setLocation($, 'propietario', veh.propietarionombre);
-      setLocation($, 'fecha', formatDate(cert.fechcreacion));
-      setLocation($, 'hora', vm.cabecera.hora);
-      setLocation($, 'nroDocu', vm.cabecera.nroDocu);
+      setLocation($, 'fecha', formatDate(cert.fechcreacion || insp.fechiniciovigencia));
+      // NO SOBREESCRIBIR 'hora' AQUI, YA FUE SETEADA
       setLocation($, 'nroHojaValorada', vm.cabecera.nroHojaValorada);
       setLocation($, 'tipocertificado', vm.cabecera.tipocertificado);
       setLocation($, 'tipoautorizacion', vm.cabecera.tipoautorizacion);
       setLocation($, 'fechaInspeccion', vm.cabecera.fechaInspeccion);
+      setLocation($, 'costo', `Precio<br>S/${importe}`);
       setLocation($, 'informeInspeccionNro', vm.cabecera.informeInspeccionNro);
       
       // Textos Legales y Cuerpo

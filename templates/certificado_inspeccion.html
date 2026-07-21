@@ -177,12 +177,9 @@
 				<div class="pull-left" location="telefonoEmpresa"></div>
 			</div>
 
-			<div style="font-size: 12px;margin-top: 15px;" class="pull-right">
-				<div class="clearfix"></div>
-				<div class="clearfix"></div>
-				<div class="clearfix"></div>
+			<div style="font-size: 12px; margin-top: 15px; position: relative; z-index: 10;" class="pull-right">
 				<div class="pull-left">
-					<span location="fecha" class="pull-left"></span> <span>:&nbsp;&nbsp;&nbsp;&nbsp;</span>
+					<span location="fecha"></span> &nbsp;
 				</div>
 				<div class="pull-left" location="hora"></div>
 			</div>
@@ -190,11 +187,14 @@
 			<hr size="1px" style="color: #000000;margin-left: 35%;">
 		</div>
 
-		<h4 class="titulo" style="padding-left:110px">
-			<#if hasInspeccion == true><span location="certificadoStr"></span></#if>
-			<#if hasInspeccion == false><span location="informeStr"></span></#if>
-			<#if hasInspeccion == true><span style="font-weight: bold;" location="nroDocu"></span></#if>
+		<h4 class="titulo" style="text-align: center; margin-bottom: 0;">
+			<#if hasInspeccion==true><div location="certificadoStr"></div></#if>
+			<#if hasInspeccion==false><div location="informeStr"></div></#if>
 		</h4>
+		<h5 style="text-align: center; margin-top: 5px; font-weight: bold;">
+			<#if hasInspeccion==true><div location="nroDocu"></div></#if>
+			<#if hasInspeccion==false><div location="nroDocu"></div></#if>
+		</h5>
 		<div>
 
 			<div class="pull-left">
@@ -977,7 +977,7 @@
 			<div style="float: left; width: 50%; font-size: 12px;">
 				<div style="border: 1px solid black; width: 174px; padding-top: 10px">
 					<div style="float: left; margin-left: 10px; height: 28px">
-						<span location="strFechInspeccion"></span> &nbsp;
+						<span>FECHA DE INSPECCI&Oacute;N:</span> &nbsp;
 					</div>
 					<div style="float: left">
 						<span location="fechaInicioVigencia"></span>
