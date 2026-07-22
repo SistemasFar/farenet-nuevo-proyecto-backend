@@ -871,6 +871,19 @@ class CertificadoPreviewService {
                   flex: 0 0 auto; background-color: white; box-shadow: 0 4px 16px rgba(0,0,0,.45);
                   overflow: visible; /* Mantener visible hasta comprobación manual en navegador */
                   -webkit-print-color-adjust: exact; print-color-adjust: exact;
+                  display: flex; flex-direction: column;
+                  --header-height: 35mm;
+                }
+                .a4-header {
+                  height: var(--header-height);
+                  flex: 0 0 auto;
+                }
+                .a4-content {
+                  flex: 1 1 auto;
+                  position: relative;
+                  height: calc(297mm - var(--header-height));
+                  margin-top: 0;
+                  padding-top: 0;
                 }
                 .a4-page-principal.farenet {
                   background-image: url('/img/fondocert_U.png'); background-size: 100% auto;
@@ -891,6 +904,10 @@ class CertificadoPreviewService {
                 .cert-document-viewer .legacy-page-canvas .certificado-inspeccion.page-breaker {
                   page-break-before: auto !important; break-before: auto !important;
                 }
+                .cert-document-viewer .legacy-page-canvas > * {
+                  margin-top: 0 !important;
+                  padding-top: 0 !important;
+                }
                 
                 @page { size: A4 portrait; margin: 0; }
                 @media print {
@@ -909,8 +926,11 @@ class CertificadoPreviewService {
 
       const $seccionPrincipal = $(`
           <section class="a4-page a4-page-principal ${claseEmpresa}" data-page-type="principal">
-              <div class="legacy-page-positioner">
-                  <div class="legacy-page-canvas"></div>
+              <div class="a4-header"></div>
+              <div class="a4-content">
+                  <div class="legacy-page-positioner">
+                      <div class="legacy-page-canvas"></div>
+                  </div>
               </div>
           </section>
       `);
@@ -920,8 +940,11 @@ class CertificadoPreviewService {
       if ($paginaComplementaria) {
           const $seccionComplementaria = $(`
               <section class="a4-page a4-page-complementaria" data-page-type="complementaria">
-                  <div class="legacy-page-positioner">
-                      <div class="legacy-page-canvas"></div>
+                  <div class="a4-header"></div>
+                  <div class="a4-content">
+                      <div class="legacy-page-positioner">
+                          <div class="legacy-page-canvas"></div>
+                      </div>
                   </div>
               </section>
           `);
@@ -964,9 +987,10 @@ class CertificadoPreviewService {
               var anchoNatural = Math.max(contenido.scrollWidth, contenido.offsetWidth);
               var altoNatural = Math.max(contenido.scrollHeight, contenido.offsetHeight);
 
+              var contentNode = pagina.querySelector('.a4-content');
               var escala = Math.min(
-                pagina.clientWidth / anchoNatural,
-                pagina.clientHeight / altoNatural,
+                contentNode.clientWidth / anchoNatural,
+                contentNode.clientHeight / altoNatural,
                 1
               );
 
