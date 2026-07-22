@@ -885,8 +885,8 @@ class CertificadoPreviewService {
                   position: absolute; inset: 0; display: flex; justify-content: center; align-items: flex-start;
                 }
                 .legacy-page-canvas {
-                  width: 726px; height: 1060px; flex: 0 0 auto; display: flow-root;
-                  transform: scale(1.05); transform-origin: top center;
+                  flex: 0 0 auto; display: flow-root;
+                  transform-origin: top center;
                 }
                 .cert-document-viewer .legacy-page-canvas .certificado-inspeccion.page-breaker {
                   page-break-before: auto !important; break-before: auto !important;
@@ -950,6 +950,33 @@ class CertificadoPreviewService {
           console.error('[CERTIFICADO A4] Validación fallida', { diferenciasMetricas, diferenciasTextos });
           throw new Error(`El empaquetado A4 produjo diferencias: ${JSON.stringify({ diferenciasMetricas, diferenciasTextos })}`);
       }
+
+      // 8. Script inyectado para el cálculo dinámico de escala basado en el ancho real
+      $('body').append(`
+        <script>
+          window.addEventListener('load', function() {
+            document.querySelectorAll('.a4-page').forEach(function(pagina) {
+              var canvas = pagina.querySelector('.legacy-page-canvas');
+              if (!canvas) return;
+              var contenido = canvas.firstElementChild;
+              if (!contenido) return;
+
+              var anchoNatural = Math.max(contenido.scrollWidth, contenido.offsetWidth);
+              var altoNatural = Math.max(contenido.scrollHeight, contenido.offsetHeight);
+
+              var escala = Math.min(
+                pagina.clientWidth / anchoNatural,
+                pagina.clientHeight / altoNatural,
+                1
+              );
+
+              canvas.style.width = anchoNatural + 'px';
+              canvas.style.height = altoNatural + 'px';
+              canvas.style.transform = 'scale(' + escala + ')';
+            });
+          });
+        </script>
+      `);
 
       return $.html();
   }
