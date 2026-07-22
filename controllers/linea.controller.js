@@ -164,6 +164,26 @@ class LineaController {
     }
   }
 
+
+
+  async generarHtmlCertificadoOficial(req, res) {
+    try {
+      const { nroInspeccion } = req.params;
+      const user = req.user;
+
+      const html = await CertificadoPreviewService.generarHtmlCertificadoOficial(nroInspeccion, user);
+      
+      return res.json({
+        ok: true,
+        html
+      });
+    } catch (error) {
+      console.error(error);
+      const status = error.statusCode || 500;
+      res.status(status).json({ message: error.message || 'Error al generar certificado oficial' });
+    }
+  }
+
   async registrarPoliza(req, res) {
     try {
       const { nroInspeccion } = req.params;

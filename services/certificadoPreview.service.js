@@ -591,8 +591,8 @@ class CertificadoPreviewService {
          primeraCara.find('[location="resolucion"]').closest('.pull-left').remove();
          // IMPORTANTE: NO eliminamos 'costo' de la primera cara porque no existe en la segunda cara
       } else {
-         // Ocultar el bloque inferior, igual que legacy
-         $('.certificado-inspeccion.page-breaker').last().remove();
+         // La segunda cara (Foto y Firma) es la segunda instancia (índice 1)
+         $('.certificado-inspeccion.page-breaker').eq(1).remove();
       }
 
       // Limpiar etiquetas FreeMarker residuales que quedaron huérfanas
@@ -772,6 +772,187 @@ class CertificadoPreviewService {
     }
   }
 
+
+  async generarHtmlCertificadoOficial(nroInspeccion, user) {
+      // 1. Obtener HTML técnico base e intacto
+      const htmlTecnico = await this.generarHtmlPrevisualizacion(nroInspeccion, user);
+      const $ = cheerio.load(htmlTecnico);
+
+      const $paginas = $('.certificado-inspeccion.page-breaker');
+      if ($paginas.length < 1 || $paginas.length > 2) {
+          throw new Error("Estructura de documento inesperada. Páginas detectadas: " + $paginas.length);
+      }
+
+      // -- 2.1 Inspeccionar elementos fuera de las páginas --
+      const estructuraBodyOriginal = $('body').children().map((index, element) => ({
+          index,
+          tag: element.tagName,
+          id: $(element).attr('id') || null,
+          class: $(element).attr('class') || null,
+          contienePagina: $(element).find('.certificado-inspeccion.page-breaker').length > 0 || $(element).is('.certificado-inspeccion.page-breaker'),
+          tablas: $(element).find('table').length,
+          locations: $(element).find('[location]').length,
+          imagenes: $(element).find('img').length
+      })).get();
+      console.log('[CERTIFICADO A4] Estructura original del body:', estructuraBodyOriginal);
+
+      // -- 2.2 Listar locations de resultado --
+      const locationsResultado = $('body').find('[location]').map((_, element) => $(element).attr('location')).get().filter(location => String(location || '').toLowerCase().includes('resultado'));
+      console.log('[CERTIFICADO A4] Locations de resultado:', [...new Set(locationsResultado)]);
+
+      // -- 2.3 Capturar Scope Antes --
+      const $scopeAntes = $('<div data-validation-scope="antes"></div>');
+      $scopeAntes.append($paginas.clone());
+
+      const capturarMetricas = ($scope) => ({
+          tablas: $scope.find('table').length,
+          locations: $scope.find('[location]').length,
+          imagenes: $scope.find('img').length,
+          pageBreakers: $scope.find('.certificado-inspeccion.page-breaker').length,
+          filasFrenos: $scope.find('[location^="frenos-pesoEje"]').length,
+          filasDefectos: $scope.find('.gridDefecto tbody tr').length
+      });
+
+      const obtenerTextos = ($scope, selector) => {
+          return $scope.find(selector).map((_, element) => $(element).text().trim()).get();
+      };
+
+      const capturarTextos = ($scope) => ({
+          placa: obtenerTextos($scope, '[location="placa"]'),
+          frenosPesoEje1: obtenerTextos($scope, '[location="frenos-pesoEje1"]'),
+          frenosFuerzaDerechaEje1: obtenerTextos($scope, '[location="frenos-fuerzaFrenadoEjeDerecho1"]'),
+          eficienciaFrenos: obtenerTextos($scope, '[location="frenos-eficienciaServicio"]'),
+          alineamientoEje1: obtenerTextos($scope, '[location="alineamiento-resultadoEje1"]'),
+          profundimetroEje1: obtenerTextos($scope, '[location="profundimetro-eje1"]'),
+          luxometroBajas: obtenerTextos($scope, '[location="luxometro-resultadoBajas"]'),
+          analizadorRpm: obtenerTextos($scope, '[location="analizador-rpm"]'),
+          resultadoFinal: obtenerTextos($scope, '[location="resultado"]')
+      });
+
+      const metricasAntes = capturarMetricas($scopeAntes);
+      const textAntes = capturarTextos($scopeAntes);
+
+      // 3. Determinar fondo principal vía SELECT seguro de solo lectura
+      const queryCertificado = `
+        SELECT nrodocumentocertificado, empresacertificadora_key 
+        FROM certificado 
+        WHERE inspeccion_nrodocumentoinspeccion = $1 
+        ORDER BY fechcreacion DESC LIMIT 1
+      `;
+      const resCertificado = await db.query(queryCertificado, [nroInspeccion]);
+      const certData = resCertificado.rows[0];
+
+      if (!certData) {
+          const error = new Error(`No existe certificado para la inspección ${nroInspeccion}`);
+          error.statusCode = 404;
+          throw error;
+      }
+
+      const empresaKey = String(certData.empresacertificadora_key || '').trim().toUpperCase();
+      const esGuiza = empresaKey === 'GUIZA' && String(nroInspeccion).includes('INS-25');
+      const claseEmpresa = esGuiza ? 'guiza' : 'farenet';
+
+      // 4. Clonar nodos originales (Preservación completa del OuterHTML y atributos)
+      const $paginaPrincipal = $paginas.eq(0).clone();
+      const $paginaComplementaria = $paginas.length === 2 ? $paginas.eq(1).clone() : null;
+
+      // 5. Inyectar CSS estricto A4 en el <head> original si no existe
+      if ($('#certificado-oficial-a4').length === 0) {
+          $('head').append(`
+              <style id="certificado-oficial-a4">
+                html, body { margin: 0; padding: 0; background: #525659; }
+                .cert-document-viewer {
+                  display: flex; flex-direction: column; align-items: center; gap: 24px;
+                  padding: 24px; min-width: max-content; box-sizing: border-box;
+                }
+                .a4-page {
+                  width: 210mm; height: 297mm; min-width: 210mm; max-width: 210mm;
+                  min-height: 297mm; max-height: 297mm; box-sizing: border-box; position: relative;
+                  flex: 0 0 auto; background-color: white; box-shadow: 0 4px 16px rgba(0,0,0,.45);
+                  overflow: visible; /* Mantener visible hasta comprobación manual en navegador */
+                  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+                }
+                .a4-page-principal.farenet {
+                  background-image: url('/img/fondocert_U.png'); background-size: 100% auto;
+                  background-position: top center; background-repeat: no-repeat;
+                }
+                .a4-page-principal.guiza {
+                  background-image: url('/img/fondo_cert2.png'); background-size: 100% auto;
+                  background-position: top center; background-repeat: no-repeat;
+                }
+                
+                .legacy-page-positioner {
+                  position: absolute; inset: 0; display: flex; justify-content: center; align-items: flex-start;
+                }
+                .legacy-page-canvas {
+                  width: 726px; height: 1060px; flex: 0 0 auto; display: flow-root;
+                  transform: scale(1.05); transform-origin: top center;
+                }
+                .cert-document-viewer .legacy-page-canvas .certificado-inspeccion.page-breaker {
+                  page-break-before: auto !important; break-before: auto !important;
+                }
+                
+                @page { size: A4 portrait; margin: 0; }
+                @media print {
+                  html, body { background: white !important; }
+                  .cert-document-viewer { padding: 0; background: white !important; }
+                  .a4-page { margin: 0; box-shadow: none; break-after: page; page-break-after: always; }
+                  .a4-page:last-child { break-after: auto; page-break-after: auto; }
+                }
+              </style>
+          `);
+      }
+
+      // 6. Vaciar y reconstruir ÚNICAMENTE el <body> (preservando el <head>)
+      $('body').empty();
+      $('body').append('<main class="cert-document-viewer"></main>');
+
+      const $seccionPrincipal = $(`
+          <section class="a4-page a4-page-principal ${claseEmpresa}" data-page-type="principal">
+              <div class="legacy-page-positioner">
+                  <div class="legacy-page-canvas"></div>
+              </div>
+          </section>
+      `);
+      $seccionPrincipal.find('.legacy-page-canvas').append($paginaPrincipal);
+      $('.cert-document-viewer').append($seccionPrincipal);
+
+      if ($paginaComplementaria) {
+          const $seccionComplementaria = $(`
+              <section class="a4-page a4-page-complementaria" data-page-type="complementaria">
+                  <div class="legacy-page-positioner">
+                      <div class="legacy-page-canvas"></div>
+                  </div>
+              </section>
+          `);
+          $seccionComplementaria.find('.legacy-page-canvas').append($paginaComplementaria);
+          $('.cert-document-viewer').append($seccionComplementaria);
+      }
+
+      // 7. Validación Rigurosa Post-Empaquetado (Seguro Anti-Regresiones)
+      const $scopeDespues = $('.cert-document-viewer');
+      const metricasDespues = capturarMetricas($scopeDespues);
+      const textDespues = capturarTextos($scopeDespues);
+
+      const diferenciasMetricas = Object.fromEntries(
+          Object.keys(metricasAntes)
+              .filter(key => metricasAntes[key] !== metricasDespues[key])
+              .map(key => [key, { antes: metricasAntes[key], despues: metricasDespues[key] }])
+      );
+
+      const diferenciasTextos = Object.fromEntries(
+          Object.keys(textAntes)
+              .filter(key => JSON.stringify(textAntes[key]) !== JSON.stringify(textDespues[key]))
+              .map(key => [key, { antes: textAntes[key], despues: textDespues[key] }])
+      );
+
+      if (Object.keys(diferenciasMetricas).length > 0 || Object.keys(diferenciasTextos).length > 0) {
+          console.error('[CERTIFICADO A4] Validación fallida', { diferenciasMetricas, diferenciasTextos });
+          throw new Error(`El empaquetado A4 produjo diferencias: ${JSON.stringify({ diferenciasMetricas, diferenciasTextos })}`);
+      }
+
+      return $.html();
+  }
 }
 
 module.exports = new CertificadoPreviewService();

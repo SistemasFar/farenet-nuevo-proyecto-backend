@@ -33,6 +33,7 @@ router.post('/foto/:nroInspeccion/reiniciar', authMiddleware, validarAccesoPlant
 router.post('/prueba/:nroInspeccion/reiniciar', authMiddleware, validarAccesoPlantaInspeccion, lineaController.reiniciarPrueba);
 
 router.get('/previsualizacion/:nroInspeccion', authMiddleware, validarAccesoPlantaInspeccion, lineaController.obtenerPreVisualizacion);
+router.get('/certificado-oficial/:nroInspeccion', authMiddleware, validarAccesoPlantaInspeccion, lineaController.generarHtmlCertificadoOficial);
 
 // Rutas de lectura específicas (van antes del wildcard /:nroInspeccion)
 router.post('/appresultado', machineAuthMiddleware, lineaController.appresultado);
