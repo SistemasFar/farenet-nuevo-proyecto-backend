@@ -560,7 +560,8 @@ class CertificadoPreviewService {
       };
 
       rawHtml = evalTag(rawHtml, 'hasInspeccion', hasInspeccion);
-      rawHtml = evalTag(rawHtml, 'mostrar2daCara', mostrar2daCara);
+      // YA NO evaluamos mostrar2daCara con evalTag porque Cheerio se encarga de eliminar la segunda cara usando .last().remove()
+      // rawHtml = evalTag(rawHtml, 'mostrar2daCara', mostrar2daCara);
       rawHtml = evalTag(rawHtml, 'hasSello', hasSello);
       // Configurar costo basado en comprobante
       const importe = comp && comp.importetotal ? Number(comp.importetotal).toFixed(2) : '50.00';
