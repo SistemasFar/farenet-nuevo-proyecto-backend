@@ -775,7 +775,17 @@ class CertificadoPreviewService {
 
   async generarHtmlCertificadoOficial(nroInspeccion, user) {
       // 1. Obtener HTML técnico base e intacto
-      const htmlTecnico = await this.generarHtmlPrevisualizacion(nroInspeccion, user);
+      let htmlTecnico = await this.generarHtmlPrevisualizacion(nroInspeccion, user);
+      
+      // TWEAKS VISUALES SEGUROS: Modificar solo los bordes que ya existen en el template (sin agregar a otras tablas)
+      htmlTecnico = htmlTecnico.replace(/border:\s*1px\s*solid\s*black/gi, 'border: 1.5px solid #000');
+      htmlTecnico = htmlTecnico.replace(/border:\s*solid\s*1px\s*black/gi, 'border: 1.5px solid #000');
+      // Oscurecer explícitamente donde el legacy decía "black"
+      htmlTecnico = htmlTecnico.replace(/color:\s*black/gi, 'color: #000');
+      // Aumentar el tamaño de las letras principales
+      htmlTecnico = htmlTecnico.replace(/font-size:\s*7px/gi, 'font-size: 9px');
+      htmlTecnico = htmlTecnico.replace(/font-size:\s*9px/gi, 'font-size: 11px');
+
       const $ = cheerio.load(htmlTecnico);
 
       const $paginas = $('.certificado-inspeccion.page-breaker');
@@ -909,6 +919,19 @@ class CertificadoPreviewService {
                   padding-top: 0 !important;
                 }
                 
+                /* TWEAKS VISUALES DE TEXTO: Renderizado más oscuro y firme (sin agregar líneas) */
+                .cert-document-viewer {
+                  -webkit-font-smoothing: antialiased;
+                  -moz-osx-font-smoothing: grayscale;
+                  text-rendering: optimizeLegibility;
+                }
+                .cert-document-viewer span, 
+                .cert-document-viewer td, 
+                .cert-document-viewer div {
+                  color: #000 !important;
+                  font-weight: 500 !important;
+                }
+                
                 @page { size: A4 portrait; margin: 0; }
                 @media print {
                   html, body { background: white !important; }
@@ -934,6 +957,25 @@ class CertificadoPreviewService {
               </div>
           </section>
       `);
+      let locationsInyectados = 0;
+      // Restaurar el sello cuadrado de resolución junto al sello redondo de costo en la primera cara
+      if (empresaKey !== 'BUCK' && $paginaPrincipal.find('[location="resolucion"]').length === 0) {
+          const resolucionSelloPath = esGuiza ? '/img/sello_resolucion2.png' : '/img/sello_resolucion.png';
+          const nroCertificado = certData.nrodocumentocertificado || '';
+          const $selloResolucion = $(`
+              <div class="pull-left" style="width: 30%; margin-right: 5%; margin-left: 3px;">
+                  <div style="background:url('${resolucionSelloPath}') no-repeat center center; background-size:250px; height:150px; text-align:center; -webkit-print-color-adjust: exact;">
+                      <h2 location="resolucion" style="display:inline-block; padding-top:60px; font-family: capture; color: #000 !important; font-weight: bold;">${nroCertificado}</h2>
+                  </div>
+              </div>
+          `);
+          const $costo = $paginaPrincipal.find('[location="costo"]').closest('.pull-left');
+          if ($costo.length > 0) {
+              $selloResolucion.insertBefore($costo);
+              locationsInyectados++;
+          }
+      }
+
       $seccionPrincipal.find('.legacy-page-canvas').append($paginaPrincipal);
       $('.cert-document-viewer').append($seccionPrincipal);
 
@@ -959,8 +1001,16 @@ class CertificadoPreviewService {
 
       const diferenciasMetricas = Object.fromEntries(
           Object.keys(metricasAntes)
-              .filter(key => metricasAntes[key] !== metricasDespues[key])
-              .map(key => [key, { antes: metricasAntes[key], despues: metricasDespues[key] }])
+              .filter(key => {
+                  let valorAntes = metricasAntes[key];
+                  if (key === 'locations') valorAntes += locationsInyectados;
+                  return valorAntes !== metricasDespues[key];
+              })
+              .map(key => {
+                  let valorAntes = metricasAntes[key];
+                  if (key === 'locations') valorAntes += locationsInyectados;
+                  return [key, { antes: valorAntes, despues: metricasDespues[key] }];
+              })
       );
 
       const diferenciasTextos = Object.fromEntries(
