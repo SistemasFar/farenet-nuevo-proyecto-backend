@@ -541,10 +541,21 @@ class CertificadoPreviewService {
          return 'none';
       });
 
-      // Evaluar tags estáticos de FreeMarker booleanos
+      // Evaluar tags estáticos de FreeMarker booleanos de forma robusta
       const evalTag = (html, varName, varValue) => {
-          let res = html.replace(new RegExp(`<#if\\s+${varName}\\s*==\\s*true\\s*>([\\s\\S]*?)<\\/#if>`, 'gi'), (match, content) => varValue ? content : '');
-          res = res.replace(new RegExp(`<#if\\s+${varName}\\s*==\\s*false\\s*>([\\s\\S]*?)<\\/#if>`, 'gi'), (match, content) => !varValue ? content : '');
+          let res = html;
+          if (varValue) {
+             res = res.replace(new RegExp(`<#if\\s+${varName}\\s*==\\s*true\\s*>`, 'gi'), '');
+             // Si es true, solo borramos la etiqueta de apertura. El </#if> de cierre quedará huérfano y se limpiará luego.
+          } else {
+             res = res.replace(new RegExp(`<#if\\s+${varName}\\s*==\\s*true\\s*>([\\s\\S]*?)<\\/#if>`, 'gi'), '');
+          }
+          
+          if (!varValue) {
+             res = res.replace(new RegExp(`<#if\\s+${varName}\\s*==\\s*false\\s*>`, 'gi'), '');
+          } else {
+             res = res.replace(new RegExp(`<#if\\s+${varName}\\s*==\\s*false\\s*>([\\s\\S]*?)<\\/#if>`, 'gi'), '');
+          }
           return res;
       };
 
@@ -557,7 +568,7 @@ class CertificadoPreviewService {
       rawHtml = evalTag(rawHtml, 'hasSelloGZ', false);
       rawHtml = evalTag(rawHtml, 'esExtraordinario', tipoInspeccionNombre.trim().toLowerCase().includes('extraordinari'));
 
-      const $ = cheerio.load(rawHtml);
+      let $ = cheerio.load(rawHtml);
 
       // Limpieza estricta de valores predeterminados (ficticios) técnicos
       const technicalPrefixes = [
@@ -582,6 +593,14 @@ class CertificadoPreviewService {
          // Ocultar el bloque inferior, igual que legacy
          $('.certificado-inspeccion.page-breaker').last().remove();
       }
+
+      // Limpiar etiquetas FreeMarker residuales que quedaron huérfanas
+      let finalHtml = $.html();
+      finalHtml = finalHtml.replace(/&lt;#if[\s\S]*?&gt;/gi, '');
+      finalHtml = finalHtml.replace(/&lt;\/#if&gt;/gi, '');
+      finalHtml = finalHtml.replace(/<#if[\s\S]*?>/gi, '');
+      finalHtml = finalHtml.replace(/<\/#if>/gi, '');
+      $ = cheerio.load(finalHtml);
 
       // Procesar hasSello
       if (!hasSello) {
