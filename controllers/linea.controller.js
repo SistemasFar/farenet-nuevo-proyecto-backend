@@ -184,6 +184,107 @@ class LineaController {
     }
   }
 
+  async generarHtmlInformeVisualizacion(req, res, next) {
+    try {
+        const { nroInspeccion } = req.params;
+
+        const htmlPrevisualizacion =
+            await CertificadoPreviewService.generarHtmlPrevisualizacion(
+                    nroInspeccion,
+                    req.user
+                );
+
+        const cheerio = require('cheerio');
+        const $ = cheerio.load(htmlPrevisualizacion);
+
+        const metricasAntes = {
+            tablas: $('table').length,
+            filas: $('tr').length,
+            celdas: $('td, th').length,
+            imagenes: $('img').length,
+            locations: $('[location]').length
+        };
+
+        const $nroDocu = $('[location="nroDocu"]');
+
+        console.log('[VISUALIZAR INFORME] nroDocu detectado', {
+            cantidad: $nroDocu.length,
+            texto: $nroDocu.length ? $nroDocu.text().trim() : null
+        });
+
+        if ($nroDocu.length > 1) {
+            throw new Error(
+                `Se encontraron ${$nroDocu.length} nodos nroDocu; se esperaba como máximo uno`
+            );
+        }
+
+        if ($nroDocu.length === 1) {
+            const textoNroDocu = String($nroDocu.text() || '')
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .trim()
+                .toUpperCase();
+
+            const esCodigoCertificado = textoNroDocu.includes('CERTIFICADO N');
+
+            if (esCodigoCertificado) {
+                // El usuario proporcionó una captura donde se exige que diga INFORME N°: INS-...
+                // y el título superior diga INFORME DE INSPECCIÓN TÉCNICA VEHICULAR.
+                $nroDocu.text(`INFORME N°: ${nroInspeccion}`);
+                
+                const $tituloCertificado = $('[location="certificadoStr"]');
+                if ($tituloCertificado.length > 0) {
+                    $tituloCertificado.text('INFORME DE INSPECCIÓN TÉCNICA VEHICULAR');
+                }
+            }
+        }
+
+        // Restituir el ancho a un tamaño óptimo (max-content) para la pestaña independiente y evitar que se recorten los cuadros
+        // (generarHtmlPrevisualizacion le inyecta width 100% para el modal del frontend)
+        $('.certificado-inspeccion').attr('style', 'width: max-content !important; margin: 40px auto !important; overflow: visible !important;');
+        
+        // Ocultar bloque de empresa y la línea horizontal en la cabecera, conservando fecha y hora
+        $('.cabecera [location="empresa"]').parent().attr('style', 'display: none !important;');
+        $('.cabecera hr').attr('style', 'display: none !important;');
+
+        // Ocultar textos legales y elementos de la segunda cara específicos del informe visual
+        $('.certificado-inspeccion [location="tipocertificado"]').closest('table').attr('style', 'display: none !important;');
+        $('.certificado-inspeccion [location="tituloExtraordinario"]').closest('table').attr('style', 'display: none !important;');
+        $('.certificado-inspeccion [location="claseautorizacionText"]').closest('table').attr('style', 'display: none !important;');
+        $('.certificado-inspeccion [location="image"]').parent().attr('style', 'display: none !important;');
+        $('.certificado-inspeccion [location="tipocertificadocuerpo"]').attr('style', 'display: none !important;');
+        
+        // Ocultar sellos (Resolución Directoral)
+        $('.certificado-inspeccion [location="resolucion"]').parent().parent().attr('style', 'display: none !important;');
+
+        const metricasDespues = {
+            tablas: $('table').length,
+            filas: $('tr').length,
+            celdas: $('td, th').length,
+            imagenes: $('img').length,
+            locations: $('[location]').length
+        };
+
+        if (
+            metricasAntes.tablas !== metricasDespues.tablas ||
+            metricasAntes.filas !== metricasDespues.filas ||
+            metricasAntes.celdas !== metricasDespues.celdas ||
+            metricasAntes.imagenes !== metricasDespues.imagenes ||
+            metricasAntes.locations !== metricasDespues.locations
+        ) {
+            console.error('[VISUALIZAR INFORME] Error de validación de preservación HTML', { metricasAntes, metricasDespues });
+            throw new Error('La validación de preservación estructural ha fallado al generar el informe');
+        }
+
+        return res.json({
+            ok: true,
+            html: $.html()
+        });
+    } catch (error) {
+        return next(error);
+    }
+  }
+
   async registrarPoliza(req, res) {
     try {
       const { nroInspeccion } = req.params;
