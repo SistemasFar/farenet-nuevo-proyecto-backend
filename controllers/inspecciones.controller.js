@@ -2,6 +2,7 @@ const inspeccionesService = require('../services/inspecciones.service');
 const pool = require('../config/database');
 const { guardarInspeccionTransaccion } = require('../services/guardar_inspeccion.service');
 const inspeccionesProcesoService = require('../services/inspecciones_proceso.service');
+const anularService = require('../services/anular_inspeccion.service');
 
 
 const buscarInspecciones = async (req, res) => {
@@ -120,6 +121,24 @@ const anularInspeccion = async (req, res) => {
   }
 };
 
+const anularInspeccionCompleta = async (req, res) => {
+  try {
+    const { nrodocumentoinspeccion } = req.params;
+    const { motivo, observacion } = req.body;
+    // req.user podria no tener session si auth esta deshabilitado, fallback 'sistemas'
+    const username = req.user?.username || 'sistemas';
+
+    if (!nrodocumentoinspeccion) {
+      return res.status(400).json({ ok: false, message: 'nrodocumentoinspeccion requerido' });
+    }
+
+    const resultado = await anularService.anularInspeccionConMotivo(nrodocumentoinspeccion, motivo, observacion, username);
+    res.json(resultado);
+  } catch (error) {
+    console.error('Error anularInspeccionCompleta:', error);
+    res.status(400).json({ ok: false, message: error.message || 'Error al anular inspección' });
+  }
+};
 
 
 const consultarVehiculoYCaja = async (req, res) => {
@@ -301,5 +320,6 @@ module.exports = {
   consultarReinspeccion,
   consultarVehiculoRapido,
   validarCuponidad,
-  consultarReinspeccionesActivas
+  consultarReinspeccionesActivas,
+  anularInspeccionCompleta
 };

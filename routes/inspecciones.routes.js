@@ -16,5 +16,6 @@ router.post('/descuentos/consumir', inspeccionesController.consumirDescuento);
 router.get('/reinspeccion/:placa/:concepto/:planta', inspeccionesController.consultarReinspeccion);
 router.get('/reinspecciones-activas/:placa', inspeccionesController.consultarReinspeccionesActivas);
 router.get('/cuponidad/validar/:codigo', inspeccionesController.validarCuponidad);
+router.post('/:nrodocumentoinspeccion/anular', inspeccionesController.anularInspeccionCompleta);
 
 module.exports = router;
