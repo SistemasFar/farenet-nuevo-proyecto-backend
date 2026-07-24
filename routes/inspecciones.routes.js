@@ -18,5 +18,6 @@ router.get('/reinspecciones-activas/:placa', inspeccionesController.consultarRei
 router.get('/cuponidad/validar/:codigo', inspeccionesController.validarCuponidad);
 router.post('/:nrodocumentoinspeccion/anular', inspeccionesController.anularInspeccionCompleta);
 router.post('/:nrodocumentoinspeccion/error-impresion', inspeccionesController.errorImpresion);
+router.post('/:nro/traspaso-resultados', inspeccionesController.traspasarResultados);
 
 module.exports = router;

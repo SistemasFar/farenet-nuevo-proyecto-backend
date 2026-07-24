@@ -10,9 +10,10 @@ const client = new Client({
 client.connect().then(async () => {
   try {
     const res = await client.query(`
-      SELECT co.linea_key
-      FROM comprobante co
-      WHERE co.inspeccion_nrodocumentoinspeccion = 'INS-201-000158445';
+      SELECT column_name, data_type 
+      FROM information_schema.columns 
+      WHERE table_name = 'resultadomaquina'
+      ORDER BY column_name;
     `);
     console.log(JSON.stringify(res.rows, null, 2));
   } catch (err) {

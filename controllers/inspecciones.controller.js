@@ -4,6 +4,7 @@ const { guardarInspeccionTransaccion } = require('../services/guardar_inspeccion
 const inspeccionesProcesoService = require('../services/inspecciones_proceso.service');
 const anularService = require('../services/anular_inspeccion.service');
 const errorImpresionService = require('../services/error_impresion.service');
+const traspasoResultadosService = require('../services/traspaso_resultados.service');
 
 
 const buscarInspecciones = async (req, res) => {
@@ -327,6 +328,27 @@ const obtenerProceso = async (req, res) => {
   }
 };
 
+const traspasarResultados = async (req, res) => {
+  try {
+    const { nro } = req.params;
+    const { inspeccionNueva, placaNueva } = req.body;
+    const { username } = req.user;
+
+    const result = await traspasoResultadosService.traspasarResultados(
+      nro, 
+      inspeccionNueva, 
+      placaNueva, 
+      "Traspaso de resultados desde panel consolidado", 
+      username
+    );
+
+    res.json(result);
+  } catch (error) {
+    console.error("Error traspasarResultados:", error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
 module.exports = {
   buscarInspecciones,
   guardarInspeccion,
@@ -343,5 +365,6 @@ module.exports = {
   validarCuponidad,
   consultarReinspeccionesActivas,
   anularInspeccionCompleta,
-  errorImpresion
+  errorImpresion,
+  traspasarResultados
 };
