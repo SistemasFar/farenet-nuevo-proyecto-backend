@@ -99,6 +99,55 @@ const obtenerVehiculo = async (placa, plantaKey, autorizacionMtc, tipoInspeccion
   }
 };
 
+const anularCertificadoMTC = async (placa, nroCertificado, motivoKey, fechaCreacion, plantaKey) => {
+  try {
+    const plantaRes = await pool.query(`SELECT codigoentidadcertificadoramtc, codigolocalmtc, iv FROM planta WHERE key = $1`, [plantaKey]);
+    if (plantaRes.rows.length === 0) return null;
+    const planta = plantaRes.rows[0];
+
+    // MOCK para pruebas locales
+    if (placa.toUpperCase() === 'NUEVA1' || placa.toUpperCase() === 'ABC123') {
+      return { nroCertificadoNuevo: "CERT-" + Math.floor(Math.random() * 10000) };
+    }
+
+    const client = await soap.createClientAsync(WSDL_URL);
+    
+    // Mapear motivo local a motivo MTC (1=Perdida, 2=Robo, 3=Deterioro)
+    let motivoMTC = 3; 
+    if (motivoKey === 'PERDIDA') motivoMTC = 1;
+    if (motivoKey === 'ROBO') motivoMTC = 2;
+
+    const args = {
+      anulacionCitv: {
+        CodEntidadCert: planta.codigoentidadcertificadoramtc,
+        CodLocal: planta.codigolocalmtc,
+        NroPlaca: placa.toUpperCase(),
+        NroCertificado: nroCertificado,
+        Token: planta.iv || '', 
+        MotivoAnulacion: motivoMTC,
+        FecEmiCertificado: fechaCreacion ? new Date(fechaCreacion).toISOString() : new Date().toISOString(),
+        UsuarioAnulacion: 'SISTEMAS'
+      }
+    };
+
+    const [result] = await client.AnulaCITVAsync(args);
+
+    if (result && result.AnulaCITVResult) {
+      if (result.AnulaCITVResult.Mensaje && result.AnulaCITVResult.Mensaje.includes("MSJ")) {
+        throw new Error(result.AnulaCITVResult.Mensaje);
+      }
+      return {
+        nroCertificadoNuevo: result.AnulaCITVResult.NroCertificadoNuevo || "PENDIENTE"
+      };
+    }
+    return null;
+  } catch (error) {
+    console.error("Error al anular en MTC: ", error.message);
+    throw new Error("Error de acuerdo al MTC. Hubo un problema al anular el certificado.");
+  }
+};
+
 module.exports = {
-  obtenerVehiculo
+  obtenerVehiculo,
+  anularCertificadoMTC
 };

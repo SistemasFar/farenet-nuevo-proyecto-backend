@@ -5,6 +5,8 @@ const inspeccionesController = require('../controllers/inspecciones.controller')
 
 router.get('/buscar', inspeccionesController.buscarInspecciones);
 router.post('/guardar', inspeccionesController.guardarInspeccion);
+router.post('/guardar-duplicado', inspeccionesController.guardarDuplicado);
+router.get('/buscar-info-duplicado/:placa', inspeccionesController.buscarInfoDuplicado);
 router.get('/generar-nro/:plantaKey', inspeccionesController.generarNroInspeccion);
 router.post('/guardar/proceso', inspeccionesController.guardarProceso);
 router.get('/proceso/:nrodocumentoinspeccion', inspeccionesController.obtenerProceso);

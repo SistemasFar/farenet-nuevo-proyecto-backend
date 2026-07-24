@@ -1,10 +1,12 @@
 const inspeccionesService = require('../services/inspecciones.service');
 const pool = require('../config/database');
 const { guardarInspeccionTransaccion } = require('../services/guardar_inspeccion.service');
+const { guardarDuplicadoTransaccion } = require('../services/guardar_duplicado.service');
 const inspeccionesProcesoService = require('../services/inspecciones_proceso.service');
 const anularService = require('../services/anular_inspeccion.service');
 const errorImpresionService = require('../services/error_impresion.service');
 const traspasoResultadosService = require('../services/traspaso_resultados.service');
+const mtcService = require('../services/mtc.service');
 
 
 const buscarInspecciones = async (req, res) => {
@@ -349,9 +351,77 @@ const traspasarResultados = async (req, res) => {
   }
 };
 
+const guardarDuplicado = async (req, res) => {
+  try {
+    const result = await guardarDuplicadoTransaccion(req.body);
+    res.status(200).json({
+      status: 'success',
+      message: 'Duplicado generado correctamente',
+      data: result
+    });
+  } catch (error) {
+    console.error('Error al guardar duplicado:', error);
+    res.status(500).json({
+      status: 'error',
+      message: error.message || 'Error interno del servidor'
+    });
+  }
+};
+
+const buscarInfoDuplicado = async (req, res) => {
+  try {
+    const { placa } = req.params;
+    // La UI puede mandar plantaKey por body/query, pero siendo GET mejor query o asumimos SEDE por defecto
+    const { plantaKey } = req.query; // Para enviar al MTC
+
+    const client = await pool.connect();
+    try {
+      const inspResult = await client.query(`
+        SELECT i.nrodocumentoinspeccion, c.conceptoinspeccion_key, i.tipoinspeccion_key, i.tipocertificado_key, i.tipoautorizacion_key, v.categoria_key, i.vehiculo_nromotor
+        FROM inspeccion i
+        JOIN comprobante c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
+        JOIN vehiculo v ON v.nromotor = i.vehiculo_nromotor
+        WHERE c.placamotor = $1 AND i.inspeccionestado_key IN ('APROBADO', 'CON')
+        ORDER BY i.fechcreacion DESC
+        LIMIT 1
+      `, [placa]);
+      if (inspResult.rows.length === 0) {
+        return res.status(404).json({ status: 'error', message: 'No se encontró inspección aprobada para duplicado' });
+      }
+
+      const inspeccion = inspResult.rows[0];
+
+      if (plantaKey) {
+        // Validacion con MTC
+        const vehiculoMtc = await mtcService.obtenerVehiculo(
+          placa,
+          plantaKey,
+          inspeccion.tipoautorizacion_key || 0,
+          inspeccion.tipoinspeccion_key || 0,
+          inspeccion.tipocertificado_key || 0,
+          inspeccion.categoria_key || 0
+        );
+
+        if (!vehiculoMtc) {
+          // Si es null es que hubo un error o rechazo (comportamiento Legacy)
+          return res.status(400).json({ status: 'error', message: 'Hubo un problema al obtener Vehiculo del MTC' });
+        }
+      }
+
+      res.json({ status: 'success', data: { conceptoinspeccion_key: inspeccion.conceptoinspeccion_key } });
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
 module.exports = {
   buscarInspecciones,
   guardarInspeccion,
+  guardarDuplicado,
+  buscarInfoDuplicado,
   generarNroInspeccion,
   guardarProceso,
   obtenerProceso,
