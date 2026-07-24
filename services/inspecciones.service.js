@@ -2,7 +2,7 @@ const pool = require('../config/database');
 const mtcService = require('./mtc.service');
 const inspeccionModel = require('../models/inspeccion.model');
 
-const ESTADOS_PERMITIDOS = ['CON', 'ANULADO', 'RETIRADO', 'PROCESO'];
+const ESTADOS_PERMITIDOS = ['CON', 'ANULADO', 'ANU', 'RETIRADO', 'PROCESO'];
 
 const consultarVehiculoRapido = async (placa) => {
   return await inspeccionModel.consultarVehiculoRapido(placa);
@@ -30,7 +30,7 @@ const buscarInspecciones = async (filtros) => {
 
   let where = `
     WHERE l.planta_key = $1
-      AND UPPER(COALESCE(i.inspeccionestado_key, '')) IN ('CON', 'ANULADO', 'RETIRADO', 'PROCESO')
+      AND UPPER(COALESCE(i.inspeccionestado_key, '')) IN ('CON', 'ANULADO', 'ANU', 'RETIRADO', 'PROCESO')
   `;
 
   params.push(plantaKey);

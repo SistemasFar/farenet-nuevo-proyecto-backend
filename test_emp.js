@@ -1,1 +1,0 @@
-const db = require('./config/database'); db.query('SELECT table_schema, table_name FROM information_schema.tables WHERE table_name LIKE ''%empresa%''').then(res => { console.log(res.rows); process.exit(0); });
