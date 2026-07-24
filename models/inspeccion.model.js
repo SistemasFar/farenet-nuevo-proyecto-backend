@@ -73,12 +73,13 @@ const consultarVehiculoRapido = async (placa) => {
 const verificarPlacaDuplicada = async (placa, concepto) => {
   const duplicadoRes = await pool.query(`
     SELECT pl.nombre as nombre_sede
-    FROM inspeccion i
-    JOIN comprobante c ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
-    LEFT JOIN planta pl ON pl.key = SPLIT_PART(i.nrodocumentoinspeccion, '-', 2)
+    FROM comprobante c
+    LEFT JOIN inspeccion i ON c.inspeccion_nrodocumentoinspeccion = i.nrodocumentoinspeccion
+    LEFT JOIN planta pl ON pl.key = SPLIT_PART(c.inspeccion_nrodocumentoinspeccion, '-', 2)
     WHERE c.placamotor = $1 
       AND c.conceptoinspeccion_key = $2 
-      AND DATE(i.fechcreacion) = CURRENT_DATE
+      AND DATE(c.fechcreacion) = CURRENT_DATE
+      AND UPPER(COALESCE(c.comprobanteestado_key, '')) NOT IN ('ANULADO', 'ANU')
       AND UPPER(COALESCE(i.inspeccionestado_key, '')) NOT IN ('ANULADO', 'RETIRADO', 'ANU')
     LIMIT 1
   `, [placa, concepto]);

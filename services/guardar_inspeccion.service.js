@@ -1,10 +1,18 @@
 const pool = require('../config/database');
+const inspeccionModel = require('../models/inspeccion.model');
+
 const guardarInspeccionTransaccion = async (reqBody) => {
   const { 
     formCaja, formVehiculo, formFacturacion, formVerificacion, 
     idBorrador, pagosAgregados, documentoPago, isConsultado,
     precioSubtotal, descuento, precioTotal 
   } = reqBody;
+
+  const duplicado = await inspeccionModel.verificarPlacaDuplicada(formCaja.placa, formCaja.concepto);
+  if (duplicado) {
+    const sede = duplicado.nombre_sede || 'otra sede';
+    throw new Error(`Este vehículo está en proceso de inspección en la sede ${sede}. No puede haber duplicados.`);
+  }
 
   const client = await pool.connect();
   try {
