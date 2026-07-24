@@ -3,6 +3,7 @@ const pool = require('../config/database');
 const { guardarInspeccionTransaccion } = require('../services/guardar_inspeccion.service');
 const inspeccionesProcesoService = require('../services/inspecciones_proceso.service');
 const anularService = require('../services/anular_inspeccion.service');
+const errorImpresionService = require('../services/error_impresion.service');
 
 
 const buscarInspecciones = async (req, res) => {
@@ -140,6 +141,26 @@ const anularInspeccionCompleta = async (req, res) => {
   }
 };
 
+const errorImpresion = async (req, res) => {
+  try {
+    const { nrodocumentoinspeccion } = req.params;
+    const { motivo, observacion } = req.body;
+    const username = req.user?.username || 'sistemas';
+
+    if (!nrodocumentoinspeccion) {
+      return res.status(400).json({ ok: false, message: 'nrodocumentoinspeccion requerido' });
+    }
+    if (!observacion || observacion.length < 5) {
+      return res.status(400).json({ ok: false, message: 'La observación debe tener más de 5 caracteres' });
+    }
+
+    const resultado = await errorImpresionService.errorImpresion(nrodocumentoinspeccion, observacion, motivo, username);
+    res.json(resultado);
+  } catch (error) {
+    console.error('Error errorImpresion:', error);
+    res.status(400).json({ ok: false, message: error.message || 'Error al reportar impresión fallida' });
+  }
+};
 
 const consultarVehiculoYCaja = async (req, res) => {
   try {
@@ -321,5 +342,6 @@ module.exports = {
   consultarVehiculoRapido,
   validarCuponidad,
   consultarReinspeccionesActivas,
-  anularInspeccionCompleta
+  anularInspeccionCompleta,
+  errorImpresion
 };

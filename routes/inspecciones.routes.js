@@ -17,5 +17,6 @@ router.get('/reinspeccion/:placa/:concepto/:planta', inspeccionesController.cons
 router.get('/reinspecciones-activas/:placa', inspeccionesController.consultarReinspeccionesActivas);
 router.get('/cuponidad/validar/:codigo', inspeccionesController.validarCuponidad);
 router.post('/:nrodocumentoinspeccion/anular', inspeccionesController.anularInspeccionCompleta);
+router.post('/:nrodocumentoinspeccion/error-impresion', inspeccionesController.errorImpresion);
 
 module.exports = router;
