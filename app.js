@@ -367,7 +367,8 @@ const auditoriaRoutes = require('./routes/auditoria.routes');
 app.use('/api/auditoria', auditoriaRoutes);
 app.use('/api/usuarios', usuarioRoutes);
 app.use('/api/operacion', operacionRoutes);
-app.use('/api/inspecciones', inspeccionesRoutes);
+const authMiddleware = require('./middlewares/auth.middleware');
+app.use('/api/inspecciones', authMiddleware, inspeccionesRoutes);
 app.use('/api/linea', lineaRoutes);
 app.use('/linea', lineaRoutes); // Compatibilidad con legacy
 app.use('/api/descuentos', campanaRoutes);
