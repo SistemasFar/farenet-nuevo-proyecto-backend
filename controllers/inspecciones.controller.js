@@ -6,7 +6,7 @@ const inspeccionesProcesoService = require('../services/inspecciones_proceso.ser
 const anularService = require('../services/anular_inspeccion.service');
 const errorImpresionService = require('../services/error_impresion.service');
 const traspasoResultadosService = require('../services/traspaso_resultados.service');
-const mtcService = require('../services/mtc.service');
+const mtcService = require('../services/integrations/mtc.service');
 
 
 const buscarInspecciones = async (req, res) => {

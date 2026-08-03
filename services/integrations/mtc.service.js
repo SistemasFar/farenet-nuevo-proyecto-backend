@@ -1,5 +1,5 @@
 const soap = require('soap');
-const pool = require('../config/database'); 
+const pool = require('../../config/database'); 
 
 const WSDL_URL = 'https://wscitv.mtc.gob.pe/WSInterOperabilidadCITV.svc?wsdl';
 

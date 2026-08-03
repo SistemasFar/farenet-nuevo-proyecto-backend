@@ -1,5 +1,5 @@
 const pool = require('../config/database');
-const mtcService = require('./mtc.service');
+const mtcService = require('./integrations/mtc.service');
 const inspeccionModel = require('../models/inspeccion.model');
 
 const ESTADOS_PERMITIDOS = ['CON', 'ANULADO', 'ANU', 'RETIRADO', 'PROCESO'];

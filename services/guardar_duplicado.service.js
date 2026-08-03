@@ -1,6 +1,6 @@
 const pool = require('../config/database');
 const inspeccionModel = require('../models/inspeccion.model');
-const mtcService = require('./mtc.service');
+const mtcService = require('./integrations/mtc.service');
 
 const guardarDuplicadoTransaccion = async (reqBody) => {
   const { 
