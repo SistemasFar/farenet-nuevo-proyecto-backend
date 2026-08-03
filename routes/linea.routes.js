@@ -6,7 +6,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 const lineaController = require('../controllers/linea.controller');
 const authMiddleware = require('../middlewares/auth.middleware');
 const machineAuthMiddleware = require('../middlewares/machine.auth.middleware');
-const validarAccesoPlantaInspeccion = require('../middlewares/planta.auth.middleware');
+const { validarAccesoPlantaInspeccion } = require('../middlewares/planta.auth.middleware');
 
 // RUTAS MÁS ESPECÍFICAS PRIMERO (para evitar que /:nroInspeccion capture todo)
 

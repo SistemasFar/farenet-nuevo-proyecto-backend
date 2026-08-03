@@ -3,7 +3,7 @@ const db = require('../config/database');
 
 const authMiddleware = async (req, res, next) => {
     try {
-        const authDisabled = process.env.AUTH_DISABLED === 'true';
+        const authDisabled = process.env.AUTH_DISABLED === 'true' && process.env.NODE_ENV !== 'production';
 
         if (authDisabled) {
             req.user = {

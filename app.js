@@ -2,6 +2,20 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
+// Validación Fail-Fast para AUTH_DISABLED
+const isAuthDisabled = process.env.AUTH_DISABLED === 'true';
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (isAuthDisabled) {
+    if (isProduction) {
+        console.error("FATAL ERROR: No se puede arrancar el servidor en producción con AUTH_DISABLED=true.");
+        console.error("Esta configuración compromete la seguridad del sistema y está bloqueada.");
+        process.exit(1);
+    } else {
+        console.warn("⚠️ [ADVERTENCIA] AUTH_DISABLED está activo. La autenticación humana está apagada. SOLO PARA DESARROLLO.");
+    }
+}
+
 const http = require('http');
 const { Server } = require('socket.io');
 const pool = require('./config/database');
