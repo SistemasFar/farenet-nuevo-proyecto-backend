@@ -184,6 +184,7 @@ const login = async (req, res) => {
                 user: construirUsuarioResponse(dataAuth.user),
                 plantaSeleccionada: planta,
                 plantas,
+                empresas: dataAuth.empresas || [],
                 permisos
             });
         }
@@ -201,6 +202,7 @@ const login = async (req, res) => {
             requiereSeleccionarPlanta: true,
             user: construirUsuarioResponse(dataAuth.user),
             plantas,
+            empresas: dataAuth.empresas || [],
             permisos: dataAuth.permisos || []
         });
     } catch (error) {

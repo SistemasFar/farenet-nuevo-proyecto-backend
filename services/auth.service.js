@@ -104,6 +104,22 @@ const authenticateUser = async (username, password) => {
 
     const permisos = await obtenerPermisosPorUsuario(cleanUsername);
 
+    // Regla de Negocio Temporal: 
+    // - Sistemas tiene acceso a FARENET y FAREGAS
+    // - Los demás perfiles solo tienen acceso a FARENET
+    const perfil = String(user.perfil_id || '').toLowerCase().trim();
+    const userType = String(user.user_type || '').toLowerCase().trim();
+    
+    const esSistemas = (perfil === 'sistemas' || perfil === 'administrador' || userType === 'sistemas');
+
+    const empresas = [
+        { key: 'FARENET', nombre: 'FARENET S.A.C.' }
+    ];
+
+    if (esSistemas) {
+        empresas.push({ key: 'FAREGAS', nombre: 'FAREGAS S.A.C.' });
+    }
+
     return {
         token: generarTokenMock(),
         user: {
@@ -113,7 +129,8 @@ const authenticateUser = async (username, password) => {
             estado: user.estado,
             user_type: user.user_type
         },
-        permisos
+        permisos,
+        empresas
     };
 };
 
