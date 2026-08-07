@@ -395,6 +395,9 @@ app.use('/api/vehiculo', vehiculoRoutes);
 const externosRoutes = require('./routes/externos.routes');
 app.use('/api/externos', externosRoutes);
 
+const faregasRoutes = require('./modules/faregas/routes/faregas.routes');
+app.use('/api/faregas', faregasRoutes);
+
 // ==========================
 // HEALTH CHECK
 // ==========================
