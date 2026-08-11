@@ -65,9 +65,8 @@ exports.getPlantasPorUsuario = async (username, perfilId) => {
         const query = `
             SELECT p.key, p.nombre 
             FROM fg_usuario_planta up 
-            JOIN fg_planta p ON up.planta_id = p.id 
-            JOIN fg_usuario u ON up.usuario_id = u.id 
-            WHERE u.username = $1
+            JOIN fg_planta p ON p.key = up.plantas_key
+            WHERE up.usuario_username = $1
             ORDER BY p.nombre
         `;
         const result = await db.query(query, [username]);
@@ -83,9 +82,8 @@ exports.validarAccesoPlanta = async (username, perfilId, plantaKey) => {
         const query = `
             SELECT p.key, p.nombre 
             FROM fg_usuario_planta up 
-            JOIN fg_planta p ON up.planta_id = p.id 
-            JOIN fg_usuario u ON up.usuario_id = u.id 
-            WHERE u.username = $1 AND p.key = $2
+            JOIN fg_planta p ON p.key = up.plantas_key
+            WHERE up.usuario_username = $1 AND p.key = $2
             LIMIT 1
         `;
         const r = await db.query(query, [username, plantaKey]);
