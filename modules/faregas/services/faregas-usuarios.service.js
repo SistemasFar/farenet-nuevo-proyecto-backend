@@ -112,11 +112,37 @@ exports.actualizarUsuario = async (oldUsername, data) => {
 
 exports.cambiarPassword = async (username, password) => {
     const hash = bcrypt.hashSync(password, 10);
-    await db.query(`
-        UPDATE fg_usuario
-        SET contrasenha = $1
-        WHERE username = $2
-    `, [hash, username]);
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        
+        // 1. Actualizar contraseña en FAREGAS
+        const resFaregas = await client.query(`
+            UPDATE fg_usuario
+            SET contrasenha = $1
+            WHERE username = $2
+        `, [hash, username]);
+
+        // Si el usuario no existe en FAREGAS, abortar
+        if (resFaregas.rowCount === 0) {
+            throw new Error('USER_NOT_FOUND');
+        }
+
+        // 2. Sincronizar contraseña en FARENET si el usuario existe
+        await client.query(`
+            UPDATE usuario
+            SET contrasenha = $1
+            WHERE username = $2
+        `, [hash, username]);
+        // No es error si en FARENET rowCount es 0 (usuario solo FAREGAS)
+
+        await client.query('COMMIT');
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
 };
 
 exports.obtenerPerfiles = async () => {

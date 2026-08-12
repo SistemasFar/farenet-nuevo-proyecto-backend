@@ -46,6 +46,9 @@ exports.cambiarPassword = async (req, res) => {
         await service.cambiarPassword(req.params.username, password);
         res.json({ success: true });
     } catch (e) {
+        if (e.message === 'USER_NOT_FOUND') {
+            return res.status(404).json({ message: 'El usuario no existe' });
+        }
         console.error(e);
         res.status(500).json({ message: 'Error interno del servidor' });
     }

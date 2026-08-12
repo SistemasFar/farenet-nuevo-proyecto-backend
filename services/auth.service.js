@@ -148,11 +148,32 @@ const actualizarContrasena = async (username, currentPassword, newPassword) => {
     }
 
     const newHash = bcrypt.hashSync(normalizarTexto(newPassword), 10);
+    const client = await db.connect();
 
-    await db.query(
-        `UPDATE usuario SET contrasenha = $1 WHERE TRIM(username) = $2`,
-        [newHash, cleanUsername]
-    );
+    try {
+        await client.query('BEGIN');
+
+        const resFarenet = await client.query(
+            `UPDATE usuario SET contrasenha = $1 WHERE TRIM(username) = $2`,
+            [newHash, cleanUsername]
+        );
+
+        if (resFarenet.rowCount === 0) {
+            throw new Error("Usuario no encontrado en el sistema.");
+        }
+
+        await client.query(
+            `UPDATE fg_usuario SET contrasenha = $1 WHERE username = $2`,
+            [newHash, cleanUsername]
+        );
+
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
 };
 
 module.exports = {
