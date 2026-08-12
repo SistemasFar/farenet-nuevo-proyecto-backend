@@ -10,4 +10,8 @@ router.get('/ping', healthController.ping);
 // Módulo de usuarios y perfiles
 router.use('/usuarios', usuariosRoutes);
 
+// Módulo de auditoría
+const auditoriaRoutes = require('./faregas-auditoria.routes');
+router.use('/auditoria', auditoriaRoutes);
+
 module.exports = router;

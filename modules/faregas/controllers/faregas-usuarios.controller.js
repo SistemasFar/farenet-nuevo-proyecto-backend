@@ -51,9 +51,32 @@ exports.cambiarPassword = async (req, res) => {
     }
 };
 
+exports.eliminarUsuario = async (req, res) => {
+    try {
+        await service.eliminarUsuario(req.params.username);
+        res.json({ success: true });
+    } catch (e) {
+        if (e.message === 'HAS_SESSIONS') {
+            return res.status(409).json({ message: 'No se puede eliminar el usuario porque tiene sesiones registradas.' });
+        }
+        console.error(e);
+        res.status(500).json({ message: 'Error interno del servidor' });
+    }
+};
+
 exports.obtenerPerfiles = async (req, res) => {
     try {
         const data = await service.obtenerPerfiles();
+        res.json(data);
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ message: 'Error interno del servidor' });
+    }
+};
+
+exports.obtenerPermisos = async (req, res) => {
+    try {
+        const data = await service.obtenerPermisos();
         res.json(data);
     } catch (e) {
         console.error(e);

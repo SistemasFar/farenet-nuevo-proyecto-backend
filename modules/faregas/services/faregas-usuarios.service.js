@@ -39,13 +39,13 @@ exports.crearUsuario = async (data) => {
             VALUES ($1, $2, $3, $4, 'FAREGAS')
         `, [cleanUsername, hash, cleanPerfil, estadoBool]);
 
-        // 2. Insertar plantas si aplica
         if (cleanPerfil !== 'SISTEMAS' && Array.isArray(sedes) && sedes.length > 0) {
             for (const planta_key of sedes) {
-                await client.query(`
-                    INSERT INTO fg_usuario_planta (usuario_username, plantas_key)
-                    VALUES ($1, $2)
-                `, [cleanUsername, planta_key]);
+                const check = await client.query('SELECT 1 FROM fg_perfil_planta WHERE perfil_clave = $1 AND planta_key = $2', [cleanPerfil, planta_key]);
+                if (check.rowCount === 0) {
+                    throw new Error(`Planta ${planta_key} no permitida para el perfil ${cleanPerfil}`);
+                }
+                await client.query('INSERT INTO fg_usuario_planta (usuario_username, plantas_key) VALUES ($1, $2)', [cleanUsername, planta_key]);
             }
         }
         
@@ -85,16 +85,18 @@ exports.actualizarUsuario = async (oldUsername, data) => {
         `, [newUsername, cleanPerfil, estadoBool, oldUsername]);
 
         // Actualizar plantas
-        // Borrar actuales
-        await client.query('DELETE FROM fg_usuario_planta WHERE usuario_username = $1', [newUsername]);
-        
-        // Insertar nuevas si no es SISTEMAS
-        if (cleanPerfil !== 'SISTEMAS' && Array.isArray(sedes) && sedes.length > 0) {
-            for (const planta_key of sedes) {
-                await client.query(`
-                    INSERT INTO fg_usuario_planta (usuario_username, plantas_key)
-                    VALUES ($1, $2)
-                `, [newUsername, planta_key]);
+        if (cleanPerfil === 'SISTEMAS') {
+            await client.query('DELETE FROM fg_usuario_planta WHERE usuario_username = $1', [newUsername]);
+        } else {
+            await client.query('DELETE FROM fg_usuario_planta WHERE usuario_username = $1', [newUsername]);
+            if (Array.isArray(sedes) && sedes.length > 0) {
+                for (const planta_key of sedes) {
+                    const check = await client.query('SELECT 1 FROM fg_perfil_planta WHERE perfil_clave = $1 AND planta_key = $2', [cleanPerfil, planta_key]);
+                    if (check.rowCount === 0) {
+                        throw new Error(`Planta ${planta_key} no permitida para el perfil ${cleanPerfil}`);
+                    }
+                    await client.query('INSERT INTO fg_usuario_planta (usuario_username, plantas_key) VALUES ($1, $2)', [newUsername, planta_key]);
+                }
             }
         }
 
@@ -120,7 +122,19 @@ exports.cambiarPassword = async (username, password) => {
 exports.obtenerPerfiles = async () => {
     const result = await db.query(`
         SELECT p.clave, p.nombre, p.visible,
-               (SELECT COUNT(*) FROM fg_usuario u WHERE u.perfil_id = p.clave) as num_usuarios
+               (SELECT COUNT(*) FROM fg_usuario u WHERE u.perfil_id = p.clave) as num_usuarios,
+               COALESCE(
+                   (SELECT json_agg(planta_key)
+                    FROM fg_perfil_planta pp
+                    WHERE pp.perfil_clave = p.clave),
+                   '[]'::json
+               ) as sedes,
+               COALESCE(
+                   (SELECT json_agg(permiso_clave)
+                    FROM fg_perfil_permiso ppe
+                    WHERE ppe.perfil_clave = p.clave),
+                   '[]'::json
+               ) as permisos
         FROM fg_perfil p
         ORDER BY p.clave
     `);
@@ -128,24 +142,93 @@ exports.obtenerPerfiles = async () => {
 };
 
 exports.crearPerfil = async (data) => {
-    const { clave, nombre, visible } = data;
+    const { clave, nombre, visible, sedes, permisos } = data;
     const isVisible = visible === true || visible === 'true';
-    await db.query(`
-        INSERT INTO fg_perfil (clave, nombre, visible)
-        VALUES ($1, $2, $3)
-    `, [clave, nombre, isVisible]);
-    return { clave };
+    const client = await db.connect();
+    
+    try {
+        await client.query('BEGIN');
+        
+        await client.query(`
+            INSERT INTO fg_perfil (clave, nombre, visible)
+            VALUES ($1, $2, $3)
+        `, [clave, nombre, isVisible]);
+        
+        if (Array.isArray(sedes) && sedes.length > 0) {
+            for (const planta_key of sedes) {
+                await client.query('INSERT INTO fg_perfil_planta (perfil_clave, planta_key) VALUES ($1, $2)', [clave, planta_key]);
+            }
+        }
+
+        if (Array.isArray(permisos) && permisos.length > 0) {
+            for (const p of permisos) {
+                await client.query('INSERT INTO fg_perfil_permiso (perfil_clave, permiso_clave) VALUES ($1, $2)', [clave, p]);
+            }
+        }
+
+        await client.query('COMMIT');
+        return { clave };
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
 };
 
 exports.actualizarPerfil = async (clave, data) => {
-    const { nombre, visible } = data;
+    const { nombre, visible, sedes, permisos } = data;
     const isVisible = visible === true || visible === 'true';
-    await db.query(`
-        UPDATE fg_perfil
-        SET nombre = $1, visible = $2
-        WHERE clave = $3
-    `, [nombre, isVisible, clave]);
-    return { clave };
+    const client = await db.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        await client.query(`
+            UPDATE fg_perfil
+            SET nombre = $1, visible = $2
+            WHERE clave = $3
+        `, [nombre, isVisible, clave]);
+
+        // Actualizar sedes
+        await client.query('DELETE FROM fg_perfil_planta WHERE perfil_clave = $1', [clave]);
+        if (Array.isArray(sedes) && sedes.length > 0) {
+            for (const planta_key of sedes) {
+                await client.query('INSERT INTO fg_perfil_planta (perfil_clave, planta_key) VALUES ($1, $2)', [clave, planta_key]);
+            }
+        }
+
+        // Limpiar asignaciones de sedes inválidas de los usuarios
+        await client.query(`
+            DELETE FROM fg_usuario_planta up
+            USING fg_usuario u
+            WHERE up.usuario_username = u.username
+              AND u.perfil_id = $1
+              AND up.plantas_key NOT IN (
+                  SELECT planta_key FROM fg_perfil_planta WHERE perfil_clave = $1
+              )
+        `, [clave]);
+
+        // Actualizar permisos (sólo MENU)
+        await client.query(`
+            DELETE FROM fg_perfil_permiso 
+            WHERE perfil_clave = $1 AND permiso_clave IN (SELECT clave FROM fg_permiso WHERE modulo = 'MENU')
+        `, [clave]);
+        
+        if (Array.isArray(permisos) && permisos.length > 0) {
+            for (const p of permisos) {
+                await client.query('INSERT INTO fg_perfil_permiso (perfil_clave, permiso_clave) VALUES ($1, $2) ON CONFLICT DO NOTHING', [clave, p]);
+            }
+        }
+
+        await client.query('COMMIT');
+        return { clave };
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
 };
 
 exports.eliminarPerfil = async (clave) => {
@@ -165,4 +248,28 @@ exports.eliminarPerfil = async (clave) => {
 exports.obtenerPlantas = async () => {
     const result = await db.query('SELECT key, nombre FROM fg_planta ORDER BY nombre');
     return result.rows;
+};
+
+exports.obtenerPermisos = async () => {
+    const result = await db.query("SELECT clave, nombre FROM fg_permiso WHERE modulo = 'MENU' AND activo = true ORDER BY nombre");
+    return result.rows;
+};
+
+exports.eliminarUsuario = async (username) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const sesiones = await client.query('SELECT 1 FROM fg_usuario_sesion WHERE usuario_username = $1 LIMIT 1', [username]);
+        if (sesiones.rowCount > 0) {
+            throw new Error('HAS_SESSIONS');
+        }
+        await client.query('DELETE FROM fg_usuario_planta WHERE usuario_username = $1', [username]);
+        await client.query('DELETE FROM fg_usuario WHERE username = $1', [username]);
+        await client.query('COMMIT');
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
 };

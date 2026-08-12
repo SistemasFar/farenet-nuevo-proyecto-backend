@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const controller = require('../controllers/faregas-usuarios.controller');
+const controller = require('../controllers/faregas-auditoria.controller');
 const jwt = require('jsonwebtoken');
 const db = require('../../../config/database');
 
 const JWT_SECRET_FAREGAS = process.env.JWT_SECRET_FAREGAS || 'fallback_faregas_secret';
 
-const adminMiddleware = async (req, res, next) => {
+const auditoriaMiddleware = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ message: 'Token requerido' });
@@ -20,7 +20,6 @@ const adminMiddleware = async (req, res, next) => {
             return res.status(403).json({ message: 'Flujo inválido' });
         }
 
-        // Validación estricta contra base de datos
         const userDb = await db.query(
             'SELECT estado, perfil_id FROM fg_usuario WHERE username = $1 LIMIT 1', 
             [decoded.username]
@@ -35,40 +34,28 @@ const adminMiddleware = async (req, res, next) => {
             return res.status(403).json({ message: 'Usuario inactivo' });
         }
 
-        // Verificar permiso MENU_USUARIOS
+        // Verificar permiso MENU_AUDITORIA contra BD
         const permisoDb = await db.query(
-            `SELECT 1 FROM fg_perfil_permiso 
-             WHERE perfil_clave = $1 AND permiso_clave = 'MENU_USUARIOS'`,
+            `SELECT 1 FROM fg_perfil_permiso pp
+             JOIN fg_permiso p ON pp.permiso_clave = p.clave
+             WHERE pp.perfil_clave = $1 AND p.clave = 'MENU_AUDITORIA' AND p.activo = true`,
             [user.perfil_id]
         );
 
         if (permisoDb.rowCount === 0) {
-            return res.status(403).json({ message: 'No tiene permiso para administrar usuarios (MENU_USUARIOS)' });
+            return res.status(403).json({ message: 'No tiene permiso para ver la auditoría (MENU_AUDITORIA)' });
         }
 
-        req.user = decoded;
+        req.user = { ...decoded, perfil_id: user.perfil_id };
         next();
     } catch (e) {
-        console.error("Error validando token FAREGAS en ADMIN", e);
+        console.error("Error validando token FAREGAS en AUDITORIA", e);
         return res.status(401).json({ message: 'Token inválido o expirado' });
     }
 };
 
-router.use(adminMiddleware);
+router.use(auditoriaMiddleware);
 
-router.get('/', controller.obtenerUsuarios);
-router.post('/', controller.crearUsuario);
-router.put('/:username', controller.actualizarUsuario);
-router.patch('/:username/password', controller.cambiarPassword);
-router.delete('/:username', controller.eliminarUsuario);
-
-router.get('/permisos', controller.obtenerPermisos);
-
-router.get('/perfiles', controller.obtenerPerfiles);
-router.post('/perfiles', controller.crearPerfil);
-router.put('/perfiles/:clave', controller.actualizarPerfil);
-router.delete('/perfiles/:clave', controller.eliminarPerfil);
-
-router.get('/plantas', controller.obtenerPlantas);
+router.get('/accesos', controller.listarAccesos);
 
 module.exports = router;

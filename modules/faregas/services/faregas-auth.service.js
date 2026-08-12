@@ -64,12 +64,13 @@ exports.getPlantasPorUsuario = async (username, perfilId) => {
     } else {
         const query = `
             SELECT p.key, p.nombre 
-            FROM fg_usuario_planta up 
+            FROM fg_usuario_planta up
+            JOIN fg_perfil_planta pp ON up.plantas_key = pp.planta_key
             JOIN fg_planta p ON p.key = up.plantas_key
-            WHERE up.usuario_username = $1
+            WHERE up.usuario_username = $1 AND pp.perfil_clave = $2
             ORDER BY p.nombre
         `;
-        const result = await db.query(query, [username]);
+        const result = await db.query(query, [username, perfilId]);
         return result.rows;
     }
 };
@@ -81,14 +82,26 @@ exports.validarAccesoPlanta = async (username, perfilId, plantaKey) => {
     } else {
         const query = `
             SELECT p.key, p.nombre 
-            FROM fg_usuario_planta up 
+            FROM fg_usuario_planta up
+            JOIN fg_perfil_planta pp ON up.plantas_key = pp.planta_key
             JOIN fg_planta p ON p.key = up.plantas_key
-            WHERE up.usuario_username = $1 AND p.key = $2
+            WHERE up.usuario_username = $1 AND pp.perfil_clave = $2 AND p.key = $3
             LIMIT 1
         `;
-        const r = await db.query(query, [username, plantaKey]);
+        const r = await db.query(query, [username, perfilId, plantaKey]);
         return r.rows.length > 0 ? r.rows[0] : null;
     }
+};
+
+exports.getPermisosPorPerfil = async (perfilId) => {
+    const query = `
+        SELECT p.clave
+        FROM fg_perfil_permiso pp
+        JOIN fg_permiso p ON p.clave = pp.permiso_clave
+        WHERE pp.perfil_clave = $1 AND p.activo = true
+    `;
+    const r = await db.query(query, [perfilId]);
+    return r.rows.map(row => row.clave);
 };
 
 exports.crearSesion = async (username, plantaKey, ip, userAgent) => {
