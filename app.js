@@ -398,7 +398,7 @@ app.use('/api/externos', externosRoutes);
 const faregasRoutes = require('./modules/faregas/routes/faregas.routes');
 app.use('/api/faregas', faregasRoutes);
 
-const faregasAuthRoutes = require('./modules/faregas/auth/faregas-auth.routes');
+const faregasAuthRoutes = require('./modules/faregas/routes/faregas-auth.routes');
 app.use('/api/faregas/auth', faregasAuthRoutes);
 
 const orquestadorRoutes = require('./modules/orquestador/orquestador.routes');

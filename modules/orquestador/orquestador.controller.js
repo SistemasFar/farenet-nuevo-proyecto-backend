@@ -1,5 +1,5 @@
 const orquestadorService = require('./orquestador.service');
-const faregasAuthService = require('../faregas/auth/faregas-auth.service');
+const faregasAuthService = require('../faregas/services/faregas-auth.service');
 
 exports.detectarEmpresas = async (req, res) => {
     const { username, password } = req.body;

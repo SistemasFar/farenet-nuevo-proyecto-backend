@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const faregasAuthController = require('./faregas-auth.controller');
+const faregasAuthController = require('../controllers/faregas-auth.controller');
 
 router.post('/validar', faregasAuthController.validar);
 router.post('/login', faregasAuthController.login);

@@ -1,4 +1,4 @@
-const faregasAuthService = require('./faregas-auth.service');
+const faregasAuthService = require('../services/faregas-auth.service');
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET_FAREGAS = process.env.JWT_SECRET_FAREGAS || 'fallback_faregas_secret';
