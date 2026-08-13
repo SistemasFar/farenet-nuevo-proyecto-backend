@@ -14,4 +14,12 @@ router.use('/usuarios', usuariosRoutes);
 const auditoriaRoutes = require('./faregas-auditoria.routes');
 router.use('/auditoria', auditoriaRoutes);
 
+// Módulo de certificados (Fase 1)
+const certificadosRoutes = require('./faregas-certificados.routes');
+router.use('/certificados', certificadosRoutes);
+
+// Módulo de clientes y autocompletado vehicular (Fase 2)
+const clientesRoutes = require('./faregas-clientes.routes');
+router.use('/clientes', clientesRoutes);
+
 module.exports = router;

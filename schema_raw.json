@@ -1,0 +1,4021 @@
+{
+  "fg_auditoria_acceso": {
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": "nextval('fg_auditoria_acceso_id_seq'::regclass)"
+      },
+      {
+        "column_name": "username",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "evento",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "exitoso",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "mensaje",
+        "data_type": "text",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "planta_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "ip_direccion",
+        "data_type": "character varying",
+        "character_maximum_length": 45,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "user_agent",
+        "data_type": "character varying",
+        "character_maximum_length": 1000,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "fecha_evento",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "CURRENT_TIMESTAMP"
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_auditoria_acceso_pkey",
+        "column_name": "id",
+        "foreign_table_name": "fg_auditoria_acceso",
+        "foreign_column_name": "id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172082_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172082_3_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "evento IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172082_4_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "exitoso IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172082_9_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "fecha_evento IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_auditoria_acceso_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_auditoria_acceso_pkey ON public.fg_auditoria_acceso USING btree (id)"
+      },
+      {
+        "indexname": "idx_fg_auditoria_acceso_fecha_evento",
+        "indexdef": "CREATE INDEX idx_fg_auditoria_acceso_fecha_evento ON public.fg_auditoria_acceso USING btree (fecha_evento)"
+      },
+      {
+        "indexname": "idx_fg_auditoria_acceso_username",
+        "indexdef": "CREATE INDEX idx_fg_auditoria_acceso_username ON public.fg_auditoria_acceso USING btree (username)"
+      },
+      {
+        "indexname": "idx_fg_auditoria_acceso_evento",
+        "indexdef": "CREATE INDEX idx_fg_auditoria_acceso_evento ON public.fg_auditoria_acceso USING btree (evento)"
+      }
+    ]
+  },
+  "fg_certificado": {
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": "nextval('fg_certificado_id_seq'::regclass)"
+      },
+      {
+        "column_name": "tipo_certificado_clave",
+        "data_type": "character varying",
+        "character_maximum_length": 30,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "numero_certificado",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "cliente_id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "planta_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "fecha_emision",
+        "data_type": "date",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "estado",
+        "data_type": "character varying",
+        "character_maximum_length": 30,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "observaciones",
+        "data_type": "text",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "usuario_creacion",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "fecha_creacion",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column_name": "usuario_modificacion",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "fecha_modificacion",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "entidad_certificadora_nombre",
+        "data_type": "character varying",
+        "character_maximum_length": 300,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "resolucion_directoral",
+        "data_type": "character varying",
+        "character_maximum_length": 150,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "domicilio_fiscal",
+        "data_type": "character varying",
+        "character_maximum_length": 500,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "telefono_certificadora",
+        "data_type": "character varying",
+        "character_maximum_length": 30,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "lugar_emision",
+        "data_type": "character varying",
+        "character_maximum_length": 150,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_certificado_pkey",
+        "column_name": "id",
+        "foreign_table_name": "fg_certificado",
+        "foreign_column_name": "id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_numero_certificado_key",
+        "column_name": "numero_certificado",
+        "foreign_table_name": "fg_certificado",
+        "foreign_column_name": "numero_certificado",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_certificado_tipo",
+        "column_name": "tipo_certificado_clave",
+        "foreign_table_name": "fg_tipo_certificado",
+        "foreign_column_name": "clave",
+        "update_rule": "CASCADE",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_certificado_cliente",
+        "column_name": "cliente_id",
+        "foreign_table_name": "fg_cliente",
+        "foreign_column_name": "id",
+        "update_rule": "CASCADE",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_certificado_planta",
+        "column_name": "planta_key",
+        "foreign_table_name": "fg_planta",
+        "foreign_column_name": "key",
+        "update_rule": "CASCADE",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_certificado_usuarioc",
+        "column_name": "usuario_creacion",
+        "foreign_table_name": "fg_usuario",
+        "foreign_column_name": "username",
+        "update_rule": "CASCADE",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_certificado_usuariom",
+        "column_name": "usuario_modificacion",
+        "foreign_table_name": "fg_usuario",
+        "foreign_column_name": "username",
+        "update_rule": "CASCADE",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172139_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172139_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "tipo_certificado_clave IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172139_5_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "planta_key IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172139_9_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "usuario_creacion IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172139_10_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "fecha_creacion IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_certificado_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_pkey ON public.fg_certificado USING btree (id)"
+      },
+      {
+        "indexname": "fg_certificado_numero_certificado_key",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_numero_certificado_key ON public.fg_certificado USING btree (numero_certificado)"
+      },
+      {
+        "indexname": "idx_fg_certificado_tipo",
+        "indexdef": "CREATE INDEX idx_fg_certificado_tipo ON public.fg_certificado USING btree (tipo_certificado_clave)"
+      },
+      {
+        "indexname": "idx_fg_certificado_cli",
+        "indexdef": "CREATE INDEX idx_fg_certificado_cli ON public.fg_certificado USING btree (cliente_id)"
+      },
+      {
+        "indexname": "idx_fg_certificado_planta",
+        "indexdef": "CREATE INDEX idx_fg_certificado_planta ON public.fg_certificado USING btree (planta_key)"
+      },
+      {
+        "indexname": "idx_fg_certificado_fecha",
+        "indexdef": "CREATE INDEX idx_fg_certificado_fecha ON public.fg_certificado USING btree (fecha_emision)"
+      },
+      {
+        "indexname": "idx_fg_certificado_estado",
+        "indexdef": "CREATE INDEX idx_fg_certificado_estado ON public.fg_certificado USING btree (estado)"
+      }
+    ]
+  },
+  "fg_certificado_conformidad": {
+    "columns": [
+      {
+        "column_name": "certificado_id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "tipo_conformidad",
+        "data_type": "character varying",
+        "character_maximum_length": 30,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "tipo_tramite",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "caracteristica_registrable",
+        "data_type": "character varying",
+        "character_maximum_length": 300,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "motivo",
+        "data_type": "text",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "descripcion",
+        "data_type": "text",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "uso_original_vehiculo",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_certificado_conformidad_pkey",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_conformidad",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_cert_conf_cert",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado",
+        "foreign_column_name": "id",
+        "update_rule": "CASCADE",
+        "delete_rule": "CASCADE",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172331_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "certificado_id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172331_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "tipo_conformidad IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_certificado_conformidad_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_conformidad_pkey ON public.fg_certificado_conformidad USING btree (certificado_id)"
+      }
+    ]
+  },
+  "fg_certificado_glp": {
+    "columns": [
+      {
+        "column_name": "certificado_id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "taller_autorizado_id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "expediente_tecnico",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "vigencia_hasta",
+        "data_type": "date",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "taller_razon_social",
+        "data_type": "character varying",
+        "character_maximum_length": 300,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "taller_sede",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "taller_direccion",
+        "data_type": "character varying",
+        "character_maximum_length": 500,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "taller_codigo_autorizacion",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_certificado_glp_pkey",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_glp",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_cert_glp_cert",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado",
+        "foreign_column_name": "id",
+        "update_rule": "CASCADE",
+        "delete_rule": "CASCADE",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_cert_glp_taller",
+        "column_name": "taller_autorizado_id",
+        "foreign_table_name": "fg_taller_autorizado",
+        "foreign_column_name": "id",
+        "update_rule": "CASCADE",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172272_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "certificado_id IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_certificado_glp_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_glp_pkey ON public.fg_certificado_glp USING btree (certificado_id)"
+      }
+    ]
+  },
+  "fg_certificado_glp_componente": {
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": "nextval('fg_certificado_glp_componente_id_seq'::regclass)"
+      },
+      {
+        "column_name": "certificado_id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "orden",
+        "data_type": "smallint",
+        "character_maximum_length": null,
+        "numeric_precision": 16,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "componente",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "marca",
+        "data_type": "character varying",
+        "character_maximum_length": 150,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "modelo",
+        "data_type": "character varying",
+        "character_maximum_length": 150,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "capacidad_litros",
+        "data_type": "numeric",
+        "character_maximum_length": null,
+        "numeric_precision": 10,
+        "numeric_scale": 2,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "mes_fabricacion",
+        "data_type": "smallint",
+        "character_maximum_length": null,
+        "numeric_precision": 16,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "anio_fabricacion",
+        "data_type": "smallint",
+        "character_maximum_length": null,
+        "numeric_precision": 16,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "numero_serie",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "fg_certificado_glp_componente_mes_fabricacion_check",
+        "column_name": null,
+        "foreign_table_name": "fg_certificado_glp_componente",
+        "foreign_column_name": "mes_fabricacion",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "(((mes_fabricacion IS NULL) OR ((mes_fabricacion >= 1) AND (mes_fabricacion <= 12))))"
+      },
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_certificado_glp_componente_pkey",
+        "column_name": "id",
+        "foreign_table_name": "fg_certificado_glp_componente",
+        "foreign_column_name": "id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_glp_componente_certificado_id_orden_key",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_glp_componente",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_glp_componente_certificado_id_orden_key",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_glp_componente",
+        "foreign_column_name": "orden",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_glp_componente_certificado_id_orden_key",
+        "column_name": "orden",
+        "foreign_table_name": "fg_certificado_glp_componente",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_glp_componente_certificado_id_orden_key",
+        "column_name": "orden",
+        "foreign_table_name": "fg_certificado_glp_componente",
+        "foreign_column_name": "orden",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_cert_glp_comp_cert",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_glp",
+        "foreign_column_name": "certificado_id",
+        "update_rule": "CASCADE",
+        "delete_rule": "CASCADE",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172292_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172292_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "certificado_id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172292_3_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "orden IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172292_4_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "componente IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_certificado_glp_componente_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_glp_componente_pkey ON public.fg_certificado_glp_componente USING btree (id)"
+      },
+      {
+        "indexname": "fg_certificado_glp_componente_certificado_id_orden_key",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_glp_componente_certificado_id_orden_key ON public.fg_certificado_glp_componente USING btree (certificado_id, orden)"
+      }
+    ]
+  },
+  "fg_certificado_glp_verificacion": {
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": "nextval('fg_certificado_glp_verificacion_id_seq'::regclass)"
+      },
+      {
+        "column_name": "certificado_id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "codigo",
+        "data_type": "character varying",
+        "character_maximum_length": 5,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "orden",
+        "data_type": "smallint",
+        "character_maximum_length": null,
+        "numeric_precision": 16,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "descripcion",
+        "data_type": "text",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "cumple",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "observacion",
+        "data_type": "text",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_certificado_glp_verificacion_pkey",
+        "column_name": "id",
+        "foreign_table_name": "fg_certificado_glp_verificacion",
+        "foreign_column_name": "id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_glp_verificacion_certificado_id_codigo_key",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_glp_verificacion",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_glp_verificacion_certificado_id_codigo_key",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_glp_verificacion",
+        "foreign_column_name": "codigo",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_glp_verificacion_certificado_id_codigo_key",
+        "column_name": "codigo",
+        "foreign_table_name": "fg_certificado_glp_verificacion",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_glp_verificacion_certificado_id_codigo_key",
+        "column_name": "codigo",
+        "foreign_table_name": "fg_certificado_glp_verificacion",
+        "foreign_column_name": "codigo",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_glp_verificacion_certificado_id_orden_key",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_glp_verificacion",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_glp_verificacion_certificado_id_orden_key",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_glp_verificacion",
+        "foreign_column_name": "orden",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_glp_verificacion_certificado_id_orden_key",
+        "column_name": "orden",
+        "foreign_table_name": "fg_certificado_glp_verificacion",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_glp_verificacion_certificado_id_orden_key",
+        "column_name": "orden",
+        "foreign_table_name": "fg_certificado_glp_verificacion",
+        "foreign_column_name": "orden",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_cert_glp_verif_cert",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_glp",
+        "foreign_column_name": "certificado_id",
+        "update_rule": "CASCADE",
+        "delete_rule": "CASCADE",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172312_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172312_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "certificado_id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172312_3_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "codigo IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172312_4_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "orden IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172312_5_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "descripcion IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172312_6_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "cumple IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_certificado_glp_verificacion_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_glp_verificacion_pkey ON public.fg_certificado_glp_verificacion USING btree (id)"
+      },
+      {
+        "indexname": "fg_certificado_glp_verificacion_certificado_id_codigo_key",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_glp_verificacion_certificado_id_codigo_key ON public.fg_certificado_glp_verificacion USING btree (certificado_id, codigo)"
+      },
+      {
+        "indexname": "fg_certificado_glp_verificacion_certificado_id_orden_key",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_glp_verificacion_certificado_id_orden_key ON public.fg_certificado_glp_verificacion USING btree (certificado_id, orden)"
+      }
+    ]
+  },
+  "fg_certificado_gnv": {
+    "columns": [
+      {
+        "column_name": "certificado_id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "taller_autorizado_id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "vigencia_hasta",
+        "data_type": "date",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "taller_razon_social",
+        "data_type": "character varying",
+        "character_maximum_length": 300,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "taller_sede",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "taller_direccion",
+        "data_type": "character varying",
+        "character_maximum_length": 500,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "taller_codigo_autorizacion",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_certificado_gnv_pkey",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_gnv",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_cert_gnv_cert",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado",
+        "foreign_column_name": "id",
+        "update_rule": "CASCADE",
+        "delete_rule": "CASCADE",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_cert_gnv_taller",
+        "column_name": "taller_autorizado_id",
+        "foreign_table_name": "fg_taller_autorizado",
+        "foreign_column_name": "id",
+        "update_rule": "CASCADE",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172233_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "certificado_id IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_certificado_gnv_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_gnv_pkey ON public.fg_certificado_gnv USING btree (certificado_id)"
+      }
+    ]
+  },
+  "fg_certificado_gnv_verificacion": {
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": "nextval('fg_certificado_gnv_verificacion_id_seq'::regclass)"
+      },
+      {
+        "column_name": "certificado_id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "codigo",
+        "data_type": "character varying",
+        "character_maximum_length": 5,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "orden",
+        "data_type": "smallint",
+        "character_maximum_length": null,
+        "numeric_precision": 16,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "descripcion",
+        "data_type": "text",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "cumple",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "observacion",
+        "data_type": "text",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_certificado_gnv_verificacion_pkey",
+        "column_name": "id",
+        "foreign_table_name": "fg_certificado_gnv_verificacion",
+        "foreign_column_name": "id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_gnv_verificacion_certificado_id_codigo_key",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_gnv_verificacion",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_gnv_verificacion_certificado_id_codigo_key",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_gnv_verificacion",
+        "foreign_column_name": "codigo",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_gnv_verificacion_certificado_id_codigo_key",
+        "column_name": "codigo",
+        "foreign_table_name": "fg_certificado_gnv_verificacion",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_gnv_verificacion_certificado_id_codigo_key",
+        "column_name": "codigo",
+        "foreign_table_name": "fg_certificado_gnv_verificacion",
+        "foreign_column_name": "codigo",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_gnv_verificacion_certificado_id_orden_key",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_gnv_verificacion",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_gnv_verificacion_certificado_id_orden_key",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_gnv_verificacion",
+        "foreign_column_name": "orden",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_gnv_verificacion_certificado_id_orden_key",
+        "column_name": "orden",
+        "foreign_table_name": "fg_certificado_gnv_verificacion",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_gnv_verificacion_certificado_id_orden_key",
+        "column_name": "orden",
+        "foreign_table_name": "fg_certificado_gnv_verificacion",
+        "foreign_column_name": "orden",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_cert_gnv_verif_cert",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_gnv",
+        "foreign_column_name": "certificado_id",
+        "update_rule": "CASCADE",
+        "delete_rule": "CASCADE",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172253_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172253_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "certificado_id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172253_3_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "codigo IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172253_4_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "orden IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172253_5_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "descripcion IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172253_6_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "cumple IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_certificado_gnv_verificacion_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_gnv_verificacion_pkey ON public.fg_certificado_gnv_verificacion USING btree (id)"
+      },
+      {
+        "indexname": "fg_certificado_gnv_verificacion_certificado_id_codigo_key",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_gnv_verificacion_certificado_id_codigo_key ON public.fg_certificado_gnv_verificacion USING btree (certificado_id, codigo)"
+      },
+      {
+        "indexname": "fg_certificado_gnv_verificacion_certificado_id_orden_key",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_gnv_verificacion_certificado_id_orden_key ON public.fg_certificado_gnv_verificacion USING btree (certificado_id, orden)"
+      }
+    ]
+  },
+  "fg_certificado_titular": {
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": "nextval('fg_certificado_titular_id_seq'::regclass)"
+      },
+      {
+        "column_name": "certificado_id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "cliente_id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "orden",
+        "data_type": "smallint",
+        "character_maximum_length": null,
+        "numeric_precision": 16,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "tipo_documento",
+        "data_type": "character varying",
+        "character_maximum_length": 10,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "nro_documento",
+        "data_type": "character varying",
+        "character_maximum_length": 20,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "nombre_razon_social",
+        "data_type": "character varying",
+        "character_maximum_length": 300,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "direccion",
+        "data_type": "character varying",
+        "character_maximum_length": 500,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_certificado_titular_pkey",
+        "column_name": "id",
+        "foreign_table_name": "fg_certificado_titular",
+        "foreign_column_name": "id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_titular_certificado_id_orden_key",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_titular",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_titular_certificado_id_orden_key",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_titular",
+        "foreign_column_name": "orden",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_titular_certificado_id_orden_key",
+        "column_name": "orden",
+        "foreign_table_name": "fg_certificado_titular",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_certificado_titular_certificado_id_orden_key",
+        "column_name": "orden",
+        "foreign_table_name": "fg_certificado_titular",
+        "foreign_column_name": "orden",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_cert_titular_cert",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado",
+        "foreign_column_name": "id",
+        "update_rule": "CASCADE",
+        "delete_rule": "CASCADE",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_cert_titular_cliente",
+        "column_name": "cliente_id",
+        "foreign_table_name": "fg_cliente",
+        "foreign_column_name": "id",
+        "update_rule": "CASCADE",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172197_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172197_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "certificado_id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172197_4_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "orden IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172197_7_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "nombre_razon_social IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_certificado_titular_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_titular_pkey ON public.fg_certificado_titular USING btree (id)"
+      },
+      {
+        "indexname": "fg_certificado_titular_certificado_id_orden_key",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_titular_certificado_id_orden_key ON public.fg_certificado_titular USING btree (certificado_id, orden)"
+      },
+      {
+        "indexname": "idx_fg_cert_titular_cli",
+        "indexdef": "CREATE INDEX idx_fg_cert_titular_cli ON public.fg_certificado_titular USING btree (cliente_id)"
+      }
+    ]
+  },
+  "fg_certificado_vehiculo": {
+    "columns": [
+      {
+        "column_name": "certificado_id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "placa",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "categoria",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "clase",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "marca",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "modelo",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "version",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "anio_fabricacion",
+        "data_type": "character varying",
+        "character_maximum_length": 10,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "anio_modelo",
+        "data_type": "character varying",
+        "character_maximum_length": 10,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "vin",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "serie_chasis",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "numero_motor",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "combustible",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "color",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "carroceria",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "numero_cilindros",
+        "data_type": "integer",
+        "character_maximum_length": null,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "cilindrada",
+        "data_type": "numeric",
+        "character_maximum_length": null,
+        "numeric_precision": 10,
+        "numeric_scale": 3,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "numero_ejes",
+        "data_type": "integer",
+        "character_maximum_length": null,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "numero_ruedas",
+        "data_type": "integer",
+        "character_maximum_length": null,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "numero_asientos",
+        "data_type": "integer",
+        "character_maximum_length": null,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "numero_pasajeros",
+        "data_type": "integer",
+        "character_maximum_length": null,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "longitud",
+        "data_type": "numeric",
+        "character_maximum_length": null,
+        "numeric_precision": 10,
+        "numeric_scale": 3,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "ancho",
+        "data_type": "numeric",
+        "character_maximum_length": null,
+        "numeric_precision": 10,
+        "numeric_scale": 3,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "alto",
+        "data_type": "numeric",
+        "character_maximum_length": null,
+        "numeric_precision": 10,
+        "numeric_scale": 3,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "peso_neto",
+        "data_type": "numeric",
+        "character_maximum_length": null,
+        "numeric_precision": 10,
+        "numeric_scale": 3,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "peso_bruto",
+        "data_type": "numeric",
+        "character_maximum_length": null,
+        "numeric_precision": 10,
+        "numeric_scale": 3,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "carga_util",
+        "data_type": "numeric",
+        "character_maximum_length": null,
+        "numeric_precision": 10,
+        "numeric_scale": 3,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "potencia",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "formula_rodante",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_certificado_vehiculo_pkey",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado_vehiculo",
+        "foreign_column_name": "certificado_id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_cert_vehiculo_cert",
+        "column_name": "certificado_id",
+        "foreign_table_name": "fg_certificado",
+        "foreign_column_name": "id",
+        "update_rule": "CASCADE",
+        "delete_rule": "CASCADE",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172182_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "certificado_id IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_certificado_vehiculo_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_certificado_vehiculo_pkey ON public.fg_certificado_vehiculo USING btree (certificado_id)"
+      }
+    ]
+  },
+  "fg_cliente": {
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": "nextval('fg_cliente_id_seq'::regclass)"
+      },
+      {
+        "column_name": "tipo_documento",
+        "data_type": "character varying",
+        "character_maximum_length": 10,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "nro_documento",
+        "data_type": "character varying",
+        "character_maximum_length": 20,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "nombre_razon_social",
+        "data_type": "character varying",
+        "character_maximum_length": 300,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "direccion",
+        "data_type": "character varying",
+        "character_maximum_length": 500,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "telefono",
+        "data_type": "character varying",
+        "character_maximum_length": 30,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "correo",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "estado",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "true"
+      },
+      {
+        "column_name": "fecha_creacion",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column_name": "fecha_modificacion",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_cliente_pkey",
+        "column_name": "id",
+        "foreign_table_name": "fg_cliente",
+        "foreign_column_name": "id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_cliente_tipo_documento_nro_documento_key",
+        "column_name": "tipo_documento",
+        "foreign_table_name": "fg_cliente",
+        "foreign_column_name": "tipo_documento",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_cliente_tipo_documento_nro_documento_key",
+        "column_name": "tipo_documento",
+        "foreign_table_name": "fg_cliente",
+        "foreign_column_name": "nro_documento",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_cliente_tipo_documento_nro_documento_key",
+        "column_name": "nro_documento",
+        "foreign_table_name": "fg_cliente",
+        "foreign_column_name": "tipo_documento",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_cliente_tipo_documento_nro_documento_key",
+        "column_name": "nro_documento",
+        "foreign_table_name": "fg_cliente",
+        "foreign_column_name": "nro_documento",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172097_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172097_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "tipo_documento IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172097_3_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "nro_documento IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172097_4_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "nombre_razon_social IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172097_8_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "estado IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172097_9_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "fecha_creacion IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_cliente_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_cliente_pkey ON public.fg_cliente USING btree (id)"
+      },
+      {
+        "indexname": "fg_cliente_tipo_documento_nro_documento_key",
+        "indexdef": "CREATE UNIQUE INDEX fg_cliente_tipo_documento_nro_documento_key ON public.fg_cliente USING btree (tipo_documento, nro_documento)"
+      }
+    ]
+  },
+  "fg_correlativo_certificado": {
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": "nextval('fg_correlativo_certificado_id_seq'::regclass)"
+      },
+      {
+        "column_name": "tipo_certificado_clave",
+        "data_type": "character varying",
+        "character_maximum_length": 30,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "nro_actual",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": "0"
+      },
+      {
+        "column_name": "activo",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "true"
+      },
+      {
+        "column_name": "fecha_modificacion",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column_name": "planta_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "nro_inicio",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "nro_maximo",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "fecha_asignacion",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column_name": "fecha_cierre",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "planta_key",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "tipo_certificado_clave",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "planta_key",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "planta_key",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "planta_key",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_inicio",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "planta_key",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_maximo",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "tipo_certificado_clave",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "tipo_certificado_clave",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "tipo_certificado_clave",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "planta_key",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "tipo_certificado_clave",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_inicio",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "tipo_certificado_clave",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_maximo",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "nro_inicio",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "tipo_certificado_clave",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "nro_inicio",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "planta_key",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "nro_inicio",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_inicio",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "nro_inicio",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_maximo",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "nro_maximo",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "tipo_certificado_clave",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "nro_maximo",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "planta_key",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "nro_maximo",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_inicio",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_correlativo_certificado_hist_key",
+        "column_name": "nro_maximo",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_maximo",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "chk_cierre",
+        "column_name": null,
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "activo",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "(((activo = false) OR (fecha_cierre IS NULL)))"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "chk_cierre",
+        "column_name": null,
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "fecha_cierre",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "(((activo = false) OR (fecha_cierre IS NULL)))"
+      },
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_correlativo_certificado_pkey",
+        "column_name": "id",
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_correlativo_tipo",
+        "column_name": "tipo_certificado_clave",
+        "foreign_table_name": "fg_tipo_certificado",
+        "foreign_column_name": "clave",
+        "update_rule": "CASCADE",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_correlativo_planta",
+        "column_name": "planta_key",
+        "foreign_table_name": "fg_planta",
+        "foreign_column_name": "key",
+        "update_rule": "CASCADE",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "chk_nro_inicio",
+        "column_name": null,
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_inicio",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "((nro_inicio > 0))"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "chk_nro_maximo",
+        "column_name": null,
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_inicio",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "((nro_maximo >= nro_inicio))"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "chk_nro_maximo",
+        "column_name": null,
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_maximo",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "((nro_maximo >= nro_inicio))"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "chk_nro_actual_min",
+        "column_name": null,
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_actual",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "((nro_actual >= (nro_inicio - 1)))"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "chk_nro_actual_min",
+        "column_name": null,
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_inicio",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "((nro_actual >= (nro_inicio - 1)))"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "chk_nro_actual_max",
+        "column_name": null,
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_actual",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "((nro_actual <= nro_maximo))"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "chk_nro_actual_max",
+        "column_name": null,
+        "foreign_table_name": "fg_correlativo_certificado",
+        "foreign_column_name": "nro_maximo",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "((nro_actual <= nro_maximo))"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172121_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172121_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "tipo_certificado_clave IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172121_4_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "nro_actual IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172121_5_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "activo IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172121_6_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "fecha_modificacion IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172121_7_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "planta_key IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172121_8_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "nro_inicio IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172121_9_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "nro_maximo IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172121_10_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "fecha_asignacion IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_correlativo_certificado_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_correlativo_certificado_pkey ON public.fg_correlativo_certificado USING btree (id)"
+      },
+      {
+        "indexname": "fg_correlativo_certificado_hist_key",
+        "indexdef": "CREATE UNIQUE INDEX fg_correlativo_certificado_hist_key ON public.fg_correlativo_certificado USING btree (planta_key, tipo_certificado_clave, nro_inicio, nro_maximo)"
+      },
+      {
+        "indexname": "fg_correlativo_certificado_activo_idx",
+        "indexdef": "CREATE UNIQUE INDEX fg_correlativo_certificado_activo_idx ON public.fg_correlativo_certificado USING btree (planta_key, tipo_certificado_clave) WHERE (activo = true)"
+      },
+      {
+        "indexname": "excl_fg_correlativo_rango",
+        "indexdef": "CREATE INDEX excl_fg_correlativo_rango ON public.fg_correlativo_certificado USING gist (planta_key, tipo_certificado_clave, int8range(nro_inicio, nro_maximo, '[]'::text))"
+      }
+    ]
+  },
+  "fg_perfil": {
+    "columns": [
+      {
+        "column_name": "clave",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "nombre",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "visible",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_perfil_pkey",
+        "column_name": "clave",
+        "foreign_table_name": "fg_perfil",
+        "foreign_column_name": "clave",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_171956_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "clave IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_171956_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "nombre IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_perfil_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_perfil_pkey ON public.fg_perfil USING btree (clave)"
+      }
+    ]
+  },
+  "fg_perfil_permiso": {
+    "columns": [
+      {
+        "column_name": "perfil_clave",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "permiso_clave",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "timestamp with time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "now()"
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "pk_fg_perfil_permiso",
+        "column_name": "perfil_clave",
+        "foreign_table_name": "fg_perfil_permiso",
+        "foreign_column_name": "perfil_clave",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "pk_fg_perfil_permiso",
+        "column_name": "perfil_clave",
+        "foreign_table_name": "fg_perfil_permiso",
+        "foreign_column_name": "permiso_clave",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "pk_fg_perfil_permiso",
+        "column_name": "permiso_clave",
+        "foreign_table_name": "fg_perfil_permiso",
+        "foreign_column_name": "perfil_clave",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "pk_fg_perfil_permiso",
+        "column_name": "permiso_clave",
+        "foreign_table_name": "fg_perfil_permiso",
+        "foreign_column_name": "permiso_clave",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_fg_pp_perfil",
+        "column_name": "perfil_clave",
+        "foreign_table_name": "fg_perfil",
+        "foreign_column_name": "clave",
+        "update_rule": "NO ACTION",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_fg_pp_permiso",
+        "column_name": "permiso_clave",
+        "foreign_table_name": "fg_permiso",
+        "foreign_column_name": "clave",
+        "update_rule": "NO ACTION",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_171973_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "perfil_clave IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_171973_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "permiso_clave IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_171973_3_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "created_at IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "pk_fg_perfil_permiso",
+        "indexdef": "CREATE UNIQUE INDEX pk_fg_perfil_permiso ON public.fg_perfil_permiso USING btree (perfil_clave, permiso_clave)"
+      },
+      {
+        "indexname": "idx_fg_perfil_permiso_perfil",
+        "indexdef": "CREATE INDEX idx_fg_perfil_permiso_perfil ON public.fg_perfil_permiso USING btree (perfil_clave)"
+      },
+      {
+        "indexname": "idx_fg_perfil_permiso_permiso",
+        "indexdef": "CREATE INDEX idx_fg_perfil_permiso_permiso ON public.fg_perfil_permiso USING btree (permiso_clave)"
+      }
+    ]
+  },
+  "fg_perfil_planta": {
+    "columns": [
+      {
+        "column_name": "perfil_clave",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "planta_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_perfil_planta_pkey",
+        "column_name": "perfil_clave",
+        "foreign_table_name": "fg_perfil_planta",
+        "foreign_column_name": "perfil_clave",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_perfil_planta_pkey",
+        "column_name": "perfil_clave",
+        "foreign_table_name": "fg_perfil_planta",
+        "foreign_column_name": "planta_key",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_perfil_planta_pkey",
+        "column_name": "planta_key",
+        "foreign_table_name": "fg_perfil_planta",
+        "foreign_column_name": "perfil_clave",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_perfil_planta_pkey",
+        "column_name": "planta_key",
+        "foreign_table_name": "fg_perfil_planta",
+        "foreign_column_name": "planta_key",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fg_perfil_planta_perfil_clave_fkey",
+        "column_name": "perfil_clave",
+        "foreign_table_name": "fg_perfil",
+        "foreign_column_name": "clave",
+        "update_rule": "NO ACTION",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fg_perfil_planta_planta_key_fkey",
+        "column_name": "planta_key",
+        "foreign_table_name": "fg_planta",
+        "foreign_column_name": "key",
+        "update_rule": "NO ACTION",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172065_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "perfil_clave IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172065_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "planta_key IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_perfil_planta_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_perfil_planta_pkey ON public.fg_perfil_planta USING btree (perfil_clave, planta_key)"
+      }
+    ]
+  },
+  "fg_permiso": {
+    "columns": [
+      {
+        "column_name": "clave",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "nombre",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "modulo",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "descripcion",
+        "data_type": "text",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "activo",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "true"
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_permiso_pkey",
+        "column_name": "clave",
+        "foreign_table_name": "fg_permiso",
+        "foreign_column_name": "clave",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_171964_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "clave IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_171964_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "nombre IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_171964_3_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "modulo IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_171964_5_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "activo IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_permiso_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_permiso_pkey ON public.fg_permiso USING btree (clave)"
+      }
+    ]
+  },
+  "fg_planta": {
+    "columns": [
+      {
+        "column_name": "key",
+        "data_type": "character varying",
+        "character_maximum_length": 20,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "nombre",
+        "data_type": "character varying",
+        "character_maximum_length": 150,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "direccion",
+        "data_type": "character varying",
+        "character_maximum_length": 500,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "telefono",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_planta_pkey",
+        "column_name": "key",
+        "foreign_table_name": "fg_planta",
+        "foreign_column_name": "key",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172004_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "key IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172004_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "nombre IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_planta_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_planta_pkey ON public.fg_planta USING btree (key)"
+      }
+    ]
+  },
+  "fg_taller_autorizado": {
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": "nextval('fg_taller_autorizado_id_seq'::regclass)"
+      },
+      {
+        "column_name": "ruc",
+        "data_type": "character varying",
+        "character_maximum_length": 11,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "razon_social",
+        "data_type": "character varying",
+        "character_maximum_length": 300,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "nombre_comercial",
+        "data_type": "character varying",
+        "character_maximum_length": 300,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "sede",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "direccion",
+        "data_type": "character varying",
+        "character_maximum_length": 500,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "codigo_autorizacion",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "estado",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "true"
+      },
+      {
+        "column_name": "fecha_creacion",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column_name": "fecha_modificacion",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_taller_autorizado_pkey",
+        "column_name": "id",
+        "foreign_table_name": "fg_taller_autorizado",
+        "foreign_column_name": "id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172222_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172222_3_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "razon_social IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172222_8_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "estado IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172222_9_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "fecha_creacion IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_taller_autorizado_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_taller_autorizado_pkey ON public.fg_taller_autorizado USING btree (id)"
+      }
+    ]
+  },
+  "fg_tipo_certificado": {
+    "columns": [
+      {
+        "column_name": "clave",
+        "data_type": "character varying",
+        "character_maximum_length": 30,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "nombre",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "descripcion",
+        "data_type": "character varying",
+        "character_maximum_length": 300,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "activo",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "true"
+      },
+      {
+        "column_name": "entidad_certificadora_nombre",
+        "data_type": "character varying",
+        "character_maximum_length": 300,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "resolucion_directoral",
+        "data_type": "character varying",
+        "character_maximum_length": 150,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "domicilio_fiscal",
+        "data_type": "character varying",
+        "character_maximum_length": 500,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "telefono",
+        "data_type": "character varying",
+        "character_maximum_length": 30,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "lugar_emision",
+        "data_type": "character varying",
+        "character_maximum_length": 150,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "codigo",
+        "data_type": "character varying",
+        "character_maximum_length": 2,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_tipo_certificado_pkey",
+        "column_name": "clave",
+        "foreign_table_name": "fg_tipo_certificado",
+        "foreign_column_name": "clave",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_tipo_certificado_codigo_key",
+        "column_name": "codigo",
+        "foreign_table_name": "fg_tipo_certificado",
+        "foreign_column_name": "codigo",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172110_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "clave IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172110_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "nombre IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172110_4_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "activo IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172110_10_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "codigo IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_tipo_certificado_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_tipo_certificado_pkey ON public.fg_tipo_certificado USING btree (clave)"
+      },
+      {
+        "indexname": "fg_tipo_certificado_codigo_key",
+        "indexdef": "CREATE UNIQUE INDEX fg_tipo_certificado_codigo_key ON public.fg_tipo_certificado USING btree (codigo)"
+      }
+    ]
+  },
+  "fg_usuario": {
+    "columns": [
+      {
+        "column_name": "username",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "user_type",
+        "data_type": "character varying",
+        "character_maximum_length": 31,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "contrasenha",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "perfil_id",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "persona_nrodocumentoidentidad",
+        "data_type": "character varying",
+        "character_maximum_length": 20,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "estado",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "foto",
+        "data_type": "text",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_usuario_pkey",
+        "column_name": "username",
+        "foreign_table_name": "fg_usuario",
+        "foreign_column_name": "username",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_fg_usuario_perfil",
+        "column_name": "perfil_id",
+        "foreign_table_name": "fg_perfil",
+        "foreign_column_name": "clave",
+        "update_rule": "NO ACTION",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_171991_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "username IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_171991_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "user_type IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_171991_3_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "contrasenha IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_usuario_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_usuario_pkey ON public.fg_usuario USING btree (username)"
+      }
+    ]
+  },
+  "fg_usuario_planta": {
+    "columns": [
+      {
+        "column_name": "usuario_username",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "plantas_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "pk_fg_usuario_planta",
+        "column_name": "usuario_username",
+        "foreign_table_name": "fg_usuario_planta",
+        "foreign_column_name": "usuario_username",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "pk_fg_usuario_planta",
+        "column_name": "usuario_username",
+        "foreign_table_name": "fg_usuario_planta",
+        "foreign_column_name": "plantas_key",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "pk_fg_usuario_planta",
+        "column_name": "plantas_key",
+        "foreign_table_name": "fg_usuario_planta",
+        "foreign_column_name": "usuario_username",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "pk_fg_usuario_planta",
+        "column_name": "plantas_key",
+        "foreign_table_name": "fg_usuario_planta",
+        "foreign_column_name": "plantas_key",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_fg_up_planta",
+        "column_name": "plantas_key",
+        "foreign_table_name": "fg_planta",
+        "foreign_column_name": "key",
+        "update_rule": "NO ACTION",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_fg_up_usuario",
+        "column_name": "usuario_username",
+        "foreign_table_name": "fg_usuario",
+        "foreign_column_name": "username",
+        "update_rule": "CASCADE",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172012_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "usuario_username IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172012_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "plantas_key IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "pk_fg_usuario_planta",
+        "indexdef": "CREATE UNIQUE INDEX pk_fg_usuario_planta ON public.fg_usuario_planta USING btree (usuario_username, plantas_key)"
+      }
+    ]
+  },
+  "fg_usuario_sesion": {
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": "nextval('fg_usuario_sesion_id_seq'::regclass)"
+      },
+      {
+        "column_name": "usuario_username",
+        "data_type": "character varying",
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "logintime_utc",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "timezone('UTC'::text, now())"
+      },
+      {
+        "column_name": "isactive",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "true"
+      },
+      {
+        "column_name": "server_name",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "clienteip",
+        "data_type": "character varying",
+        "character_maximum_length": 45,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "logouttime_utc",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "session_jti",
+        "data_type": "uuid",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "revoked_at_utc",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "jwt_jti",
+        "data_type": "uuid",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "access_expires_utc",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "refresh_token_hash",
+        "data_type": "text",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "refresh_expires_utc",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "planta_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "constraints": [
+      {
+        "constraint_type": "PRIMARY KEY",
+        "constraint_name": "fg_usuario_sesion_pkey",
+        "column_name": "id",
+        "foreign_table_name": "fg_usuario_sesion",
+        "foreign_column_name": "id",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "UNIQUE",
+        "constraint_name": "fg_usuario_sesion_session_jti_key",
+        "column_name": "session_jti",
+        "foreign_table_name": "fg_usuario_sesion",
+        "foreign_column_name": "session_jti",
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_fg_us_planta",
+        "column_name": "planta_key",
+        "foreign_table_name": "fg_planta",
+        "foreign_column_name": "key",
+        "update_rule": "NO ACTION",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "FOREIGN KEY",
+        "constraint_name": "fk_fg_us_usuario",
+        "column_name": "usuario_username",
+        "foreign_table_name": "fg_usuario",
+        "foreign_column_name": "username",
+        "update_rule": "CASCADE",
+        "delete_rule": "NO ACTION",
+        "check_clause": null
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172029_1_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "id IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172029_2_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "usuario_username IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172029_3_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "logintime_utc IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172029_4_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "isactive IS NOT NULL"
+      },
+      {
+        "constraint_type": "CHECK",
+        "constraint_name": "2200_172029_8_not_null",
+        "column_name": null,
+        "foreign_table_name": null,
+        "foreign_column_name": null,
+        "update_rule": null,
+        "delete_rule": null,
+        "check_clause": "session_jti IS NOT NULL"
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_usuario_sesion_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_usuario_sesion_pkey ON public.fg_usuario_sesion USING btree (id)"
+      },
+      {
+        "indexname": "fg_usuario_sesion_session_jti_key",
+        "indexdef": "CREATE UNIQUE INDEX fg_usuario_sesion_session_jti_key ON public.fg_usuario_sesion USING btree (session_jti)"
+      },
+      {
+        "indexname": "idx_fg_usuario_sesion_user_active",
+        "indexdef": "CREATE INDEX idx_fg_usuario_sesion_user_active ON public.fg_usuario_sesion USING btree (usuario_username, isactive)"
+      },
+      {
+        "indexname": "ix_fg_usuario_sesion_planta_key",
+        "indexdef": "CREATE INDEX ix_fg_usuario_sesion_planta_key ON public.fg_usuario_sesion USING btree (planta_key) WHERE (planta_key IS NOT NULL)"
+      }
+    ]
+  }
+}

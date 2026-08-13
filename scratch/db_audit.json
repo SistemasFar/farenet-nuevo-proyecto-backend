@@ -1,0 +1,552 @@
+{
+  "fg_cliente": {
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "bigint",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "tipo_documento",
+        "data_type": "character varying",
+        "character_maximum_length": 10
+      },
+      {
+        "column_name": "nro_documento",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "nombre_razon_social",
+        "data_type": "character varying",
+        "character_maximum_length": 300
+      },
+      {
+        "column_name": "direccion",
+        "data_type": "character varying",
+        "character_maximum_length": 500
+      },
+      {
+        "column_name": "telefono",
+        "data_type": "character varying",
+        "character_maximum_length": 30
+      },
+      {
+        "column_name": "correo",
+        "data_type": "character varying",
+        "character_maximum_length": 200
+      },
+      {
+        "column_name": "estado",
+        "data_type": "boolean",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "fecha_creacion",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "fecha_modificacion",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "fg_cliente_pkey",
+        "indexdef": "CREATE UNIQUE INDEX fg_cliente_pkey ON public.fg_cliente USING btree (id)"
+      },
+      {
+        "indexname": "fg_cliente_tipo_documento_nro_documento_key",
+        "indexdef": "CREATE UNIQUE INDEX fg_cliente_tipo_documento_nro_documento_key ON public.fg_cliente USING btree (tipo_documento, nro_documento)"
+      }
+    ]
+  },
+  "persona": {
+    "columns": [
+      {
+        "column_name": "nrodocumentoidentidad",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "estado",
+        "data_type": "boolean",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "fechcreacion",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "fechmodi",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "apellidos",
+        "data_type": "character varying",
+        "character_maximum_length": 200
+      },
+      {
+        "column_name": "direccion",
+        "data_type": "character varying",
+        "character_maximum_length": 500
+      },
+      {
+        "column_name": "email",
+        "data_type": "character varying",
+        "character_maximum_length": 150
+      },
+      {
+        "column_name": "nombrerazonsocial",
+        "data_type": "character varying",
+        "character_maximum_length": 500
+      },
+      {
+        "column_name": "nombres",
+        "data_type": "character varying",
+        "character_maximum_length": 200
+      },
+      {
+        "column_name": "telefono",
+        "data_type": "character varying",
+        "character_maximum_length": 100
+      },
+      {
+        "column_name": "usuariocreacion_username",
+        "data_type": "character varying",
+        "character_maximum_length": 255
+      },
+      {
+        "column_name": "usuariomodi_id",
+        "data_type": "character varying",
+        "character_maximum_length": 255
+      },
+      {
+        "column_name": "departamento_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "distrito_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "pais_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "provincia_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "tipodocumentoidentidad_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "persona_contacto",
+        "data_type": "character varying",
+        "character_maximum_length": 250
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "persona_pkey",
+        "indexdef": "CREATE UNIQUE INDEX persona_pkey ON public.persona USING btree (nrodocumentoidentidad)"
+      },
+      {
+        "indexname": "idx_persona_doc",
+        "indexdef": "CREATE INDEX idx_persona_doc ON public.persona USING btree (nrodocumentoidentidad)"
+      },
+      {
+        "indexname": "idx_persona_nrodoc",
+        "indexdef": "CREATE INDEX idx_persona_nrodoc ON public.persona USING btree (nrodocumentoidentidad) INCLUDE (telefono)"
+      },
+      {
+        "indexname": "ix_persona_nrodoc",
+        "indexdef": "CREATE INDEX ix_persona_nrodoc ON public.persona USING btree (nrodocumentoidentidad)"
+      },
+      {
+        "indexname": "persona_nombrerazonsocial_idx",
+        "indexdef": "CREATE INDEX persona_nombrerazonsocial_idx ON public.persona USING btree (nombrerazonsocial)"
+      },
+      {
+        "indexname": "persona_nrodocumentoidentidad_idx",
+        "indexdef": "CREATE INDEX persona_nrodocumentoidentidad_idx ON public.persona USING btree (nrodocumentoidentidad)"
+      }
+    ]
+  },
+  "vehiculo": {
+    "columns": [
+      {
+        "column_name": "nromotor",
+        "data_type": "character varying",
+        "character_maximum_length": 255
+      },
+      {
+        "column_name": "estado",
+        "data_type": "boolean",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "fechcreacion",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "fechmodi",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "alto",
+        "data_type": "double precision",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "ancho",
+        "data_type": "double precision",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "aniofabricacion",
+        "data_type": "integer",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "cargautil",
+        "data_type": "double precision",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "categoriaextra",
+        "data_type": "character varying",
+        "character_maximum_length": 255
+      },
+      {
+        "column_name": "distanciaeje1",
+        "data_type": "real",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "distanciaeje2",
+        "data_type": "real",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "distanciaeje3",
+        "data_type": "real",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "distanciaeje4",
+        "data_type": "real",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "fechfintarjetapropiedad",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "fechiniciotarjetapropiedad",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "kilometraje",
+        "data_type": "double precision",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "longitud",
+        "data_type": "double precision",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "nroasientos",
+        "data_type": "integer",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "nrocilindros",
+        "data_type": "integer",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "nroejes",
+        "data_type": "integer",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "nropasajeros",
+        "data_type": "integer",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "nropisos",
+        "data_type": "integer",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "nroplacaantigua",
+        "data_type": "character varying",
+        "character_maximum_length": 255
+      },
+      {
+        "column_name": "nropuertas",
+        "data_type": "integer",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "nroruedas",
+        "data_type": "integer",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "nrosalidaemergencia",
+        "data_type": "integer",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "nroserie",
+        "data_type": "character varying",
+        "character_maximum_length": 255
+      },
+      {
+        "column_name": "nrosoat",
+        "data_type": "character varying",
+        "character_maximum_length": 255
+      },
+      {
+        "column_name": "pesobruto",
+        "data_type": "double precision",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "pesoseco",
+        "data_type": "double precision",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "usuariocreacion_username",
+        "data_type": "character varying",
+        "character_maximum_length": 255
+      },
+      {
+        "column_name": "usuariomodi_id",
+        "data_type": "character varying",
+        "character_maximum_length": 255
+      },
+      {
+        "column_name": "aseguradora_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "carroceria_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "categoria_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "color_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "combustible_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "marca_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "marcacarroceria",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "modelo_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "vehiculoclase_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "tipopoliza_key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "tarjetapropiedad_id",
+        "data_type": "bigint",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "codigocertificado",
+        "data_type": "character varying",
+        "character_maximum_length": 255
+      },
+      {
+        "column_name": "empcertificadoragas",
+        "data_type": "character varying",
+        "character_maximum_length": 255
+      },
+      {
+        "column_name": "fechemision",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "sindctos",
+        "data_type": "boolean",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "empcertificadoragas_key",
+        "data_type": "integer",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "certificadora_gas_key",
+        "data_type": "integer",
+        "character_maximum_length": null
+      }
+    ],
+    "indexes": [
+      {
+        "indexname": "vehiculo_pkey",
+        "indexdef": "CREATE UNIQUE INDEX vehiculo_pkey ON public.vehiculo USING btree (nromotor)"
+      },
+      {
+        "indexname": "ix_vehiculo_mar_mod_cat_comb",
+        "indexdef": "CREATE INDEX ix_vehiculo_mar_mod_cat_comb ON public.vehiculo USING btree (marca_key, modelo_key, categoria_key, combustible_key)"
+      },
+      {
+        "indexname": "ix_vehiculo_nromotor",
+        "indexdef": "CREATE INDEX ix_vehiculo_nromotor ON public.vehiculo USING btree (nromotor)"
+      }
+    ]
+  },
+  "marca": {
+    "columns": [
+      {
+        "column_name": "key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "nombre",
+        "data_type": "character varying",
+        "character_maximum_length": 150
+      }
+    ]
+  },
+  "modelo": {
+    "columns": [
+      {
+        "column_name": "key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "nombre",
+        "data_type": "character varying",
+        "character_maximum_length": 150
+      }
+    ]
+  },
+  "categoria": {
+    "columns": [
+      {
+        "column_name": "key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "nombre",
+        "data_type": "character varying",
+        "character_maximum_length": 150
+      },
+      {
+        "column_name": "keymtc",
+        "data_type": "integer",
+        "character_maximum_length": null
+      }
+    ]
+  },
+  "vehiculoclase": {
+    "columns": [
+      {
+        "column_name": "key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "nombre",
+        "data_type": "character varying",
+        "character_maximum_length": 150
+      }
+    ]
+  },
+  "color": {
+    "columns": [
+      {
+        "column_name": "key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "nombre",
+        "data_type": "character varying",
+        "character_maximum_length": 75
+      }
+    ]
+  },
+  "combustible": {
+    "columns": [
+      {
+        "column_name": "key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "nombre",
+        "data_type": "character varying",
+        "character_maximum_length": 150
+      }
+    ]
+  },
+  "carroceria": {
+    "columns": [
+      {
+        "column_name": "key",
+        "data_type": "character varying",
+        "character_maximum_length": 20
+      },
+      {
+        "column_name": "nombre",
+        "data_type": "character varying",
+        "character_maximum_length": 150
+      }
+    ]
+  }
+}
