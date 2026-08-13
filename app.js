@@ -401,8 +401,8 @@ app.use('/api/faregas', faregasRoutes);
 const faregasAuthRoutes = require('./modules/faregas/routes/faregas-auth.routes');
 app.use('/api/faregas/auth', faregasAuthRoutes);
 
-const orquestadorRoutes = require('./modules/orquestador/orquestador.routes');
-app.use('/api/global-auth', orquestadorRoutes);
+const globalAuthRoutes = require('./global-auth/global-auth.routes');
+app.use('/api/global-auth', globalAuthRoutes);
 
 // ==========================
 // HEALTH CHECK

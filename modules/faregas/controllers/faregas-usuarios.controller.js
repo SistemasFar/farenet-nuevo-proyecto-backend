@@ -28,7 +28,12 @@ exports.crearUsuario = async (req, res) => {
 
 exports.actualizarUsuario = async (req, res) => {
     try {
-        const result = await service.actualizarUsuario(req.params.username, req.body);
+        const usuarioObjetivo = req.params.username;
+        if (req.user.username === usuarioObjetivo && req.body.estado === false) {
+            return res.status(409).json({ message: 'No puedes desactivar tu propio usuario mientras tienes una sesión activa.' });
+        }
+        
+        const result = await service.actualizarUsuario(usuarioObjetivo, req.body);
         res.json(result);
     } catch (e) {
         if (e.message === 'USERNAME_EXISTS') {
@@ -56,7 +61,12 @@ exports.cambiarPassword = async (req, res) => {
 
 exports.eliminarUsuario = async (req, res) => {
     try {
-        await service.eliminarUsuario(req.params.username);
+        const usuarioObjetivo = req.params.username;
+        if (req.user.username === usuarioObjetivo) {
+            return res.status(409).json({ message: 'No puedes eliminar tu propio usuario mientras tienes una sesión activa.' });
+        }
+
+        await service.eliminarUsuario(usuarioObjetivo);
         res.json({ success: true });
     } catch (e) {
         if (e.message === 'HAS_SESSIONS') {

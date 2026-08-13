@@ -1,5 +1,6 @@
-const db = require('../../config/database');
+const db = require('../config/database');
 const bcrypt = require('bcryptjs');
+const faregasAuthService = require('../modules/faregas/services/faregas-auth.service');
 
 const normalizarTexto = (valor) => {
     return String(valor || '').trim();
@@ -60,4 +61,29 @@ exports.validarFarenetReadOnly = async (username, password) => {
     }
     
     return { valido: false };
+};
+
+exports.detectarEmpresasDisponibles = async (username, password) => {
+    const farenetResult = await exports.validarFarenetReadOnly(username, password);
+    const faregasResult = await faregasAuthService.validarFaregas(username, password);
+
+    if (!farenetResult.valido && !faregasResult.valido) {
+        throw new Error("Credenciales inválidas");
+    }
+
+    const empresasDisponibles = [];
+    if (farenetResult.valido) {
+        empresasDisponibles.push({
+            key: 'FARENET',
+            nombre: 'FARENET S.A.C.'
+        });
+    }
+    if (faregasResult.valido) {
+        empresasDisponibles.push({
+            key: 'FAREGAS',
+            nombre: 'FAREGAS S.A.C.'
+        });
+    }
+
+    return empresasDisponibles;
 };
