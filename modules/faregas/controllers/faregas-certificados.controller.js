@@ -390,3 +390,24 @@ exports.emitir = async (req, res) => {
         res.status(500).json({ ok: false, message: error.message });
     }
 };
+
+exports.obtenerPrevisualizacion = async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        const result = await certificadosService.obtenerPrevisualizacion(id, req.user);
+        res.json({ ok: true, data: result });
+    } catch (error) {
+        if (error.message === 'FORMATO_PREVIEW_PENDIENTE') {
+            return res.status(400).json({
+                ok: false,
+                codigo: 'FORMATO_PREVIEW_PENDIENTE',
+                message: 'El formato oficial de previsualización para esta modalidad aún está pendiente.'
+            });
+        }
+        if (error.message === 'CERTIFICADO_NOT_FOUND' || error.message === 'PLANTA_NO_AUTORIZADA') {
+            return res.status(403).json({ ok: false, message: 'No autorizado o no encontrado' });
+        }
+        res.status(500).json({ ok: false, message: error.message });
+    }
+};
+

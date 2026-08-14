@@ -77,6 +77,11 @@ router.get('/borradores/:id/glp', controller.obtenerGLP);
 router.put('/borradores/:id/conformidad', controller.guardarConformidad);
 router.get('/borradores/:id/conformidad', controller.obtenerConformidad);
 
+// PREVISUALIZACIÓN Y EMISIÓN
+router.get('/borradores/:id/previsualizacion', controller.obtenerPrevisualizacion);
+router.get('/borradores/:id/validar-emision', controller.validarEmision);
+router.post('/borradores/:id/emitir', controller.emitir);
+
 // TALLERES
 router.get('/talleres', controller.obtenerTalleresActivos);
 

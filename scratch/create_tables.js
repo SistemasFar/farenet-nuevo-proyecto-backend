@@ -40,10 +40,10 @@ async function run() {
         
         console.log("Insertando tipos iniciales...");
         await client.query(`
-            INSERT INTO fg_tipo_certificado (clave, nombre, descripcion) VALUES
-            ('GNV_ANUAL', 'Certificado de Inspección Anual GNV', NULL),
-            ('GLP_ANUAL', 'Certificado de Inspección GLP', NULL),
-            ('CONFORMIDAD', 'Certificado de Conformidad', NULL);
+            INSERT INTO fg_tipo_certificado (clave, nombre, descripcion, codigo) VALUES
+            ('GNV_ANUAL', 'Certificado de Inspección Anual GNV', NULL, '22'),
+            ('GLP_ANUAL', 'Certificado de Inspección GLP', NULL, '49'),
+            ('CONFORMIDAD', 'Certificado de Conformidad', NULL, '39');
         `);
         
         console.log("Creando 3. fg_correlativo_certificado");
@@ -164,6 +164,12 @@ async function run() {
                 fecha_creacion TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 fecha_modificacion TIMESTAMP WITHOUT TIME ZONE NULL
             );
+
+            INSERT INTO fg_taller_autorizado (razon_social, sede, estado, fecha_creacion)
+            VALUES 
+            ('TALLER AUTORIZADO SURCO', 'SURCO', true, CURRENT_TIMESTAMP),
+            ('TALLER AUTORIZADO SURQUILLO', 'SURQUILLO', true, CURRENT_TIMESTAMP)
+            ON CONFLICT DO NOTHING;
         `);
 
         console.log("Creando 8. fg_certificado_gnv");
@@ -176,6 +182,8 @@ async function run() {
                 taller_sede VARCHAR(200) NULL,
                 taller_direccion VARCHAR(500) NULL,
                 taller_codigo_autorizacion VARCHAR(100) NULL,
+                modalidad VARCHAR(20) NULL,
+                numero_chip VARCHAR(15) NULL,
                 CONSTRAINT fk_cert_gnv_cert FOREIGN KEY (certificado_id) REFERENCES fg_certificado(id) ON UPDATE CASCADE ON DELETE CASCADE,
                 CONSTRAINT fk_cert_gnv_taller FOREIGN KEY (taller_autorizado_id) REFERENCES fg_taller_autorizado(id) ON UPDATE CASCADE ON DELETE NO ACTION
             );
@@ -209,6 +217,7 @@ async function run() {
                 taller_sede VARCHAR(200) NULL,
                 taller_direccion VARCHAR(500) NULL,
                 taller_codigo_autorizacion VARCHAR(100) NULL,
+                modalidad VARCHAR(20) NULL,
                 CONSTRAINT fk_cert_glp_cert FOREIGN KEY (certificado_id) REFERENCES fg_certificado(id) ON UPDATE CASCADE ON DELETE CASCADE,
                 CONSTRAINT fk_cert_glp_taller FOREIGN KEY (taller_autorizado_id) REFERENCES fg_taller_autorizado(id) ON UPDATE CASCADE ON DELETE NO ACTION
             );

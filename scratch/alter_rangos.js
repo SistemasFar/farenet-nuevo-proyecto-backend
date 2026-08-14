@@ -38,7 +38,7 @@ async function run() {
         // Cambio 1
         await client.query("ALTER TABLE fg_tipo_certificado ADD COLUMN codigo VARCHAR(2);");
         await client.query("UPDATE fg_tipo_certificado SET codigo = '22' WHERE clave = 'GNV_ANUAL';");
-        await client.query("UPDATE fg_tipo_certificado SET codigo = '41' WHERE clave = 'GLP_ANUAL';");
+        await client.query("UPDATE fg_tipo_certificado SET codigo = '49' WHERE clave = 'GLP_ANUAL';");
         await client.query("UPDATE fg_tipo_certificado SET codigo = '39' WHERE clave = 'CONFORMIDAD';");
         await client.query("ALTER TABLE fg_tipo_certificado ALTER COLUMN codigo SET NOT NULL;");
         await client.query("ALTER TABLE fg_tipo_certificado ADD CONSTRAINT fg_tipo_certificado_codigo_key UNIQUE(codigo);");

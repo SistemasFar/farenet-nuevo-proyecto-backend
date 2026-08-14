@@ -278,6 +278,11 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
         numeroCertificado: cert.numero_certificado,
         fechaEmision: cert.fecha_emision,
         observaciones: cert.observaciones,
+        entidadCertificadoraNombre: cert.entidad_certificadora_nombre,
+        resolucionDirectoral: cert.resolucion_directoral,
+        domicilioFiscal: cert.domicilio_fiscal,
+        telefonoCertificadora: cert.telefono_certificadora,
+        lugarEmision: cert.lugar_emision,
         vehiculo: resVeh.rowCount > 0 ? resVeh.rows[0] : null,
         titulares: resTit.rows
     };
@@ -595,17 +600,33 @@ exports.guardarGNV = async (id, data, userContext) => {
             snapshotTaller = resTaller.rows[0];
         }
 
+        // Validar modalidad si se envía
+        const modalidadGNV = data.modalidad ? data.modalidad.trim().toUpperCase() : null;
+        if (modalidadGNV && !['INICIAL', 'ANUAL'].includes(modalidadGNV)) {
+            throw new Error('MODALIDAD_GNV_INVALIDA');
+        }
+
+        // Validar numero_chip
+        let numeroChip = data.numeroChip ? data.numeroChip.trim().toUpperCase() : null;
+        if (numeroChip) {
+            if (!/^[A-Z0-9]{1,15}$/.test(numeroChip)) {
+                throw new Error('NUMERO_CHIP_INVALIDO');
+            }
+        }
+
         const qUpd = `
             INSERT INTO fg_certificado_gnv (
-                certificado_id, taller_autorizado_id, vigencia_hasta, taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                certificado_id, taller_autorizado_id, vigencia_hasta, taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion, modalidad, numero_chip
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (certificado_id) DO UPDATE SET
                 taller_autorizado_id = EXCLUDED.taller_autorizado_id,
                 vigencia_hasta = EXCLUDED.vigencia_hasta,
                 taller_razon_social = EXCLUDED.taller_razon_social,
                 taller_sede = EXCLUDED.taller_sede,
                 taller_direccion = EXCLUDED.taller_direccion,
-                taller_codigo_autorizacion = EXCLUDED.taller_codigo_autorizacion
+                taller_codigo_autorizacion = EXCLUDED.taller_codigo_autorizacion,
+                modalidad = EXCLUDED.modalidad,
+                numero_chip = EXCLUDED.numero_chip
         `;
         
         await client.query(qUpd, [
@@ -615,7 +636,9 @@ exports.guardarGNV = async (id, data, userContext) => {
             snapshotTaller ? snapshotTaller.razon_social : null,
             snapshotTaller ? snapshotTaller.sede : null,
             snapshotTaller ? snapshotTaller.direccion : null,
-            snapshotTaller ? snapshotTaller.codigo_autorizacion : null
+            snapshotTaller ? snapshotTaller.codigo_autorizacion : null,
+            modalidadGNV,
+            numeroChip
         ]);
 
         await client.query('COMMIT');
@@ -686,10 +709,16 @@ exports.guardarGLP = async (id, data, userContext) => {
             snapshotTaller = resTaller.rows[0];
         }
 
+        // Validar modalidad si se envía
+        const modalidadGLP = data.modalidad ? data.modalidad.trim().toUpperCase() : null;
+        if (modalidadGLP && !['INICIAL', 'ANUAL'].includes(modalidadGLP)) {
+            throw new Error('MODALIDAD_GLP_INVALIDA');
+        }
+
         const qUpd = `
             INSERT INTO fg_certificado_glp (
-                certificado_id, taller_autorizado_id, expediente_tecnico, vigencia_hasta, taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                certificado_id, taller_autorizado_id, expediente_tecnico, vigencia_hasta, taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion, modalidad
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (certificado_id) DO UPDATE SET
                 taller_autorizado_id = EXCLUDED.taller_autorizado_id,
                 expediente_tecnico = EXCLUDED.expediente_tecnico,
@@ -697,7 +726,8 @@ exports.guardarGLP = async (id, data, userContext) => {
                 taller_razon_social = EXCLUDED.taller_razon_social,
                 taller_sede = EXCLUDED.taller_sede,
                 taller_direccion = EXCLUDED.taller_direccion,
-                taller_codigo_autorizacion = EXCLUDED.taller_codigo_autorizacion
+                taller_codigo_autorizacion = EXCLUDED.taller_codigo_autorizacion,
+                modalidad = EXCLUDED.modalidad
         `;
         
         await client.query(qUpd, [
@@ -708,7 +738,8 @@ exports.guardarGLP = async (id, data, userContext) => {
             snapshotTaller ? snapshotTaller.razon_social : null,
             snapshotTaller ? snapshotTaller.sede : null,
             snapshotTaller ? snapshotTaller.direccion : null,
-            snapshotTaller ? snapshotTaller.codigo_autorizacion : null
+            snapshotTaller ? snapshotTaller.codigo_autorizacion : null,
+            modalidadGLP
         ]);
 
         await client.query('COMMIT');
@@ -859,7 +890,7 @@ exports.obtenerConformidad = async (id, userContext) => {
 
 exports.obtenerTalleresActivos = async () => {
     const res = await db.query(`
-        SELECT id, ruc, razon_social AS "razonSocial", nombre_comercial AS "nombreComercial", 
+        SELECT id, ruc, razon_social AS "razonSocial", razon_social AS "nombre", nombre_comercial AS "nombreComercial", 
                sede, direccion, codigo_autorizacion AS "codigoAutorizacion"
         FROM fg_taller_autorizado
         WHERE estado = true
@@ -962,6 +993,18 @@ exports.validarEmision = async (id, userContext) => {
             const g = rGnv.rows[0];
             if (!g.taller_autorizado_id) pushError('gnv', 'taller_autorizado_id', 'CAMPO_REQUERIDO', 'Taller autorizado requerido');
             if (!g.vigencia_hasta) pushError('gnv', 'vigencia_hasta', 'CAMPO_REQUERIDO', 'Vigencia requerida');
+            // Modalidad requerida
+            if (!g.modalidad || !['INICIAL', 'ANUAL'].includes(g.modalidad)) {
+                pushError('gnv', 'modalidad', 'CAMPO_REQUERIDO', 'Modalidad GNV requerida (INICIAL o ANUAL)');
+            }
+            // Chip requerido solo para INICIAL
+            if (g.modalidad === 'INICIAL') {
+                if (!g.numero_chip) {
+                    pushError('gnv', 'numero_chip', 'CAMPO_REQUERIDO', 'N° Chip requerido para GNV INICIAL');
+                } else if (!/^[A-Z0-9]{1,15}$/.test(g.numero_chip)) {
+                    pushError('gnv', 'numero_chip', 'FORMATO_INVALIDO', 'N° Chip inválido: solo alfanumérico, máx 15 caracteres');
+                }
+            }
         }
 
         const rVer = await db.query('SELECT * FROM fg_certificado_gnv_verificacion WHERE certificado_id = $1', [id]);
@@ -995,6 +1038,10 @@ exports.validarEmision = async (id, userContext) => {
             if (!g.taller_autorizado_id) pushError('glp', 'taller_autorizado_id', 'CAMPO_REQUERIDO', 'Taller autorizado requerido');
             if (!g.vigencia_hasta) pushError('glp', 'vigencia_hasta', 'CAMPO_REQUERIDO', 'Vigencia requerida');
             if (!g.expediente_tecnico) pushError('glp', 'expediente_tecnico', 'CAMPO_REQUERIDO', 'Expediente técnico requerido');
+            // Modalidad requerida
+            if (!g.modalidad || !['INICIAL', 'ANUAL'].includes(g.modalidad)) {
+                pushError('glp', 'modalidad', 'CAMPO_REQUERIDO', 'Modalidad GLP requerida (INICIAL o ANUAL)');
+            }
         }
 
         const rComp = await db.query('SELECT * FROM fg_certificado_glp_componente WHERE certificado_id = $1', [id]);
@@ -1153,3 +1200,87 @@ exports.emitirCertificado = async (id, userContext) => {
         client.release();
     }
 };
+
+const generateGnvAnualHtml = require('../templates/gnv-anual.template');
+const generateGlpAnualHtml = require('../templates/glp-anual.template');
+const generateConformidadHtml = require('../templates/conformidad.template');
+
+exports.obtenerPrevisualizacion = async (id, userContext) => {
+    const borrador = await exports.obtenerBorradorCompleto(id, userContext);
+    const tipoClave = borrador.tipo ? borrador.tipo.clave : null;
+
+    if (tipoClave === 'GNV_ANUAL') {
+        const dataGnv = await exports.obtenerGNV(id, userContext);
+        const gnv = dataGnv.gnv || {};
+        if (gnv.modalidad === 'INICIAL') {
+            throw new Error('FORMATO_PREVIEW_PENDIENTE');
+        }
+        const html = generateGnvAnualHtml({
+            cabecera: {
+                id: borrador.id,
+                placa_nueva: borrador.vehiculo?.placaNueva,
+                fecha_emision: borrador.fechaEmision,
+                observaciones: borrador.observaciones,
+                entidad_certificadora_nombre: borrador.entidadCertificadoraNombre,
+                resolucion_directoral: borrador.resolucionDirectoral,
+                domicilio_fiscal: borrador.domicilioFiscal,
+                telefono_certificadora: borrador.telefonoCertificadora,
+                lugar_emision: borrador.lugarEmision
+            },
+            vehiculo: borrador.vehiculo,
+            gnv: gnv,
+            verificaciones: dataGnv.verificaciones || [],
+            titulares: borrador.titulares || []
+        });
+        return { html, tipo: 'GNV_ANUAL' };
+    } else if (tipoClave === 'GLP_ANUAL') {
+        const dataGlp = await exports.obtenerGLP(id, userContext);
+        const glp = dataGlp.glp || {};
+        if (glp.modalidad === 'INICIAL') {
+            throw new Error('FORMATO_PREVIEW_PENDIENTE');
+        }
+        const html = generateGlpAnualHtml({
+            cabecera: {
+                id: borrador.id,
+                placa_nueva: borrador.vehiculo?.placaNueva,
+                fecha_emision: borrador.fechaEmision,
+                observaciones: borrador.observaciones,
+                cliente_nombre: borrador.cliente?.nombreRazonSocial,
+                entidad_certificadora_nombre: borrador.entidadCertificadoraNombre,
+                resolucion_directoral: borrador.resolucionDirectoral,
+                domicilio_fiscal: borrador.domicilioFiscal,
+                telefono_certificadora: borrador.telefonoCertificadora,
+                lugar_emision: borrador.lugarEmision
+            },
+            vehiculo: borrador.vehiculo,
+            glp: glp,
+            componentes: dataGlp.componentes || [],
+            verificaciones: dataGlp.verificaciones || [],
+            titulares: borrador.titulares || []
+        });
+        return { html, tipo: 'GLP_ANUAL' };
+    } else if (tipoClave === 'CONFORMIDAD') {
+        const dataConf = await exports.obtenerConformidad(id, userContext);
+        const html = generateConformidadHtml({
+            cabecera: {
+                id: borrador.id,
+                placa_nueva: borrador.vehiculo?.placaNueva,
+                fecha_emision: borrador.fechaEmision,
+                observaciones: borrador.observaciones,
+                cliente_nombre: borrador.cliente?.nombreRazonSocial,
+                entidad_certificadora_nombre: borrador.entidadCertificadoraNombre,
+                resolucion_directoral: borrador.resolucionDirectoral,
+                domicilio_fiscal: borrador.domicilioFiscal,
+                telefono_certificadora: borrador.telefonoCertificadora,
+                lugar_emision: borrador.lugarEmision
+            },
+            vehiculo: borrador.vehiculo,
+            conformidad: dataConf.conformidad || {},
+            titulares: borrador.titulares || []
+        });
+        return { html, tipo: 'CONFORMIDAD' };
+    } else {
+        throw new Error('FORMATO_NUMERO_NO_CONFIGURADO');
+    }
+};
+
