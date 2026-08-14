@@ -1,0 +1,339 @@
+Created At: 2026-08-13T23:09:30Z
+Completed At: 2026-08-13T23:09:30Z
+File Path: `file:///c:/Users/Sistemas2/Desktop/farenet%20nuevo%20proyecto/farenetFrontend/src/modules/faregas/views/NuevoCertificado/NuevoCertificadoView.tsx`
+Total Lines: 830
+Total Bytes: 32116
+Showing lines 500 to 830
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+500: 
+501:         // Si todo ok, avanzamos
+502:         if (currentStepIndex < STEPS.length - 1) {
+503:           setCurrentStepIndex(currentStepIndex + 1);
+504:         }
+505: 
+506:       } catch (err: any) {
+507:         Swal.fire('Error', err.message || 'Error guardando datos', 'error');
+508:       } finally {
+509:         setIsSavingStep2(false);
+510:       }
+511:     } else if (currentStepIndex < STEPS.length - 1) {
+512:       setCurrentStepIndex(currentStepIndex + 1);
+513:     }
+514:   };
+515: 
+516:   
+517: 
+518: 
+519:     const irPasoAnterior = () => {
+520:     if (currentStepIndex > 0) {
+521:       setCurrentStepIndex(currentStepIndex - 1);
+522:     }
+523:   };
+524: 
+525:   const montoPendiente = Math.max(0, precioTotal - pagosAgregados.reduce((sum, p) => sum + parseFloat(p.importe || '0'), 0));
+526: 
+527:   // Efecto para inyectar automticamente el pago de Cuponidad
+528:   useEffect(() => {
+529:     if (formCaja.descuentoObj?.isCuponidad) {
+530:       const uuid = formCaja.descuentoObj.documentoBusqueda || formCaja.descuentoObj.uuid;
+531:       const cuponidadTarjeta = maestrosPago?.tarjetas?.find((t: any) => t.nombre.toUpperCase().includes('CUPONIDAD'));
+532: 
+533:       if (cuponidadTarjeta) {
+534:         const pagoExiste = pagosAgregados.some((p: any) => p.nroOperacion === uuid);
+535:         if (!pagoExiste) {
+536:           const nuevoPago = {
+537:             tipo: 'TARJETA',
+538:             tarjetaKey: cuponidadTarjeta.key,
+539:             nroOperacion: uuid,
+540:             importe: precioTotal.toFixed(2),
+541:             entidadFinancieraKey: '',
+542:             cuentaCorrienteKey: '',
+543:             fechaDeposito: '',
+544:             digitosTarjeta: ''
+545:           };
+546:           setPagosAgregados([nuevoPago]);
+547:         }
+548:       }
+549:     }
+550:   }, [formCaja.descuentoObj, precioTotal, maestrosPago, pagosAgregados]);
+551: 
+552:   // Efecto para auto-llenar pagos de Cortesía u otros que dejan el total en 0
+553:   useEffect(() => {
+554:     if (currentStepIndex === 1 && maestrosPago && formCaja.descuentoObj) {
+555: 
+556:       // Si el monto pendiente es 0 (ej. Cortesía, 100% descuento)
+557:       if (montoPendiente === 0) {
+558:         setDisablePagoTabs(true);
+559:         setFormPago((prev: any) => ({ ...prev, importe: '0' }));
+560:         // Si el precio total es 0, asegurarnos de no tener pagos "basura"
+561:         if (precioTotal === 0 && pagosAgregados.length > 0) {
+562:           setPagosAgregados([]);
+563:         }
+564:       } else {
+565:         setDisablePagoTabs(false);
+566:       }
+567:     } else if (currentStepIndex === 1) {
+568:       // En caso de que se haya quitado el descuento
+569:       if (montoPendiente > 0) {
+570:         setDisablePagoTabs(false);
+571:       }
+572:     }
+573:   }, [currentStepIndex, formCaja.descuentoObj, maestrosPago, precioTotal, montoPendiente]);
+574: 
+575:   const handleAgregarPago = async () => {
+576:     if (!formPago.importe || isNaN(parseFloat(formPago.importe)) || parseFloat(formPago.importe) <= 0) {
+577:       alert('Ingrese un importe válido mayor a 0.');
+578:       return;
+579:     }
+580: 
+581:     const importeNumerico = parseFloat(formPago.importe);
+582: 
+583:     if (pagoTab === 'BANCO') {
+584:       if (!formPago.entidadFinancieraKey || !formPago.cuentaCorrienteKey || !formPago.nroOperacion || !formPago.fechaDeposito) {
+585:         alert('Complete todos los campos del banco.');
+586:         return;
+587:       }
+588:     } else if (pagoTab === 'TARJETA') {
+589:       const selected = maestrosPago?.tarjetas?.find(t => t.key === formPago.tarjetaKey);
+590:       const nameUpper = selected ? selected.nombre.toUpperCase() : '';
+591:       const isCuponidad = nameUpper.includes('CUPONIDAD');
+592:       const isYapePlin = nameUpper.includes('YAPE') || nameUpper.includes('PLIN');
+593:       const isPagoWeb = nameUpper.includes('PAGO WEB');
+594:       const isEspecial = isCuponidad || isYapePlin || isPagoWeb;
+595: 
+596:       if (!formPago.tarjetaKey || !formPago.nroOperacion) {
+597:         alert('Complete los campos obligatorios de la tarjeta.');
+598:         return;
+599:       }
+600:       if (!isEspecial && !formPago.digitosTarjeta) {
+601:         alert('Ingrese los últimos 4 dígitos de la tarjeta.');
+602:         return;
+603:       }
+604: 
+605:       if (isCuponidad) {
+606:         if (formPago.nroOperacion.trim().length !== 10) {
+607:           alert('El Nro de Cuponidad ingresado no es correcto. Debe tener exactamente 10 caracteres.');
+608:           return;
+609:         }
+610:         try {
+611:           await inspeccionesApi.validarCuponidad(formPago.nroOperacion.trim());
+612:         } catch (err: any) {
+613:           alert(err.message || 'El código de Cuponidad ya fue usado o es inválido.');
+614:           return;
+615:         }
+616:       }
+617: 
+618:       if (isYapePlin) {
+619:         const len = formPago.nroOperacion.trim().length;
+620:         if (len < 4 || len > 10) {
+621:           alert('El Nro de Operación de Yape/Plin debe tener entre 4 y 10 dígitos.');
+622:           return;
+623:         }
+624:       }
+625:     }
+626: 
+627:     let montoPendienteReal = montoPendiente;
+628:     if (editingPagoIndex !== null) {
+629:       montoPendienteReal += parseFloat(pagosAgregados[editingPagoIndex].importe || '0');
+630:     }
+631: 
+632:     if (importeNumerico > montoPendienteReal) {
+633:       alert(`El importe ingresado (S/ ${importeNumerico.toFixed(2)}) es mayor al monto pendiente (S/ ${montoPendienteReal.toFixed(2)}).`);
+634:       return;
+635:     }
+636: 
+637:     const nuevoPago = {
+638:       tipo: pagoTab,
+639:       ...formPago,
+640:       importe: importeNumerico.toFixed(2),
+641:       nroOperacion: formPago.nroOperacion?.trim() || ''
+642:     };
+643: 
+644:     if (editingPagoIndex !== null) {
+645:       const nuevosPagos = [...pagosAgregados];
+646:       nuevosPagos[editingPagoIndex] = nuevoPago;
+647:       setPagosAgregados(nuevosPagos);
+648:       setEditingPagoIndex(null);
+649:     } else {
+650:       setPagosAgregados([...pagosAgregados, nuevoPago]);
+651:     }
+652: 
+653:     // Reset form
+654:     setFormPago({
+655:       importe: '',
+656:       tarjetaKey: '',
+657:       entidadFinancieraKey: '',
+658:       cuentaCorrienteKey: '',
+659:       nroOperacion: '',
+660:       digitosTarjeta: '',
+661:       fechaDeposito: new Date().toISOString().split('T')[0]
+662:     });
+663:   };
+664: 
+665:   const eliminarPago = (index: number) => {
+666:     const nuevosPagos = [...pagosAgregados];
+667:     nuevosPagos.splice(index, 1);
+668:     setPagosAgregados(nuevosPagos);
+669:   };
+670: 
+671:   if (loading && currentStepIndex === 0) {
+672:     return <div className="p-8 text-center text-slate-500">Cargando opciones...</div>;
+673:   }
+674: 
+675:   if (error) {
+676:     return <div className="p-8 text-center text-red-500">{error}</div>;
+677:   }
+678: 
+679:   return (
+680:     <div className="w-full min-h-[calc(100vh-10rem)] bg-white rounded-2xl shadow-xl border-t-[4px] border-solid border-t-[#f59e0b] overflow-hidden flex flex-col" style={{ borderImage: "linear-gradient(to right, #fde047 0%, #f59e0b 50%, #b45309 100%) 1" }}>
+681: 
+682:       {/* Header / Stepper */}
+683:       <div className="bg-[#f4f9ff] border-b border-[#052a79]/10 p-6">
+684:         <div className="flex items-center gap-3 mb-6">
+685:           <button
+686:             type="button"
+687:             onClick={() => navigate('/faregas/inicio')}
+688:             className="p-1.5 text-slate-400 hover:text-[#052a79] hover:bg-slate-100 rounded-full transition"
+689:             title="Volver"
+690:           >
+691:             <ArrowLeft className="w-5 h-5" />
+692:           </button>
+693:           <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">
+694:             Nuevo Certificado
+695:           </h2>
+696:         </div>
+697: 
+698:         <div className="flex items-center justify-between relative">
+699:           <div className="absolute left-0 top-1/2 w-full h-1 bg-slate-200 -z-10 -translate-y-1/2">
+700:             <div
+701:               className="h-full bg-gold-3d transition-all duration-500"
+702:               style={{ width: `${(currentStepIndex / (STEPS.length - 1)) * 100}%` }}
+703:             ></div>
+704:           </div>
+705: 
+706:           {STEPS.map((step, index) => {
+707:             const StepIcon = step.icon;
+708:             const isActive = index === currentStepIndex;
+709:             const isCompleted = index < currentStepIndex;
+710: 
+711:             return (
+712:               <div key={step.id} className="flex flex-col items-center gap-2 bg-[#f4f9ff] px-2">
+713:                 <div
+714:                   className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${isActive ? 'bg-[#052a79] text-white shadow-md ring-4 ring-blue-100' :
+715:                     isCompleted ? 'bg-gold-3d shadow-sm border-none' :
+716:                       'bg-white text-slate-400 border-2 border-slate-200'
+717:                     }`}
+718:                 >
+719:                   {isCompleted ? <CheckCircle2 className="w-5 h-5" /> : <StepIcon className="w-5 h-5" />}
+720:                 </div>
+721:                 <span className={`text-xs font-bold uppercase tracking-wider mt-1 ${isActive ? 'text-[#052a79]' : isCompleted ? 'text-gold-3d drop-shadow-sm' : 'text-slate-400'}`}>
+722:                   {step.label}
+723:                 </span>
+724:               </div>
+725:             );
+726:           })}
+727:         </div>
+728:       </div>
+729: 
+730:       {/* Content Area */}
+731:       <div className="p-8">
+732:         {STEPS[currentStepIndex].id === 'datos_iniciales' && (
+733:           <CajaStep
+734:             formCaja={formCaja}
+735:             setFormCaja={setFormCaja}
+736:           />
+737:         )}
+738:         {STEPS[currentStepIndex].id === 'vehiculo' && (
+739:           <VehiculoStep
+740:             tipoCertificado={formCaja.tipoCertificado as TipoCertificadoFaregas}
+741:             formVehiculo={formVehiculo}
+742:             setFormVehiculo={setFormVehiculo}
+743:             formPropietario={formPropietario}
+744:             setFormPropietario={setFormPropietario}
+745:             formGlp={formGlp}
+746:             setFormGlp={setFormGlp}
+747:             formGnv={formGnv}
+748:             setFormGnv={setFormGnv}
+749:             formConformidad={formConformidad}
+750:             setFormConformidad={setFormConformidad}
+751:             titulares={titulares}
+752:             setTitulares={setTitulares}
+753:           />
+754:         )}
+755:         {STEPS[currentStepIndex].id === 'pago' && (
+756:           <PagoStep
+757:             pagoTab={pagoTab}
+758:             setPagoTab={setPagoTab}
+759:             formPago={formPago}
+760:             setFormPago={setFormPago}
+761:             pagosAgregados={pagosAgregados}
+762:             handleAgregarPago={handleAgregarPago}
+763:             eliminarPago={eliminarPago}
+764:           />
+765:         )}
+766:         {STEPS[currentStepIndex].id === 'facturacion' && (
+767:           <FacturacionStep
+768:             formFacturacion={formFacturacion}
+769:             setFormFacturacion={setFormFacturacion}
+770:           />
+771:         )}
+772:         {STEPS[currentStepIndex].id === 'verificacion' && (
+773:           <VerificacionStep
+774:             tipoCertificado={formCaja.tipoCertificado as TipoCertificadoFaregas}
+775:             formCaja={formCaja}
+776:             formVehiculo={formVehiculo}
+777:             formPropietario={formPropietario}
+778:             formGlp={formGlp}
+779:             formGnv={formGnv}
+780:             formConformidad={formConformidad}
+781:             pagosAgregados={pagosAgregados}
+782:             formFacturacion={formFacturacion}
+783:           />
+784:         )}
+785:       </div>
+786: 
+787:       {/* FOOTER ACTIONS */}
+788:       <div className="bg-slate-50 border-t border-slate-200 p-4 flex justify-between items-center">
+789:         {currentStepIndex > 0 ? (
+790:           <button
+791:             type="button"
+792:             onClick={irPasoAnterior}
+793:             className="rounded-lg border border-slate-300 bg-white px-5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition"
+794:           >
+795:             Atrás
+796:           </button>
+797:         ) : <div></div>}
+798: 
+799:         <div className="flex flex-col items-end gap-1.5">
+800:           {currentStepIndex === STEPS.length - 1 ? (
+801:             <div className="flex gap-3">
+802:               <button
+803:                 type="button"
+804:                 onClick={irSiguientePaso}
+805:                 className="bg-gold-3d hover:-translate-y-0.5 rounded-lg px-6 py-2.5 text-xs font-black transition shadow-sm"
+806:               >
+807:                 FINALIZAR
+808:               </button>
+809:             </div>
+810:           ) : (
+811:             <button
+812:               type="button"
+813:               onClick={irSiguientePaso}
+814:               disabled={isCreatingDraft || isSavingStep2 || (currentStepIndex === 0 && (!formCaja.tipoCertificado || !formCaja.placa || (!formCaja.categoria && !vehiculoEncontrado)))}
+815:               className={`flex items-center gap-2 rounded-lg px-6 py-2.5 text-xs font-black transition shadow-sm
+816:                 ${(isCreatingDraft || isSavingStep2 || (currentStepIndex === 0 && (!formCaja.tipoCertificado || !formCaja.placa || (!formCaja.categoria && !vehiculoEncontrado))))
+817:                   ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+818:                   : 'bg-gold-3d hover:-translate-y-0.5'
+819:                 }`}
+820:             >
+821:               {isCreatingDraft || isSavingStep2 ? 'Procesando...' : 'Siguiente Paso'}
+822:             </button>
+823:           )}
+824:         </div>
+825:       </div>
+826: 
+827:     </div>
+828:   );
+829: }
+830: 
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

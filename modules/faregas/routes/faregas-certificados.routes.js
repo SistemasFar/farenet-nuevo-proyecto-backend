@@ -39,6 +39,9 @@ const authMiddleware = async (req, res, next) => {
 
 router.use(authMiddleware);
 
+// Catálogo
+router.get('/catalogos/verificaciones', controller.obtenerCatalogoVerificaciones);
+
 router.get('/tipos', controller.obtenerTipos);
 router.get('/correlativos', controller.obtenerCorrelativos);
 router.get('/correlativos/:plantaKey/:tipo', controller.obtenerRangoActivo);
@@ -46,6 +49,7 @@ router.post('/correlativos', controller.crearRango);
 router.patch('/correlativos/:id/cerrar', controller.cerrarRango);
 
 // FASE 3: BORRADORES DE CERTIFICADOS
+router.get('/borradores', controller.obtenerBorradores);
 router.post('/borradores', controller.crearBorrador);
 router.get('/borradores/:id', controller.obtenerBorradorCompleto);
 router.patch('/borradores/:id', controller.actualizarBorrador);
@@ -55,5 +59,25 @@ router.put('/borradores/:id/vehiculo', controller.guardarVehiculoBorrador);
 router.post('/borradores/:id/titulares', controller.agregarTitular);
 router.patch('/borradores/:id/titulares/:titularId', controller.actualizarTitular);
 router.delete('/borradores/:id/titulares/:titularId', controller.eliminarTitular);
+
+// FASE 4: DATOS ESPECÍFICOS DE CERTIFICADOS
+
+// GNV
+router.put('/borradores/:id/gnv', controller.guardarGNV);
+router.put('/borradores/:id/gnv/verificaciones', controller.guardarGNVVerificaciones);
+router.get('/borradores/:id/gnv', controller.obtenerGNV);
+
+// GLP
+router.put('/borradores/:id/glp', controller.guardarGLP);
+router.put('/borradores/:id/glp/componentes', controller.guardarGLPComponentes);
+router.put('/borradores/:id/glp/verificaciones', controller.guardarGLPVerificaciones);
+router.get('/borradores/:id/glp', controller.obtenerGLP);
+
+// CONFORMIDAD
+router.put('/borradores/:id/conformidad', controller.guardarConformidad);
+router.get('/borradores/:id/conformidad', controller.obtenerConformidad);
+
+// TALLERES
+router.get('/talleres', controller.obtenerTalleresActivos);
 
 module.exports = router;

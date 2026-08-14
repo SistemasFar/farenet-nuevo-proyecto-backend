@@ -1,0 +1,249 @@
+Created At: 2026-08-13T22:39:29Z
+Completed At: 2026-08-13T22:39:53Z
+The following changes were made by the multi_replace_file_content tool to: C:\Users\Sistemas2\Desktop\farenet nuevo proyecto\farenetFrontend\src\modules\faregas\views\NuevoCertificado\NuevoCertificadoView.tsx. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -20,9 +20,9 @@
+ import { TipoConformidadStep } from './components/NuevoCertificado/conformidad/TipoConformidadStep';
+ import { CaracteristicasFinalesStep } from './components/NuevoCertificado/conformidad/CaracteristicasFinalesStep';
+ import { EmisionStep } from './components/NuevoCertificado/EmisionStep';
+-import { useNavigate, useOutletContext } from 'react-router-dom';
+-import type { MainLayoutContext } from '../Dashboard/MainLayout';
+ import { faregasCertificadosApi } from '@/services/faregas/faregas-certificados.api';
++import { faregasClientesApi } from '@/services/faregas/faregas-clientes.api';
++import type { TitularState } from './components/NuevoCertificado/TitularesList';
+ 
+ const customSelectStyles = {
+   control: (base: any, state: any) => ({
+@@ -94,6 +94,7 @@
+   const [certificadoId, setCertificadoId] = useState<number | null>(null);
+   const [vehiculoEncontrado, setVehiculoEncontrado] = useState<any | null>(null);
+   const [isCreatingDraft, setIsCreatingDraft] = useState(false);
++  const [isSavingStep2, setIsSavingStep2] = useState(false);
+ 
+   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+   const [maestros, setMaestros] = useState<MaestrosCajaResponse['data'] | null>(null);
+@@ -147,7 +147,10 @@
+   const [editingPagoIndex, setEditingPagoIndex] = useState<number | null>(null);
+ 
+   // Form State (Vehículo)
+-    // Nuevos estados FAREGAS
++  const [titulares, setTitulares] = useState<TitularState[]>([]);
++  const [formVehiculo, setFormVehiculo] = useState<any>({});
++  
++  // Nuevos estados FAREGAS
+   // El tipoCertificado ahora vive en formCaja.tipoCertificado
+   const [formPropietario, setFormPropietario] = useState<any>({});
+   const [formGlp, setFormGlp] = useState<any>({});
+@@ -154,14 +154,4 @@
+   const [formConformidad, setFormConformidad] = useState<any>({});
+-  
+-  const [isVehiculoValid, setIsVehiculoValid] = useState(false);
+-  const [vehiculoTab, setVehiculoTab] = useState<'DATOS' | 'SOAT'>('DATOS');
+-  const [formVehiculo, setFormVehiculo] = useState<FormVehiculoState>({
+-    clase: '', marca: '', modelo: '', carroceria: '', marcaCarroceria: '', placaNueva: '',
+-    anioFabricacion: '', combustible: '', nroSerie: '', nroMotor: '', color: '',
+-    nroAsientos: '', nroPasajeros: '', nroPisos: '', longitud: '', ancho: '', altura: '',
+-    nroEjes: '', nroRuedas: '', nroCilindros: '', pesoSeco: '', cargaUtil: '', pesoBruto: '',
+-    nroPuertas: '', salidasEmergencia: '', kilometraje: ''
+-  });
+ 
+   // Form State (Facturación)
+   const [isFacturacionValid, setIsFacturacionValid] = useState(false);
+@@ -209,6 +209,24 @@
+     };
+   }, []);
+ 
++  useEffect(() => {
++    const handleEliminarTitular = async (e: any) => {
++      const { uuid, titularId } = e.detail;
++      if (!certificadoId) return;
++      try {
++        await faregasCertificadosApi.eliminarTitular(certificadoId, titularId);
++        setTitulares(prev => prev.filter(t => t._uuid !== uuid));
++        Swal.fire('Eliminado', 'El titular ha sido eliminado correctamente.', 'success');
++      } catch (err: any) {
++        Swal.fire('Error', 'No se pudo eliminar el titular: ' + err.message, 'error');
++      }
++    };
++    document.addEventListener('eliminarTitularBackend', handleEliminarTitular);
++    return () => {
++      document.removeEventListener('eliminarTitularBackend', handleEliminarTitular);
++    };
++  }, [certificadoId]);
++
+   const cargarMaestros = async () => {
+     try {
+       setLoading(true);
+@@ -277,20 +277,8 @@
+       }
+ 
+       if (e.key === 'ArrowRight') {
+-        if (currentStepIndex === 2) {
+-          if (vehiculoTab === 'DATOS') {
+-            setVehiculoTab('SOAT');
+-            return;
+-          }
+-        }
+         irSiguientePaso();
+       } else if (e.key === 'ArrowLeft') {
+-        if (currentStepIndex === 2) {
+-          if (vehiculoTab === 'SOAT') {
+-            setVehiculoTab('DATOS');
+-            return;
+-          }
+-        }
+         irPasoAnterior();
+       }
+     };
+@@ -297,6 +297,6 @@
+     window.addEventListener('keydown', handleKeyDown);
+     return () => window.removeEventListener('keydown', handleKeyDown);
+-  }, [currentStepIndex, vehiculoTab, formCaja, formVehiculo, formFacturacion, isVehiculoValid, isFacturacionValid, pagosAgregados]);
++  }, [currentStepIndex, formCaja, formVehiculo, formFacturacion, pagosAgregados]);
+ 
+   // Sincronizar Marca con Marca Carrocería
+ 
+@@ -412,6 +412,111 @@
+       } finally {
+         setIsCreatingDraft(false);
+       }
++    } else if (currentStepIndex === 1) {
++      if (!certificadoId) {
++        Swal.fire('Error', 'No hay borrador activo.', 'error');
++        return;
++      }
++      try {
++        setIsSavingStep2(true);
++        let idClientePrincipal = null;
++
++        // Si hay titulares, procesamos el principal (índice 0, orden 1)
++        if (titulares.length > 0) {
++          const principal = titulares[0];
++          if (principal.tipoDocumento && principal.nroDocumento && principal.nombreRazonSocial) {
++            if (!principal.clienteId) {
++              const resCli = await faregasClientesApi.crearCliente({
++                tipoDocumento: principal.tipoDocumento,
++                nroDocumento: principal.nroDocumento,
++                nombreRazonSocial: principal.nombreRazonSocial,
++                direccion: principal.direccion
++              });
++              if (resCli.ok && resCli.data?.id) {
++                idClientePrincipal = resCli.data.id;
++                // Actualizamos el titular 0
++                setTitulares(prev => {
++                  const arr = [...prev];
++                  arr[0] = { ...arr[0], clienteId: idClientePrincipal };
++                  return arr;
++                });
++              }
++            } else {
++              idClientePrincipal = principal.clienteId;
++            }
++          }
++        }
++
++        // Asociar cliente al certificado
++        if (idClientePrincipal) {
++          await faregasCertificadosApi.actualizarBorrador(certificadoId, { clienteId: String(idClientePrincipal) });
++        }
++
++        // Guardar snapshot de vehículo
++        await faregasCertificadosApi.guardarVehiculoBorrador(certificadoId, {
++          placa: formCaja.placa,
++          categoria: formCaja.categoria,
++          clase: formVehiculo.clase,
++          marca: formVehiculo.marca,
++          modelo: formVehiculo.modelo,
++          version: formVehiculo.version,
++          anioFabricacion: formVehiculo.anioFabricacion,
++          anioModelo: formVehiculo.anioModelo,
++          vin: formVehiculo.vin,
++          serieChasis: formVehiculo.serieChasis,
++          numeroMotor: formVehiculo.numeroMotor,
++          combustible: formVehiculo.combustible,
++          color: formVehiculo.color,
++          carroceria: formVehiculo.carroceria,
++          numeroCilindros: formVehiculo.numeroCilindros,
++          cilindrada: formVehiculo.cilindrada,
++          numeroEjes: formVehiculo.numeroEjes,
++          numeroRuedas: formVehiculo.numeroRuedas,
++          numeroAsientos: formVehiculo.numeroAsientos,
++          numeroPasajeros: formVehiculo.numeroPasajeros,
++          longitud: formVehiculo.longitud,
++          ancho: formVehiculo.ancho,
++          alto: formVehiculo.alto,
++          pesoNeto: formVehiculo.pesoNeto,
++          pesoBruto: formVehiculo.pesoBruto,
++          cargaUtil: formVehiculo.cargaUtil,
++          potencia: formVehiculo.potencia,
++          formulaRodante: formVehiculo.formulaRodante
++        });
++
++        // Guardar titulares secuencialmente
++        for (let i = 0; i < titulares.length; i++) {
++          const t = titulares[i];
++          const currentClienteId = i === 0 && idClientePrincipal ? idClientePrincipal : t.clienteId;
++          const payloadTitular = {
++            orden: t.orden,
++            clienteId: currentClienteId,
++            tipoDocumento: t.tipoDocumento,
++            nroDocumento: t.nroDocumento,
++            nombreRazonSocial: t.nombreRazonSocial,
++            direccion: t.direccion
++          };
++
++          if (t.titularId) {
++            await faregasCertificadosApi.actualizarTitular(certificadoId, t.titularId, payloadTitular);
++          } else {
++            const resTitular = await faregasCertificadosApi.crearTitular(certificadoId, payloadTitular);
++            if (resTitular.ok && resTitular.data?.id) {
++              setTitulares(prev => prev.map(pt => pt._uuid === t._uuid ? { ...pt, titularId: resTitular.data.id } : pt));
++            }
++          }
++        }
++
++        // Si todo ok, avanzamos
++        if (currentStepIndex < STEPS.length - 1) {
++          setCurrentStepIndex(currentStepIndex + 1);
++        }
++
++      } catch (err: any) {
++        Swal.fire('Error', err.message || 'Error guardando datos', 'error');
++      } finally {
++        setIsSavingStep2(false);
++      }
+     } else if (currentStepIndex < STEPS.length - 1) {
+       setCurrentStepIndex(currentStepIndex + 1);
+     }
+@@ -651,6 +651,8 @@
+             setFormGnv={setFormGnv}
+             formConformidad={formConformidad}
+             setFormConformidad={setFormConformidad}
++            titulares={titulares}
++            setTitulares={setTitulares}
+           />
+         )}
+         {STEPS[currentStepIndex].id === 'pago' && (
+@@ -711,9 +711,9 @@
+             <button
+               type="button"
+               onClick={irSiguientePaso}
+-              disabled={isCreatingDraft || (currentStepIndex === 0 && (!formCaja.tipoCertificado || !formCaja.placa || (!formCaja.categoria && !vehiculoEncontrado)))}
++              disabled={isCreatingDraft || isSavingStep2 || (currentStepIndex === 0 && (!formCaja.tipoCertificado || !formCaja.placa || (!formCaja.categoria && !vehiculoEncontrado)))}
+               className={`flex items-center gap-2 rounded-lg px-6 py-2.5 text-xs font-black transition shadow-sm
+-                ${(isCreatingDraft || (currentStepIndex === 0 && (!formCaja.tipoCertificado || !formCaja.placa || (!formCaja.categoria && !vehiculoEncontrado))))
++                ${(isCreatingDraft || isSavingStep2 || (currentStepIndex === 0 && (!formCaja.tipoCertificado || !formCaja.placa || (!formCaja.categoria && !vehiculoEncontrado))))
+                   ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+                   : 'bg-gold-3d hover:-translate-y-0.5'
+                 }`}
+@@ -720,4 +720,4 @@
+-              {isCreatingDraft ? 'Procesando...' : 'Siguiente Paso'}
++              {isCreatingDraft || isSavingStep2 ? 'Procesando...' : 'Siguiente Paso'}
+             </button>
+           )}
+         </div>
+[diff_block_end]
+
+Please note that the above snippet only shows the MODIFIED lines from the last change. It shows up to 3 lines of unchanged lines before and after the modified lines. The actual file contents may have many more lines not shown.
+
+We did our best to apply changes despite some inaccuracies. Double check if the edit applied is what you intended.
