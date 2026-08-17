@@ -1,1 +1,0 @@
-require('dotenv').config({path:'.env'}); require('./config/database').query("SELECT column_name FROM information_schema.columns WHERE table_name = 'fg_correlativo_certificado'").then(res => { console.log(res.rows); process.exit(0); })
