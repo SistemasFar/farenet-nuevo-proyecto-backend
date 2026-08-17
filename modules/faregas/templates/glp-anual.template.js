@@ -8,7 +8,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
     const verifs = data.verificaciones || [];
     const titulares = data.titulares || [];
 
-    const numCertificado = options.modo === 'FINAL' ? (cert.numero_certificado || '') : 'DG-49-PREVIEW';
+    const numCertificado = options.modo === 'FINAL' ? (cert.numero_certificado || '') : 'DG-41-PREVIEW';
 
     const fechaImp = formatDateLong(cert.fecha_emision);
     const vigenciaHastaFmt = formatDateShort(glp.vigencia_hasta);
@@ -19,7 +19,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
 
     const tallerNombre = glp.taller_razon_social || '';
     const tallerDir = glp.taller_direccion || '';
-    const tallerDisplay = [tallerNombre, tallerDir].filter(Boolean).join(' - ') || '-';
+    const tallerDisplay = 'CHARING. - Calle. San Pedro. 745 Surquillo';
 
     // Verificaciones 1-7 GLP
     const verifMap = {};
@@ -51,12 +51,14 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
 
     // Componentes rows
     const compRowsHtml = componentes.length > 0 ? componentes.map((c, i) => {
-        let modStr = escapeHtml(c.modelo || '');
+        let modRaw = (c.modelo || '').trim();
+        if (modRaw.toUpperCase() === 'Q') modRaw = '';
+        let modStr = escapeHtml(modRaw);
         if (c.componente === 'CILINDRO' && (c.capacidad_litros || c.anio_fabricacion)) {
             const cap = c.capacidad_litros ? `${c.capacidad_litros} LTS` : '';
             const anio = c.anio_fabricacion ? `${c.mes_fabricacion ? String(c.mes_fabricacion).padStart(2, '0') + '-' : ''}${c.anio_fabricacion}` : '';
             const extra = [cap, anio].filter(Boolean).join(' / ');
-            if (extra) modStr = modStr ? `${modStr} (${extra})` : extra;
+            if (extra) modStr = modStr ? `${modStr} (${extra})` : `(${extra})`;
         }
         return `<tr>
             <td style="text-align: center;">${i + 1}</td>
@@ -142,6 +144,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             font-size: 9px;
             color: #333;
             line-height: 1.25;
+            text-align: left;
         }
         .title {
             font-size: 13.5px;
@@ -234,15 +237,16 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
     <div class="documento-certificado">
         <div class="cert-content">
             <div class="header">
+                <div class="title" style="margin-top: 0; margin-bottom: 10px;">CERTIFICADO DE INSPECCION DEL VEHICULO A GLP</div>
                 <div class="header-sub">
-            ${escapeHtml(resDirectoral)}<br>
-            Domicilio Fiscal: ${escapeHtml(domFiscal)}<br>
-            Celular: ${escapeHtml(telfCert)}
-        </div>
-        <div class="title">CERTIFICADO DE INSPECCION DEL VEHICULO A GLP</div>
-        <div class="cert-num">Certificado N° ${escapeHtml(numCertificado)}</div>
-        <div style="font-weight: bold; font-size: 10.5px; margin-top: 2px;">${escapeHtml(entNombre)}</div>
-    </div>
+                    R.D. N° 0339-2024-MTC/17.03<br>
+                    Domicilio Fiscal: Jr. Alberto Secada N°315 Prov.<br>
+                    Const del Callao – Prov. Const del Callao.<br>
+                    Celular: 966702160
+                </div>
+                <div style="font-weight: bold; font-size: 14px; margin-bottom: 10px; letter-spacing: 0.5px; text-align: center;">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
+                <div class="cert-num">Certificado N° ${escapeHtml(numCertificado)}</div>
+            </div>
 
     <div class="certifica-p">
         Haber efectuado la evaluación de las condiciones de seguridad respecto de la conversión del sistema de combustión a Gas Licuado de Petróleo - GLP efectuada al siguiente vehículo:
@@ -268,7 +272,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val">${escapeHtml(veh.categoria || '-')}</td>
             <td class="num">11</td>
             <td>Combustible</td>
-            <td class="val">${escapeHtml(veh.combustible || 'BI COMBUSTIBLE GLP')}</td>
+            <td class="val">BI COMBUSTIBLE GLP</td>
         </tr>
         <tr>
             <td class="num">4</td>
@@ -356,7 +360,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
 
     <div class="footer-sec">
         <div>El presente Certificado es emitido a solicitud del taller autorizado <strong>${escapeHtml(tallerDisplay)}</strong>.</div>
-        <div style="margin-top: 4px;">Se expide el presente certificado en <strong>${escapeHtml(lugarEmision)}</strong> a los <strong>${fechaImp.dia}</strong> días del mes de <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.</div>
+        <div style="margin-top: 4px;">Se expide el presente certificado en Lima a los <strong>${fechaImp.dia}</strong> días del mes de <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.</div>
     </div>
         </div>
     </div>

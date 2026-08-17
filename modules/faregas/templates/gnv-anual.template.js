@@ -10,7 +10,7 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
     const numCertificado = options.modo === 'FINAL' ? (cert.numero_certificado || '') : 'DG-22-PREVIEW';
 
     const fechaImp = formatDateLong(cert.fecha_emision);
-    const vigenciaHastaFmt = formatDateShort(gnv.vigencia_hasta);
+    const vigenciaHastaFmt = formatDateShort(gnv.vigencia_hasta).replace(/\//g, '-');
 
     const tallerNombre = gnv.taller_razon_social || '';
     const tallerSede = gnv.taller_sede || '';
@@ -192,14 +192,15 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
     <div class="documento-certificado">
         <div class="cert-content">
             <div class="header">
-                <div class="header-sub">
-            ${escapeHtml(resDirectoral)}<br>
-            Domicilio Fiscal: ${escapeHtml(domFiscal)}<br>
-            Celular: ${escapeHtml(telfCert)}
-        </div>
-        <div class="title">CERTIFICADO DE INSPECCION ANUAL DEL VEHICULO A GNV</div>
-        <div class="cert-num">Certificado N° ${escapeHtml(numCertificado)}</div>
-        <div style="font-weight: bold; font-size: 11px; margin-top: 4px;">${escapeHtml(entNombre)}</div>
+                <div class="title" style="margin-top: 0; margin-bottom: 10px;">CERTIFICADO DE INSPECCION ANUAL DEL VEHICULO A GNV</div>
+                <div class="header-sub" style="text-align: left;">
+                    R.D. N° 0296-2024 - MTC/17.03<br>
+                    Domicilio Fiscal: Jr. Alberto Secada N°315 Prov.<br>
+                    Const del Callao – Prov. Const del Callao<br>
+                    Celular: 966702160
+                </div>
+                <div style="font-weight: bold; font-size: 14px; margin-bottom: 10px; letter-spacing: 0.5px; text-align: center;">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
+                <div class="cert-num">Certificado N° ${escapeHtml(numCertificado)}</div>
     </div>
 
     <div class="certifica-hdr">CERTIFICA</div>
@@ -287,7 +288,7 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
     </div>
 
     <div class="footer-date">
-        Se expide el presente certificado en <strong>${escapeHtml(lugarEmision)}</strong> a los <strong>${fechaImp.dia}</strong> días del mes de <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.
+        Se expide el presente certificado en Lima a los <strong>${fechaImp.dia}</strong> días del mes de <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.
     </div>
         </div>
     </div>
