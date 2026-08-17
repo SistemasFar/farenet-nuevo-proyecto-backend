@@ -21,7 +21,9 @@ const config = Object.freeze({
     enabled: getBooleanEnv('NUBEFACT_ENABLED', false),
     apiUrl: process.env.NUBEFACT_API_URL || '',
     token: process.env.NUBEFACT_TOKEN || '',
-    timeoutMs: getIntegerEnv('NUBEFACT_TIMEOUT_MS', 10000)
+    timeoutMs: getIntegerEnv('NUBEFACT_TIMEOUT_MS', 10000),
+    enviarSunat: getBooleanEnv('NUBEFACT_ENVIAR_SUNAT', true),
+    enviarCliente: getBooleanEnv('NUBEFACT_ENVIAR_CLIENTE', true)
   })
 });
 

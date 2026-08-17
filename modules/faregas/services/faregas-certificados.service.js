@@ -1,4 +1,5 @@
 const db = require('../../../config/database');
+const { paraPlantilla } = require('../mappers/faregas-vehiculo.mapper');
 
 exports.obtenerTiposActivos = async () => {
     const res = await db.query(`
@@ -984,6 +985,32 @@ exports.validarEmision = async (id, userContext) => {
         }
     }
 
+    // Orden y pagos Faregas. La orden es la fuente de verdad del saldo antes de emitir.
+    const rOrdenPago = await db.query(
+        'SELECT estado, importe_total, importe_pagado, saldo_pendiente FROM fg_orden_pago WHERE certificado_id = $1',
+        [id]
+    );
+    if (rOrdenPago.rowCount === 0) {
+        pushError('pago', 'orden', 'ORDEN_PAGO_FALTANTE', 'Falta registrar la orden de pago del certificado');
+    } else {
+        const orden = rOrdenPago.rows[0];
+        if (orden.estado !== 'PAGADO' || Number(orden.saldo_pendiente) > 0.009) {
+            pushError('pago', 'saldo', 'PAGO_INCOMPLETO', `Pago incompleto. Saldo pendiente: S/ ${Number(orden.saldo_pendiente).toFixed(2)}`);
+        }
+    }
+
+    // La facturacion electronica debe estar aceptada antes de consumir el
+    // correlativo definitivo del certificado.
+    const rFacturacion = await db.query(
+        'SELECT estado, nro_comprobante, aceptada_sunat FROM fg_facturacion WHERE certificado_id = $1',
+        [id]
+    );
+    if (rFacturacion.rowCount === 0) {
+        pushError('facturacion', 'general', 'FACTURACION_FALTANTE', 'Faltan los datos de facturacion');
+    } else if (rFacturacion.rows[0].estado !== 'ACEPTADO' || rFacturacion.rows[0].aceptada_sunat !== true) {
+        pushError('facturacion', 'estado', 'FACTURACION_NO_EMITIDA', 'El comprobante debe estar aceptado por Nubefact/SUNAT antes de emitir el certificado');
+    }
+
     // GNV Especifico
     if (cert.tipo_clave === 'GNV_ANUAL') {
         const rGnv = await db.query('SELECT * FROM fg_certificado_gnv WHERE certificado_id = $1', [id]);
@@ -999,6 +1026,7 @@ exports.validarEmision = async (id, userContext) => {
             }
             // Chip requerido solo para INICIAL
             if (g.modalidad === 'INICIAL') {
+                pushError('gnv', 'formato', 'FORMATO_INICIAL_PENDIENTE', 'La captura GNV INICIAL está habilitada, pero su formato de emisión todavía no está configurado');
                 if (!g.numero_chip) {
                     pushError('gnv', 'numero_chip', 'CAMPO_REQUERIDO', 'N° Chip requerido para GNV INICIAL');
                 } else if (!/^[A-Z0-9]{1,15}$/.test(g.numero_chip)) {
@@ -1041,6 +1069,8 @@ exports.validarEmision = async (id, userContext) => {
             // Modalidad requerida
             if (!g.modalidad || !['INICIAL', 'ANUAL'].includes(g.modalidad)) {
                 pushError('glp', 'modalidad', 'CAMPO_REQUERIDO', 'Modalidad GLP requerida (INICIAL o ANUAL)');
+            } else if (g.modalidad === 'INICIAL') {
+                pushError('glp', 'formato', 'FORMATO_INICIAL_PENDIENTE', 'La captura GLP INICIAL está habilitada, pero su formato de emisión todavía no está configurado');
             }
         }
 
@@ -1053,8 +1083,8 @@ exports.validarEmision = async (id, userContext) => {
             if (!c.marca) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', `Marca requerida para componente ${c.componente}`);
             if (!c.modelo) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', `Modelo requerido para componente ${c.componente}`);
             if (c.componente === 'CILINDRO') {
-                if (!c.serie) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', 'Serie requerida para CILINDRO');
-                if (!c.capacidad) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', 'Capacidad requerida para CILINDRO');
+                if (!c.numero_serie) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', 'Serie requerida para CILINDRO');
+                if (!c.capacidad_litros) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', 'Capacidad requerida para CILINDRO');
                 if (!c.mes_fabricacion) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', 'Mes fabricación requerido para CILINDRO');
                 if (!c.anio_fabricacion) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', 'Año fabricación requerido para CILINDRO');
             }
@@ -1208,6 +1238,7 @@ const generateConformidadHtml = require('../templates/conformidad.template');
 exports.obtenerPrevisualizacion = async (id, userContext) => {
     const borrador = await exports.obtenerBorradorCompleto(id, userContext);
     const tipoClave = borrador.tipo ? borrador.tipo.clave : null;
+    const vehiculoPlantilla = paraPlantilla(borrador.vehiculo || {});
 
     if (tipoClave === 'GNV_ANUAL') {
         const dataGnv = await exports.obtenerGNV(id, userContext);
@@ -1218,7 +1249,7 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
         const html = generateGnvAnualHtml({
             cabecera: {
                 id: borrador.id,
-                placa_nueva: borrador.vehiculo?.placaNueva,
+                placa_nueva: vehiculoPlantilla.placa,
                 fecha_emision: borrador.fechaEmision,
                 observaciones: borrador.observaciones,
                 entidad_certificadora_nombre: borrador.entidadCertificadoraNombre,
@@ -1227,7 +1258,7 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
                 telefono_certificadora: borrador.telefonoCertificadora,
                 lugar_emision: borrador.lugarEmision
             },
-            vehiculo: borrador.vehiculo,
+            vehiculo: vehiculoPlantilla,
             gnv: gnv,
             verificaciones: dataGnv.verificaciones || [],
             titulares: borrador.titulares || []
@@ -1242,7 +1273,7 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
         const html = generateGlpAnualHtml({
             cabecera: {
                 id: borrador.id,
-                placa_nueva: borrador.vehiculo?.placaNueva,
+                placa_nueva: vehiculoPlantilla.placa,
                 fecha_emision: borrador.fechaEmision,
                 observaciones: borrador.observaciones,
                 cliente_nombre: borrador.cliente?.nombreRazonSocial,
@@ -1252,7 +1283,7 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
                 telefono_certificadora: borrador.telefonoCertificadora,
                 lugar_emision: borrador.lugarEmision
             },
-            vehiculo: borrador.vehiculo,
+            vehiculo: vehiculoPlantilla,
             glp: glp,
             componentes: dataGlp.componentes || [],
             verificaciones: dataGlp.verificaciones || [],
@@ -1264,7 +1295,7 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
         const html = generateConformidadHtml({
             cabecera: {
                 id: borrador.id,
-                placa_nueva: borrador.vehiculo?.placaNueva,
+                placa_nueva: vehiculoPlantilla.placa,
                 fecha_emision: borrador.fechaEmision,
                 observaciones: borrador.observaciones,
                 cliente_nombre: borrador.cliente?.nombreRazonSocial,
@@ -1274,7 +1305,7 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
                 telefono_certificadora: borrador.telefonoCertificadora,
                 lugar_emision: borrador.lugarEmision
             },
-            vehiculo: borrador.vehiculo,
+            vehiculo: vehiculoPlantilla,
             conformidad: dataConf.conformidad || {},
             titulares: borrador.titulares || []
         });
@@ -1283,4 +1314,3 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
         throw new Error('FORMATO_NUMERO_NO_CONFIGURADO');
     }
 };
-

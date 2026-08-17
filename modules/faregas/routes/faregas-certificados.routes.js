@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const controller = require('../controllers/faregas-certificados.controller');
+const pagosController = require('../controllers/faregas-pagos.controller');
+const facturacionController = require('../controllers/faregas-facturacion.controller');
 const jwt = require('jsonwebtoken');
 const db = require('../../../config/database');
 
@@ -76,6 +78,15 @@ router.get('/borradores/:id/glp', controller.obtenerGLP);
 // CONFORMIDAD
 router.put('/borradores/:id/conformidad', controller.guardarConformidad);
 router.get('/borradores/:id/conformidad', controller.obtenerConformidad);
+
+// PAGOS
+router.get('/borradores/:id/pagos', pagosController.obtenerPagos);
+router.put('/borradores/:id/pagos', pagosController.guardarPagos);
+
+// FACTURACION ELECTRONICA
+router.get('/borradores/:id/facturacion', facturacionController.obtener);
+router.put('/borradores/:id/facturacion', facturacionController.guardar);
+router.post('/borradores/:id/facturacion/emitir', facturacionController.emitir);
 
 // PREVISUALIZACIÓN Y EMISIÓN
 router.get('/borradores/:id/previsualizacion', controller.obtenerPrevisualizacion);

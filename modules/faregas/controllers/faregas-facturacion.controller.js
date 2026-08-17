@@ -1,0 +1,56 @@
+const facturacionService = require('../services/faregas-facturacion.service');
+
+const responderError = (res, error) => {
+    const status = error.statusCode || 500;
+    const messages = {
+        CERTIFICADO_NOT_FOUND: 'El certificado no existe.',
+        PLANTA_NO_AUTORIZADA: 'No tiene acceso a la planta del certificado.',
+        CERTIFICADO_NO_EDITABLE: 'El certificado ya no se encuentra en estado BORRADOR.',
+        DATOS_FACTURACION_INVALIDOS: 'Los datos de facturacion no son validos.',
+        FACTURACION_NO_EDITABLE: 'La facturacion ya fue enviada y no puede modificarse.',
+        FACTURACION_FALTANTE: 'Primero debe guardar los datos de facturacion.',
+        ORDEN_PAGO_FALTANTE: 'No existe una orden de pago para el certificado.',
+        PAGO_INCOMPLETO: 'El pago debe estar completo antes de facturar.',
+        NUBEFACT_DESHABILITADO: 'La integracion con Nubefact esta deshabilitada.',
+        NUBEFACT_NO_CONFIGURADO: 'Faltan la URL o el token de Nubefact.',
+        EMISION_EN_PROCESO: 'Ya existe una emision de comprobante en proceso.',
+        SERIE_COMPROBANTE_NO_CONFIGURADA: 'La planta no tiene una serie de comprobantes configurada.',
+        SERIE_COMPROBANTE_INVALIDA: 'La serie de comprobantes de la planta es invalida.',
+        NUBEFACT_RECHAZADO: 'Nubefact o SUNAT rechazaron el comprobante.',
+        NUBEFACT_ERROR: 'No se pudo confirmar la emision del comprobante con Nubefact.'
+    };
+    if (status >= 500) console.error('[FAREGAS FACTURACION]', error);
+    return res.status(status).json({
+        ok: false,
+        codigo: error.code || error.message || 'ERROR_INTERNO',
+        message: messages[error.code || error.message] || 'Error interno del servidor.',
+        detalles: error.detalles || undefined
+    });
+};
+
+exports.obtener = async (req, res) => {
+    try {
+        const data = await facturacionService.obtenerFacturacion(Number(req.params.id), req.user);
+        return res.json({ ok: true, data });
+    } catch (error) {
+        return responderError(res, error);
+    }
+};
+
+exports.guardar = async (req, res) => {
+    try {
+        const data = await facturacionService.guardarFacturacion(Number(req.params.id), req.body, req.user);
+        return res.json({ ok: true, data });
+    } catch (error) {
+        return responderError(res, error);
+    }
+};
+
+exports.emitir = async (req, res) => {
+    try {
+        const data = await facturacionService.emitirFacturacion(Number(req.params.id), req.user);
+        return res.json({ ok: true, data });
+    } catch (error) {
+        return responderError(res, error);
+    }
+};
