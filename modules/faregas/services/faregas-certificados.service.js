@@ -195,6 +195,12 @@ exports.crearBorrador = async (data, userContext) => {
     // userContext: username, perfil_id, planta_key
     
     const { tipoCertificadoClave, clienteId, observaciones } = data;
+
+    if (observaciones && observaciones.length > 250 && tipoCertificadoClave && tipoCertificadoClave.startsWith('GNV')) {
+        const err = new Error('Las observaciones no pueden superar los 250 caracteres.');
+        err.status = 400;
+        throw err;
+    }
     const { username, planta_key } = userContext;
 
     // Validar tipo
@@ -312,6 +318,11 @@ exports.actualizarBorrador = async (id, data, userContext) => {
             values.push(data.clienteId);
         }
         if (data.observaciones !== undefined) {
+            if (data.observaciones && data.observaciones.length > 250 && (cert.tipo_certificado_clave.startsWith('GNV') || (data.tipoCertificadoClave && data.tipoCertificadoClave.startsWith('GNV')))) {
+                const err = new Error('Las observaciones no pueden superar los 250 caracteres.');
+                err.status = 400;
+                throw err;
+            }
             campos.push(`observaciones = $${idx++}`);
             values.push(data.observaciones);
         }
@@ -841,6 +852,18 @@ exports.guardarConformidad = async (id, data, userContext) => {
             throw new Error('TIPO_CONFORMIDAD_INVALIDO');
         }
 
+        if (data.caracteristicaRegistrable && data.caracteristicaRegistrable.length > 300) {
+            const err = new Error('La característica a certificar no puede superar los 300 caracteres.');
+            err.status = 400;
+            throw err;
+        }
+
+        if (data.usoOriginalVehiculo && data.usoOriginalVehiculo.length > 200) {
+            const err = new Error('El uso original del vehículo no puede superar los 200 caracteres.');
+            err.status = 400;
+            throw err;
+        }
+
         const qUpd = `
             INSERT INTO fg_certificado_conformidad (
                 certificado_id, tipo_conformidad, tipo_tramite, caracteristica_registrable, motivo, descripcion, uso_original_vehiculo
@@ -920,6 +943,10 @@ exports.validarEmision = async (id, userContext) => {
 
     const errores = [];
     const pushError = (seccion, campo, codigo, mensaje) => errores.push({ seccion, campo, codigo, mensaje });
+
+    if (cert.tipo_clave.startsWith('GNV') && cert.observaciones && cert.observaciones.length > 250) {
+        pushError('cabecera', 'observaciones', 'LONGITUD_EXCEDIDA', 'Las observaciones no pueden superar los 250 caracteres.');
+    }
 
     // Vehículo base
     const rVeh = await db.query('SELECT * FROM fg_certificado_vehiculo WHERE certificado_id = $1', [id]);

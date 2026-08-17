@@ -1,13 +1,13 @@
 const { escapeHtml, formatDateLong, formatDateShort } = require('./template-utils');
 
-function generateGnvAnualHtml(data) {
+function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
     const cert = data.cabecera || {};
     const veh = data.vehiculo || {};
     const gnv = data.gnv || {};
     const verifs = data.verificaciones || [];
     const titulares = data.titulares || [];
 
-    const numCertificado = 'DG-22-PREVIEW';
+    const numCertificado = options.modo === 'FINAL' ? (cert.numero_certificado || '') : 'DG-22-PREVIEW';
 
     const fechaImp = formatDateLong(cert.fecha_emision);
     const vigenciaHastaFmt = formatDateShort(gnv.vigencia_hasta);
@@ -56,16 +56,28 @@ function generateGnvAnualHtml(data) {
     <meta charset="UTF-8">
     <title>Certificado GNV Anual - Previsualización</title>
     <style>
-        @page { size: A4 portrait; margin: 15mm; }
+        @page { size: A4 portrait; margin: 0; }
         body {
             font-family: Arial, Helvetica, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #fff;
+            position: relative;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+        .documento-certificado {
+            width: 210mm;
+            min-height: 297mm;
+            box-sizing: border-box;
+            padding: 20mm 15mm 15mm 15mm;
+            margin: 0 auto;
+            position: relative;
+        }
+        .cert-content {
             font-size: 11px;
             color: #000;
             line-height: 1.35;
-            margin: 0;
-            padding: 20px;
-            background-color: #fff;
-            position: relative;
         }
         .watermark {
             position: fixed;
@@ -174,11 +186,13 @@ function generateGnvAnualHtml(data) {
     </style>
 </head>
 <body>
-    <div class="watermark">PREVISUALIZACIÓN</div>
-    <div class="preview-badge">⚠️ BORRADOR FAREGAS — PREVISUALIZACIÓN NO EMITIDA (DOCUMENTO SIN VALIDEZ LEGAL)</div>
+    ${options.modo === "PREVIEW" ? `<div class="watermark">PREVISUALIZACIÓN</div>
+    <div class="preview-badge">⚠️ BORRADOR FAREGAS — PREVISUALIZACIÓN NO EMITIDA (DOCUMENTO SIN VALIDEZ LEGAL)</div>` : ""}
 
-    <div class="header">
-        <div class="header-sub">
+    <div class="documento-certificado">
+        <div class="cert-content">
+            <div class="header">
+                <div class="header-sub">
             ${escapeHtml(resDirectoral)}<br>
             Domicilio Fiscal: ${escapeHtml(domFiscal)}<br>
             Celular: ${escapeHtml(telfCert)}
@@ -274,6 +288,8 @@ function generateGnvAnualHtml(data) {
 
     <div class="footer-date">
         Se expide el presente certificado en <strong>${escapeHtml(lugarEmision)}</strong> a los <strong>${fechaImp.dia}</strong> días del mes de <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.
+    </div>
+        </div>
     </div>
 </body>
 </html>`;

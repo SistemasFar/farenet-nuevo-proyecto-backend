@@ -1,12 +1,12 @@
 const { escapeHtml, formatDateLong } = require('./template-utils');
 
-function generateConformidadHtml(data) {
+function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
     const cert = data.cabecera || {};
     const veh = data.vehiculo || {};
     const conf = data.conformidad || {};
     const titulares = data.titulares || [];
 
-    const numCertificado = 'DG-39-PREVIEW';
+    const numCertificado = options.modo === 'FINAL' ? (cert.numero_certificado || '') : 'DG-39-PREVIEW';
     const fechaImp = formatDateLong(cert.fecha_emision);
 
     const propietarioNombre = titulares.length > 0
@@ -35,7 +35,7 @@ function generateConformidadHtml(data) {
     <meta charset="UTF-8">
     <title>Certificado de Conformidad - Previsualización</title>
     <style>
-        @page { size: A4 portrait; margin: 15mm; }
+        @page { size: A4 portrait; margin: 0; }
         body {
             font-family: Arial, Helvetica, sans-serif;
             font-size: 10.5px;
@@ -45,6 +45,8 @@ function generateConformidadHtml(data) {
             padding: 20px;
             background-color: #fff;
             position: relative;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
         .watermark {
             position: fixed;
@@ -164,11 +166,13 @@ function generateConformidadHtml(data) {
     </style>
 </head>
 <body>
-    <div class="watermark">PREVISUALIZACIÓN</div>
-    <div class="preview-badge">⚠️ BORRADOR FAREGAS — PREVISUALIZACIÓN NO EMITIDA (DOCUMENTO SIN VALIDEZ LEGAL)</div>
+    ${options.modo === "PREVIEW" ? `<div class="watermark">PREVISUALIZACIÓN</div>
+    <div class="preview-badge">⚠️ BORRADOR FAREGAS — PREVISUALIZACIÓN NO EMITIDA (DOCUMENTO SIN VALIDEZ LEGAL)</div>` : ""}
 
-    <div class="header">
-        <div class="header-sub">
+    <div class="documento-certificado">
+        <div class="cert-content">
+            <div class="header">
+                <div class="header-sub">
             ${escapeHtml(resDirectoral)}<br>
             Domicilio Fiscal: ${escapeHtml(domFiscal)}<br>
             Celular: ${escapeHtml(telfCert)}
@@ -304,6 +308,8 @@ function generateConformidadHtml(data) {
 
     <div class="footer-date">
         <strong>${escapeHtml(lugarEmision)}</strong>, <strong>${fechaImp.dia}</strong> de <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.
+    </div>
+        </div>
     </div>
 </body>
 </html>`;

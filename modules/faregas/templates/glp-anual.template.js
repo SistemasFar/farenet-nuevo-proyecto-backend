@@ -1,6 +1,6 @@
 const { escapeHtml, formatDateLong, formatDateShort } = require('./template-utils');
 
-function generateGlpAnualHtml(data) {
+function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
     const cert = data.cabecera || {};
     const veh = data.vehiculo || {};
     const glp = data.glp || {};
@@ -8,7 +8,7 @@ function generateGlpAnualHtml(data) {
     const verifs = data.verificaciones || [];
     const titulares = data.titulares || [];
 
-    const numCertificado = 'DG-49-PREVIEW';
+    const numCertificado = options.modo === 'FINAL' ? (cert.numero_certificado || '') : 'DG-49-PREVIEW';
 
     const fechaImp = formatDateLong(cert.fecha_emision);
     const vigenciaHastaFmt = formatDateShort(glp.vigencia_hasta);
@@ -94,7 +94,7 @@ function generateGlpAnualHtml(data) {
     <meta charset="UTF-8">
     <title>Certificado GLP Anual - Previsualización</title>
     <style>
-        @page { size: A4 portrait; margin: 15mm; }
+        @page { size: A4 portrait; margin: 0; }
         body {
             font-family: Arial, Helvetica, sans-serif;
             font-size: 10.5px;
@@ -104,6 +104,8 @@ function generateGlpAnualHtml(data) {
             padding: 20px;
             background-color: #fff;
             position: relative;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
         .watermark {
             position: fixed;
@@ -226,11 +228,13 @@ function generateGlpAnualHtml(data) {
     </style>
 </head>
 <body>
-    <div class="watermark">PREVISUALIZACIÓN</div>
-    <div class="preview-badge">⚠️ BORRADOR FAREGAS — PREVISUALIZACIÓN NO EMITIDA (DOCUMENTO SIN VALIDEZ LEGAL)</div>
+    ${options.modo === "PREVIEW" ? `<div class="watermark">PREVISUALIZACIÓN</div>
+    <div class="preview-badge">⚠️ BORRADOR FAREGAS — PREVISUALIZACIÓN NO EMITIDA (DOCUMENTO SIN VALIDEZ LEGAL)</div>` : ""}
 
-    <div class="header">
-        <div class="header-sub">
+    <div class="documento-certificado">
+        <div class="cert-content">
+            <div class="header">
+                <div class="header-sub">
             ${escapeHtml(resDirectoral)}<br>
             Domicilio Fiscal: ${escapeHtml(domFiscal)}<br>
             Celular: ${escapeHtml(telfCert)}
@@ -353,6 +357,8 @@ function generateGlpAnualHtml(data) {
     <div class="footer-sec">
         <div>El presente Certificado es emitido a solicitud del taller autorizado <strong>${escapeHtml(tallerDisplay)}</strong>.</div>
         <div style="margin-top: 4px;">Se expide el presente certificado en <strong>${escapeHtml(lugarEmision)}</strong> a los <strong>${fechaImp.dia}</strong> días del mes de <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.</div>
+    </div>
+        </div>
     </div>
 </body>
 </html>`;

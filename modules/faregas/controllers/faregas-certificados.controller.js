@@ -394,7 +394,7 @@ exports.emitir = async (req, res) => {
 exports.obtenerPrevisualizacion = async (req, res) => {
     try {
         const id = parseInt(req.params.id);
-        const result = await certificadosService.obtenerPrevisualizacion(id, req.user);
+        const result = await service.obtenerPrevisualizacion(id, req.user);
         res.json({ ok: true, data: result });
     } catch (error) {
         if (error.message === 'FORMATO_PREVIEW_PENDIENTE') {
