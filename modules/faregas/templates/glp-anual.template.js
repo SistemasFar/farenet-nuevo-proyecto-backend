@@ -55,10 +55,10 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
         if (modRaw.toUpperCase() === 'Q') modRaw = '';
         let modStr = escapeHtml(modRaw);
         if (c.componente === 'CILINDRO' && (c.capacidad_litros || c.anio_fabricacion)) {
-            const cap = c.capacidad_litros ? `${c.capacidad_litros} LTS` : '';
+            const cap = c.capacidad_litros ? `${Number(c.capacidad_litros).toFixed(2)} LTS` : '';
             const anio = c.anio_fabricacion ? `${c.mes_fabricacion ? String(c.mes_fabricacion).padStart(2, '0') + '-' : ''}${c.anio_fabricacion}` : '';
             const extra = [cap, anio].filter(Boolean).join(' / ');
-            if (extra) modStr = modStr ? `${modStr} (${extra})` : `(${extra})`;
+            if (extra) modStr = extra;
         }
         return `<tr>
             <td style="text-align: center;">${i + 1}</td>
@@ -237,15 +237,17 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
     <div class="documento-certificado">
         <div class="cert-content">
             <div class="header">
-                <div class="title" style="margin-top: 0; margin-bottom: 10px;">CERTIFICADO DE INSPECCION DEL VEHICULO A GLP</div>
-                <div class="header-sub">
+                <div class="header-sub" style="margin-bottom: 10px;">
                     R.D. N° 0339-2024-MTC/17.03<br>
                     Domicilio Fiscal: Jr. Alberto Secada N°315 Prov.<br>
                     Const del Callao – Prov. Const del Callao.<br>
                     Celular: 966702160
                 </div>
+                <div class="title" style="margin-top: 10px; margin-bottom: 5px;">CERTIFICADO DE INSPECCION DEL VEHICULO A GLP</div>
+                <div class="cert-num" style="text-align: right; margin-bottom: 5px;">
+                    Certificado N° ${escapeHtml(numCertificado)}
+                </div>
                 <div style="font-weight: bold; font-size: 14px; margin-bottom: 10px; letter-spacing: 0.5px; text-align: center;">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
-                <div class="cert-num">Certificado N° ${escapeHtml(numCertificado)}</div>
             </div>
 
     <div class="certifica-p">
