@@ -230,15 +230,17 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
     <div class="documento-certificado">
         <div class="cert-content">
             <div class="header">
-                <div class="header-sub">
+                <div class="header-sub" style="margin-bottom: 10px;">
                     R.D. N.º 0339-2024-MTC/17.03<br>
                     Domicilio Fiscal: Jr. Alberto Secada N.°315 Prov.<br>
                     Const del Callao – Prov. Const del Callao.<br>
                     Celular: 966702160
                 </div>
-                <div class="title" style="margin-top: 10px; margin-bottom: 10px;">CERTIFICADO DE CONFORMIDAD DE CONVERSION GLP</div>
+                <div class="title" style="margin-top: 10px; margin-bottom: 5px;">CERTIFICADO DE CONFORMIDAD DE CONVERSION GLP</div>
+                <div class="cert-num" style="text-align: right; margin-bottom: 5px;">
+                    Certificado N°${escapeHtml(numCertificado)}
+                </div>
                 <div style="font-weight: bold; font-size: 14px; margin-bottom: 10px; letter-spacing: 0.5px; text-align: center;">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
-                <div class="cert-num">Certificado N°${escapeHtml(numCertificado)}</div>
             </div>
             
             <div style="text-align: center; font-weight: bold; font-size: 13px; margin-bottom: 10px;">CERTIFICA</div>
