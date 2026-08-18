@@ -729,8 +729,9 @@ exports.guardarGLP = async (id, data, userContext) => {
 
         const qUpd = `
             INSERT INTO fg_certificado_glp (
-                certificado_id, taller_autorizado_id, expediente_tecnico, vigencia_hasta, taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion, modalidad
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                certificado_id, taller_autorizado_id, expediente_tecnico, vigencia_hasta, taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion, modalidad,
+                combustible_posterior, peso_neto_posterior, carga_util_posterior
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT (certificado_id) DO UPDATE SET
                 taller_autorizado_id = EXCLUDED.taller_autorizado_id,
                 expediente_tecnico = EXCLUDED.expediente_tecnico,
@@ -739,7 +740,10 @@ exports.guardarGLP = async (id, data, userContext) => {
                 taller_sede = EXCLUDED.taller_sede,
                 taller_direccion = EXCLUDED.taller_direccion,
                 taller_codigo_autorizacion = EXCLUDED.taller_codigo_autorizacion,
-                modalidad = EXCLUDED.modalidad
+                modalidad = EXCLUDED.modalidad,
+                combustible_posterior = EXCLUDED.combustible_posterior,
+                peso_neto_posterior = EXCLUDED.peso_neto_posterior,
+                carga_util_posterior = EXCLUDED.carga_util_posterior
         `;
         
         await client.query(qUpd, [
@@ -751,7 +755,10 @@ exports.guardarGLP = async (id, data, userContext) => {
             snapshotTaller ? snapshotTaller.sede : null,
             snapshotTaller ? snapshotTaller.direccion : null,
             snapshotTaller ? snapshotTaller.codigo_autorizacion : null,
-            modalidadGLP
+            modalidadGLP,
+            data.combustiblePosterior || null,
+            data.pesoNetoPosterior || null,
+            data.cargaUtilPosterior || null
         ]);
 
         await client.query('COMMIT');
@@ -1266,6 +1273,7 @@ exports.emitirCertificado = async (id, userContext) => {
 
 const generateGnvAnualHtml = require('../templates/gnv-anual.template');
 const generateGlpAnualHtml = require('../templates/glp-anual.template');
+const generateGlpInicialHtml = require('../templates/glp-inicial.template');
 const generateConformidadHtml = require('../templates/conformidad.template');
 
 exports.obtenerPrevisualizacion = async (id, userContext) => {
@@ -1300,10 +1308,7 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
     } else if (tipoClave === 'GLP_ANUAL') {
         const dataGlp = await exports.obtenerGLP(id, userContext);
         const glp = dataGlp.glp || {};
-        if (glp.modalidad === 'INICIAL') {
-            throw new Error('FORMATO_PREVIEW_PENDIENTE');
-        }
-        const html = generateGlpAnualHtml({
+        const templateData = {
             cabecera: {
                 id: borrador.id,
                 placa_nueva: vehiculoPlantilla.placa,
@@ -1321,7 +1326,14 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
             componentes: dataGlp.componentes || [],
             verificaciones: dataGlp.verificaciones || [],
             titulares: borrador.titulares || []
-        });
+        };
+        
+        let html;
+        if (glp.modalidad === 'INICIAL') {
+            html = generateGlpInicialHtml(templateData);
+        } else {
+            html = generateGlpAnualHtml(templateData);
+        }
         return { html, tipo: 'GLP_ANUAL' };
     } else if (tipoClave === 'CONFORMIDAD') {
         const dataConf = await exports.obtenerConformidad(id, userContext);
