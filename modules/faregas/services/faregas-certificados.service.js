@@ -866,15 +866,18 @@ exports.guardarConformidad = async (id, data, userContext) => {
 
         const qUpd = `
             INSERT INTO fg_certificado_conformidad (
-                certificado_id, tipo_conformidad, tipo_tramite, caracteristica_registrable, motivo, descripcion, uso_original_vehiculo
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                certificado_id, tipo_conformidad, tipo_tramite, caracteristica_registrable, motivo, descripcion, uso_original_vehiculo, marca_modificacion, marca_montaje, marca_fabricacion
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (certificado_id) DO UPDATE SET
                 tipo_conformidad = EXCLUDED.tipo_conformidad,
                 tipo_tramite = EXCLUDED.tipo_tramite,
                 caracteristica_registrable = EXCLUDED.caracteristica_registrable,
                 motivo = EXCLUDED.motivo,
                 descripcion = EXCLUDED.descripcion,
-                uso_original_vehiculo = EXCLUDED.uso_original_vehiculo
+                uso_original_vehiculo = EXCLUDED.uso_original_vehiculo,
+                marca_modificacion = EXCLUDED.marca_modificacion,
+                marca_montaje = EXCLUDED.marca_montaje,
+                marca_fabricacion = EXCLUDED.marca_fabricacion
         `;
         
         await client.query(qUpd, [
@@ -884,7 +887,10 @@ exports.guardarConformidad = async (id, data, userContext) => {
             data.caracteristicaRegistrable || null,
             data.motivo || null,
             data.descripcion || null,
-            data.usoOriginalVehiculo || null
+            data.usoOriginalVehiculo || null,
+            data.marcaModificacion || false,
+            data.marcaMontaje || false,
+            data.marcaFabricacion || false
         ]);
 
         await client.query('COMMIT');

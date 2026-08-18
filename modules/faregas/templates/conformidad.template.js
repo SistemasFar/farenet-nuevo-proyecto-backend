@@ -98,12 +98,13 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             margin-bottom: 8px;
         }
         table.type-box {
-            width: 250px;
+            width: 500px;
             margin: 0 auto 12px auto;
             border-collapse: collapse;
             font-size: 10px;
             font-weight: bold;
             text-align: center;
+            table-layout: fixed;
         }
         table.type-box td {
             border: 1px solid #000;
@@ -172,23 +173,33 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
     <div class="documento-certificado">
         <div class="cert-content">
             <div class="header">
-                <div class="header-sub">
-            ${escapeHtml(resDirectoral)}<br>
-            Domicilio Fiscal: ${escapeHtml(domFiscal)}<br>
-            Celular: ${escapeHtml(telfCert)}
+                <div class="header-sub" style="text-align: left;">
+            R.D. N° 282-2022-MTC/17.03<br>
+            Domicilio Fiscal: Calle San Pedro N° 745, Surquillo, Lima, Lima<br>
+            Distrito de Surquillo – Provincia y Departamento de Lima<br>
+            Celular: 966702160
         </div>
         <div class="title">CERTIFICADO DE CONFORMIDAD</div>
         <div class="cert-num">Certificado N°${escapeHtml(numCertificado)}</div>
     </div>
 
     <table class="type-box">
-        <tr><td class="${tipoConf === 'MODIFICACION' ? 'active' : ''}">MODIFICACION</td></tr>
-        <tr><td class="${tipoConf === 'MONTAJE' ? 'active' : ''}">MONTAJE</td></tr>
-        <tr><td class="${tipoConf === 'FABRICACION' ? 'active' : ''}">FABRICACION</td></tr>
+        <tr>
+            <td style="width: 50%;" class="${tipoConf === 'MODIFICACION' ? 'active' : ''}">MODIFICACION</td>
+            <td style="width: 50%; text-align: center; font-weight: bold;">${conf.marca_modificacion ? 'X' : ''}</td>
+        </tr>
+        <tr>
+            <td style="width: 50%;" class="${tipoConf === 'MONTAJE' ? 'active' : ''}">MONTAJE</td>
+            <td style="width: 50%; text-align: center; font-weight: bold;">${conf.marca_montaje ? 'X' : ''}</td>
+        </tr>
+        <tr>
+            <td style="width: 50%;" class="${tipoConf === 'FABRICACION' ? 'active' : ''}">FABRICACION</td>
+            <td style="width: 50%; text-align: center; font-weight: bold;">${conf.marca_fabricacion ? 'X' : ''}</td>
+        </tr>
     </table>
 
     <div class="certifica-p">
-        La empresa <strong>${escapeHtml(entNombre)}</strong> Reconocida como Entidad Certificadora de Conformidad con <strong>RESOLUCIÓN DIRECTORAL N°${escapeHtml(resDirectoral)}</strong>.
+        La empresa SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRÚAS S.A.C. Reconocida como Entidad Certificadora de Conformidad con RESOLUCIÓN DIRECTORAL N°282-2022 MTC/15.
     </div>
     <div class="certifica-p">
         <strong>CERTIFICA:</strong> Haber realizado la inspección técnica del vehículo: <strong>${escapeHtml(veh.placa || cert.placa_nueva || '-')}</strong>
@@ -196,12 +207,11 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
 
     <table class="owner-box">
         <tr>
-            <td style="width: 170px;">Razón social/Persona natural:</td>
-            <td class="val">${escapeHtml(propietarioNombre)}</td>
+            <td colspan="2">Razón social/Persona natural: <span class="val">${escapeHtml(propietarioNombre)}</span></td>
         </tr>
         <tr>
-            <td>Placa de rodaje: <strong>${escapeHtml(veh.placa || cert.placa_nueva || '-')}</strong></td>
-            <td>Clase: <strong>${escapeHtml(veh.clase || '-')}</strong></td>
+            <td style="width: 50%;">Placa de rodaje: <strong>${escapeHtml(veh.placa || cert.placa_nueva || '-')}</strong></td>
+            <td style="width: 50%;">Clase: <strong>${escapeHtml(veh.clase || '-')}</strong></td>
         </tr>
     </table>
 
@@ -307,7 +317,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
     </div>
 
     <div class="footer-date">
-        <strong>${escapeHtml(lugarEmision)}</strong>, <strong>${fechaImp.dia}</strong> de <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.
+        Lima, <strong>${fechaImp.dia}</strong> de <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.
     </div>
         </div>
     </div>
