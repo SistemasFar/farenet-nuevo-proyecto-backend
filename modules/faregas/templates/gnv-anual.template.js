@@ -192,20 +192,20 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
     <div class="documento-certificado">
         <div class="cert-content">
             <div class="header">
-                <div class="title" style="margin-top: 0; margin-bottom: 10px;">CERTIFICADO DE INSPECCION ANUAL DEL VEHICULO A GNV</div>
                 <div class="header-sub" style="text-align: left;">
                     R.D. N° 0296-2024 - MTC/17.03<br>
                     Domicilio Fiscal: Jr. Alberto Secada N°315 Prov.<br>
                     Const del Callao – Prov. Const del Callao<br>
                     Celular: 966702160
                 </div>
+                <div class="title" style="margin-top: 10px; margin-bottom: 10px;">CERTIFICADO DE INSPECCION ANUAL DEL VEHICULO A GNV</div>
                 <div style="font-weight: bold; font-size: 14px; margin-bottom: 10px; letter-spacing: 0.5px; text-align: center;">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
                 <div class="cert-num">Certificado N° ${escapeHtml(numCertificado)}</div>
     </div>
 
     <div class="certifica-hdr">CERTIFICA</div>
     <div class="certifica-p">
-        Haber efectuado la evaluación de las condiciones de seguridad respecto de la conversión del sistema de combustión a Gas Natural - GNV, efectuada por el Taller de Conversión Autorizado: <strong>${escapeHtml(tallerNombre || '-')}</strong>, al siguiente vehículo:
+        Haber efectuado la evaluación de las condiciones de seguridad respecto de la conversión del sistema de combustión a Gas Natural - GNV, efectuada por el Taller de Conversión Autorizado: CHARING S.A.C. SEDE SURQUILLO, al siguiente vehículo:
     </div>
 
     <table class="data-table">
