@@ -260,6 +260,17 @@ exports.guardarGNV = async (req, res) => {
     }
 };
 
+exports.guardarGNVComponentes = async (req, res) => {
+    try {
+        const userContext = { username: req.user.username, perfil_id: req.user.perfil_id };
+        await service.guardarGNVComponentes(req.params.id, req.body.componentes, userContext);
+        res.json({ ok: true, message: 'Componentes GNV guardados' });
+    } catch (error) {
+        console.error('Error en guardarGNVComponentes:', error);
+        res.status(400).json({ ok: false, message: error.message });
+    }
+};
+
 exports.guardarGNVVerificaciones = async (req, res) => {
     try {
         const userContext = { username: req.user.username, perfil_id: req.user.perfil_id };

@@ -66,6 +66,7 @@ router.delete('/borradores/:id/titulares/:titularId', controller.eliminarTitular
 
 // GNV
 router.put('/borradores/:id/gnv', controller.guardarGNV);
+router.put('/borradores/:id/gnv/componentes', controller.guardarGNVComponentes);
 router.put('/borradores/:id/gnv/verificaciones', controller.guardarGNVVerificaciones);
 router.get('/borradores/:id/gnv', controller.obtenerGNV);
 

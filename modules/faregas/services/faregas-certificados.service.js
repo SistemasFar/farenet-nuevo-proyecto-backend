@@ -628,8 +628,9 @@ exports.guardarGNV = async (id, data, userContext) => {
 
         const qUpd = `
             INSERT INTO fg_certificado_gnv (
-                certificado_id, taller_autorizado_id, vigencia_hasta, taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion, modalidad, numero_chip
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                certificado_id, taller_autorizado_id, vigencia_hasta, taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion, modalidad, numero_chip,
+                combustible_posterior, peso_neto_posterior
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (certificado_id) DO UPDATE SET
                 taller_autorizado_id = EXCLUDED.taller_autorizado_id,
                 vigencia_hasta = EXCLUDED.vigencia_hasta,
@@ -638,7 +639,9 @@ exports.guardarGNV = async (id, data, userContext) => {
                 taller_direccion = EXCLUDED.taller_direccion,
                 taller_codigo_autorizacion = EXCLUDED.taller_codigo_autorizacion,
                 modalidad = EXCLUDED.modalidad,
-                numero_chip = EXCLUDED.numero_chip
+                numero_chip = EXCLUDED.numero_chip,
+                combustible_posterior = EXCLUDED.combustible_posterior,
+                peso_neto_posterior = EXCLUDED.peso_neto_posterior
         `;
         
         await client.query(qUpd, [
@@ -650,13 +653,46 @@ exports.guardarGNV = async (id, data, userContext) => {
             snapshotTaller ? snapshotTaller.direccion : null,
             snapshotTaller ? snapshotTaller.codigo_autorizacion : null,
             modalidadGNV,
-            numeroChip
+            numeroChip,
+            data.combustiblePosterior || null,
+            data.pesoNetoPosterior || null
         ]);
 
         await client.query('COMMIT');
         return true;
     } catch (e) {
         await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
+};
+
+exports.guardarGNVComponentes = async (id, componentes, userContext) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        await obtenerYValidarBorrador(client, id, 'GNV_ANUAL', userContext);
+
+        await client.query('DELETE FROM fg_certificado_gnv_componente WHERE certificado_id = $1', [id]);
+
+        if (componentes && componentes.length > 0) {
+            const qIns = `
+                INSERT INTO fg_certificado_gnv_componente (certificado_id, orden, componente, marca, modelo, capacidad_litros, mes_fabricacion, anio_fabricacion, numero_serie)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            `;
+            for (const c of componentes) {
+                await client.query(qIns, [id, c.orden, c.componente, c.marca || null, c.modelo || null, c.capacidadLitros || null, c.mesFabricacion || null, c.anioFabricacion || null, c.numeroSerie || null]);
+            }
+        }
+
+        await client.query('COMMIT');
+        return true;
+    } catch (e) {
+        await client.query('ROLLBACK');
+        if (e.code === '23505' && e.constraint === 'fg_certificado_gnv_componente_certificado_id_orden_key') {
+            throw new Error('COMPONENTE_INVALIDO');
+        }
         throw e;
     } finally {
         client.release();
@@ -699,10 +735,12 @@ exports.obtenerGNV = async (id, userContext) => {
 
     const rGnv = await db.query(`SELECT * FROM fg_certificado_gnv WHERE certificado_id = $1`, [id]);
     const rVerif = await db.query(`SELECT * FROM fg_certificado_gnv_verificacion WHERE certificado_id = $1 ORDER BY orden ASC`, [id]);
+    const rComp = await db.query(`SELECT * FROM fg_certificado_gnv_componente WHERE certificado_id = $1 ORDER BY orden ASC`, [id]);
 
     return {
         gnv: rGnv.rowCount > 0 ? rGnv.rows[0] : null,
-        verificaciones: rVerif.rows
+        verificaciones: rVerif.rows,
+        componentes: rComp.rows
     };
 };
 
@@ -1272,6 +1310,7 @@ exports.emitirCertificado = async (id, userContext) => {
 };
 
 const generateGnvAnualHtml = require('../templates/gnv-anual.template');
+const generateGnvInicialHtml = require('../templates/gnv-inicial.template');
 const generateGlpAnualHtml = require('../templates/glp-anual.template');
 const generateGlpInicialHtml = require('../templates/glp-inicial.template');
 const generateConformidadHtml = require('../templates/conformidad.template');
@@ -1285,7 +1324,25 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
         const dataGnv = await exports.obtenerGNV(id, userContext);
         const gnv = dataGnv.gnv || {};
         if (gnv.modalidad === 'INICIAL') {
-            throw new Error('FORMATO_PREVIEW_PENDIENTE');
+            const html = generateGnvInicialHtml({
+                cabecera: {
+                    id: borrador.id,
+                    placa_nueva: vehiculoPlantilla.placa,
+                    fecha_emision: borrador.fechaEmision,
+                    observaciones: borrador.observaciones,
+                    entidad_certificadora_nombre: borrador.entidadCertificadoraNombre,
+                    resolucion_directoral: borrador.resolucionDirectoral,
+                    domicilio_fiscal: borrador.domicilioFiscal,
+                    telefono_certificadora: borrador.telefonoCertificadora,
+                    lugar_emision: borrador.lugarEmision
+                },
+                vehiculo: vehiculoPlantilla,
+                propietario: borrador.titulares && borrador.titulares.length > 0 ? borrador.titulares[0] : {},
+                gnv: { ...gnv, componentes: dataGnv.componentes },
+                componentes: dataGnv.componentes,
+                taller: gnv.tallerAutorizado ? { nombre: gnv.tallerAutorizado.nombre } : {}
+            });
+            return { html };
         }
         const html = generateGnvAnualHtml({
             cabecera: {
