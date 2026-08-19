@@ -199,8 +199,8 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
                     Celular: 966702160
                 </div>
                 <div class="title" style="margin-top: 10px; margin-bottom: 10px;">CERTIFICADO DE INSPECCION ANUAL DEL VEHICULO A GNV</div>
+                <div class="cert-num" style="text-align: right;">Certificado N° ${escapeHtml(numCertificado)}</div>
                 <div style="font-weight: bold; font-size: 14px; margin-bottom: 10px; letter-spacing: 0.5px; text-align: center;">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
-                <div class="cert-num">Certificado N° ${escapeHtml(numCertificado)}</div>
     </div>
 
     <div class="certifica-hdr">CERTIFICA</div>
