@@ -142,17 +142,14 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, userContext) => {
 
     // 1. Obtener plantas permitidas
     const pRes = await faregasAuthService.getPlantasPorUsuario(userContext.username, userContext.perfil_id);
-    const plantas = pRes.map(p => p.key);
-
-    if (plantas.length === 0) {
+    // Validar acceso (opcional si getPlantasPorUsuario ya valida que esté en la lista, pero la regla dice "SEDE ACTIVA" que es userContext.planta_key)
+    const tieneAcceso = pRes.some(p => p.key === userContext.planta_key);
+    if (!tieneAcceso) {
         return { data: [], total: 0, page, pageSize, totalPages: 0 };
     }
 
-    // 2. Construir IN clause
-    const inClause = plantas.map((_, i) => '$' + (i + 1)).join(', ');
-
-    const qTotal = `SELECT COUNT(*) FROM fg_certificado WHERE estado = 'BORRADOR' AND planta_key IN (${inClause})`;
-    const resTotal = await db.query(qTotal, plantas);
+    const qTotal = `SELECT COUNT(*) FROM fg_certificado WHERE estado = 'BORRADOR' AND planta_key = $1`;
+    const resTotal = await db.query(qTotal, [userContext.planta_key]);
     const total = parseInt(resTotal.rows[0].count);
 
     if (total === 0) {
@@ -174,12 +171,12 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, userContext) => {
         LEFT JOIN fg_certificado_titular cl ON c.id = cl.certificado_id AND cl.orden = 1
         LEFT JOIN fg_tipo_certificado t ON c.tipo_certificado_clave = t.clave
         WHERE c.estado = 'BORRADOR' 
-        AND c.planta_key IN (${inClause})
+        AND c.planta_key = $1
         ORDER BY c.fecha_creacion DESC
-        LIMIT $${plantas.length + 1} OFFSET $${plantas.length + 2}
+        LIMIT $2 OFFSET $3
     `;
 
-    const resData = await db.query(qData, [...plantas, pageSize, offset]);
+    const resData = await db.query(qData, [userContext.planta_key, pageSize, offset]);
 
     return {
         data: resData.rows,
@@ -626,6 +623,22 @@ exports.guardarGNV = async (id, data, userContext) => {
             }
         }
 
+        const qModActual = `SELECT modalidad FROM fg_certificado_gnv WHERE certificado_id = $1 FOR UPDATE`;
+        const rModActual = await client.query(qModActual, [id]);
+        const modalidadAnterior = rModActual.rowCount > 0 ? rModActual.rows[0].modalidad : null;
+
+        if (modalidadAnterior && modalidadGNV && modalidadAnterior !== modalidadGNV) {
+            if (modalidadAnterior === 'INICIAL' && modalidadGNV === 'ANUAL') {
+                numeroChip = null;
+                data.combustiblePosterior = null;
+                data.pesoNetoPosterior = null;
+                data.cargaUtilPosterior = null;
+                await client.query('DELETE FROM fg_certificado_gnv_componente WHERE certificado_id = $1', [id]);
+            } else if (modalidadAnterior === 'ANUAL' && modalidadGNV === 'INICIAL') {
+                await client.query('DELETE FROM fg_certificado_gnv_verificacion WHERE certificado_id = $1', [id]);
+            }
+        }
+
         const qUpd = `
             INSERT INTO fg_certificado_gnv (
                 certificado_id, taller_autorizado_id, vigencia_hasta, taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion, modalidad, numero_chip,
@@ -763,6 +776,21 @@ exports.guardarGLP = async (id, data, userContext) => {
         const modalidadGLP = data.modalidad ? data.modalidad.trim().toUpperCase() : null;
         if (modalidadGLP && !['INICIAL', 'ANUAL'].includes(modalidadGLP)) {
             throw new Error('MODALIDAD_GLP_INVALIDA');
+        }
+
+        const qModActual = `SELECT modalidad FROM fg_certificado_glp WHERE certificado_id = $1 FOR UPDATE`;
+        const rModActual = await client.query(qModActual, [id]);
+        const modalidadAnterior = rModActual.rowCount > 0 ? rModActual.rows[0].modalidad : null;
+
+        if (modalidadAnterior && modalidadGLP && modalidadAnterior !== modalidadGLP) {
+            if (modalidadAnterior === 'INICIAL' && modalidadGLP === 'ANUAL') {
+                data.combustiblePosterior = null;
+                data.pesoNetoPosterior = null;
+                data.cargaUtilPosterior = null;
+                // NO eliminamos componentes
+            } else if (modalidadAnterior === 'ANUAL' && modalidadGLP === 'INICIAL') {
+                await client.query('DELETE FROM fg_certificado_glp_verificacion WHERE certificado_id = $1', [id]);
+            }
         }
 
         const qUpd = `

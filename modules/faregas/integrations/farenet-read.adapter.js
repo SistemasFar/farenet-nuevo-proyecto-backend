@@ -19,6 +19,25 @@ exports.buscarPersona = async (tipoDocumento, nroDocumento) => {
 
 exports.buscarVehiculoPorPlaca = async (placa) => {
     const res = await db.query(`
+        WITH v_target AS (
+            SELECT v.*, 1 as rank
+            FROM tarjetapropiedad tp
+            INNER JOIN vehiculo v ON v.tarjetapropiedad_id = tp.id
+            WHERE UPPER(tp.nroplaca::text) = UPPER($1)
+            UNION ALL
+            SELECT v.*, 2 as rank
+            FROM vehiculo v
+            WHERE UPPER(v.nroplacaantigua::text) = UPPER($1)
+            UNION ALL
+            SELECT v.*, 3 as rank
+            FROM vehiculo v
+            WHERE UPPER(v.nromotor::text) = UPPER($1)
+        ),
+        v_final AS (
+            SELECT * FROM v_target 
+            ORDER BY rank ASC, fechmodi DESC NULLS LAST 
+            LIMIT 1
+        )
         SELECT
             COALESCE(NULLIF(TRIM(tp.nroplaca), ''), NULLIF(TRIM(v.nroplacaantigua), '')) AS placa,
             v.categoria_key,
@@ -54,7 +73,7 @@ exports.buscarVehiculoPorPlaca = async (placa) => {
             v.nropuertas,
             v.nropisos,
             v.nrosalidaemergencia
-        FROM vehiculo v
+        FROM v_final v
         LEFT JOIN tarjetapropiedad tp ON v.tarjetapropiedad_id = tp.id
         LEFT JOIN categoria c ON v.categoria_key = c.key
         LEFT JOIN vehiculoclase vc ON v.vehiculoclase_key = vc.key
@@ -63,17 +82,6 @@ exports.buscarVehiculoPorPlaca = async (placa) => {
         LEFT JOIN combustible co ON v.combustible_key = co.key
         LEFT JOIN color col ON v.color_key = col.key
         LEFT JOIN carroceria ca ON v.carroceria_key = ca.key
-        WHERE UPPER(TRIM(COALESCE(tp.nroplaca, ''))) = UPPER(TRIM($1))
-           OR UPPER(TRIM(COALESCE(v.nroplacaantigua, ''))) = UPPER(TRIM($1))
-           OR UPPER(TRIM(COALESCE(v.nromotor, ''))) = UPPER(TRIM($1))
-        ORDER BY
-            CASE
-                WHEN UPPER(TRIM(COALESCE(tp.nroplaca, ''))) = UPPER(TRIM($1)) THEN 1
-                WHEN UPPER(TRIM(COALESCE(v.nroplacaantigua, ''))) = UPPER(TRIM($1)) THEN 2
-                ELSE 3
-            END,
-            v.fechmodi DESC NULLS LAST
-        LIMIT 1
     `, [placa]);
     if (res.rows.length === 0) return null;
     return desdeFilaFarenet(res.rows[0]);
