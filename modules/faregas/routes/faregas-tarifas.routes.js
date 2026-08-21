@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const clientesController = require('../controllers/faregas-clientes.controller');
+const tarifasController = require('../controllers/faregas-tarifas.controller');
 const jwt = require('jsonwebtoken');
 const db = require('../../../config/database');
 
@@ -37,19 +37,6 @@ const authMiddleware = async (req, res, next) => {
     }
 };
 
-// GET /api/faregas/clientes/documento/:tipoDocumento/:nroDocumento
-router.get('/documento/:tipoDocumento/:nroDocumento', authMiddleware, clientesController.obtenerClientePorDocumento);
-
-// GET /api/faregas/clientes/autocompletar/:tipoDocumento/:nroDocumento
-router.get('/autocompletar/:tipoDocumento/:nroDocumento', authMiddleware, clientesController.autocompletarPersona);
-
-// GET /api/faregas/clientes/vehiculo/:placa
-router.get('/vehiculo/:placa', authMiddleware, clientesController.consultarVehiculoPorPlaca);
-
-// POST /api/faregas/clientes
-router.post('/', authMiddleware, clientesController.crearCliente);
-
-// PATCH /api/faregas/clientes/:id
-router.patch('/:id', authMiddleware, clientesController.actualizarCliente);
+router.get('/', authMiddleware, tarifasController.obtenerTarifasPorPlanta);
 
 module.exports = router;

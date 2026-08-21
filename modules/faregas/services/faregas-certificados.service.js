@@ -188,19 +188,32 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, userContext) => {
 };
 
 exports.crearBorrador = async (data, userContext) => {
-    // data: tipoCertificadoClave, clienteId, observaciones
+    // data: tarifaCodigo, clienteId, observaciones
     // userContext: username, perfil_id, planta_key
     
-    const { tipoCertificadoClave, clienteId, observaciones } = data;
+    const { tarifaCodigo, clienteId, observaciones } = data;
+    const { username, planta_key } = userContext;
+
+    if (!tarifaCodigo) {
+        throw new Error('TARIFA_REQUERIDA');
+    }
+
+    // Validar tarifa y obtener tipo_certificado_clave
+    const tarifaDb = await db.query(
+        'SELECT tipo_certificado_clave FROM fg_tarifa WHERE planta_key = $1 AND codigo = $2 AND activo = TRUE LIMIT 1', 
+        [planta_key, tarifaCodigo]
+    );
+    if (tarifaDb.rowCount === 0) throw new Error('TARIFA_NO_CONFIGURADA');
+    
+    const tipoCertificadoClave = tarifaDb.rows[0].tipo_certificado_clave;
 
     if (observaciones && observaciones.length > 250 && tipoCertificadoClave && tipoCertificadoClave.startsWith('GNV')) {
         const err = new Error('Las observaciones no pueden superar los 250 caracteres.');
         err.status = 400;
         throw err;
     }
-    const { username, planta_key } = userContext;
 
-    // Validar tipo
+    // Validar tipo (sólo por si acaso)
     const tipo = await db.query('SELECT activo FROM fg_tipo_certificado WHERE clave = $1', [tipoCertificadoClave]);
     if (tipo.rowCount === 0) throw new Error('TIPO_NOT_FOUND');
     if (!tipo.rows[0].activo) throw new Error('TIPO_INACTIVO');
@@ -214,15 +227,16 @@ exports.crearBorrador = async (data, userContext) => {
 
     const q = `
         INSERT INTO fg_certificado (
-            tipo_certificado_clave, cliente_id, planta_key, 
+            tipo_certificado_clave, tarifa_codigo, cliente_id, planta_key, 
             numero_certificado, fecha_emision, estado, 
             observaciones, usuario_creacion, usuario_modificacion
         ) VALUES (
-            $1, $2, $3, NULL, NULL, 'BORRADOR', $4, $5, $5
+            $1, $2, $3, $4, NULL, NULL, 'BORRADOR', $5, $6, $6
         ) RETURNING id, estado
     `;
     const res = await db.query(q, [
         tipoCertificadoClave, 
+        tarifaCodigo,
         clienteId || null, 
         planta_key, 
         observaciones || null, 
@@ -323,12 +337,25 @@ exports.actualizarBorrador = async (id, data, userContext) => {
             campos.push(`observaciones = $${idx++}`);
             values.push(data.observaciones);
         }
-        if (data.tipoCertificadoClave !== undefined) {
-            const tipo = await client.query('SELECT activo FROM fg_tipo_certificado WHERE clave = $1', [data.tipoCertificadoClave]);
+        if (data.tarifaCodigo !== undefined) {
+            const tarifaDb = await client.query(
+                'SELECT tipo_certificado_clave FROM fg_tarifa WHERE planta_key = $1 AND codigo = $2 AND activo = TRUE LIMIT 1',
+                [userContext.planta_key, data.tarifaCodigo]
+            );
+            if (tarifaDb.rowCount === 0) throw new Error('TARIFA_NO_CONFIGURADA');
+            
+            const tipoCertificadoClave = tarifaDb.rows[0].tipo_certificado_clave;
+            
+            const tipo = await client.query('SELECT activo FROM fg_tipo_certificado WHERE clave = $1', 
+            [tipoCertificadoClave]);
             if (tipo.rowCount === 0) throw new Error('TIPO_NOT_FOUND');
             if (!tipo.rows[0].activo) throw new Error('TIPO_INACTIVO');
+            
             campos.push(`tipo_certificado_clave = $${idx++}`);
-            values.push(data.tipoCertificadoClave);
+            values.push(tipoCertificadoClave);
+            
+            campos.push(`tarifa_codigo = $${idx++}`);
+            values.push(data.tarifaCodigo);
         }
 
         if (campos.length > 0) {

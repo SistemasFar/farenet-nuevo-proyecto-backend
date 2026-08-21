@@ -4,7 +4,7 @@ const controller = require('../controllers/faregas-usuarios.controller');
 const jwt = require('jsonwebtoken');
 const db = require('../../../config/database');
 
-const JWT_SECRET_FAREGAS = process.env.JWT_SECRET_FAREGAS || 'fallback_faregas_secret';
+const JWT_SECRET_FAREGAS = process.env.JWT_SECRET_FAREGAS;
 
 const adminMiddleware = async (req, res, next) => {
     const authHeader = req.headers.authorization;

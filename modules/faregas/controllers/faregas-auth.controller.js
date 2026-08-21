@@ -2,7 +2,8 @@ const faregasAuthService = require('../services/faregas-auth.service');
 const faregasAuditoriaService = require('../services/faregas-auditoria.service');
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET_FAREGAS = process.env.JWT_SECRET_FAREGAS || 'fallback_faregas_secret';
+const JWT_SECRET_FAREGAS = process.env.JWT_SECRET_FAREGAS;
+if (!JWT_SECRET_FAREGAS) throw new Error("CRITICAL: JWT_SECRET_FAREGAS missing in env");
 
 exports.validar = async (req, res) => {
     const { username, password } = req.body;

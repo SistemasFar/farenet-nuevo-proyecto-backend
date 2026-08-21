@@ -6,7 +6,7 @@ const facturacionController = require('../controllers/faregas-facturacion.contro
 const jwt = require('jsonwebtoken');
 const db = require('../../../config/database');
 
-const JWT_SECRET_FAREGAS = process.env.JWT_SECRET_FAREGAS || 'fallback_faregas_secret';
+const JWT_SECRET_FAREGAS = process.env.JWT_SECRET_FAREGAS;
 
 const authMiddleware = async (req, res, next) => {
     const authHeader = req.headers.authorization;

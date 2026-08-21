@@ -22,4 +22,10 @@ router.use('/certificados', certificadosRoutes);
 const clientesRoutes = require('./faregas-clientes.routes');
 router.use('/clientes', clientesRoutes);
 
+const tarifasRoutes = require('./faregas-tarifas.routes');
+router.use('/tarifas', tarifasRoutes);
+
+const configRoutes = require('./faregas-config.routes');
+router.use('/config', configRoutes);
+
 module.exports = router;

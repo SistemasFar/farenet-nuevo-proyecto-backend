@@ -4,7 +4,7 @@ const { redondear, obtenerTarifaConfigurada, normalizarPagos } = require('./fare
 
 const obtenerCertificado = async (queryable, certificadoId, userContext, bloquear = false) => {
     const result = await queryable.query(
-        `SELECT id, estado, planta_key, tipo_certificado_clave FROM fg_certificado WHERE id = $1${bloquear ? ' FOR UPDATE' : ''}`,
+        `SELECT id, estado, planta_key, tipo_certificado_clave, tarifa_codigo FROM fg_certificado WHERE id = $1${bloquear ? ' FOR UPDATE' : ''}`,
         [certificadoId]
     );
     if (result.rowCount === 0) throw new Error('CERTIFICADO_NOT_FOUND');
@@ -71,7 +71,14 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         );
         let orden;
         if (ordenResult.rowCount === 0) {
-            const tarifaConfigurada = obtenerTarifaConfigurada(certificado.tipo_certificado_clave);
+            let tarifaConfigurada;
+            if (certificado.tarifa_codigo) {
+                const tarifaDb = await client.query('SELECT precio FROM fg_tarifa WHERE planta_key = $1 AND codigo = $2 AND activo = TRUE LIMIT 1', [certificado.planta_key, certificado.tarifa_codigo]);
+                if (tarifaDb.rowCount === 0) throw new Error('TARIFA_NO_CONFIGURADA');
+                tarifaConfigurada = Number(tarifaDb.rows[0].precio);
+            } else {
+                throw new Error('TARIFA_REQUERIDA');
+            }
             if (Math.abs(tarifaConfigurada - importeSolicitado) > 0.009) throw new Error('TARIFA_NO_COINCIDE');
             const base = redondear(importeSolicitado / 1.18);
             const igv = redondear(importeSolicitado - base);
@@ -163,7 +170,14 @@ exports.obtenerPagos = async (certificadoId, userContext) => {
     const certificado = await obtenerCertificado(db, certificadoId, userContext);
     const ordenResult = await db.query('SELECT * FROM fg_orden_pago WHERE certificado_id = $1', [certificadoId]);
     if (ordenResult.rowCount === 0) {
-        return { orden: null, pagos: [], importeTotal: obtenerTarifaConfigurada(certificado.tipo_certificado_clave) };
+        let importeTotal = null;
+        if (certificado.tarifa_codigo) {
+            const tarifaDb = await db.query('SELECT precio FROM fg_tarifa WHERE planta_key = $1 AND codigo = $2 AND activo = TRUE LIMIT 1', [certificado.planta_key, certificado.tarifa_codigo]);
+            if (tarifaDb.rowCount > 0) {
+                importeTotal = Number(tarifaDb.rows[0].precio);
+            }
+        }
+        return { orden: null, pagos: [], importeTotal };
     }
     const orden = ordenResult.rows[0];
     return { orden, pagos: await exports.listarPagosPorOrden(orden.id), importeTotal: Number(orden.importe_total) };

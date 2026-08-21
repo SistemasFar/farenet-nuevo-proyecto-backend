@@ -59,7 +59,7 @@ exports.validarFaregas = async (username, password) => {
 
 exports.getPlantasPorUsuario = async (username, perfilId) => {
     if (perfilId === 'SISTEMAS') {
-        const result = await db.query('SELECT key, nombre FROM fg_planta ORDER BY nombre');
+        const result = await db.query('SELECT key, nombre FROM fg_planta WHERE activo = true ORDER BY nombre');
         return result.rows;
     } else {
         const query = `
@@ -67,7 +67,7 @@ exports.getPlantasPorUsuario = async (username, perfilId) => {
             FROM fg_usuario_planta up
             JOIN fg_perfil_planta pp ON up.plantas_key = pp.planta_key
             JOIN fg_planta p ON p.key = up.plantas_key
-            WHERE up.usuario_username = $1 AND pp.perfil_clave = $2
+            WHERE up.usuario_username = $1 AND pp.perfil_clave = $2 AND p.activo = true
             ORDER BY p.nombre
         `;
         const result = await db.query(query, [username, perfilId]);
