@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const configController = require('../controllers/faregas-config.controller');
-const { authFaregasMiddleware } = require('../../../middlewares/faregas-auth.middleware');
+const { authFaregasMiddleware } = require('../middlewares/faregas-auth.middleware');
 const db = require('../../../config/database');
 
 const requireConfigSedesPerm = async (req, res, next) => {

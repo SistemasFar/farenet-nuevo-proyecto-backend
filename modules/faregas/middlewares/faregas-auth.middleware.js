@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const db = require('../config/database');
+const db = require('../../../config/database');
 
 const JWT_SECRET_FAREGAS = process.env.JWT_SECRET_FAREGAS;
 
