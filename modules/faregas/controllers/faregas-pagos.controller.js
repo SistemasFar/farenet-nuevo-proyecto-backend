@@ -7,6 +7,7 @@ const responderError = (res, error) => {
         CERTIFICADO_NO_EDITABLE: [409, 'El certificado ya no se encuentra en estado BORRADOR.'],
         IMPORTE_TOTAL_INVALIDO: [400, 'El importe total de la orden debe ser mayor a cero.'],
         TARIFA_NO_CONFIGURADA: [409, 'No existe una tarifa válida configurada para este certificado.'],
+        SERVICIO_NO_CERTIFICACION: [409, 'La tarifa pertenece a un servicio que no genera certificados.'],
         TARIFA_NO_COINCIDE: [409, 'El importe enviado no coincide con la tarifa configurada en el servidor.'],
         IMPORTE_ORDEN_NO_MODIFICABLE: [409, 'El importe total de una orden existente no puede modificarse.'],
         TIPO_PAGO_INVALIDO: [400, 'El medio de pago indicado no es válido.'],

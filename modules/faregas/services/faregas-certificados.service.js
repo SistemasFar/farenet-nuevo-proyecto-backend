@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const { paraPlantilla } = require('../mappers/faregas-vehiculo.mapper');
+const tarifasService = require('./faregas-tarifas.service');
 
 exports.obtenerTiposActivos = async () => {
     const res = await db.query(`
@@ -199,13 +200,11 @@ exports.crearBorrador = async (data, userContext) => {
     }
 
     // Validar tarifa y obtener tipo_certificado_clave
-    const tarifaDb = await db.query(
-        'SELECT tipo_certificado_clave FROM fg_tarifa WHERE planta_key = $1 AND codigo = $2 AND activo = TRUE LIMIT 1', 
-        [planta_key, tarifaCodigo]
+    const tarifa = tarifasService.validarTarifaCertificacion(
+        await tarifasService.obtenerTarifaOperativaPorCodigo(planta_key, tarifaCodigo)
     );
-    if (tarifaDb.rowCount === 0) throw new Error('TARIFA_NO_CONFIGURADA');
-    
-    const tipoCertificadoClave = tarifaDb.rows[0].tipo_certificado_clave;
+
+    const tipoCertificadoClave = tarifa.tipo_certificado_clave;
 
     if (observaciones && observaciones.length > 250 && tipoCertificadoClave && tipoCertificadoClave.startsWith('GNV')) {
         const err = new Error('Las observaciones no pueden superar los 250 caracteres.');
@@ -338,13 +337,15 @@ exports.actualizarBorrador = async (id, data, userContext) => {
             values.push(data.observaciones);
         }
         if (data.tarifaCodigo !== undefined) {
-            const tarifaDb = await client.query(
-                'SELECT tipo_certificado_clave FROM fg_tarifa WHERE planta_key = $1 AND codigo = $2 AND activo = TRUE LIMIT 1',
-                [userContext.planta_key, data.tarifaCodigo]
+            const tarifa = tarifasService.validarTarifaCertificacion(
+                await tarifasService.obtenerTarifaOperativaPorCodigo(
+                    userContext.planta_key,
+                    data.tarifaCodigo,
+                    client
+                )
             );
-            if (tarifaDb.rowCount === 0) throw new Error('TARIFA_NO_CONFIGURADA');
-            
-            const tipoCertificadoClave = tarifaDb.rows[0].tipo_certificado_clave;
+
+            const tipoCertificadoClave = tarifa.tipo_certificado_clave;
             
             const tipo = await client.query('SELECT activo FROM fg_tipo_certificado WHERE clave = $1', 
             [tipoCertificadoClave]);

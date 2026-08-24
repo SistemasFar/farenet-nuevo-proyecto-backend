@@ -137,6 +137,7 @@ exports.crearBorrador = async (req, res) => {
     } catch (e) {
         if (e.message === 'TARIFA_REQUERIDA') return res.status(400).json({ ok: false, message: 'tarifaCodigo es obligatorio' });
         if (e.message === 'TARIFA_NO_CONFIGURADA') return res.status(400).json({ ok: false, message: 'Tarifa no configurada para la sede actual' });
+        if (e.message === 'SERVICIO_NO_CERTIFICACION') return res.status(409).json({ ok: false, message: 'El servicio seleccionado no pertenece al flujo de certificación.' });
         if (e.message === 'TIPO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El tipo de certificado indicado no existe' });
         if (e.message === 'TIPO_INACTIVO') return res.status(400).json({ ok: false, message: 'El tipo de certificado está inactivo' });
         if (e.message === 'CLIENTE_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El cliente indicado no existe' });
@@ -172,6 +173,7 @@ exports.actualizarBorrador = async (req, res) => {
         if (e.message === 'CERTIFICADO_NO_EDITABLE') return res.status(409).json({ ok: false, message: 'El certificado ya no se encuentra en estado BORRADOR.' });
         if (e.message === 'TARIFA_REQUERIDA') return res.status(400).json({ ok: false, message: 'tarifaCodigo es obligatorio' });
         if (e.message === 'TARIFA_NO_CONFIGURADA') return res.status(400).json({ ok: false, message: 'Tarifa no configurada para la sede actual' });
+        if (e.message === 'SERVICIO_NO_CERTIFICACION') return res.status(409).json({ ok: false, message: 'El servicio seleccionado no pertenece al flujo de certificación.' });
         if (e.message === 'TIPO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El tipo de certificado indicado no existe' });
         if (e.message === 'TIPO_INACTIVO') return res.status(400).json({ ok: false, message: 'El tipo de certificado está inactivo' });
         

@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const faregasAuthService = require('./faregas-auth.service');
+const tarifasService = require('./faregas-tarifas.service');
 const { redondear, obtenerTarifaConfigurada, normalizarPagos } = require('./faregas-pagos.rules');
 
 const obtenerCertificado = async (queryable, certificadoId, userContext, bloquear = false) => {
@@ -73,9 +74,14 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         if (ordenResult.rowCount === 0) {
             let tarifaConfigurada;
             if (certificado.tarifa_codigo) {
-                const tarifaDb = await client.query('SELECT precio FROM fg_tarifa WHERE planta_key = $1 AND codigo = $2 AND activo = TRUE LIMIT 1', [certificado.planta_key, certificado.tarifa_codigo]);
-                if (tarifaDb.rowCount === 0) throw new Error('TARIFA_NO_CONFIGURADA');
-                tarifaConfigurada = Number(tarifaDb.rows[0].precio);
+                const tarifa = tarifasService.validarTarifaCertificacion(
+                    await tarifasService.obtenerTarifaOperativaPorCodigo(
+                        certificado.planta_key,
+                        certificado.tarifa_codigo,
+                        client
+                    )
+                );
+                tarifaConfigurada = tarifa.precio;
             } else {
                 throw new Error('TARIFA_REQUERIDA');
             }
@@ -172,10 +178,11 @@ exports.obtenerPagos = async (certificadoId, userContext) => {
     if (ordenResult.rowCount === 0) {
         let importeTotal = null;
         if (certificado.tarifa_codigo) {
-            const tarifaDb = await db.query('SELECT precio FROM fg_tarifa WHERE planta_key = $1 AND codigo = $2 AND activo = TRUE LIMIT 1', [certificado.planta_key, certificado.tarifa_codigo]);
-            if (tarifaDb.rowCount > 0) {
-                importeTotal = Number(tarifaDb.rows[0].precio);
-            }
+            const tarifa = await tarifasService.obtenerTarifaOperativaPorCodigo(
+                certificado.planta_key,
+                certificado.tarifa_codigo
+            );
+            if (tarifa) importeTotal = tarifa.precio;
         }
         return { orden: null, pagos: [], importeTotal };
     }

@@ -7,11 +7,14 @@ exports.obtenerTarifasPorPlanta = async (req, res) => {
             return res.status(400).json({ success: false, message: 'No se encontró la planta en la sesión.' });
         }
 
-        const tarifas = await tarifasService.obtenerTarifasPorPlanta(plantaKey);
+        const catalogo = await tarifasService.obtenerCatalogoPorPlanta(plantaKey);
+        if (!catalogo) {
+            return res.status(404).json({ success: false, message: 'La sede no está disponible.' });
+        }
 
         res.status(200).json({
             success: true,
-            tarifas
+            catalogo
         });
     } catch (error) {
         console.error('[obtenerTarifasPorPlanta Error]', error);
