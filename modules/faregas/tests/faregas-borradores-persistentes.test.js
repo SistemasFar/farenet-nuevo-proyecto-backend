@@ -51,7 +51,7 @@ test('persiste una transición consecutiva y rechaza saltarse pasos', async () =
     const connectOriginal = db.connect;
     const accesoOriginal = auth.validarAccesoPlanta;
     const actualizaciones = [];
-    let pasoActual = 'VEHICULO';
+    let pasoActual = 'PAGO';
     const client = {
         query: async (sql, params) => {
             if (/SELECT estado, planta_key, paso_actual/i.test(sql)) {
@@ -68,16 +68,59 @@ test('persiste una transición consecutiva y rechaza saltarse pasos', async () =
     db.connect = async () => client;
     auth.validarAccesoPlanta = async () => true;
     try {
-        const result = await service.actualizarPasoBorrador(7, 'PAGO', {
+        const result = await service.actualizarPasoBorrador(7, 'VEHICULO', {
             username: 'operador', perfil_id: 'OPERADOR'
         });
-        assert.equal(result.pasoActual, 'PAGO');
+        assert.equal(result.pasoActual, 'VEHICULO');
         assert.equal(actualizaciones.length, 1);
         await assert.rejects(
             service.actualizarPasoBorrador(7, 'VERIFICACION_EMISION', {
                 username: 'operador', perfil_id: 'OPERADOR'
             }),
             /TRANSICION_PASO_INVALIDA/
+        );
+    } finally {
+        db.connect = connectOriginal;
+        auth.validarAccesoPlanta = accesoOriginal;
+    }
+});
+
+test('permite guardar el vehículo después del pago y solo lo bloquea al iniciar facturación', async () => {
+    const connectOriginal = db.connect;
+    const accesoOriginal = auth.validarAccesoPlanta;
+    const consultas = [];
+    let facturacionIniciada = false;
+    const client = {
+        query: async (sql) => {
+            consultas.push(sql);
+            if (/SELECT estado, planta_key FROM fg_certificado/i.test(sql)) {
+                return { rowCount: 1, rows: [{ estado: 'BORRADOR', planta_key: '201' }] };
+            }
+            if (/FROM fg_facturacion/i.test(sql)) {
+                return facturacionIniciada
+                    ? { rowCount: 1, rows: [{ '?column?': 1 }] }
+                    : { rowCount: 0, rows: [] };
+            }
+            return { rowCount: 1, rows: [] };
+        },
+        release: () => undefined
+    };
+    db.connect = async () => client;
+    auth.validarAccesoPlanta = async () => true;
+    try {
+        await service.guardarVehiculoBorrador(163, { placa: 'ABC123' }, {
+            username: 'operador', perfil_id: 'OPERADOR'
+        });
+        const consultaBloqueo = consultas.find((sql) => /FROM fg_facturacion/i.test(sql));
+        assert.ok(consultaBloqueo);
+        assert.doesNotMatch(consultaBloqueo, /fg_orden_pago/i);
+
+        facturacionIniciada = true;
+        await assert.rejects(
+            service.guardarVehiculoBorrador(163, { placa: 'ABC123' }, {
+                username: 'operador', perfil_id: 'OPERADOR'
+            }),
+            /DATOS_PREVIOS_NO_EDITABLES/
         );
     } finally {
         db.connect = connectOriginal;

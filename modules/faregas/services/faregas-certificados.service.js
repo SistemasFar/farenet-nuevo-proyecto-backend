@@ -128,9 +128,10 @@ const faregasAuthService = require('./faregas-auth.service');
 
 const PASOS_BORRADOR = Object.freeze([
     'DATOS_INICIALES',
-    'VEHICULO',
     'PAGO',
+    'VEHICULO',
     'FACTURACION',
+    'PREVISUALIZACION',
     'VERIFICACION_EMISION'
 ]);
 
@@ -272,7 +273,7 @@ exports.crearBorrador = async (data, userContext) => {
                 numero_certificado, fecha_emision, estado, paso_actual,
                 observaciones, usuario_creacion, usuario_modificacion
             ) VALUES (
-                $1, $2, $3, $4, NULL, NULL, 'BORRADOR', 'VEHICULO', $5, $6, $6
+                $1, $2, $3, $4, NULL, NULL, 'BORRADOR', 'PAGO', $5, $6, $6
             ) RETURNING id, estado, paso_actual AS "pasoActual"
         `, [tipoCertificadoClave, tarifaCodigo, clienteId || null, planta_key, observaciones || null, username]);
         const borrador = res.rows[0];
@@ -497,10 +498,14 @@ exports.guardarVehiculoBorrador = async (id, data, userContext) => {
 
         await validarAccesoCertificado(userContext.username, userContext.perfil_id, cert.planta_key);
         if (cert.estado !== 'BORRADOR') throw new Error('CERTIFICADO_NO_EDITABLE');
+        // El flujo vigente confirma el pago antes de completar el expediente
+        // técnico. Por eso un pago no puede bloquear este guardado; la
+        // facturación sí congela el snapshot vehicular que será emitido.
         const evidencia = await client.query(`
-            SELECT 1 FROM fg_orden_pago WHERE certificado_id = $1 AND estado = 'PAGADO'
-            UNION ALL
-            SELECT 1 FROM fg_facturacion WHERE certificado_id = $1 AND estado IN ('PENDIENTE', 'ACEPTADO', 'ERROR')
+            SELECT 1
+            FROM fg_facturacion
+            WHERE certificado_id = $1
+              AND estado IN ('PENDIENTE', 'ACEPTADO', 'ERROR')
             LIMIT 1
         `, [id]);
         if (evidencia.rowCount > 0) throw new Error('DATOS_PREVIOS_NO_EDITABLES');

@@ -193,6 +193,7 @@ exports.guardarVehiculoBorrador = async (req, res) => {
         if (e.message === 'CERTIFICADO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El certificado indicado no existe' });
         if (e.message === 'PLANTA_NO_AUTORIZADA') return res.status(403).json({ ok: false, message: 'No tiene acceso a la planta de este certificado.' });
         if (e.message === 'CERTIFICADO_NO_EDITABLE') return res.status(409).json({ ok: false, message: 'El certificado ya no se encuentra en estado BORRADOR.' });
+        if (e.message === 'DATOS_PREVIOS_NO_EDITABLES') return res.status(409).json({ ok: false, message: 'Los datos técnicos ya no se pueden modificar porque la facturación del certificado ya fue iniciada.' });
         
         console.error(e);
         res.status(500).json({ ok: false, message: 'Error interno del servidor' });

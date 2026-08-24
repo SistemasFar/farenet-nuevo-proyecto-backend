@@ -24,7 +24,7 @@ test('crear borrador conserva el contrato tarifaCodigo y deriva el tipo desde el
             return { rowCount: 1, rows: [{ activo: true }] };
         }
         if (/INSERT INTO fg_certificado/i.test(sql)) {
-            return { rowCount: 1, rows: [{ id: 987, estado: 'BORRADOR', pasoActual: 'VEHICULO' }] };
+            return { rowCount: 1, rows: [{ id: 987, estado: 'BORRADOR', pasoActual: 'PAGO' }] };
         }
         if (/INSERT INTO fg_certificado_vehiculo/i.test(sql)) {
             return { rowCount: 1, rows: [] };
@@ -39,7 +39,7 @@ test('crear borrador conserva el contrato tarifaCodigo y deriva el tipo desde el
             { tarifaCodigo: 'GLP_ANUAL', observaciones: '' },
             { username: 'OPERADOR_TEST', perfil_id: 'OPERADOR', planta_key: '201' }
         );
-        assert.deepEqual(borrador, { id: 987, estado: 'BORRADOR', pasoActual: 'VEHICULO' });
+        assert.deepEqual(borrador, { id: 987, estado: 'BORRADOR', pasoActual: 'PAGO' });
         const insert = consultas.find((item) => /INSERT INTO fg_certificado/i.test(item.sql));
         assert.equal(insert.params[0], 'GLP_ANUAL');
         assert.equal(insert.params[1], 'GLP_ANUAL');
