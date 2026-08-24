@@ -8,6 +8,7 @@ test.after(() => db.end());
 
 test('crear borrador conserva el contrato tarifaCodigo y deriva el tipo desde el catálogo oficial', async () => {
     const queryOriginal = db.query;
+    const connectOriginal = db.connect;
     const tarifaOriginal = tarifasService.obtenerTarifaOperativaPorCodigo;
     const consultas = [];
 
@@ -16,29 +17,36 @@ test('crear borrador conserva el contrato tarifaCodigo y deriva el tipo desde el
         assert.equal(codigo, 'GLP_ANUAL');
         return { tipo_flujo: 'CERTIFICACION', tipo_certificado_clave: 'GLP_ANUAL', precio: 60 };
     };
-    db.query = async (sql, params) => {
+    const queryMock = async (sql, params) => {
         consultas.push({ sql, params });
+        if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(String(sql).trim())) return { rowCount: 0, rows: [] };
         if (/SELECT activo FROM fg_tipo_certificado/i.test(sql)) {
             return { rowCount: 1, rows: [{ activo: true }] };
         }
         if (/INSERT INTO fg_certificado/i.test(sql)) {
-            return { rowCount: 1, rows: [{ id: 987, estado: 'BORRADOR' }] };
+            return { rowCount: 1, rows: [{ id: 987, estado: 'BORRADOR', pasoActual: 'VEHICULO' }] };
+        }
+        if (/INSERT INTO fg_certificado_vehiculo/i.test(sql)) {
+            return { rowCount: 1, rows: [] };
         }
         throw new Error(`Consulta inesperada en la prueba: ${sql}`);
     };
+    db.query = queryMock;
+    db.connect = async () => ({ query: queryMock, release: () => undefined });
 
     try {
         const borrador = await certificadosService.crearBorrador(
             { tarifaCodigo: 'GLP_ANUAL', observaciones: '' },
             { username: 'OPERADOR_TEST', perfil_id: 'OPERADOR', planta_key: '201' }
         );
-        assert.deepEqual(borrador, { id: 987, estado: 'BORRADOR' });
+        assert.deepEqual(borrador, { id: 987, estado: 'BORRADOR', pasoActual: 'VEHICULO' });
         const insert = consultas.find((item) => /INSERT INTO fg_certificado/i.test(item.sql));
         assert.equal(insert.params[0], 'GLP_ANUAL');
         assert.equal(insert.params[1], 'GLP_ANUAL');
         assert.equal(insert.params[3], '201');
     } finally {
         db.query = queryOriginal;
+        db.connect = connectOriginal;
         tarifasService.obtenerTarifaOperativaPorCodigo = tarifaOriginal;
     }
 });

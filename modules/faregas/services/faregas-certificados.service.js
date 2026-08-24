@@ -126,6 +126,14 @@ exports.cerrarRango = async (id) => {
 
 const faregasAuthService = require('./faregas-auth.service');
 
+const PASOS_BORRADOR = Object.freeze([
+    'DATOS_INICIALES',
+    'VEHICULO',
+    'PAGO',
+    'FACTURACION',
+    'VERIFICACION_EMISION'
+]);
+
 // Función helper para validar si el usuario puede acceder a la planta del certificado
 const validarAccesoCertificado = async (username, perfilId, plantaKey) => {
     const acceso = await faregasAuthService.validarAccesoPlanta(username, perfilId, plantaKey);
@@ -134,7 +142,12 @@ const validarAccesoCertificado = async (username, perfilId, plantaKey) => {
     }
 };
 
-exports.obtenerBorradores = async (page = 1, pageSize = 10, userContext) => {
+exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userContext) => {
+    // Compatibilidad con llamadas internas anteriores: (page, pageSize, userContext).
+    if (search && typeof search === 'object' && !userContext) {
+        userContext = search;
+        search = '';
+    }
     if (page < 1) page = 1;
     if (pageSize < 1) pageSize = 10;
     if (pageSize > 100) pageSize = 100;
@@ -149,8 +162,25 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, userContext) => {
         return { data: [], total: 0, page, pageSize, totalPages: 0 };
     }
 
-    const qTotal = `SELECT COUNT(*) FROM fg_certificado WHERE estado = 'BORRADOR' AND planta_key = $1`;
-    const resTotal = await db.query(qTotal, [userContext.planta_key]);
+    const termino = String(search || '').trim();
+    const filtroBusqueda = termino ? `
+        AND (
+            c.id::text ILIKE $2
+            OR COALESCE(v.placa, '') ILIKE $2
+            OR COALESCE(tit.nro_documento, '') ILIKE $2
+            OR COALESCE(tit.nombre_razon_social, '') ILIKE $2
+        )` : '';
+    const parametrosBase = termino
+        ? [userContext.planta_key, `%${termino}%`]
+        : [userContext.planta_key];
+    const qTotal = `
+        SELECT COUNT(DISTINCT c.id)
+        FROM fg_certificado c
+        LEFT JOIN fg_certificado_vehiculo v ON v.certificado_id = c.id
+        LEFT JOIN fg_certificado_titular tit ON tit.certificado_id = c.id AND tit.orden = 1
+        WHERE c.estado = 'BORRADOR' AND c.planta_key = $1
+        ${filtroBusqueda}`;
+    const resTotal = await db.query(qTotal, parametrosBase);
     const total = parseInt(resTotal.rows[0].count);
 
     if (total === 0) {
@@ -160,24 +190,33 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, userContext) => {
     const qData = `
         SELECT 
             c.id, 
-            c.fecha_creacion as "fechaHora", 
+            c.fecha_creacion AS "fechaCreacion",
+            c.fecha_modificacion AS "fechaActualizacion",
             c.estado,
-            v.placa as placa,
-            cl.nro_documento as "titularDocumento", 
-            cl.nombre_razon_social as "titularNombre",
-            t.clave as "tipoCertificadoClave",
-            t.nombre as "tipoCertificadoNombre"
+            c.paso_actual AS "pasoActual",
+            v.placa,
+            tit.nro_documento AS "clienteDocumento",
+            tit.nombre_razon_social AS "clienteNombre",
+            t.clave AS "tipoCertificadoClave",
+            COALESCE(s.nombre, t.nombre) AS "conceptoVehicular",
+            op.estado AS "estadoPago",
+            f.estado AS "estadoFacturacion"
         FROM fg_certificado c
         LEFT JOIN fg_certificado_vehiculo v ON c.id = v.certificado_id
-        LEFT JOIN fg_certificado_titular cl ON c.id = cl.certificado_id AND cl.orden = 1
+        LEFT JOIN fg_certificado_titular tit ON c.id = tit.certificado_id AND tit.orden = 1
         LEFT JOIN fg_tipo_certificado t ON c.tipo_certificado_clave = t.clave
+        LEFT JOIN fg_tarifa ta ON ta.codigo = c.tarifa_codigo AND ta.planta_key = c.planta_key
+        LEFT JOIN fg_servicio s ON s.id = ta.servicio_id
+        LEFT JOIN fg_orden_pago op ON op.certificado_id = c.id
+        LEFT JOIN fg_facturacion f ON f.certificado_id = c.id
         WHERE c.estado = 'BORRADOR' 
         AND c.planta_key = $1
-        ORDER BY c.fecha_creacion DESC
-        LIMIT $2 OFFSET $3
+        ${filtroBusqueda}
+        ORDER BY COALESCE(c.fecha_modificacion, c.fecha_creacion) DESC, c.id DESC
+        LIMIT $${parametrosBase.length + 1} OFFSET $${parametrosBase.length + 2}
     `;
 
-    const resData = await db.query(qData, [userContext.planta_key, pageSize, offset]);
+    const resData = await db.query(qData, [...parametrosBase, pageSize, offset]);
 
     return {
         data: resData.rows,
@@ -192,7 +231,7 @@ exports.crearBorrador = async (data, userContext) => {
     // data: tarifaCodigo, clienteId, observaciones
     // userContext: username, perfil_id, planta_key
     
-    const { tarifaCodigo, clienteId, observaciones } = data;
+    const { tarifaCodigo, clienteId, observaciones, placa, categoria } = data;
     const { username, planta_key } = userContext;
 
     if (!tarifaCodigo) {
@@ -224,25 +263,33 @@ exports.crearBorrador = async (data, userContext) => {
         if (!cli.rows[0].estado) throw new Error('CLIENTE_INACTIVO');
     }
 
-    const q = `
-        INSERT INTO fg_certificado (
-            tipo_certificado_clave, tarifa_codigo, cliente_id, planta_key, 
-            numero_certificado, fecha_emision, estado, 
-            observaciones, usuario_creacion, usuario_modificacion
-        ) VALUES (
-            $1, $2, $3, $4, NULL, NULL, 'BORRADOR', $5, $6, $6
-        ) RETURNING id, estado
-    `;
-    const res = await db.query(q, [
-        tipoCertificadoClave, 
-        tarifaCodigo,
-        clienteId || null, 
-        planta_key, 
-        observaciones || null, 
-        username
-    ]);
-
-    return res.rows[0];
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const res = await client.query(`
+            INSERT INTO fg_certificado (
+                tipo_certificado_clave, tarifa_codigo, cliente_id, planta_key,
+                numero_certificado, fecha_emision, estado, paso_actual,
+                observaciones, usuario_creacion, usuario_modificacion
+            ) VALUES (
+                $1, $2, $3, $4, NULL, NULL, 'BORRADOR', 'VEHICULO', $5, $6, $6
+            ) RETURNING id, estado, paso_actual AS "pasoActual"
+        `, [tipoCertificadoClave, tarifaCodigo, clienteId || null, planta_key, observaciones || null, username]);
+        const borrador = res.rows[0];
+        await client.query(`
+            INSERT INTO fg_certificado_vehiculo (certificado_id, placa, categoria)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (certificado_id) DO UPDATE
+            SET placa = EXCLUDED.placa, categoria = EXCLUDED.categoria
+        `, [borrador.id, placa || null, categoria || null]);
+        await client.query('COMMIT');
+        return borrador;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
 };
 
 exports.obtenerBorradorCompleto = async (id, userContext) => {
@@ -251,11 +298,15 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
         SELECT c.*, 
                t.codigo AS tipo_codigo, t.nombre AS tipo_nombre,
                p.nombre AS planta_nombre,
-               cl.tipo_documento AS cliente_tipo_doc, cl.nro_documento AS cliente_nro_doc, cl.nombre_razon_social AS cliente_nombre
+               cl.tipo_documento AS cliente_tipo_doc, cl.nro_documento AS cliente_nro_doc, cl.nombre_razon_social AS cliente_nombre,
+               s.codigo AS servicio_codigo, s.nombre AS servicio_nombre, s.modalidad AS servicio_modalidad,
+               ta.precio AS tarifa_precio
         FROM fg_certificado c
         LEFT JOIN fg_tipo_certificado t ON c.tipo_certificado_clave = t.clave
         LEFT JOIN fg_planta p ON c.planta_key = p.key
         LEFT JOIN fg_cliente cl ON c.cliente_id = cl.id
+        LEFT JOIN fg_tarifa ta ON ta.codigo = c.tarifa_codigo AND ta.planta_key = c.planta_key
+        LEFT JOIN fg_servicio s ON s.id = ta.servicio_id
         WHERE c.id = $1
     `;
     const resCab = await db.query(qCab, [id]);
@@ -277,6 +328,16 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
     return {
         id: cert.id,
         estado: cert.estado,
+        pasoActual: cert.paso_actual,
+        tarifaCodigo: cert.tarifa_codigo,
+        servicio: cert.servicio_codigo ? {
+            codigo: cert.servicio_codigo,
+            nombre: cert.servicio_nombre,
+            modalidad: cert.servicio_modalidad,
+            precio: cert.tarifa_precio === null ? null : Number(cert.tarifa_precio)
+        } : null,
+        fechaCreacion: cert.fecha_creacion,
+        fechaActualizacion: cert.fecha_modificacion,
         tipo: {
             clave: cert.tipo_certificado_clave,
             codigo: cert.tipo_codigo,
@@ -305,12 +366,48 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
     };
 };
 
+exports.actualizarPasoBorrador = async (id, pasoActual, userContext) => {
+    const pasoDestino = String(pasoActual || '').trim().toUpperCase();
+    const destino = PASOS_BORRADOR.indexOf(pasoDestino);
+    if (destino < 0) throw new Error('PASO_INVALIDO');
+
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const result = await client.query(
+            'SELECT estado, planta_key, paso_actual FROM fg_certificado WHERE id = $1 FOR UPDATE',
+            [id]
+        );
+        if (result.rowCount === 0) throw new Error('CERTIFICADO_NOT_FOUND');
+        const certificado = result.rows[0];
+        await validarAccesoCertificado(userContext.username, userContext.perfil_id, certificado.planta_key);
+        if (certificado.estado !== 'BORRADOR') throw new Error('CERTIFICADO_NO_EDITABLE');
+
+        const actual = PASOS_BORRADOR.indexOf(certificado.paso_actual || 'DATOS_INICIALES');
+        if (destino > actual + 1) throw new Error('TRANSICION_PASO_INVALIDA');
+        // Volver a revisar una pantalla no reduce el progreso persistido.
+        const pasoPersistido = destino > actual ? pasoDestino : certificado.paso_actual;
+        await client.query(`
+            UPDATE fg_certificado
+            SET paso_actual = $2, usuario_modificacion = $3, fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $1
+        `, [id, pasoPersistido, userContext.username]);
+        await client.query('COMMIT');
+        return { pasoActual: pasoPersistido };
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
 exports.actualizarBorrador = async (id, data, userContext) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
         
-        const qCheck = `SELECT estado, planta_key FROM fg_certificado WHERE id = $1 FOR UPDATE`;
+        const qCheck = `SELECT estado, planta_key, tipo_certificado_clave, tarifa_codigo FROM fg_certificado WHERE id = $1 FOR UPDATE`;
         const rCheck = await client.query(qCheck, [id]);
         if (rCheck.rowCount === 0) throw new Error('CERTIFICADO_NOT_FOUND');
         const cert = rCheck.rows[0];
@@ -337,6 +434,15 @@ exports.actualizarBorrador = async (id, data, userContext) => {
             values.push(data.observaciones);
         }
         if (data.tarifaCodigo !== undefined) {
+            if (data.tarifaCodigo !== cert.tarifa_codigo) {
+                const evidencia = await client.query(`
+                    SELECT 1 FROM fg_orden_pago WHERE certificado_id = $1 AND estado = 'PAGADO'
+                    UNION ALL
+                    SELECT 1 FROM fg_facturacion WHERE certificado_id = $1 AND estado IN ('PENDIENTE', 'ACEPTADO', 'ERROR')
+                    LIMIT 1
+                `, [id]);
+                if (evidencia.rowCount > 0) throw new Error('DATOS_PREVIOS_NO_EDITABLES');
+            }
             const tarifa = tarifasService.validarTarifaCertificacion(
                 await tarifasService.obtenerTarifaOperativaPorCodigo(
                     userContext.planta_key,
@@ -391,6 +497,13 @@ exports.guardarVehiculoBorrador = async (id, data, userContext) => {
 
         await validarAccesoCertificado(userContext.username, userContext.perfil_id, cert.planta_key);
         if (cert.estado !== 'BORRADOR') throw new Error('CERTIFICADO_NO_EDITABLE');
+        const evidencia = await client.query(`
+            SELECT 1 FROM fg_orden_pago WHERE certificado_id = $1 AND estado = 'PAGADO'
+            UNION ALL
+            SELECT 1 FROM fg_facturacion WHERE certificado_id = $1 AND estado IN ('PENDIENTE', 'ACEPTADO', 'ERROR')
+            LIMIT 1
+        `, [id]);
+        if (evidencia.rowCount > 0) throw new Error('DATOS_PREVIOS_NO_EDITABLES');
 
         const qUpd = `
             INSERT INTO fg_certificado_vehiculo (

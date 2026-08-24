@@ -120,7 +120,8 @@ exports.obtenerBorradores = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const pageSize = parseInt(req.query.pageSize) || 10;
-        const data = await service.obtenerBorradores(page, pageSize, req.user);
+        const search = String(req.query.search || '').trim();
+        const data = await service.obtenerBorradores(page, pageSize, search, req.user);
         res.status(200).json({ ok: true, ...data });
     } catch (e) {
         res.status(500).json({ ok: false, message: e.message });
@@ -171,6 +172,7 @@ exports.actualizarBorrador = async (req, res) => {
         if (e.message === 'CERTIFICADO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El certificado indicado no existe' });
         if (e.message === 'PLANTA_NO_AUTORIZADA') return res.status(403).json({ ok: false, message: 'No tiene acceso a la planta de este certificado.' });
         if (e.message === 'CERTIFICADO_NO_EDITABLE') return res.status(409).json({ ok: false, message: 'El certificado ya no se encuentra en estado BORRADOR.' });
+        if (e.message === 'DATOS_PREVIOS_NO_EDITABLES') return res.status(409).json({ ok: false, message: 'No se pueden modificar servicio o datos técnicos después de confirmar el pago o la facturación.' });
         if (e.message === 'TARIFA_REQUERIDA') return res.status(400).json({ ok: false, message: 'tarifaCodigo es obligatorio' });
         if (e.message === 'TARIFA_NO_CONFIGURADA') return res.status(400).json({ ok: false, message: 'Tarifa no configurada para la sede actual' });
         if (e.message === 'SERVICIO_NO_CERTIFICACION') return res.status(409).json({ ok: false, message: 'El servicio seleccionado no pertenece al flujo de certificación.' });
@@ -276,6 +278,22 @@ exports.guardarGNVComponentes = async (req, res) => {
     } catch (error) {
         console.error('Error en guardarGNVComponentes:', error);
         res.status(400).json({ ok: false, message: error.message });
+    }
+};
+
+exports.actualizarPasoBorrador = async (req, res) => {
+    try {
+        const data = await service.actualizarPasoBorrador(req.params.id, req.body.pasoActual, req.user);
+        res.status(200).json({ ok: true, data });
+    } catch (e) {
+        if (e.message === 'CERTIFICADO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El certificado indicado no existe' });
+        if (e.message === 'PLANTA_NO_AUTORIZADA') return res.status(403).json({ ok: false, message: 'No tiene acceso a la planta de este certificado.' });
+        if (e.message === 'CERTIFICADO_NO_EDITABLE') return res.status(409).json({ ok: false, message: 'El certificado ya no se encuentra en estado BORRADOR.' });
+        if (e.message === 'DATOS_PREVIOS_NO_EDITABLES') return res.status(409).json({ ok: false, message: 'Los datos técnicos ya no son editables después de confirmar el pago o la facturación.' });
+        if (e.message === 'PASO_INVALIDO') return res.status(400).json({ ok: false, message: 'El paso indicado no es válido.' });
+        if (e.message === 'TRANSICION_PASO_INVALIDA') return res.status(409).json({ ok: false, message: 'No se puede omitir un paso sin guardar el anterior.' });
+        console.error(e);
+        res.status(500).json({ ok: false, message: 'Error interno del servidor' });
     }
 };
 

@@ -55,6 +55,7 @@ router.get('/borradores', controller.obtenerBorradores);
 router.post('/borradores', controller.crearBorrador);
 router.get('/borradores/:id', controller.obtenerBorradorCompleto);
 router.patch('/borradores/:id', controller.actualizarBorrador);
+router.patch('/borradores/:id/paso', controller.actualizarPasoBorrador);
 
 router.put('/borradores/:id/vehiculo', controller.guardarVehiculoBorrador);
 
