@@ -121,9 +121,14 @@ exports.obtenerBorradores = async (req, res) => {
         const page = parseInt(req.query.page) || 1;
         const pageSize = parseInt(req.query.pageSize) || 10;
         const search = String(req.query.search || '').trim();
-        const data = await service.obtenerBorradores(page, pageSize, search, req.user);
+        const fechaDesde = String(req.query.fechaDesde || '').trim();
+        const fechaHasta = String(req.query.fechaHasta || '').trim();
+        const data = await service.obtenerBorradores(page, pageSize, search, req.user, { fechaDesde, fechaHasta });
         res.status(200).json({ ok: true, ...data });
     } catch (e) {
+        if (e.message === 'FECHA_INVALIDA') return res.status(400).json({ ok: false, message: 'La fecha indicada no es válida.' });
+        if (e.message === 'RANGO_FECHAS_INCOMPLETO') return res.status(400).json({ ok: false, message: 'Debe indicar las fechas Desde y Hasta.' });
+        if (e.message === 'RANGO_FECHAS_INVALIDO') return res.status(400).json({ ok: false, message: 'La fecha Desde no puede ser posterior a la fecha Hasta.' });
         res.status(500).json({ ok: false, message: e.message });
     }
 };

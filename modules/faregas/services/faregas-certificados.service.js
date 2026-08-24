@@ -143,7 +143,18 @@ const validarAccesoCertificado = async (username, perfilId, plantaKey) => {
     }
 };
 
-exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userContext) => {
+const normalizarFechaFiltro = (valor) => {
+    const fecha = String(valor || '').trim();
+    if (!fecha) return '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw new Error('FECHA_INVALIDA');
+    const fechaUtc = new Date(`${fecha}T00:00:00.000Z`);
+    if (Number.isNaN(fechaUtc.getTime()) || fechaUtc.toISOString().slice(0, 10) !== fecha) {
+        throw new Error('FECHA_INVALIDA');
+    }
+    return fecha;
+};
+
+exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userContext, filtrosFecha = {}) => {
     // Compatibilidad con llamadas internas anteriores: (page, pageSize, userContext).
     if (search && typeof search === 'object' && !userContext) {
         userContext = search;
@@ -164,23 +175,41 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
     }
 
     const termino = String(search || '').trim();
-    const filtroBusqueda = termino ? `
-        AND (
-            c.id::text ILIKE $2
-            OR COALESCE(v.placa, '') ILIKE $2
-            OR COALESCE(tit.nro_documento, '') ILIKE $2
-            OR COALESCE(tit.nombre_razon_social, '') ILIKE $2
-        )` : '';
-    const parametrosBase = termino
-        ? [userContext.planta_key, `%${termino}%`]
-        : [userContext.planta_key];
+    const fechaDesde = normalizarFechaFiltro(filtrosFecha.fechaDesde);
+    const fechaHasta = normalizarFechaFiltro(filtrosFecha.fechaHasta);
+    if (Boolean(fechaDesde) !== Boolean(fechaHasta)) throw new Error('RANGO_FECHAS_INCOMPLETO');
+    if (fechaDesde && fechaDesde > fechaHasta) throw new Error('RANGO_FECHAS_INVALIDO');
+
+    const parametrosBase = [userContext.planta_key];
+    const condiciones = ["c.estado = 'BORRADOR'", 'c.planta_key = $1'];
+    if (termino) {
+        parametrosBase.push(`%${termino}%`);
+        const indiceBusqueda = parametrosBase.length;
+        condiciones.push(`(
+            c.id::text ILIKE $${indiceBusqueda}
+            OR COALESCE(v.placa, '') ILIKE $${indiceBusqueda}
+            OR COALESCE(tit.nro_documento, '') ILIKE $${indiceBusqueda}
+            OR COALESCE(tit.nombre_razon_social, '') ILIKE $${indiceBusqueda}
+        )`);
+    }
+    if (fechaDesde && fechaHasta) {
+        parametrosBase.push(fechaDesde);
+        const indiceDesde = parametrosBase.length;
+        parametrosBase.push(fechaHasta);
+        const indiceHasta = parametrosBase.length;
+        condiciones.push(`c.fecha_creacion >= $${indiceDesde}::date`);
+        condiciones.push(`c.fecha_creacion < ($${indiceHasta}::date + INTERVAL '1 day')`);
+    } else {
+        condiciones.push('c.fecha_creacion >= CURRENT_DATE');
+        condiciones.push("c.fecha_creacion < (CURRENT_DATE + INTERVAL '1 day')");
+    }
+    const filtroWhere = condiciones.join('\n        AND ');
     const qTotal = `
         SELECT COUNT(DISTINCT c.id)
         FROM fg_certificado c
         LEFT JOIN fg_certificado_vehiculo v ON v.certificado_id = c.id
         LEFT JOIN fg_certificado_titular tit ON tit.certificado_id = c.id AND tit.orden = 1
-        WHERE c.estado = 'BORRADOR' AND c.planta_key = $1
-        ${filtroBusqueda}`;
+        WHERE ${filtroWhere}`;
     const resTotal = await db.query(qTotal, parametrosBase);
     const total = parseInt(resTotal.rows[0].count);
 
@@ -210,9 +239,7 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
         LEFT JOIN fg_servicio s ON s.id = ta.servicio_id
         LEFT JOIN fg_orden_pago op ON op.certificado_id = c.id
         LEFT JOIN fg_facturacion f ON f.certificado_id = c.id
-        WHERE c.estado = 'BORRADOR' 
-        AND c.planta_key = $1
-        ${filtroBusqueda}
+        WHERE ${filtroWhere}
         ORDER BY COALESCE(c.fecha_modificacion, c.fecha_creacion) DESC, c.id DESC
         LIMIT $${parametrosBase.length + 1} OFFSET $${parametrosBase.length + 2}
     `;
