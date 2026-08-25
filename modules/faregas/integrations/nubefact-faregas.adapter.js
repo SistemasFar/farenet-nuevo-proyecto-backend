@@ -23,10 +23,22 @@ const limpiarRespuestaProveedor = (value) => {
     return copia;
 };
 
-const construirPayloadNubefact = ({ facturacion, certificado, vehiculo }) => {
+const construirPayloadNubefact = ({ facturacion, certificado, vehiculo, reservaDescuento = null }) => {
     const descripcion = `CERTIFICACION VEHICULAR ${certificado.tipo_certificado_clave} - PLACA ${vehiculo.placa}`;
     const tipoComprobante = facturacion.tipo_comprobante === 'FACTURA' ? 1 : 2;
     const tipoDocumento = facturacion.tipo_documento_cliente === 'RUC' ? 6 : 1;
+
+    let descuentoTotal = 0;
+    let tarifaOriginal = Number(facturacion.importe_total);
+    let baseOriginal = Number(facturacion.base_imponible);
+    let baseDescuento = 0;
+
+    if (reservaDescuento && Number(reservaDescuento.importe_descuento) > 0) {
+        descuentoTotal = Number(reservaDescuento.importe_descuento);
+        tarifaOriginal = Number(reservaDescuento.importe_original);
+        baseOriginal = tarifaOriginal / 1.18;
+        baseDescuento = descuentoTotal / 1.18;
+    }
 
     return {
         operacion: 'generar_comprobante',
@@ -45,7 +57,7 @@ const construirPayloadNubefact = ({ facturacion, certificado, vehiculo }) => {
         moneda: 1,
         tipo_de_cambio: '',
         porcentaje_de_igv: 18,
-        total_descuento: '0.00',
+        total_descuento: dosDecimales(descuentoTotal),
         total_anticipo: '0.00',
         total_gravada: dosDecimales(facturacion.base_imponible),
         total_inafecta: '0.00',
@@ -79,9 +91,9 @@ const construirPayloadNubefact = ({ facturacion, certificado, vehiculo }) => {
             codigo_producto_sunat: '',
             descripcion,
             cantidad: 1,
-            valor_unitario: dosDecimales(facturacion.base_imponible),
-            precio_unitario: dosDecimales(facturacion.importe_total),
-            descuento: '0.00',
+            valor_unitario: dosDecimales(baseOriginal),
+            precio_unitario: dosDecimales(tarifaOriginal),
+            descuento: dosDecimales(baseDescuento),
             subtotal: dosDecimales(facturacion.base_imponible),
             tipo_de_igv: 1,
             igv: dosDecimales(facturacion.igv),

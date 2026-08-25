@@ -146,6 +146,15 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
                 userContext.username
             ]
         );
+
+        // INTEGRACION DESCUENTOS: Vincular facturacion a comprobante de descuento
+        await client.query(
+            `UPDATE fg_descuentocomprobante 
+             SET facturacion_id = $1 
+             WHERE certificado_id = $2 AND estado IN ('RESERVADO', 'APLICADO')`,
+            [result.rows[0].id, certificadoId]
+        );
+
         await client.query('COMMIT');
         return respuestaPublica(result.rows[0]);
     } catch (error) {
@@ -216,6 +225,12 @@ const reservarEmision = async (certificadoId, userContext) => {
         );
         if (vehiculoResult.rowCount === 0) throw errorNegocio('VEHICULO_FALTANTE', 409);
 
+        // INTEGRACION DESCUENTOS
+        const reservaResult = await client.query(
+            'SELECT * FROM fg_descuentocomprobante WHERE facturacion_id = $1',
+            [facturacion.id]
+        );
+
         const updated = await client.query(
             `UPDATE fg_facturacion SET
                 estado = 'PENDIENTE', serie = $1, numero = $2, nro_comprobante = $3,
@@ -225,11 +240,14 @@ const reservarEmision = async (certificadoId, userContext) => {
             [facturacion.serie, facturacion.numero, facturacion.nro_comprobante, intento, userContext.username, facturacion.id]
         );
         facturacion = updated.rows[0];
+        
         const payload = construirPayloadNubefact({
             facturacion,
             certificado,
-            vehiculo: vehiculoResult.rows[0]
+            vehiculo: vehiculoResult.rows[0],
+            reservaDescuento: reservaResult.rowCount > 0 ? reservaResult.rows[0] : null
         });
+        
         const intentoResult = await client.query(
             `INSERT INTO fg_facturacion_intento
                 (facturacion_id, numero_intento, estado, solicitud)

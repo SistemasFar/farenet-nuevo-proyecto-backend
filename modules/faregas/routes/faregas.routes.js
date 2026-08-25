@@ -28,4 +28,7 @@ router.use('/tarifas', tarifasRoutes);
 const configRoutes = require('./faregas-config.routes');
 router.use('/config', configRoutes);
 
+const descuentosRoutes = require('./faregas-descuentos.routes');
+router.use('/descuentos', descuentosRoutes);
+
 module.exports = router;

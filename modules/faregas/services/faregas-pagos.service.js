@@ -1,6 +1,7 @@
 const db = require('../../../config/database');
 const faregasAuthService = require('./faregas-auth.service');
 const tarifasService = require('./faregas-tarifas.service');
+const descuentosService = require('./faregas-descuentos.service');
 const { redondear, obtenerTarifaConfigurada, normalizarPagos } = require('./faregas-pagos.rules');
 
 const obtenerCertificado = async (queryable, certificadoId, userContext, bloquear = false) => {
@@ -72,19 +73,15 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         );
         let orden;
         if (ordenResult.rowCount === 0) {
-            let tarifaConfigurada;
-            if (certificado.tarifa_codigo) {
-                const tarifa = tarifasService.validarTarifaCertificacion(
-                    await tarifasService.obtenerTarifaOperativaPorCodigo(
-                        certificado.planta_key,
-                        certificado.tarifa_codigo,
-                        client
-                    )
-                );
-                tarifaConfigurada = tarifa.precio;
-            } else {
+            // INTEGRACION DESCUENTOS: Obtenemos el resumen del descuento, que nos da el importeFinal
+            const resumenDescuento = await descuentosService.obtenerResumenDescuentoCertificado(client, certificado);
+            
+            if (!resumenDescuento.tarifaOriginal && !certificado.tarifa_codigo) {
                 throw new Error('TARIFA_REQUERIDA');
             }
+
+            const tarifaConfigurada = resumenDescuento.totalFinal; // Es igual a tarifaOriginal si no hay descuento
+
             if (Math.abs(tarifaConfigurada - importeSolicitado) > 0.009) throw new Error('TARIFA_NO_COINCIDE');
             const base = redondear(importeSolicitado / 1.18);
             const igv = redondear(importeSolicitado - base);
@@ -146,6 +143,11 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             RETURNING *
         `, [orden.id, totalPagado, saldo, estado, userContext.username]);
 
+        // INTEGRACION DESCUENTOS: Consumir el descuento
+        if (estado === 'PAGADO') {
+            await descuentosService.consumirDescuentoSiExiste(client, certificadoId, orden.id, userContext);
+        }
+
         const pagosGuardados = await exports.listarPagosPorOrden(orden.id, client);
         await client.query('COMMIT');
         return { orden: ordenActualizada.rows[0], pagos: pagosGuardados };
@@ -177,13 +179,13 @@ exports.obtenerPagos = async (certificadoId, userContext) => {
     const ordenResult = await db.query('SELECT * FROM fg_orden_pago WHERE certificado_id = $1', [certificadoId]);
     if (ordenResult.rowCount === 0) {
         let importeTotal = null;
-        if (certificado.tarifa_codigo) {
-            const tarifa = await tarifasService.obtenerTarifaOperativaPorCodigo(
-                certificado.planta_key,
-                certificado.tarifa_codigo
-            );
-            if (tarifa) importeTotal = tarifa.precio;
+        
+        // INTEGRACION DESCUENTOS
+        const resumenDescuento = await descuentosService.obtenerResumenDescuentoCertificado(db, certificado);
+        if (resumenDescuento.tarifaOriginal || certificado.tarifa_codigo) {
+            importeTotal = resumenDescuento.totalFinal;
         }
+
         return { orden: null, pagos: [], importeTotal };
     }
     const orden = ordenResult.rows[0];
