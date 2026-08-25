@@ -5,7 +5,7 @@ const responderError = (res, error) => {
         CERTIFICADO_NOT_FOUND: [404, 'El certificado indicado no existe.'],
         PLANTA_NO_AUTORIZADA: [403, 'No tiene acceso a la planta de este certificado.'],
         CERTIFICADO_NO_EDITABLE: [409, 'El certificado ya no se encuentra en estado BORRADOR.'],
-        IMPORTE_TOTAL_INVALIDO: [400, 'El importe total de la orden debe ser mayor a cero.'],
+        IMPORTE_TOTAL_INVALIDO: [400, 'El importe total de la orden no puede ser negativo.'],
         TARIFA_NO_CONFIGURADA: [409, 'No existe una tarifa válida configurada para este certificado.'],
         SERVICIO_NO_CERTIFICACION: [409, 'La tarifa pertenece a un servicio que no genera certificados.'],
         TARIFA_NO_COINCIDE: [409, 'El importe enviado no coincide con la tarifa configurada en el servidor.'],
@@ -23,7 +23,7 @@ const responderError = (res, error) => {
         FECHA_DEPOSITO_INVALIDA: [400, 'La fecha de depósito no es válida.'],
         FECHA_DEPOSITO_FUTURA: [400, 'La fecha de depósito no puede ser posterior a hoy.'],
     };
-    const [status, message] = errores[error.message] || [500, 'Error interno al procesar los pagos.'];
+    const [status, message] = errores[error.message] || [500, ('Error interno al procesar los pagos: ' + (error.message || error.toString()))];
     if (status === 500) console.error('Error FAREGAS pagos:', error);
     return res.status(status).json({ ok: false, message, code: error.message });
 };

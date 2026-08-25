@@ -63,7 +63,7 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         if (certificado.estado !== 'BORRADOR') throw new Error('CERTIFICADO_NO_EDITABLE');
 
         const importeSolicitado = redondear(data.importeTotal);
-        if (!Number.isFinite(importeSolicitado) || importeSolicitado <= 0) throw new Error('IMPORTE_TOTAL_INVALIDO');
+        if (!Number.isFinite(importeSolicitado) || importeSolicitado < 0) throw new Error('IMPORTE_TOTAL_INVALIDO');
         const pagos = normalizarPagos(data.pagos);
         for (const pago of pagos) await validarReferenciaPago(client, pago);
 
