@@ -151,7 +151,7 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
         await client.query(
             `UPDATE fg_descuentocomprobante 
              SET facturacion_id = $1 
-             WHERE certificado_id = $2 AND estado IN ('RESERVADO', 'APLICADO')`,
+             WHERE certificado_id = $2 AND estado = 'APLICADO'`,
             [result.rows[0].id, certificadoId]
         );
 
@@ -227,9 +227,13 @@ const reservarEmision = async (certificadoId, userContext) => {
 
         // INTEGRACION DESCUENTOS
         const reservaResult = await client.query(
-            'SELECT * FROM fg_descuentocomprobante WHERE facturacion_id = $1',
+            `SELECT * FROM fg_descuentocomprobante
+             WHERE facturacion_id = $1 AND estado = 'APLICADO'`,
             [facturacion.id]
         );
+        if (reservaResult.rowCount > 0 && Math.abs(Number(reservaResult.rows[0].importe_final) - Number(facturacion.importe_total)) > 0.009) {
+            throw errorNegocio('DESCUENTO_FACTURACION_INCONSISTENTE', 409);
+        }
 
         const updated = await client.query(
             `UPDATE fg_facturacion SET

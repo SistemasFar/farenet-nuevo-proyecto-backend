@@ -300,7 +300,7 @@ exports.crearBorrador = async (data, userContext) => {
                 numero_certificado, fecha_emision, estado, paso_actual,
                 observaciones, usuario_creacion, usuario_modificacion
             ) VALUES (
-                $1, $2, $3, $4, NULL, NULL, 'BORRADOR', 'PAGO', $5, $6, $6
+                $1, $2, $3, $4, NULL, NULL, 'BORRADOR', 'DATOS_INICIALES', $5, $6, $6
             ) RETURNING id, estado, paso_actual AS "pasoActual"
         `, [tipoCertificadoClave, tarifaCodigo, clienteId || null, planta_key, observaciones || null, username]);
         const borrador = res.rows[0];

@@ -100,6 +100,13 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             }
         }
 
+        await client.query(`UPDATE fg_descuentocomprobante
+            SET orden_pago_id=$2,
+                reservado_hasta=GREATEST(reservado_hasta, CURRENT_TIMESTAMP + INTERVAL '30 days'),
+                usuario_modificacion=$3, fecha_modificacion=CURRENT_TIMESTAMP
+            WHERE certificado_id=$1 AND estado='RESERVADO'`,
+        [certificadoId, orden.id, userContext.username]);
+
         const totalPagado = redondear(pagos.reduce((total, pago) => total + pago.importe, 0));
         if (totalPagado - Number(orden.importe_total) > 0.009) throw new Error('PAGO_EXCEDE_TOTAL');
 

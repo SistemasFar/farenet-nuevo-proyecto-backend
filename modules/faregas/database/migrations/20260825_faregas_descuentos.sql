@@ -21,7 +21,6 @@ CREATE TABLE IF NOT EXISTS fg_descuento (
     usuario_modificacion VARCHAR NULL,
     fecha_modificacion TIMESTAMP WITHOUT TIME ZONE NULL,
     
-    CONSTRAINT uq_fg_descuento_codigo UNIQUE(codigo),
     CONSTRAINT fk_fg_descuento_planta FOREIGN KEY (planta_key) REFERENCES fg_planta(key) ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_fg_descuento_usu_crea FOREIGN KEY (usuario_creacion) REFERENCES fg_usuario(username) ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_fg_descuento_usu_mod FOREIGN KEY (usuario_modificacion) REFERENCES fg_usuario(username) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -33,7 +32,7 @@ CREATE TABLE IF NOT EXISTS fg_descuento (
     CONSTRAINT chk_fg_descuento_tipo_calculo CHECK (tipo_calculo IN ('MONTO', 'PORCENTAJE'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_fg_descuento_codigo_upper ON fg_descuento(UPPER(codigo));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fg_descuento_codigo_upper ON fg_descuento(UPPER(BTRIM(codigo)));
 
 -- --------------------------------------------------
 -- 2. fg_descuentocliente (Códigos o beneficios entregados)
@@ -55,7 +54,6 @@ CREATE TABLE IF NOT EXISTS fg_descuentocliente (
     usuario_modificacion VARCHAR NULL,
     fecha_modificacion TIMESTAMP WITHOUT TIME ZONE NULL,
 
-    CONSTRAINT uq_fg_descuentocliente_codigo UNIQUE(codigo),
     CONSTRAINT fk_fg_descuentocliente_descuento FOREIGN KEY (descuento_id) REFERENCES fg_descuento(id) ON UPDATE CASCADE ON DELETE CASCADE,
     CONSTRAINT fk_fg_descuentocliente_usu_crea FOREIGN KEY (usuario_creacion) REFERENCES fg_usuario(username) ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_fg_descuentocliente_usu_mod FOREIGN KEY (usuario_modificacion) REFERENCES fg_usuario(username) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -65,7 +63,7 @@ CREATE TABLE IF NOT EXISTS fg_descuentocliente (
     CONSTRAINT chk_fg_descuentocliente_tipo_doc CHECK (tipo_documento IS NULL OR tipo_documento IN ('DNI', 'RUC'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_fg_descuentocliente_codigo_upper ON fg_descuentocliente(UPPER(codigo));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fg_descuentocliente_codigo_upper ON fg_descuentocliente(UPPER(BTRIM(codigo)));
 CREATE INDEX IF NOT EXISTS idx_fg_descuentocliente_placa ON fg_descuentocliente(placa);
 CREATE INDEX IF NOT EXISTS idx_fg_descuentocliente_doc ON fg_descuentocliente(nro_documento);
 
@@ -131,24 +129,27 @@ CREATE TABLE IF NOT EXISTS fg_descuentocomprobante (
 CREATE INDEX IF NOT EXISTS idx_fg_descom_cert ON fg_descuentocomprobante(certificado_id);
 CREATE INDEX IF NOT EXISTS idx_fg_descom_descli ON fg_descuentocomprobante(descuento_cliente_id);
 CREATE INDEX IF NOT EXISTS idx_fg_descom_estado ON fg_descuentocomprobante(estado);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fg_descom_certificado_activo
+    ON fg_descuentocomprobante(certificado_id)
+    WHERE estado IN ('RESERVADO', 'APLICADO');
 
 -- --------------------------------------------------
 -- PERMISOS
 -- --------------------------------------------------
-INSERT INTO fg_permiso (clave, descripcion) 
-VALUES ('MENU_DESCUENTOS', 'Acceso al menú de descuentos FAREGAS') 
+INSERT INTO fg_permiso (clave, nombre, modulo, descripcion, activo)
+VALUES ('MENU_DESCUENTOS', 'Menú Descuentos', 'MENU', 'Acceso al menú de descuentos FAREGAS', TRUE)
 ON CONFLICT (clave) DO NOTHING;
 
-INSERT INTO fg_permiso (clave, descripcion) 
-VALUES ('DESCUENTOS_ADMINISTRAR', 'Permite crear y modificar campañas de descuentos FAREGAS') 
+INSERT INTO fg_permiso (clave, nombre, modulo, descripcion, activo)
+VALUES ('DESCUENTOS_ADMINISTRAR', 'Administrar Descuentos', 'FAREGAS', 'Permite crear y modificar campañas de descuentos FAREGAS', TRUE)
 ON CONFLICT (clave) DO NOTHING;
 
-INSERT INTO fg_perfil_permiso (perfil_id, permiso_clave)
-SELECT p.id, 'MENU_DESCUENTOS' FROM fg_perfil p WHERE p.clave = 'SISTEMAS'
+INSERT INTO fg_perfil_permiso (perfil_clave, permiso_clave)
+SELECT p.clave, 'MENU_DESCUENTOS' FROM fg_perfil p WHERE p.clave = 'SISTEMAS'
 ON CONFLICT DO NOTHING;
 
-INSERT INTO fg_perfil_permiso (perfil_id, permiso_clave)
-SELECT p.id, 'DESCUENTOS_ADMINISTRAR' FROM fg_perfil p WHERE p.clave = 'SISTEMAS'
+INSERT INTO fg_perfil_permiso (perfil_clave, permiso_clave)
+SELECT p.clave, 'DESCUENTOS_ADMINISTRAR' FROM fg_perfil p WHERE p.clave = 'SISTEMAS'
 ON CONFLICT DO NOTHING;
 
 COMMIT;
