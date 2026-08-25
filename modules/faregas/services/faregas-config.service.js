@@ -143,42 +143,12 @@ exports.editarEmpresa = async (key, empresa, username, ip_direccion) => {
     }
 };
 
-exports.cambiarEstadoEmpresa = async (key, activo, empresaReemplazoKey, username, ip_direccion) => {
+exports.cambiarEstadoEmpresa = async (key, activo, username, ip_direccion) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
         const actual = await client.query('SELECT * FROM fg_empresa WHERE key = $1 FOR UPDATE', [key]);
         if (actual.rowCount === 0) throw new Error('EMPRESA_NO_ENCONTRADA');
-        if (!activo) {
-            const sedes = await client.query(
-                'SELECT key, nombre FROM fg_planta WHERE empresa_key = $1 ORDER BY key FOR UPDATE',
-                [key]
-            );
-            if (sedes.rowCount > 0) {
-                if (!empresaReemplazoKey) throw new Error('EMPRESA_REEMPLAZO_REQUERIDA');
-                if (empresaReemplazoKey === key) throw new Error('EMPRESA_REEMPLAZO_INVALIDA');
-                const reemplazo = await client.query(
-                    'SELECT key, nombre FROM fg_empresa WHERE key = $1 AND activo = TRUE FOR UPDATE',
-                    [empresaReemplazoKey]
-                );
-                if (reemplazo.rowCount === 0) throw new Error('EMPRESA_REEMPLAZO_INVALIDA');
-                await client.query(
-                    'UPDATE fg_planta SET empresa_key = $1 WHERE empresa_key = $2',
-                    [empresaReemplazoKey, key]
-                );
-                for (const sede of sedes.rows) {
-                    await this.registrarAuditoria(client, {
-                        username, entidad: 'SEDE', accion: 'ASIGNAR_EMPRESA', identificador: sede.key,
-                        detalles: {
-                            antes: { empresa_key: key, empresa_nombre: actual.rows[0].nombre },
-                            despues: { empresa_key: empresaReemplazoKey, empresa_nombre: reemplazo.rows[0].nombre },
-                            motivo: 'DESACTIVACION_EMPRESA'
-                        },
-                        planta_key: sede.key, ip_direccion
-                    });
-                }
-            }
-        }
         await client.query(`
             UPDATE fg_empresa
             SET activo = $1, fecha_modificacion = CURRENT_TIMESTAMP
@@ -187,11 +157,7 @@ exports.cambiarEstadoEmpresa = async (key, activo, empresaReemplazoKey, username
         await this.registrarAuditoria(client, {
             username, entidad: 'EMPRESA', accion: activo ? 'ACTIVAR_EMPRESA' : 'DESACTIVAR_EMPRESA',
             identificador: key,
-            detalles: {
-                antes: { activo: actual.rows[0].activo },
-                despues: { activo },
-                empresa_reemplazo_key: !activo ? empresaReemplazoKey || null : null
-            },
+            detalles: { antes: { activo: actual.rows[0].activo }, despues: { activo } },
             planta_key: null, ip_direccion
         });
         await client.query('COMMIT');

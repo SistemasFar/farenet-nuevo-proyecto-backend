@@ -85,7 +85,6 @@ exports.cambiarEstadoEmpresa = async (req, res) => {
         await configService.cambiarEstadoEmpresa(
             req.params.key,
             req.body.activo,
-            textoOpcional(req.body.empresa_reemplazo_key)?.toUpperCase() || null,
             req.user.username,
             req.ip
         );
@@ -95,9 +94,7 @@ exports.cambiarEstadoEmpresa = async (req, res) => {
         });
     } catch (error) {
         const mapa = {
-            EMPRESA_NO_ENCONTRADA: [404, 'Empresa no encontrada.'],
-            EMPRESA_REEMPLAZO_REQUERIDA: [409, 'Debe seleccionar la empresa que recibirá las sedes antes de desactivar.'],
-            EMPRESA_REEMPLAZO_INVALIDA: [409, 'La empresa reemplazante no existe, está inactiva o es la misma empresa.']
+            EMPRESA_NO_ENCONTRADA: [404, 'Empresa no encontrada.']
         };
         const [status, message] = mapa[error.message] || [500, error.message || 'Error al cambiar el estado de la empresa.'];
         res.status(status).json({ success: false, message });

@@ -74,7 +74,7 @@ test('valida y envía el cambio de estado de una empresa', async () => {
         }, res);
         assert.equal(res.statusCode, 200);
         assert.deepEqual(recibido.slice(0, 2), ['CAMBRIDGE', false]);
-        assert.equal(recibido[2], null);
+        assert.equal(recibido[2], 'TEST');
     } finally {
         service.cambiarEstadoEmpresa = original;
     }
@@ -97,23 +97,5 @@ test('crea una empresa normalizando código y datos opcionales', async () => {
         });
     } finally {
         service.crearEmpresa = original;
-    }
-});
-
-test('envía obligatoriamente la empresa reemplazante al desactivar', async () => {
-    const original = service.cambiarEstadoEmpresa;
-    let recibido;
-    service.cambiarEstadoEmpresa = async (...args) => { recibido = args; };
-    try {
-        const res = response();
-        await controller.cambiarEstadoEmpresa({
-            params: { key: 'CAMBRIDGE' },
-            body: { activo: false, empresa_reemplazo_key: ' nottingham ' },
-            user: { username: 'TEST' }, ip: '127.0.0.1'
-        }, res);
-        assert.equal(res.statusCode, 200);
-        assert.deepEqual(recibido.slice(0, 3), ['CAMBRIDGE', false, 'NOTTINGHAM']);
-    } finally {
-        service.cambiarEstadoEmpresa = original;
     }
 });
