@@ -39,8 +39,10 @@ exports.registrarAuditoria = async (client, { username, entidad, accion, identif
 exports.getSedes = async () => {
     const result = await db.query(`
         SELECT p.key, p.nombre, p.direccion, p.telefono, p.activo,
+        p.empresa_key, e.nombre AS empresa_nombre,
         (SELECT COUNT(*) FROM fg_tarifa t WHERE t.planta_key = p.key AND t.activo = true) as total_tarifas
         FROM fg_planta p
+        JOIN fg_empresa e ON e.key = p.empresa_key
         ORDER BY p.activo DESC, p.nombre ASC
     `);
     return result.rows;
@@ -55,9 +57,9 @@ exports.crearSede = async (sede, username, ip_direccion) => {
         if (check.rows.length > 0) throw new Error('Ya existe una sede con ese código (key).');
 
         await client.query(`
-            INSERT INTO fg_planta (key, nombre, direccion, telefono, activo)
-            VALUES ($1, $2, $3, $4, $5)
-        `, [sede.key, sede.nombre, sede.direccion, sede.telefono, false]);
+            INSERT INTO fg_planta (key, nombre, direccion, telefono, activo, empresa_key)
+            VALUES ($1, $2, $3, $4, $5, $6)
+        `, [sede.key, sede.nombre, sede.direccion, sede.telefono, false, sede.empresa_key || 'FAREGAS']);
 
         await this.registrarAuditoria(client, {
             username, entidad: 'SEDE', accion: 'CREAR_SEDE', identificador: sede.key,
@@ -69,6 +71,159 @@ exports.crearSede = async (sede, username, ip_direccion) => {
     } catch (e) {
         await client.query('ROLLBACK');
         throw e;
+    } finally {
+        client.release();
+    }
+};
+
+// EMPRESAS
+
+exports.getEmpresas = async () => {
+    const result = await db.query(`
+        SELECT e.key, e.nombre, e.ruc, e.direccion, e.telefono,
+               e.cuenta_banco_nacion, e.activo,
+               COUNT(p.key)::int AS total_sedes
+        FROM fg_empresa e
+        LEFT JOIN fg_planta p ON p.empresa_key = e.key
+        GROUP BY e.key, e.nombre, e.ruc, e.direccion, e.telefono,
+                 e.cuenta_banco_nacion, e.activo
+        ORDER BY e.activo DESC, e.nombre ASC
+    `);
+    return result.rows;
+};
+
+exports.crearEmpresa = async (empresa, username, ip_direccion) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query(`
+            INSERT INTO fg_empresa (
+                key, nombre, ruc, direccion, telefono,
+                cuenta_banco_nacion, activo
+            ) VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+        `, [empresa.key, empresa.nombre, empresa.ruc, empresa.direccion, empresa.telefono, empresa.cuenta_banco_nacion]);
+        await this.registrarAuditoria(client, {
+            username, entidad: 'EMPRESA', accion: 'CREAR_EMPRESA', identificador: empresa.key,
+            detalles: { despues: { ...empresa, activo: true } },
+            planta_key: null, ip_direccion
+        });
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.code === '23505') throw new Error('EMPRESA_DUPLICADA');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+exports.editarEmpresa = async (key, empresa, username, ip_direccion) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const actual = await client.query('SELECT * FROM fg_empresa WHERE key = $1 FOR UPDATE', [key]);
+        if (actual.rowCount === 0) throw new Error('EMPRESA_NO_ENCONTRADA');
+        await client.query(`
+            UPDATE fg_empresa
+            SET nombre = $1, ruc = $2, direccion = $3, telefono = $4,
+                cuenta_banco_nacion = $5, fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE key = $6
+        `, [empresa.nombre, empresa.ruc, empresa.direccion, empresa.telefono, empresa.cuenta_banco_nacion, key]);
+        await this.registrarAuditoria(client, {
+            username, entidad: 'EMPRESA', accion: 'EDITAR_EMPRESA', identificador: key,
+            detalles: { antes: actual.rows[0], despues: { ...actual.rows[0], ...empresa } },
+            planta_key: null, ip_direccion
+        });
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+exports.cambiarEstadoEmpresa = async (key, activo, empresaReemplazoKey, username, ip_direccion) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const actual = await client.query('SELECT * FROM fg_empresa WHERE key = $1 FOR UPDATE', [key]);
+        if (actual.rowCount === 0) throw new Error('EMPRESA_NO_ENCONTRADA');
+        if (!activo) {
+            const sedes = await client.query(
+                'SELECT key, nombre FROM fg_planta WHERE empresa_key = $1 ORDER BY key FOR UPDATE',
+                [key]
+            );
+            if (sedes.rowCount > 0) {
+                if (!empresaReemplazoKey) throw new Error('EMPRESA_REEMPLAZO_REQUERIDA');
+                if (empresaReemplazoKey === key) throw new Error('EMPRESA_REEMPLAZO_INVALIDA');
+                const reemplazo = await client.query(
+                    'SELECT key, nombre FROM fg_empresa WHERE key = $1 AND activo = TRUE FOR UPDATE',
+                    [empresaReemplazoKey]
+                );
+                if (reemplazo.rowCount === 0) throw new Error('EMPRESA_REEMPLAZO_INVALIDA');
+                await client.query(
+                    'UPDATE fg_planta SET empresa_key = $1 WHERE empresa_key = $2',
+                    [empresaReemplazoKey, key]
+                );
+                for (const sede of sedes.rows) {
+                    await this.registrarAuditoria(client, {
+                        username, entidad: 'SEDE', accion: 'ASIGNAR_EMPRESA', identificador: sede.key,
+                        detalles: {
+                            antes: { empresa_key: key, empresa_nombre: actual.rows[0].nombre },
+                            despues: { empresa_key: empresaReemplazoKey, empresa_nombre: reemplazo.rows[0].nombre },
+                            motivo: 'DESACTIVACION_EMPRESA'
+                        },
+                        planta_key: sede.key, ip_direccion
+                    });
+                }
+            }
+        }
+        await client.query(`
+            UPDATE fg_empresa
+            SET activo = $1, fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE key = $2
+        `, [activo, key]);
+        await this.registrarAuditoria(client, {
+            username, entidad: 'EMPRESA', accion: activo ? 'ACTIVAR_EMPRESA' : 'DESACTIVAR_EMPRESA',
+            identificador: key,
+            detalles: {
+                antes: { activo: actual.rows[0].activo },
+                despues: { activo },
+                empresa_reemplazo_key: !activo ? empresaReemplazoKey || null : null
+            },
+            planta_key: null, ip_direccion
+        });
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+exports.asignarEmpresaSede = async (plantaKey, empresaKey, username, ip_direccion) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const planta = await client.query('SELECT * FROM fg_planta WHERE key = $1 FOR UPDATE', [plantaKey]);
+        if (planta.rowCount === 0) throw new Error('SEDE_NO_ENCONTRADA');
+        const empresa = await client.query('SELECT key, nombre FROM fg_empresa WHERE key = $1 AND activo = TRUE', [empresaKey]);
+        if (empresa.rowCount === 0) throw new Error('EMPRESA_NO_DISPONIBLE');
+        await client.query('UPDATE fg_planta SET empresa_key = $1 WHERE key = $2', [empresaKey, plantaKey]);
+        await this.registrarAuditoria(client, {
+            username, entidad: 'SEDE', accion: 'ASIGNAR_EMPRESA', identificador: plantaKey,
+            detalles: {
+                antes: { empresa_key: planta.rows[0].empresa_key },
+                despues: { empresa_key: empresaKey, empresa_nombre: empresa.rows[0].nombre }
+            },
+            planta_key: plantaKey, ip_direccion
+        });
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
     } finally {
         client.release();
     }

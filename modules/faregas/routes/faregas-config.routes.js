@@ -142,12 +142,41 @@ const requireConfigSeriesPerm = async (req, res, next) => {
     }
 };
 
+const requireConfigEmpresasPerm = async (req, res, next) => {
+    try {
+        const permisoDb = await db.query(
+            `SELECT 1 FROM fg_perfil_permiso
+             WHERE perfil_clave = $1
+               AND permiso_clave = 'MENU_CONFIGURACION'
+               AND EXISTS (
+                   SELECT 1 FROM fg_perfil_permiso acceso
+                   WHERE acceso.perfil_clave = $1
+                     AND acceso.permiso_clave IN ('CONFIGURACION_EMPRESAS', 'CONFIGURACION_SEDES')
+               )`,
+            [req.user.perfil_id]
+        );
+        if (permisoDb.rowCount === 0) {
+            return res.status(403).json({ success: false, message: 'No tiene permisos para administrar empresas.' });
+        }
+        next();
+    } catch (_error) {
+        res.status(500).json({ success: false, message: 'Error al verificar permisos' });
+    }
+};
+
 router.use(authFaregasMiddleware);
 
 router.get('/sedes', requireConfigSedesPerm, configController.getSedes);
 router.post('/sedes', requireConfigSedesPerm, configController.crearSede);
 router.put('/sedes/:key', requireConfigSedesPerm, configController.editarSede);
 router.put('/sedes/:key/estado', requireConfigSedesPerm, configController.cambiarEstadoSede);
+
+router.get('/empresas', requireConfigEmpresasPerm, configController.getEmpresas);
+router.get('/empresas/sedes', requireConfigEmpresasPerm, configController.getSedesEmpresas);
+router.post('/empresas', requireConfigEmpresasPerm, configController.crearEmpresa);
+router.put('/empresas/:key', requireConfigEmpresasPerm, configController.editarEmpresa);
+router.put('/empresas/:key/estado', requireConfigEmpresasPerm, configController.cambiarEstadoEmpresa);
+router.put('/sedes/:key/empresa', requireConfigEmpresasPerm, configController.asignarEmpresaSede);
 
 router.get('/servicios', requireConfigServiciosPerm, configController.getServicios);
 router.post('/servicios', requireConfigServiciosPerm, configController.crearServicio);

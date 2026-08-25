@@ -1,6 +1,13 @@
 const service = require('../services/faregas-series.service');
 
-const tipos = new Set(['FACTURA', 'BOLETA']);
+const tipos = new Set([
+    'FACTURA',
+    'BOLETA',
+    'NOTA_CREDITO_FACTURA',
+    'NOTA_CREDITO_BOLETA',
+    'NOTA_DEBITO_FACTURA',
+    'NOTA_DEBITO_BOLETA'
+]);
 const fallo = (message) => { const error = new Error(message); error.status = 400; throw error; };
 const texto = (value, campo) => {
     const result = String(value || '').trim().toUpperCase();
