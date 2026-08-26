@@ -195,8 +195,8 @@ exports.crearServicio = async (req, res) => {
             orden: orden || 0
         };
 
-        await configService.crearServicio(data, req.user.username, req.ip);
-        res.json({ success: true, message: 'Servicio creado exitosamente.' });
+        const newId = await configService.crearServicio(data, req.user.username, req.ip);
+        res.json({ success: true, message: 'Servicio creado exitosamente.', servicio_id: newId });
     } catch (error) {
         const status = erroresConfiguracionServicio.has(error.message) ? 400 : 500;
         res.status(status).json({ success: false, message: error.message || 'Error al crear servicio.' });
@@ -307,5 +307,14 @@ exports.cambiarEstadoServicio = async (req, res) => {
         res.json({ success: true, message: `Servicio ${activo ? 'activado' : 'desactivado'} exitosamente.` });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message || 'Error al cambiar estado de servicio.' });
+    }
+};
+
+exports.obtenerSedesPorServicio = async (req, res) => {
+    try {
+        const dict = await configService.obtenerSedesPorServicio();
+        res.status(200).json({ success: true, sedesPorServicio: dict });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message || 'Error al obtener sedes por servicio' });
     }
 };

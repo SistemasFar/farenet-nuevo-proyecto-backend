@@ -179,6 +179,7 @@ router.put('/empresas/:key/estado', requireConfigEmpresasPerm, configController.
 router.put('/sedes/:key/empresa', requireConfigEmpresasPerm, configController.asignarEmpresaSede);
 
 router.get('/servicios', requireConfigServiciosPerm, configController.getServicios);
+router.get('/servicios/sedes', requireConfigServiciosPerm, configController.obtenerSedesPorServicio);
 router.post('/servicios', requireConfigServiciosPerm, configController.crearServicio);
 router.put('/servicios/:id', requireConfigServiciosPerm, configController.editarServicio);
 router.put('/servicios/:id/estado', requireConfigServiciosPerm, configController.cambiarEstadoServicio);

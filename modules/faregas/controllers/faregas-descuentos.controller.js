@@ -11,10 +11,11 @@ const MENSAJES = {
     DESCUENTO_DUPLICADO: 'No se pudo generar el identificador interno de la campaña.', CODIGO_CLIENTE_DUPLICADO: 'Ese código ya se encuentra registrado.',
     PLACA_DESCUENTO_REQUERIDA: 'Los descuentos de tipo PLACA requieren una placa autorizada.',
     TIPO_CALCULO_INVALIDO: 'El cálculo debe ser FLAT, MONTO o PORCENTAJE.',
-    VALOR_DESCUENTO_INVALIDO: 'Indique un valor válido para contado o crédito.',
+    VALOR_DESCUENTO_INVALIDO: 'Indique un valor válido para la regla de descuento.',
     IMPORTE_DESCUENTO_INVALIDO: 'El valor configurado no produce un descuento válido para la tarifa de esa sede.',
-    SERVICIOS_DESCUENTO_REQUERIDOS: 'Seleccione al menos un servicio para este código.',
-    REGLA_DESCUENTO_NO_CONFIGURADA: 'El código no tiene una regla de descuento al contado configurada.',
+    SERVICIOS_DESCUENTO_REQUERIDOS: 'Seleccione al menos un servicio para este descuento.',
+    REGLAS_DESCUENTO_REQUERIDAS: 'Configure primero las sedes, servicios y valores del descuento antes de crear códigos.',
+    REGLA_DESCUENTO_NO_CONFIGURADA: 'El descuento no tiene una regla válida para esta sede, servicio y forma de pago.',
     REFERENCIA_DESCUENTO_INVALIDA: 'La sede o uno de los servicios seleccionados no existe o no tiene una tarifa activa.',
     REGLA_DESCUENTO_DUPLICADA: 'No se puede repetir el mismo servicio dentro de una sede.'
 };
@@ -95,6 +96,11 @@ exports.actualizarDescuento = async (req, res) => {
 
 exports.cambiarEstadoDescuento = async (req, res) => {
     try { res.json(await descuentosService.cambiarEstadoDescuento(req.params.id, req.body.activo, req.user)); }
+    catch (error) { responderError(res, error); }
+};
+
+exports.guardarReglasDescuento = async (req, res) => {
+    try { res.json(await descuentosService.guardarReglasDescuento(req.params.id, req.body, req.user)); }
     catch (error) { responderError(res, error); }
 };
 

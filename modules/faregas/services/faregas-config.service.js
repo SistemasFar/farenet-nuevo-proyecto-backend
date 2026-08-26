@@ -524,3 +524,26 @@ exports.cambiarEstadoServicio = async (id, activo, username, ip_direccion) => {
         client.release();
     }
 };
+
+exports.obtenerSedesPorServicio = async () => {
+    const query = `
+        SELECT t.servicio_id, json_agg(json_build_object(
+            'key', p.key, 
+            'nombre', p.nombre,
+            'tarifa_id', t.id,
+            'precio', t.precio,
+            'producto_facturacion_id', t.producto_facturacion_id,
+            'activo', t.activo
+        )) AS sedes
+        FROM fg_tarifa t
+        JOIN fg_planta p ON t.planta_key = p.key
+        WHERE p.activo = true
+        GROUP BY t.servicio_id
+    `;
+    const result = await require('../../../config/database').query(query);
+    const dict = {};
+    result.rows.forEach(row => {
+        dict[row.servicio_id] = row.sedes;
+    });
+    return dict;
+};
