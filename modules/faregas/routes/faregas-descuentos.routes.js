@@ -30,6 +30,7 @@ router.get('/:id', requireAdministrar, controller.obtenerDetalle);
 router.put('/:id', requireAdministrar, controller.actualizarDescuento);
 router.patch('/:id/estado', requireAdministrar, controller.cambiarEstadoDescuento);
 router.post('/:id/codigos', requireAdministrar, controller.crearCodigo);
+router.put('/codigos/:id', requireAdministrar, controller.actualizarCodigo);
 router.patch('/codigos/:id/estado', requireAdministrar, controller.cambiarEstadoCodigo);
 
 module.exports = router;

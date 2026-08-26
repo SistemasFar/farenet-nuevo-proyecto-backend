@@ -8,8 +8,15 @@ const MENSAJES = {
     DESCUENTO_NO_APLICA_PLACA: 'El descuento no corresponde a la placa del vehículo.',
     DESCUENTO_YA_RESERVADO: 'El certificado ya tiene otro descuento reservado.',
     ORDEN_PAGO_EXISTENTE: 'No se puede cambiar el descuento porque ya existe una orden de pago.',
-    DESCUENTO_DUPLICADO: 'Ya existe una campaña con ese código.', CODIGO_CLIENTE_DUPLICADO: 'Ese código ya se encuentra registrado.',
-    PLACA_DESCUENTO_REQUERIDA: 'Los descuentos de tipo PLACA requieren una placa autorizada.'
+    DESCUENTO_DUPLICADO: 'No se pudo generar el identificador interno de la campaña.', CODIGO_CLIENTE_DUPLICADO: 'Ese código ya se encuentra registrado.',
+    PLACA_DESCUENTO_REQUERIDA: 'Los descuentos de tipo PLACA requieren una placa autorizada.',
+    TIPO_CALCULO_INVALIDO: 'El cálculo debe ser FLAT, MONTO o PORCENTAJE.',
+    VALOR_DESCUENTO_INVALIDO: 'Indique un valor válido para contado o crédito.',
+    IMPORTE_DESCUENTO_INVALIDO: 'El valor configurado no produce un descuento válido para la tarifa de esa sede.',
+    SERVICIOS_DESCUENTO_REQUERIDOS: 'Seleccione al menos un servicio para este código.',
+    REGLA_DESCUENTO_NO_CONFIGURADA: 'El código no tiene una regla de descuento al contado configurada.',
+    REFERENCIA_DESCUENTO_INVALIDA: 'La sede o uno de los servicios seleccionados no existe o no tiene una tarifa activa.',
+    REGLA_DESCUENTO_DUPLICADA: 'No se puede repetir el mismo servicio dentro de una sede.'
 };
 
 const responderError = (res, error) => res.status(error.statusCode || 500).json({
@@ -93,6 +100,11 @@ exports.cambiarEstadoDescuento = async (req, res) => {
 
 exports.crearCodigo = async (req, res) => {
     try { res.status(201).json({ success: true, ...(await descuentosService.crearCodigoCliente(req.params.id, req.body, req.user)) }); }
+    catch (error) { responderError(res, error); }
+};
+
+exports.actualizarCodigo = async (req, res) => {
+    try { res.json(await descuentosService.actualizarCodigoCliente(req.params.id, req.body, req.user)); }
     catch (error) { responderError(res, error); }
 };
 
