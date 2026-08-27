@@ -2,12 +2,37 @@ const db = require('../../../config/database');
 const { paraPlantilla } = require('../mappers/faregas-vehiculo.mapper');
 const tarifasService = require('./faregas-tarifas.service');
 
+const TIPOS_CORRELATIVO = Object.freeze({
+    GNV_INICIAL: { tipoBase: 'GNV_ANUAL', modalidad: 'INICIAL' },
+    GNV_ANUAL: { tipoBase: 'GNV_ANUAL', modalidad: 'ANUAL' },
+    GLP_INICIAL: { tipoBase: 'GLP_ANUAL', modalidad: 'INICIAL' },
+    GLP_ANUAL: { tipoBase: 'GLP_ANUAL', modalidad: 'ANUAL' },
+    CONFORMIDAD: { tipoBase: 'CONFORMIDAD', modalidad: 'UNICA' }
+});
+
+const resolverTipoCorrelativo = (clave) => TIPOS_CORRELATIVO[String(clave || '').trim().toUpperCase()] || null;
+
 exports.obtenerTiposActivos = async () => {
     const res = await db.query(`
-        SELECT clave, codigo, nombre 
-        FROM fg_tipo_certificado 
-        WHERE activo = true 
-        ORDER BY codigo
+        SELECT DISTINCT
+            CASE
+                WHEN t.clave = 'CONFORMIDAD' THEN 'CONFORMIDAD'
+                ELSE split_part(t.clave, '_', 1) || '_' || s.modalidad
+            END AS clave,
+            t.clave AS "tipoBase",
+            CASE WHEN t.clave = 'CONFORMIDAD' THEN 'UNICA' ELSE s.modalidad END AS modalidad,
+            t.codigo,
+            CASE
+                WHEN t.clave = 'CONFORMIDAD' THEN 'Conformidad'
+                ELSE split_part(t.clave, '_', 1) || ' ' || initcap(lower(s.modalidad))
+            END AS nombre
+        FROM fg_servicio s
+        JOIN fg_tipo_certificado t ON t.clave = s.tipo_certificado_clave
+        WHERE t.activo = TRUE
+          AND s.activo = TRUE
+          AND s.tipo_flujo = 'CERTIFICACION'
+          AND (t.clave = 'CONFORMIDAD' OR s.modalidad IN ('INICIAL', 'ANUAL'))
+        ORDER BY codigo, clave
     `);
     return res.rows;
 };
@@ -15,7 +40,16 @@ exports.obtenerTiposActivos = async () => {
 exports.obtenerCorrelativos = async (filters) => {
     let q = `
         SELECT c.id, c.planta_key AS "plantaKey", p.nombre AS "plantaNombre",
-               c.tipo_certificado_clave AS "tipoClave", t.codigo AS "tipoCodigo", t.nombre AS "tipoNombre",
+               CASE
+                   WHEN c.tipo_certificado_clave = 'CONFORMIDAD' THEN 'CONFORMIDAD'
+                   ELSE split_part(c.tipo_certificado_clave, '_', 1) || '_' || c.modalidad
+               END AS "tipoClave",
+               c.tipo_certificado_clave AS "tipoBase", c.modalidad,
+               t.codigo AS "tipoCodigo",
+               CASE
+                   WHEN c.tipo_certificado_clave = 'CONFORMIDAD' THEN 'Conformidad'
+                   ELSE split_part(c.tipo_certificado_clave, '_', 1) || ' ' || initcap(lower(c.modalidad))
+               END AS "tipoNombre",
                c.nro_inicio AS "nroInicio", c.nro_actual AS "nroActual", c.nro_maximo AS "nroMaximo",
                c.activo, (c.nro_maximo - c.nro_actual) AS disponibles,
                (c.nro_actual >= c.nro_maximo) AS agotado,
@@ -31,18 +65,25 @@ exports.obtenerCorrelativos = async (filters) => {
         q += ` AND c.planta_key = $${params.length}`;
     }
     if (filters.tipo) {
-        params.push(filters.tipo);
+        const tipo = resolverTipoCorrelativo(filters.tipo);
+        if (!tipo) return [];
+        params.push(tipo.tipoBase);
         q += ` AND c.tipo_certificado_clave = $${params.length}`;
+        params.push(tipo.modalidad);
+        q += ` AND c.modalidad = $${params.length}`;
     }
-    q += ` ORDER BY c.planta_key, c.tipo_certificado_clave, c.fecha_asignacion DESC`;
+    q += ` ORDER BY c.planta_key, c.tipo_certificado_clave, c.modalidad, c.fecha_asignacion DESC`;
     const res = await db.query(q, params);
     return res.rows;
 };
 
 exports.obtenerRangoActivo = async (plantaKey, tipo) => {
+    const tipoCorrelativo = resolverTipoCorrelativo(tipo);
+    if (!tipoCorrelativo) throw new Error('TIPO_NOT_FOUND');
     const q = `
         SELECT c.id, c.planta_key AS "plantaKey", p.nombre AS "plantaNombre",
-               c.tipo_certificado_clave AS "tipoClave", t.codigo AS "tipoCodigo", t.nombre AS "tipoNombre",
+               $3 AS "tipoClave", c.tipo_certificado_clave AS "tipoBase", c.modalidad,
+               t.codigo AS "tipoCodigo", t.nombre AS "tipoNombre",
                c.nro_inicio AS "nroInicio", c.nro_actual AS "nroActual", c.nro_maximo AS "nroMaximo",
                c.activo, (c.nro_maximo - c.nro_actual) AS disponibles,
                (c.nro_actual >= c.nro_maximo) AS agotado,
@@ -50,15 +91,18 @@ exports.obtenerRangoActivo = async (plantaKey, tipo) => {
         FROM fg_correlativo_certificado c
         JOIN fg_planta p ON p.key = c.planta_key
         JOIN fg_tipo_certificado t ON t.clave = c.tipo_certificado_clave
-        WHERE c.planta_key = $1 AND c.tipo_certificado_clave = $2 AND c.activo = true
+        WHERE c.planta_key = $1 AND c.tipo_certificado_clave = $2
+          AND c.modalidad = $4 AND c.activo = true
     `;
-    const res = await db.query(q, [plantaKey, tipo]);
+    const res = await db.query(q, [plantaKey, tipoCorrelativo.tipoBase, String(tipo).toUpperCase(), tipoCorrelativo.modalidad]);
     if (res.rowCount === 0) throw new Error('RANGO_NOT_FOUND');
     return res.rows[0];
 };
 
 exports.crearRango = async (data) => {
     const { plantaKey, tipoCertificadoClave, nroInicio, nroMaximo } = data;
+    const tipoCorrelativo = resolverTipoCorrelativo(tipoCertificadoClave);
+    if (!tipoCorrelativo) throw new Error('TIPO_NOT_FOUND');
     const client = await db.connect();
     try {
         await client.query('BEGIN');
@@ -66,22 +110,35 @@ exports.crearRango = async (data) => {
         const pRes = await client.query('SELECT 1 FROM fg_planta WHERE key = $1', [plantaKey]);
         if (pRes.rowCount === 0) throw new Error('PLANTA_NOT_FOUND');
         
-        const tRes = await client.query('SELECT activo FROM fg_tipo_certificado WHERE clave = $1', [tipoCertificadoClave]);
+        const tRes = await client.query('SELECT activo FROM fg_tipo_certificado WHERE clave = $1', [tipoCorrelativo.tipoBase]);
         if (tRes.rowCount === 0) throw new Error('TIPO_NOT_FOUND');
         if (!tRes.rows[0].activo) throw new Error('TIPO_INACTIVO');
+
+        const servicioRes = await client.query(`
+            SELECT 1
+            FROM fg_servicio
+            WHERE tipo_certificado_clave = $1
+              AND COALESCE(modalidad, 'UNICA') = $2
+              AND tipo_flujo = 'CERTIFICACION'
+              AND activo = TRUE
+            LIMIT 1
+        `, [tipoCorrelativo.tipoBase, tipoCorrelativo.modalidad]);
+        if (!servicioRes.rowCount) throw new Error('TIPO_INACTIVO');
         
-        const actRes = await client.query('SELECT id FROM fg_correlativo_certificado WHERE planta_key = $1 AND tipo_certificado_clave = $2 AND activo = true', [plantaKey, tipoCertificadoClave]);
+        const actRes = await client.query(`SELECT id FROM fg_correlativo_certificado
+            WHERE planta_key = $1 AND tipo_certificado_clave = $2 AND modalidad = $3 AND activo = true`,
+        [plantaKey, tipoCorrelativo.tipoBase, tipoCorrelativo.modalidad]);
         if (actRes.rowCount > 0) throw new Error('RANGO_ACTIVO_EXISTENTE');
         
         const nroActual = nroInicio - 1;
         
         const q = `
             INSERT INTO fg_correlativo_certificado 
-            (planta_key, tipo_certificado_clave, nro_inicio, nro_actual, nro_maximo, activo, fecha_cierre) 
-            VALUES ($1, $2, $3, $4, $5, true, NULL)
+            (planta_key, tipo_certificado_clave, modalidad, nro_inicio, nro_actual, nro_maximo, activo, fecha_cierre)
+            VALUES ($1, $2, $3, $4, $5, $6, true, NULL)
             RETURNING id
         `;
-        const res = await client.query(q, [plantaKey, tipoCertificadoClave, nroInicio, nroActual, nroMaximo]);
+        const res = await client.query(q, [plantaKey, tipoCorrelativo.tipoBase, tipoCorrelativo.modalidad, nroInicio, nroActual, nroMaximo]);
         
         await client.query('COMMIT');
         return { id: res.rows[0].id };
@@ -118,6 +175,62 @@ exports.cerrarRango = async (id) => {
     `;
     await db.query(qUp, [id]);
     return { message: 'Rango cerrado correctamente' };
+};
+
+exports.actualizarRango = async (id, data) => {
+    const nroInicio = Number(data.nroInicio);
+    const nroMaximo = Number(data.nroMaximo);
+    if (!Number.isSafeInteger(nroInicio) || nroInicio <= 0
+        || !Number.isSafeInteger(nroMaximo) || nroMaximo < nroInicio) {
+        throw new Error('RANGO_INVALIDO');
+    }
+
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const actual = await client.query(`
+            SELECT id, nro_inicio, nro_actual, nro_maximo, activo
+            FROM fg_correlativo_certificado
+            WHERE id = $1
+            FOR UPDATE
+        `, [id]);
+        if (!actual.rowCount) throw new Error('RANGO_NOT_FOUND');
+
+        const rango = actual.rows[0];
+        if (!rango.activo) throw new Error('RANGO_CERRADO_NO_EDITABLE');
+        const usado = Number(rango.nro_actual) >= Number(rango.nro_inicio);
+        if (usado && nroInicio !== Number(rango.nro_inicio)) {
+            throw new Error('RANGO_INICIO_NO_EDITABLE');
+        }
+        if (usado && nroMaximo < Number(rango.nro_actual)) {
+            throw new Error('RANGO_MAXIMO_MENOR_ACTUAL');
+        }
+
+        const nuevoActual = usado ? Number(rango.nro_actual) : nroInicio - 1;
+        const resultado = await client.query(`
+            UPDATE fg_correlativo_certificado
+            SET nro_inicio = $2,
+                nro_actual = $3,
+                nro_maximo = $4,
+                fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $1
+            RETURNING id, nro_inicio, nro_actual, nro_maximo,
+                      (nro_maximo - nro_actual) AS disponibles
+        `, [id, nroInicio, nuevoActual, nroMaximo]);
+        await client.query('COMMIT');
+        return resultado.rows[0];
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.code === '23P01' || error.constraint === 'excl_fg_correlativo_rango') {
+            throw new Error('RANGO_SOLAPADO');
+        }
+        if (error.constraint === 'fg_correlativo_certificado_hist_key') {
+            throw new Error('RANGO_DUPLICADO');
+        }
+        throw error;
+    } finally {
+        client.release();
+    }
 };
 
 // ============================================
@@ -435,7 +548,7 @@ exports.actualizarBorrador = async (id, data, userContext) => {
     try {
         await client.query('BEGIN');
         
-        const qCheck = `SELECT estado, planta_key, tipo_certificado_clave, tarifa_codigo FROM fg_certificado WHERE id = $1 FOR UPDATE`;
+        const qCheck = `SELECT estado, planta_key, tipo_certificado_clave, tarifa_codigo, numero_certificado FROM fg_certificado WHERE id = $1 FOR UPDATE`;
         const rCheck = await client.query(qCheck, [id]);
         if (rCheck.rowCount === 0) throw new Error('CERTIFICADO_NOT_FOUND');
         const cert = rCheck.rows[0];
@@ -463,6 +576,7 @@ exports.actualizarBorrador = async (id, data, userContext) => {
         }
         if (data.tarifaCodigo !== undefined) {
             if (data.tarifaCodigo !== cert.tarifa_codigo) {
+                if (cert.numero_certificado) throw new Error('CORRELATIVO_YA_RESERVADO');
                 const evidencia = await client.query(`
                     SELECT 1 FROM fg_orden_pago WHERE certificado_id = $1 AND estado = 'PAGADO'
                     UNION ALL
@@ -1420,10 +1534,13 @@ exports.emitirCertificado = async (id, userContext) => {
         
         // Bloquear certificado FOR UPDATE
         const rCert = await client.query(`
-            SELECT c.*, t.clave as tipo_clave, t.codigo as tipo_codigo
+            SELECT c.*, t.clave as tipo_clave, t.codigo as tipo_codigo,
+                   CASE WHEN t.clave = 'CONFORMIDAD' THEN 'UNICA' ELSE s.modalidad END AS modalidad_correlativo
             FROM fg_certificado c
             JOIN fg_tipo_certificado t ON c.tipo_certificado_clave = t.clave
-            WHERE c.id = $1 FOR UPDATE
+            LEFT JOIN fg_tarifa ta ON ta.codigo = c.tarifa_codigo AND ta.planta_key = c.planta_key
+            LEFT JOIN fg_servicio s ON s.id = ta.servicio_id
+            WHERE c.id = $1 FOR UPDATE OF c
         `, [id]);
         
         if (rCert.rowCount === 0) throw new Error('CERTIFICADO_NOT_FOUND');
@@ -1447,43 +1564,39 @@ exports.emitirCertificado = async (id, userContext) => {
         const valRes = await exports.validarEmision(id, userContext);
         if (!valRes.valido) throw new Error('NO_VALIDO_PARA_EMISION');
 
-        // Seleccionar rango activo FOR UPDATE
-        const rCorrelativo = await client.query(`
-            SELECT * FROM fg_correlativo_certificado
-            WHERE planta_key = $1 AND tipo_certificado_clave = $2 AND activo = true
-            FOR UPDATE
-        `, [cert.planta_key, cert.tipo_clave]);
+        // La previsualizacion reserva el correlativo real una sola vez. Si por
+        // compatibilidad el borrador aun no tiene numero, se reserva aqui.
+        let numero_certificado = cert.numero_certificado;
+        if (!numero_certificado) {
+            const rCorrelativo = await client.query(`
+                SELECT * FROM fg_correlativo_certificado
+                WHERE planta_key = $1 AND tipo_certificado_clave = $2
+                  AND modalidad = $3 AND activo = true
+                FOR UPDATE
+            `, [cert.planta_key, cert.tipo_clave, cert.modalidad_correlativo]);
 
-        if (rCorrelativo.rowCount === 0) {
-            throw new Error('NO_EXISTE_RANGO_ACTIVO');
+            if (rCorrelativo.rowCount === 0) throw new Error('NO_EXISTE_RANGO_ACTIVO');
+            const rango = rCorrelativo.rows[0];
+            if (rango.nro_actual >= rango.nro_maximo) throw new Error('RANGO_AGOTADO');
+
+            const siguiente = parseInt(rango.nro_actual) + 1;
+            if (siguiente > rango.nro_maximo) throw new Error('RANGO_AGOTADO');
+
+            let ancho = 0;
+            if (cert.tipo_clave === 'GNV_ANUAL') ancho = 7;
+            else if (cert.tipo_clave === 'GLP_ANUAL') ancho = 6;
+            else if (cert.tipo_clave === 'CONFORMIDAD') ancho = 6;
+            else throw new Error('FORMATO_NUMERO_NO_CONFIGURADO');
+
+            const numeroFormateado = String(siguiente).padStart(ancho, '0');
+            numero_certificado = `DG-${cert.tipo_codigo}-${numeroFormateado}`;
+
+            await client.query(`
+                UPDATE fg_correlativo_certificado
+                SET nro_actual = $1, fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE id = $2
+            `, [siguiente, rango.id]);
         }
-
-        const rango = rCorrelativo.rows[0];
-        
-        if (rango.nro_actual >= rango.nro_maximo) {
-            throw new Error('RANGO_AGOTADO');
-        }
-
-        const siguiente = parseInt(rango.nro_actual) + 1;
-        if (siguiente > rango.nro_maximo) {
-            throw new Error('RANGO_AGOTADO');
-        }
-
-        let ancho = 0;
-        if (cert.tipo_clave === 'GNV_ANUAL') ancho = 7;
-        else if (cert.tipo_clave === 'GLP_ANUAL') ancho = 6;
-        else if (cert.tipo_clave === 'CONFORMIDAD') ancho = 6;
-        else throw new Error('FORMATO_NUMERO_NO_CONFIGURADO');
-
-        const numeroFormateado = String(siguiente).padStart(ancho, '0');
-        const numero_certificado = `DG-${cert.tipo_codigo}-${numeroFormateado}`;
-
-        // Update correlativo
-        await client.query(`
-            UPDATE fg_correlativo_certificado
-            SET nro_actual = $1, fecha_modificacion = CURRENT_TIMESTAMP
-            WHERE id = $2
-        `, [siguiente, rango.id]);
 
         // Update certificado
         await client.query(`
@@ -1510,6 +1623,80 @@ exports.emitirCertificado = async (id, userContext) => {
     }
 };
 
+/**
+ * Reserva de forma atomica el numero que se mostrara en la previsualizacion.
+ * La reserva queda persistida en fg_certificado y las siguientes consultas,
+ * incluida la emision, reutilizan exactamente el mismo numero.
+ */
+exports.reservarNumeroPrevisualizacion = async (id, userContext) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const rCert = await client.query(`
+            SELECT c.*, t.clave AS tipo_clave, t.codigo AS tipo_codigo,
+                   CASE WHEN t.clave = 'CONFORMIDAD' THEN 'UNICA' ELSE s.modalidad END AS modalidad_correlativo
+            FROM fg_certificado c
+            JOIN fg_tipo_certificado t ON t.clave = c.tipo_certificado_clave
+            LEFT JOIN fg_tarifa ta ON ta.codigo = c.tarifa_codigo AND ta.planta_key = c.planta_key
+            LEFT JOIN fg_servicio s ON s.id = ta.servicio_id
+            WHERE c.id = $1
+            FOR UPDATE OF c
+        `, [id]);
+
+        if (rCert.rowCount === 0) throw new Error('CERTIFICADO_NOT_FOUND');
+        const cert = rCert.rows[0];
+        await validarAccesoCertificado(userContext.username, userContext.perfil_id, cert.planta_key);
+
+        if (cert.numero_certificado) {
+            await client.query('COMMIT');
+            return cert.numero_certificado;
+        }
+        if (cert.estado !== 'BORRADOR') throw new Error('ESTADO_INVALIDO');
+        if (!cert.modalidad_correlativo) throw new Error('FORMATO_NUMERO_NO_CONFIGURADO');
+
+        const rCorrelativo = await client.query(`
+            SELECT * FROM fg_correlativo_certificado
+            WHERE planta_key = $1 AND tipo_certificado_clave = $2
+              AND modalidad = $3 AND activo = true
+            FOR UPDATE
+        `, [cert.planta_key, cert.tipo_clave, cert.modalidad_correlativo]);
+        if (rCorrelativo.rowCount === 0) throw new Error('NO_EXISTE_RANGO_ACTIVO');
+
+        const rango = rCorrelativo.rows[0];
+        const siguiente = Number(rango.nro_actual) + 1;
+        if (!Number.isSafeInteger(siguiente) || siguiente > Number(rango.nro_maximo)) {
+            throw new Error('RANGO_AGOTADO');
+        }
+
+        let ancho = 0;
+        if (cert.tipo_clave === 'GNV_ANUAL') ancho = 7;
+        else if (cert.tipo_clave === 'GLP_ANUAL' || cert.tipo_clave === 'CONFORMIDAD') ancho = 6;
+        else throw new Error('FORMATO_NUMERO_NO_CONFIGURADO');
+
+        const numeroCertificado = `DG-${cert.tipo_codigo}-${String(siguiente).padStart(ancho, '0')}`;
+        await client.query(`
+            UPDATE fg_correlativo_certificado
+            SET nro_actual = $1, fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $2
+        `, [siguiente, rango.id]);
+        await client.query(`
+            UPDATE fg_certificado
+            SET numero_certificado = $1,
+                usuario_modificacion = $2,
+                fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $3
+        `, [numeroCertificado, userContext.username, id]);
+
+        await client.query('COMMIT');
+        return numeroCertificado;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
 const generateGnvAnualHtml = require('../templates/gnv-anual.template');
 const generateGnvInicialHtml = require('../templates/gnv-inicial.template');
 const generateGlpAnualHtml = require('../templates/glp-anual.template');
@@ -1517,67 +1704,55 @@ const generateGlpInicialHtml = require('../templates/glp-inicial.template');
 const generateConformidadHtml = require('../templates/conformidad.template');
 
 exports.obtenerPrevisualizacion = async (id, userContext) => {
+    await exports.reservarNumeroPrevisualizacion(id, userContext);
     const borrador = await exports.obtenerBorradorCompleto(id, userContext);
     const tipoClave = borrador.tipo ? borrador.tipo.clave : null;
     const vehiculoPlantilla = paraPlantilla(borrador.vehiculo || {});
+    // La previsualizacion conserva la marca de agua, pero muestra el numero
+    // real reservado para este borrador. Emitir reutiliza el mismo correlativo.
+    const modoPlantilla = borrador.estado === 'EMITIDO' ? 'FINAL' : 'PREVIEW';
+    const cabeceraComun = {
+        id: borrador.id,
+        numero_certificado: borrador.numeroCertificado,
+        placa_nueva: vehiculoPlantilla.placa,
+        fecha_emision: borrador.fechaEmision,
+        observaciones: borrador.observaciones,
+        entidad_certificadora_nombre: borrador.entidadCertificadoraNombre,
+        resolucion_directoral: borrador.resolucionDirectoral,
+        domicilio_fiscal: borrador.domicilioFiscal,
+        telefono_certificadora: borrador.telefonoCertificadora,
+        lugar_emision: borrador.lugarEmision
+    };
 
     if (tipoClave === 'GNV_ANUAL') {
         const dataGnv = await exports.obtenerGNV(id, userContext);
         const gnv = dataGnv.gnv || {};
         if (gnv.modalidad === 'INICIAL') {
             const html = generateGnvInicialHtml({
-                cabecera: {
-                    id: borrador.id,
-                    placa_nueva: vehiculoPlantilla.placa,
-                    fecha_emision: borrador.fechaEmision,
-                    observaciones: borrador.observaciones,
-                    entidad_certificadora_nombre: borrador.entidadCertificadoraNombre,
-                    resolucion_directoral: borrador.resolucionDirectoral,
-                    domicilio_fiscal: borrador.domicilioFiscal,
-                    telefono_certificadora: borrador.telefonoCertificadora,
-                    lugar_emision: borrador.lugarEmision
-                },
+                cabecera: cabeceraComun,
                 vehiculo: vehiculoPlantilla,
                 propietario: borrador.titulares && borrador.titulares.length > 0 ? borrador.titulares[0] : {},
                 gnv: { ...gnv, componentes: dataGnv.componentes },
                 componentes: dataGnv.componentes,
                 taller: gnv.tallerAutorizado ? { nombre: gnv.tallerAutorizado.nombre } : {}
-            });
+            }, { modo: modoPlantilla });
             return { html };
         }
         const html = generateGnvAnualHtml({
-            cabecera: {
-                id: borrador.id,
-                placa_nueva: vehiculoPlantilla.placa,
-                fecha_emision: borrador.fechaEmision,
-                observaciones: borrador.observaciones,
-                entidad_certificadora_nombre: borrador.entidadCertificadoraNombre,
-                resolucion_directoral: borrador.resolucionDirectoral,
-                domicilio_fiscal: borrador.domicilioFiscal,
-                telefono_certificadora: borrador.telefonoCertificadora,
-                lugar_emision: borrador.lugarEmision
-            },
+            cabecera: cabeceraComun,
             vehiculo: vehiculoPlantilla,
             gnv: gnv,
             verificaciones: dataGnv.verificaciones || [],
             titulares: borrador.titulares || []
-        });
+        }, { modo: modoPlantilla });
         return { html, tipo: 'GNV_ANUAL' };
     } else if (tipoClave === 'GLP_ANUAL') {
         const dataGlp = await exports.obtenerGLP(id, userContext);
         const glp = dataGlp.glp || {};
         const templateData = {
             cabecera: {
-                id: borrador.id,
-                placa_nueva: vehiculoPlantilla.placa,
-                fecha_emision: borrador.fechaEmision,
-                observaciones: borrador.observaciones,
+                ...cabeceraComun,
                 cliente_nombre: borrador.cliente?.nombreRazonSocial,
-                entidad_certificadora_nombre: borrador.entidadCertificadoraNombre,
-                resolucion_directoral: borrador.resolucionDirectoral,
-                domicilio_fiscal: borrador.domicilioFiscal,
-                telefono_certificadora: borrador.telefonoCertificadora,
-                lugar_emision: borrador.lugarEmision
             },
             vehiculo: vehiculoPlantilla,
             glp: glp,
@@ -1588,30 +1763,22 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
         
         let html;
         if (glp.modalidad === 'INICIAL') {
-            html = generateGlpInicialHtml(templateData);
+            html = generateGlpInicialHtml(templateData, { modo: modoPlantilla });
         } else {
-            html = generateGlpAnualHtml(templateData);
+            html = generateGlpAnualHtml(templateData, { modo: modoPlantilla });
         }
         return { html, tipo: 'GLP_ANUAL' };
     } else if (tipoClave === 'CONFORMIDAD') {
         const dataConf = await exports.obtenerConformidad(id, userContext);
         const html = generateConformidadHtml({
             cabecera: {
-                id: borrador.id,
-                placa_nueva: vehiculoPlantilla.placa,
-                fecha_emision: borrador.fechaEmision,
-                observaciones: borrador.observaciones,
+                ...cabeceraComun,
                 cliente_nombre: borrador.cliente?.nombreRazonSocial,
-                entidad_certificadora_nombre: borrador.entidadCertificadoraNombre,
-                resolucion_directoral: borrador.resolucionDirectoral,
-                domicilio_fiscal: borrador.domicilioFiscal,
-                telefono_certificadora: borrador.telefonoCertificadora,
-                lugar_emision: borrador.lugarEmision
             },
             vehiculo: vehiculoPlantilla,
             conformidad: dataConf.conformidad || {},
             titulares: borrador.titulares || []
-        });
+        }, { modo: modoPlantilla });
         return { html, tipo: 'CONFORMIDAD' };
     } else {
         throw new Error('FORMATO_NUMERO_NO_CONFIGURADO');

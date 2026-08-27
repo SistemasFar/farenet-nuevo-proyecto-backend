@@ -38,7 +38,7 @@ exports.registrarAuditoria = async (client, { username, entidad, accion, identif
 
 exports.getSedes = async () => {
     const result = await db.query(`
-        SELECT p.key, p.nombre, p.direccion, p.telefono, p.activo,
+        SELECT p.key, p.nombre, p.direccion, p.telefono, p.correo, p.activo,
         p.empresa_key, e.nombre AS empresa_nombre,
         (SELECT COUNT(*) FROM fg_tarifa t WHERE t.planta_key = p.key AND t.activo = true) as total_tarifas
         FROM fg_planta p
@@ -57,9 +57,9 @@ exports.crearSede = async (sede, username, ip_direccion) => {
         if (check.rows.length > 0) throw new Error('Ya existe una sede con ese código (key).');
 
         await client.query(`
-            INSERT INTO fg_planta (key, nombre, direccion, telefono, activo, empresa_key)
-            VALUES ($1, $2, $3, $4, $5, $6)
-        `, [sede.key, sede.nombre, sede.direccion, sede.telefono, false, sede.empresa_key || 'FAREGAS']);
+            INSERT INTO fg_planta (key, nombre, direccion, telefono, correo, activo, empresa_key)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `, [sede.key, sede.nombre, sede.direccion, sede.telefono, sede.correo || null, false, sede.empresa_key || 'FAREGAS']);
 
         await this.registrarAuditoria(client, {
             username, entidad: 'SEDE', accion: 'CREAR_SEDE', identificador: sede.key,
@@ -205,15 +205,15 @@ exports.editarSede = async (key, sede, username, ip_direccion) => {
         const anterior = check.rows[0];
 
         await client.query(`
-            UPDATE fg_planta SET nombre = $1, direccion = $2, telefono = $3
-            WHERE key = $4
-        `, [sede.nombre, sede.direccion, sede.telefono, key]);
+            UPDATE fg_planta SET nombre = $1, direccion = $2, telefono = $3, correo = $4
+            WHERE key = $5
+        `, [sede.nombre, sede.direccion, sede.telefono, sede.correo || null, key]);
 
         await this.registrarAuditoria(client, {
             username, entidad: 'SEDE', accion: 'EDITAR_SEDE', identificador: key,
             detalles: { 
-                antes: { nombre: anterior.nombre, direccion: anterior.direccion, telefono: anterior.telefono },
-                despues: { nombre: sede.nombre, direccion: sede.direccion, telefono: sede.telefono }
+                antes: { nombre: anterior.nombre, direccion: anterior.direccion, telefono: anterior.telefono, correo: anterior.correo },
+                despues: { nombre: sede.nombre, direccion: sede.direccion, telefono: sede.telefono, correo: sede.correo }
             },
             planta_key: key, ip_direccion
         });

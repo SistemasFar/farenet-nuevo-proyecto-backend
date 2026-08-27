@@ -6,7 +6,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
     const conf = data.conformidad || {};
     const titulares = data.titulares || [];
 
-    const numCertificado = options.modo === 'FINAL' ? (cert.numero_certificado || '') : 'DG-39-PREVIEW';
+    const numCertificado = cert.numero_certificado || 'PENDIENTE';
     const fechaImp = formatDateLong(cert.fecha_emision);
 
     const propietarioNombre = titulares.length > 0

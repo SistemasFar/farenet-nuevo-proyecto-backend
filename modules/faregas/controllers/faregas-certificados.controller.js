@@ -8,6 +8,14 @@ const auditarCertificado = (req, detalle) => auditoriaService.registrarEventoCer
     })
 );
 
+const auditarConfiguracion = (req, detalle) => auditoriaService.registrarEvento(
+    auditoriaService.contextoRequest(req, {
+        categoria: 'CONFIGURACION',
+        entidad: 'fg_correlativo_certificado',
+        ...detalle
+    })
+);
+
 exports.obtenerTipos = async (req, res) => {
     try {
         const data = await service.obtenerTiposActivos();
@@ -60,6 +68,13 @@ exports.crearRango = async (req, res) => {
         if (nroMaximo < nroInicio) return res.status(400).json({ ok: false, message: 'nroMaximo debe ser mayor o igual a nroInicio' });
         
         const result = await service.crearRango(req.body);
+        await auditarConfiguracion(req, {
+            evento: 'CORRELATIVO_CERTIFICADO_CREADO',
+            entidad_id: Number(result.id),
+            mensaje: 'Asignó un nuevo rango de correlativos de certificados.',
+            planta_key: plantaKey,
+            datos: { tipo: tipoCertificadoClave, nroInicio, nroMaximo }
+        });
         res.status(201).json({ ok: true, data: result });
     } catch (e) {
         if (e.message === 'PLANTA_NOT_FOUND') return res.status(404).json({ ok: false, message: 'La planta indicada no existe' });
@@ -67,8 +82,8 @@ exports.crearRango = async (req, res) => {
         if (e.message === 'TARIFA_NO_CONFIGURADA') return res.status(400).json({ ok: false, message: 'Tarifa no configurada para la sede actual' });
         if (e.message === 'TIPO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El tipo de certificado indicado no existe' });
         if (e.message === 'TIPO_INACTIVO') return res.status(400).json({ ok: false, message: 'El tipo de certificado está inactivo' });
-        if (e.message === 'RANGO_ACTIVO_EXISTENTE') return res.status(409).json({ ok: false, message: 'Ya existe un rango activo para esta planta y tipo de certificado.' });
-        if (e.message === 'RANGO_SOLAPADO') return res.status(409).json({ ok: false, message: 'El rango ingresado se cruza con un rango histórico existente para esta planta y tipo de certificado.' });
+        if (e.message === 'RANGO_ACTIVO_EXISTENTE') return res.status(409).json({ ok: false, message: 'Ya existe un rango activo para esta sede y modalidad exacta de certificado.' });
+        if (e.message === 'RANGO_SOLAPADO') return res.status(409).json({ ok: false, message: 'El rango se cruza con otro rango del mismo prefijo, incluso si pertenece a otra sede o modalidad.' });
         if (e.message === 'RANGO_DUPLICADO') return res.status(409).json({ ok: false, message: 'Ya existe exactamente el mismo rango histórico (mismo inicio y máximo).' });
         
         console.error(e);
@@ -80,6 +95,11 @@ exports.cerrarRango = async (req, res) => {
     try {
         const { id } = req.params;
         const result = await service.cerrarRango(id);
+        await auditarConfiguracion(req, {
+            evento: 'CORRELATIVO_CERTIFICADO_CERRADO',
+            entidad_id: Number(id),
+            mensaje: 'Cerró un rango de correlativos de certificados.'
+        });
         res.json({ ok: true, message: result.message });
     } catch (e) {
         if (e.message === 'RANGO_NOT_FOUND') {
@@ -337,6 +357,54 @@ exports.guardarGNVComponentes = async (req, res) => {
     }
 };
 
+exports.actualizarRango = async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const nroInicio = Number(req.body.nroInicio);
+        const nroMaximo = Number(req.body.nroMaximo);
+        if (!Number.isSafeInteger(id) || id <= 0) {
+            return res.status(400).json({ ok: false, message: 'El rango indicado es inválido' });
+        }
+        if (!Number.isSafeInteger(nroInicio) || nroInicio <= 0
+            || !Number.isSafeInteger(nroMaximo) || nroMaximo < nroInicio) {
+            return res.status(400).json({ ok: false, message: 'El inicio y fin del rango deben ser enteros válidos' });
+        }
+
+        const result = await service.actualizarRango(id, { nroInicio, nroMaximo });
+        await auditarConfiguracion(req, {
+            evento: 'CORRELATIVO_CERTIFICADO_ACTUALIZADO',
+            entidad_id: id,
+            mensaje: 'Actualizó el rango de correlativos de certificados.',
+            datos: { nroInicio, nroMaximo }
+        });
+        res.json({ ok: true, data: result });
+    } catch (error) {
+        if (error.message === 'RANGO_NOT_FOUND') {
+            return res.status(404).json({ ok: false, message: 'El rango indicado no existe' });
+        }
+        if (error.message === 'RANGO_CERRADO_NO_EDITABLE') {
+            return res.status(409).json({ ok: false, message: 'Un rango cerrado no puede editarse' });
+        }
+        if (error.message === 'RANGO_INICIO_NO_EDITABLE') {
+            return res.status(409).json({ ok: false, message: 'El correlativo inicial no puede cambiar porque el rango ya fue utilizado' });
+        }
+        if (error.message === 'RANGO_MAXIMO_MENOR_ACTUAL') {
+            return res.status(409).json({ ok: false, message: 'El correlativo final no puede ser menor que el número actual' });
+        }
+        if (error.message === 'RANGO_SOLAPADO') {
+            return res.status(409).json({ ok: false, message: 'El nuevo rango se cruza con otro rango del mismo prefijo' });
+        }
+        if (error.message === 'RANGO_DUPLICADO') {
+            return res.status(409).json({ ok: false, message: 'Ya existe el mismo rango para esta combinación' });
+        }
+        if (error.message === 'RANGO_INVALIDO') {
+            return res.status(400).json({ ok: false, message: 'El rango indicado es inválido' });
+        }
+        console.error(error);
+        res.status(500).json({ ok: false, message: 'Error interno del servidor' });
+    }
+};
+
 exports.actualizarPasoBorrador = async (req, res) => {
     try {
         const data = await service.actualizarPasoBorrador(req.params.id, req.body.pasoActual, req.user);
@@ -531,6 +599,9 @@ exports.obtenerPrevisualizacion = async (req, res) => {
         });
         res.json({ ok: true, data: result });
     } catch (error) {
+        if (['NO_EXISTE_RANGO_ACTIVO', 'RANGO_AGOTADO', 'FORMATO_NUMERO_NO_CONFIGURADO'].includes(error.message)) {
+            return res.status(400).json({ ok: false, codigo: error.message, message: error.message });
+        }
         if (error.message === 'FORMATO_PREVIEW_PENDIENTE') {
             return res.status(400).json({
                 ok: false,

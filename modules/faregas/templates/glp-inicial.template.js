@@ -8,7 +8,7 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
     const verifs = data.verificaciones || [];
     const titulares = data.titulares || [];
 
-    const numCertificado = options.modo === 'FINAL' ? (cert.numero_certificado || '') : 'DG-41-PREVIEW';
+    const numCertificado = cert.numero_certificado || 'PENDIENTE';
 
     const fechaImp = formatDateLong(cert.fecha_emision);
     const vigenciaHastaFmt = formatDateShort(glp.vigencia_hasta);

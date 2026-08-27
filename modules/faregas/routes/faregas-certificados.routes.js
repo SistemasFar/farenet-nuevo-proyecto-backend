@@ -48,6 +48,7 @@ router.get('/tipos', controller.obtenerTipos);
 router.get('/correlativos', controller.obtenerCorrelativos);
 router.get('/correlativos/:plantaKey/:tipo', controller.obtenerRangoActivo);
 router.post('/correlativos', controller.crearRango);
+router.patch('/correlativos/:id', controller.actualizarRango);
 router.patch('/correlativos/:id/cerrar', controller.cerrarRango);
 
 // FASE 3: BORRADORES DE CERTIFICADOS

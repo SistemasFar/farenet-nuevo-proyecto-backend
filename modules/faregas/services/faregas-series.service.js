@@ -86,11 +86,11 @@ exports.crear = async (serie, username, ipDireccion) => {
             INSERT INTO fg_serie_comprobante (
                 planta_key, tipo_comprobante, serie, ultimo_numero,
                 es_predeterminada, autogenerada, contingencia, activo
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
             RETURNING id
         `, [
             serie.planta_key, serie.tipo_comprobante, serie.serie, serie.ultimo_numero,
-            serie.es_predeterminada, serie.autogenerada, serie.contingencia, serie.activo
+            serie.es_predeterminada, serie.autogenerada, serie.contingencia, serie.activo, serie.tipo_documento_referencia || null, serie.serie_pos || false
         ]);
         const despues = { ...serie, sede_nombre: planta.rows[0].nombre };
         await configService.registrarAuditoria(client, {
@@ -130,12 +130,14 @@ exports.editar = async (id, cambios, username, ipDireccion) => {
             SET es_predeterminada = $1, autogenerada = $2,
                 contingencia = $3, fecha_modificacion = CURRENT_TIMESTAMP
             WHERE id = $4
-        `, [cambios.es_predeterminada, cambios.autogenerada, cambios.contingencia, id]);
+        `, [cambios.es_predeterminada, cambios.autogenerada, cambios.contingencia, cambios.tipo_documento_referencia || null, cambios.serie_pos || false, id]);
         const despues = {
             ...actual,
             es_predeterminada: cambios.es_predeterminada,
             autogenerada: cambios.autogenerada,
-            contingencia: cambios.contingencia
+            contingencia: cambios.contingencia,
+            tipo_documento_referencia: cambios.tipo_documento_referencia,
+            serie_pos: cambios.serie_pos
         };
         await configService.registrarAuditoria(client, {
             username, entidad: 'SERIE_COMPROBANTE', accion: 'EDITAR_SERIE',

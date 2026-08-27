@@ -37,7 +37,7 @@ test('actualizar borrador rechaza cambiar la tarifa a un servicio complementario
     await conMocks(() => ({
         async query(sql) {
             if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rowCount: 0, rows: [] };
-            if (/SELECT estado, planta_key, tipo_certificado_clave, tarifa_codigo FROM fg_certificado/i.test(sql)) {
+            if (/SELECT estado, planta_key, tipo_certificado_clave, tarifa_codigo, numero_certificado FROM fg_certificado/i.test(sql)) {
                 return {
                     rowCount: 1,
                     rows: [{ estado: 'BORRADOR', planta_key: '201', tipo_certificado_clave: 'GLP_ANUAL', tarifa_codigo: 'GLP_ANUAL' }]

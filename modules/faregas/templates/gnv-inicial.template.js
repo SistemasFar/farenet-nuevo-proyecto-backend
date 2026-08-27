@@ -6,7 +6,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
     const gnv = data.gnv || {};
     const componentes = data.componentes || [];
 
-    const numCertificado = options.modo === 'FINAL' ? (cert.numero_certificado || '') : 'DG-22-PREVIEW';
+    const numCertificado = cert.numero_certificado || 'PENDIENTE';
 
     // Formatear la fecha
     let dateStr = cert.fecha_emision || new Date();
