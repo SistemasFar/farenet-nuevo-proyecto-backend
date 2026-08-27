@@ -1,4 +1,5 @@
 const facturacionService = require('../services/faregas-facturacion.service');
+const auditoriaService = require('../services/faregas-auditoria.service');
 
 const responderError = (res, error) => {
     const status = error.statusCode || 500;
@@ -40,6 +41,16 @@ exports.obtener = async (req, res) => {
 exports.guardar = async (req, res) => {
     try {
         const data = await facturacionService.guardarFacturacion(Number(req.params.id), req.body, req.user);
+        await auditoriaService.registrarEventoCertificado(auditoriaService.contextoRequest(req, {
+            certificado_id: Number(req.params.id),
+            categoria: 'FACTURACION',
+            evento: 'FACTURACION_GUARDADA',
+            entidad: 'fg_facturacion',
+            entidad_id: data?.id || null,
+            mensaje: 'Se guardaron los datos de facturación del certificado.',
+            paso: 'FACTURACION',
+            datos: { tipoComprobante: data?.tipo_comprobante || req.body?.tipoComprobante || null }
+        }));
         return res.json({ ok: true, data });
     } catch (error) {
         return responderError(res, error);
@@ -49,6 +60,20 @@ exports.guardar = async (req, res) => {
 exports.emitir = async (req, res) => {
     try {
         const data = await facturacionService.emitirFacturacion(Number(req.params.id), req.user);
+        const facturacion = data?.facturacion || data;
+        await auditoriaService.registrarEventoCertificado(auditoriaService.contextoRequest(req, {
+            certificado_id: Number(req.params.id),
+            categoria: 'FACTURACION',
+            evento: 'COMPROBANTE_EMITIDO',
+            entidad: 'fg_facturacion',
+            entidad_id: facturacion?.id || null,
+            mensaje: 'Se procesó la emisión del comprobante electrónico.',
+            paso: 'FACTURACION',
+            datos: {
+                estado: facturacion?.estado || null,
+                comprobante: facturacion?.nro_comprobante || null
+            }
+        }));
         return res.json({ ok: true, data });
     } catch (error) {
         return responderError(res, error);

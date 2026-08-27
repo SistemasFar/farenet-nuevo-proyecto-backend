@@ -1,4 +1,5 @@
 const pagosService = require('../services/faregas-pagos.service');
+const auditoriaService = require('../services/faregas-auditoria.service');
 
 const responderError = (res, error) => {
     const errores = {
@@ -43,6 +44,21 @@ exports.guardarPagos = async (req, res) => {
             return res.status(400).json({ ok: false, message: 'pagos debe ser un arreglo.', code: 'PAGOS_INVALIDOS' });
         }
         const data = await pagosService.guardarPagos(req.params.id, req.body, req.user);
+        await auditoriaService.registrarEventoCertificado(auditoriaService.contextoRequest(req, {
+            certificado_id: Number(req.params.id),
+            categoria: 'PAGO',
+            evento: 'PAGOS_GUARDADOS',
+            entidad: 'fg_orden_pago',
+            entidad_id: data?.orden?.id || null,
+            mensaje: 'Se registraron los medios de pago del certificado.',
+            paso: 'PAGO',
+            datos: {
+                cantidadPagos: Array.isArray(data?.pagos) ? data.pagos.length : 0,
+                importePagado: data?.orden?.importe_pagado || 0,
+                saldoPendiente: data?.orden?.saldo_pendiente || 0,
+                estadoOrden: data?.orden?.estado || null
+            }
+        }));
         return res.status(200).json({ ok: true, data });
     } catch (error) {
         return responderError(res, error);

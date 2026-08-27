@@ -1,4 +1,12 @@
 const service = require('../services/faregas-certificados.service');
+const auditoriaService = require('../services/faregas-auditoria.service');
+
+const auditarCertificado = (req, detalle) => auditoriaService.registrarEventoCertificado(
+    auditoriaService.contextoRequest(req, {
+        certificado_id: Number(detalle.certificado_id || req.params?.id),
+        ...detalle
+    })
+);
 
 exports.obtenerTipos = async (req, res) => {
     try {
@@ -139,6 +147,13 @@ exports.crearBorrador = async (req, res) => {
         if (!tarifaCodigo) return res.status(400).json({ ok: false, message: 'tarifaCodigo es obligatorio' });
         
         const data = await service.crearBorrador(req.body, req.user);
+        await auditarCertificado(req, {
+            certificado_id: data.id,
+            evento: 'BORRADOR_CREADO',
+            mensaje: 'Se creó un nuevo borrador de certificado.',
+            paso: data.pasoActual,
+            datos: { tarifaCodigo: req.body.tarifaCodigo }
+        });
         res.status(201).json({ ok: true, data });
     } catch (e) {
         if (e.message === 'TARIFA_REQUERIDA') return res.status(400).json({ ok: false, message: 'tarifaCodigo es obligatorio' });
@@ -172,6 +187,11 @@ exports.actualizarBorrador = async (req, res) => {
     try {
         const { id } = req.params;
         await service.actualizarBorrador(id, req.body, req.user);
+        await auditarCertificado(req, {
+            evento: 'DATOS_INICIALES_GUARDADOS',
+            mensaje: 'Se actualizaron los datos iniciales del borrador.',
+            datos: { camposActualizados: Object.keys(req.body || {}).filter((campo) => !['observaciones'].includes(campo)) }
+        });
         res.status(200).json({ ok: true, message: 'Borrador actualizado correctamente' });
     } catch (e) {
         if (e.message === 'CERTIFICADO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El certificado indicado no existe' });
@@ -193,6 +213,11 @@ exports.guardarVehiculoBorrador = async (req, res) => {
     try {
         const { id } = req.params;
         await service.guardarVehiculoBorrador(id, req.body, req.user);
+        await auditarCertificado(req, {
+            evento: 'VEHICULO_GUARDADO',
+            mensaje: 'Se guardaron los datos técnicos del vehículo.',
+            paso: 'VEHICULO_Y_DATOS_TECNICOS'
+        });
         res.status(200).json({ ok: true, message: 'Snapshot vehicular guardado correctamente' });
     } catch (e) {
         if (e.message === 'CERTIFICADO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El certificado indicado no existe' });
@@ -213,6 +238,13 @@ exports.agregarTitular = async (req, res) => {
         if (orden === undefined || orden === null || !Number.isInteger(orden) || orden <= 0) return res.status(400).json({ ok: false, message: 'orden debe ser entero > 0' });
 
         const titularId = await service.agregarTitular(id, req.body, req.user);
+        await auditarCertificado(req, {
+            evento: 'TITULAR_AGREGADO',
+            mensaje: 'Se agregó un titular al certificado.',
+            entidad: 'fg_certificado_titular',
+            entidad_id: titularId,
+            datos: { orden }
+        });
         res.status(201).json({ ok: true, data: { id: titularId } });
     } catch (e) {
         if (e.message === 'CERTIFICADO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El certificado indicado no existe' });
@@ -230,6 +262,12 @@ exports.actualizarTitular = async (req, res) => {
     try {
         const { id, titularId } = req.params;
         await service.actualizarTitular(id, titularId, req.body, req.user);
+        await auditarCertificado(req, {
+            evento: 'TITULAR_ACTUALIZADO',
+            mensaje: 'Se actualizó un titular del certificado.',
+            entidad: 'fg_certificado_titular',
+            entidad_id: Number(titularId)
+        });
         res.status(200).json({ ok: true, message: 'Titular actualizado correctamente' });
     } catch (e) {
         if (e.message === 'CERTIFICADO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El certificado indicado no existe' });
@@ -248,6 +286,12 @@ exports.eliminarTitular = async (req, res) => {
     try {
         const { id, titularId } = req.params;
         await service.eliminarTitular(id, titularId, req.user);
+        await auditarCertificado(req, {
+            evento: 'TITULAR_ELIMINADO',
+            mensaje: 'Se eliminó un titular del certificado.',
+            entidad: 'fg_certificado_titular',
+            entidad_id: Number(titularId)
+        });
         res.status(200).json({ ok: true, message: 'Titular eliminado correctamente' });
     } catch (e) {
         if (e.message === 'CERTIFICADO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El certificado indicado no existe' });
@@ -269,6 +313,7 @@ exports.guardarGNV = async (req, res) => {
     try {
         const userContext = { username: req.user.username, perfil_id: req.user.perfil_id };
         await service.guardarGNV(req.params.id, req.body, userContext);
+        await auditarCertificado(req, { evento: 'DATOS_GNV_GUARDADOS', mensaje: 'Se guardó la información específica GNV.' });
         res.json({ ok: true, message: 'Datos GNV guardados correctamente' });
     } catch (error) {
         console.error('Error en guardarGNV:', error);
@@ -280,6 +325,11 @@ exports.guardarGNVComponentes = async (req, res) => {
     try {
         const userContext = { username: req.user.username, perfil_id: req.user.perfil_id };
         await service.guardarGNVComponentes(req.params.id, req.body.componentes, userContext);
+        await auditarCertificado(req, {
+            evento: 'COMPONENTES_GNV_GUARDADOS',
+            mensaje: 'Se guardaron los componentes GNV.',
+            datos: { cantidad: Array.isArray(req.body.componentes) ? req.body.componentes.length : 0 }
+        });
         res.json({ ok: true, message: 'Componentes GNV guardados' });
     } catch (error) {
         console.error('Error en guardarGNVComponentes:', error);
@@ -290,6 +340,12 @@ exports.guardarGNVComponentes = async (req, res) => {
 exports.actualizarPasoBorrador = async (req, res) => {
     try {
         const data = await service.actualizarPasoBorrador(req.params.id, req.body.pasoActual, req.user);
+        await auditarCertificado(req, {
+            evento: 'PASO_ACTUALIZADO',
+            mensaje: `El borrador avanzó al paso ${req.body.pasoActual}.`,
+            paso: req.body.pasoActual,
+            datos: { pasoActual: req.body.pasoActual }
+        });
         res.status(200).json({ ok: true, data });
     } catch (e) {
         if (e.message === 'CERTIFICADO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El certificado indicado no existe' });
@@ -307,6 +363,11 @@ exports.guardarGNVVerificaciones = async (req, res) => {
     try {
         const userContext = { username: req.user.username, perfil_id: req.user.perfil_id };
         await service.guardarGNVVerificaciones(req.params.id, req.body.verificaciones, userContext);
+        await auditarCertificado(req, {
+            evento: 'VERIFICACIONES_GNV_GUARDADAS',
+            mensaje: 'Se guardaron las verificaciones GNV.',
+            datos: { cantidad: Array.isArray(req.body.verificaciones) ? req.body.verificaciones.length : 0 }
+        });
         res.json({ ok: true, message: 'Verificaciones GNV guardadas' });
     } catch (error) {
         console.error('Error en guardarGNVVerificaciones:', error);
@@ -330,6 +391,7 @@ exports.guardarGLP = async (req, res) => {
     try {
         const userContext = { username: req.user.username, perfil_id: req.user.perfil_id };
         await service.guardarGLP(req.params.id, req.body, userContext);
+        await auditarCertificado(req, { evento: 'DATOS_GLP_GUARDADOS', mensaje: 'Se guardó la información específica GLP.' });
         res.json({ ok: true, message: 'Datos GLP guardados' });
     } catch (error) {
         console.error('Error en guardarGLP:', error);
@@ -341,6 +403,11 @@ exports.guardarGLPComponentes = async (req, res) => {
     try {
         const userContext = { username: req.user.username, perfil_id: req.user.perfil_id };
         await service.guardarGLPComponentes(req.params.id, req.body.componentes, userContext);
+        await auditarCertificado(req, {
+            evento: 'COMPONENTES_GLP_GUARDADOS',
+            mensaje: 'Se guardaron los componentes GLP.',
+            datos: { cantidad: Array.isArray(req.body.componentes) ? req.body.componentes.length : 0 }
+        });
         res.json({ ok: true, message: 'Componentes GLP guardados' });
     } catch (error) {
         console.error('Error en guardarGLPComponentes:', error);
@@ -352,6 +419,11 @@ exports.guardarGLPVerificaciones = async (req, res) => {
     try {
         const userContext = { username: req.user.username, perfil_id: req.user.perfil_id };
         await service.guardarGLPVerificaciones(req.params.id, req.body.verificaciones, userContext);
+        await auditarCertificado(req, {
+            evento: 'VERIFICACIONES_GLP_GUARDADAS',
+            mensaje: 'Se guardaron las verificaciones GLP.',
+            datos: { cantidad: Array.isArray(req.body.verificaciones) ? req.body.verificaciones.length : 0 }
+        });
         res.json({ ok: true, message: 'Verificaciones GLP guardadas' });
     } catch (error) {
         console.error('Error en guardarGLPVerificaciones:', error);
@@ -375,6 +447,7 @@ exports.guardarConformidad = async (req, res) => {
     try {
         const userContext = { username: req.user.username, perfil_id: req.user.perfil_id };
         await service.guardarConformidad(req.params.id, req.body, userContext);
+        await auditarCertificado(req, { evento: 'CONFORMIDAD_GUARDADA', mensaje: 'Se guardaron los datos de conformidad.' });
         res.json({ ok: true, message: 'Datos Conformidad guardados' });
     } catch (error) {
         console.error('Error en guardarConformidad:', error);
@@ -408,7 +481,14 @@ exports.obtenerTalleresActivos = async (req, res) => {
 exports.validarEmision = async (req, res) => {
     try {
         const id = parseInt(req.params.id);
-        const result = await certificadosService.validarEmision(id, req.user);
+        const result = await service.validarEmision(id, req.user);
+        await auditarCertificado(req, {
+            certificado_id: id,
+            evento: 'EMISION_VALIDADA',
+            exitoso: result?.valido !== false,
+            mensaje: result?.valido === false ? 'El certificado presenta observaciones para emitir.' : 'El certificado fue validado para emisión.',
+            datos: { valido: result?.valido !== false }
+        });
         res.json({ ok: true, data: result });
     } catch (error) {
         if (error.message === 'CERTIFICADO_NOT_FOUND' || error.message === 'PLANTA_NO_AUTORIZADA') {
@@ -421,7 +501,13 @@ exports.validarEmision = async (req, res) => {
 exports.emitir = async (req, res) => {
     try {
         const id = parseInt(req.params.id);
-        const result = await certificadosService.emitirCertificado(id, req.user);
+        const result = await service.emitirCertificado(id, req.user);
+        await auditarCertificado(req, {
+            certificado_id: id,
+            evento: 'CERTIFICADO_EMITIDO',
+            mensaje: 'Se emitió el certificado y se asignó su número definitivo.',
+            datos: { numeroCertificado: result?.numeroCertificado || result?.numero_certificado || null }
+        });
         res.json({ ok: true, data: result });
     } catch (error) {
         if (error.message === 'CERTIFICADO_NOT_FOUND' || error.message === 'PLANTA_NO_AUTORIZADA') {
@@ -438,6 +524,11 @@ exports.obtenerPrevisualizacion = async (req, res) => {
     try {
         const id = parseInt(req.params.id);
         const result = await service.obtenerPrevisualizacion(id, req.user);
+        await auditarCertificado(req, {
+            certificado_id: id,
+            evento: 'PREVISUALIZACION_CONSULTADA',
+            mensaje: 'Se consultó la previsualización del certificado.'
+        });
         res.json({ ok: true, data: result });
     } catch (error) {
         if (error.message === 'FORMATO_PREVIEW_PENDIENTE') {

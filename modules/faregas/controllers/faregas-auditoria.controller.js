@@ -1,5 +1,4 @@
 const faregasAuditoriaService = require('../services/faregas-auditoria.service');
-const db = require('../../../config/database');
 
 exports.listarAccesos = async (req, res) => {
     try {
@@ -8,7 +7,13 @@ exports.listarAccesos = async (req, res) => {
             evento: req.query.evento,
             exitoso: req.query.exitoso,
             fechaInicio: req.query.fechaInicio,
-            fechaFin: req.query.fechaFin
+            fechaFin: req.query.fechaFin,
+            categoria: req.query.categoria,
+            placa: req.query.placa,
+            certificadoId: req.query.certificadoId,
+            plantaKey: req.query.plantaKey,
+            buscar: req.query.buscar,
+            modulo: req.query.modulo
         };
 
         const registros = await faregasAuditoriaService.listarAccesos(filtros);

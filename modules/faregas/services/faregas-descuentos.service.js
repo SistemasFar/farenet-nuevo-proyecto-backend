@@ -2,6 +2,8 @@ const db = require('../../../config/database');
 const { randomUUID } = require('crypto');
 const faregasAuthService = require('./faregas-auth.service');
 const tarifasService = require('./faregas-tarifas.service');
+const configService = require('./faregas-config.service');
+const auditoriaService = require('./faregas-auditoria.service');
 
 const errorNegocio = (codigo, statusCode = 400, detalles) => {
     const error = new Error(codigo);
@@ -94,8 +96,7 @@ const consultarDescuentoCore = async (client, codigo, certificadoId, userContext
     }
 
     const placaNormalizada = (value) => String(value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-    if (ds.tipo === 'PLACA') {
-        if (!ds.placa) throw errorNegocio('PLACA_DESCUENTO_REQUERIDA', 409);
+    if (ds.placa) {
         if (placaNormalizada(ds.placa) !== placaNormalizada(certificado.placa)) {
             throw errorNegocio('DESCUENTO_NO_APLICA_PLACA', 422);
         }
@@ -440,19 +441,37 @@ const normalizarCampana = (data) => ({
     tipo: String(data.tipo || '').trim().toUpperCase(),
     empresaAliadaRuc: String(data.empresaAliadaRuc || '').trim() || null,
     empresaAliadaNombre: String(data.empresaAliadaNombre || '').trim() || null,
+    ejecutivo: String(data.ejecutivo || '').trim() || null,
     fechaInicio: normalizarInicioDia(data.fechaInicio),
     fechaFin: normalizarFinDia(data.fechaFin)
 });
 
 const validarCampana = (data) => {
     if (!data.nombre) throw errorNegocio('NOMBRE_DESCUENTO_REQUERIDO', 400);
-    if (!['ALIANZA', 'CUPON', 'PLACA'].includes(data.tipo)) throw errorNegocio('TIPO_DESCUENTO_INVALIDO', 400);
+    if (!['CAMPANA', 'ALIANZA', 'CONVENIO', 'PROMOCION'].includes(data.tipo)) throw errorNegocio('TIPO_DESCUENTO_INVALIDO', 400);
     if (!data.fechaInicio || !data.fechaFin || new Date(data.fechaFin) < new Date(data.fechaInicio)) {
         throw errorNegocio('VIGENCIA_DESCUENTO_INVALIDA', 400);
     }
 };
 
 const generarCodigoInternoCampana = (tipo) => `D_${tipo}_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+
+const obtenerOCrearEjecutivo = async (client, nombre, username) => {
+    if (!nombre) return null;
+    await client.query(`
+        INSERT INTO fg_ejecutivo (nombre, usuario_creacion)
+        VALUES ($1, $2)
+        ON CONFLICT DO NOTHING
+    `, [nombre, username]);
+    const result = await client.query(`
+        SELECT id
+        FROM fg_ejecutivo
+        WHERE LOWER(BTRIM(nombre)) = LOWER(BTRIM($1))
+        LIMIT 1
+    `, [nombre]);
+    if (!result.rowCount) throw errorNegocio('EJECUTIVO_NO_REGISTRADO', 500);
+    return Number(result.rows[0].id);
+};
 
 exports.listarDescuentos = async (filtros = {}) => {
     const params = [];
@@ -483,7 +502,7 @@ exports.listarDescuentos = async (filtros = {}) => {
 };
 
 exports.obtenerMaestrosAdministracion = async () => {
-    const [plantas, servicios, serviciosPorPlanta] = await Promise.all([
+    const [plantas, servicios, serviciosPorPlanta, ejecutivos] = await Promise.all([
         db.query('SELECT key, nombre FROM fg_planta WHERE activo = TRUE ORDER BY nombre'),
         db.query(`SELECT s.id, s.codigo, s.nombre, c.nombre AS categoria
                   FROM fg_servicio s JOIN fg_categoria_servicio c ON c.id = s.categoria_id
@@ -496,27 +515,34 @@ exports.obtenerMaestrosAdministracion = async () => {
                   JOIN fg_categoria_servicio c ON c.id=s.categoria_id
                   WHERE p.activo=TRUE AND t.activo=TRUE AND s.activo=TRUE AND c.activo=TRUE
                     AND s.tipo_flujo='CERTIFICACION'
-                  ORDER BY p.nombre, c.orden, s.orden, s.nombre`)
+                  ORDER BY p.nombre, c.orden, s.orden, s.nombre`),
+        db.query(`SELECT id, username, nombre
+                  FROM fg_ejecutivo
+                  WHERE activo=TRUE
+                  ORDER BY nombre`)
     ]);
-    return { plantas: plantas.rows, servicios: servicios.rows, serviciosPorPlanta: serviciosPorPlanta.rows };
+    return { plantas: plantas.rows, servicios: servicios.rows, serviciosPorPlanta: serviciosPorPlanta.rows, ejecutivos: ejecutivos.rows };
 };
 
 exports.crearDescuento = async (data, userContext) => {
     const normalizada = normalizarCampana(data);
     validarCampana(normalizada);
     const codigoInterno = generarCodigoInternoCampana(normalizada.tipo);
-    const empresaAliadaRuc = normalizada.tipo === 'ALIANZA' ? normalizada.empresaAliadaRuc : null;
-    const empresaAliadaNombre = normalizada.tipo === 'ALIANZA' ? normalizada.empresaAliadaNombre : null;
+    const esRelacionCorporativa = normalizada.tipo === 'ALIANZA' || normalizada.tipo === 'CONVENIO';
+    const empresaAliadaRuc = esRelacionCorporativa ? normalizada.empresaAliadaRuc : null;
+    const empresaAliadaNombre = esRelacionCorporativa ? normalizada.empresaAliadaNombre : null;
+    const ejecutivo = normalizada.tipo === 'ALIANZA' ? normalizada.ejecutivo : null;
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+        const ejecutivoId = await obtenerOCrearEjecutivo(client, ejecutivo, userContext.username);
         const result = await client.query(`
             INSERT INTO fg_descuento
-                (codigo, nombre, tipo, empresa_aliada_ruc, empresa_aliada_nombre,
+                (codigo, nombre, tipo, empresa_aliada_ruc, empresa_aliada_nombre, ejecutivo, ejecutivo_id,
                  tipo_calculo, valor, fecha_inicio, fecha_fin, planta_key, usuario_creacion)
-            VALUES ($1,$2,$3,$4,$5,NULL,NULL,$6,$7,NULL,$8) RETURNING id
+            VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,NULL,$8,$9,NULL,$10) RETURNING id
         `, [codigoInterno, normalizada.nombre, normalizada.tipo, empresaAliadaRuc,
-            empresaAliadaNombre, normalizada.fechaInicio, normalizada.fechaFin, userContext.username]);
+            empresaAliadaNombre, ejecutivo, ejecutivoId, normalizada.fechaInicio, normalizada.fechaFin, userContext.username]);
         const id = result.rows[0].id;
         await client.query('COMMIT');
         return { id: Number(id) };
@@ -530,17 +556,20 @@ exports.crearDescuento = async (data, userContext) => {
 exports.actualizarDescuento = async (id, data, userContext) => {
     const normalizada = normalizarCampana(data);
     validarCampana(normalizada);
-    const empresaAliadaRuc = normalizada.tipo === 'ALIANZA' ? normalizada.empresaAliadaRuc : null;
-    const empresaAliadaNombre = normalizada.tipo === 'ALIANZA' ? normalizada.empresaAliadaNombre : null;
+    const esRelacionCorporativa = normalizada.tipo === 'ALIANZA' || normalizada.tipo === 'CONVENIO';
+    const empresaAliadaRuc = esRelacionCorporativa ? normalizada.empresaAliadaRuc : null;
+    const empresaAliadaNombre = esRelacionCorporativa ? normalizada.empresaAliadaNombre : null;
+    const ejecutivo = normalizada.tipo === 'ALIANZA' ? normalizada.ejecutivo : null;
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+        const ejecutivoId = await obtenerOCrearEjecutivo(client, ejecutivo, userContext.username);
         const result = await client.query(`UPDATE fg_descuento SET
             nombre=$2, tipo=$3, empresa_aliada_ruc=$4, empresa_aliada_nombre=$5,
-            fecha_inicio=$6, fecha_fin=$7,
-            usuario_modificacion=$8, fecha_modificacion=CURRENT_TIMESTAMP
+            ejecutivo=$6, ejecutivo_id=$7, fecha_inicio=$8, fecha_fin=$9,
+            usuario_modificacion=$10, fecha_modificacion=CURRENT_TIMESTAMP
             WHERE id=$1 RETURNING id`, [id, normalizada.nombre, normalizada.tipo,
-            empresaAliadaRuc, empresaAliadaNombre,
+            empresaAliadaRuc, empresaAliadaNombre, ejecutivo, ejecutivoId,
             normalizada.fechaInicio, normalizada.fechaFin, userContext.username]);
         if (!result.rowCount) throw errorNegocio('DESCUENTO_NOT_FOUND', 404);
         await client.query('COMMIT');
@@ -553,193 +582,37 @@ exports.actualizarDescuento = async (id, data, userContext) => {
 };
 
 exports.cambiarEstadoDescuento = async (id, activo, userContext) => {
-    const result = await db.query(`UPDATE fg_descuento SET activo=$2, usuario_modificacion=$3,
-        fecha_modificacion=CURRENT_TIMESTAMP WHERE id=$1 RETURNING id`, [id, Boolean(activo), userContext.username]);
-    if (!result.rowCount) throw errorNegocio('DESCUENTO_NOT_FOUND', 404);
-    return { success: true };
-};
-
-exports.obtenerDetalleAdministracion = async (id) => {
-    const [descuento, reglas, codigos] = await Promise.all([
-        db.query('SELECT * FROM fg_descuento WHERE id=$1', [id]),
-        db.query(`SELECT dd.planta_key AS "plantaKey", dd.servicio_id AS "servicioId",
-                         dd.tipo_calculo AS "tipoCalculo", dd.valor,
-                         dd.valor_contado AS "valorContado", dd.valor_credito AS "valorCredito"
-                  FROM fg_descuentodetalle dd
-                  JOIN fg_planta p ON p.key=dd.planta_key
-                  WHERE dd.descuento_id=$1 AND dd.descuento_cliente_id IS NULL AND dd.activo=TRUE
-                  ORDER BY p.nombre, dd.servicio_id`, [id]),
-        db.query(`SELECT dc.id, dc.codigo, dc.placa,
-                         dc.fecha_inicio, dc.fecha_fin, dc.max_usos, dc.usos_realizados, dc.activo
-                  FROM fg_descuentocliente dc
-                  WHERE dc.descuento_id=$1
-                  ORDER BY dc.fecha_creacion DESC`, [id])
-    ]);
-    if (!descuento.rowCount) throw errorNegocio('DESCUENTO_NOT_FOUND', 404);
-    return { descuento: descuento.rows[0], reglas: reglas.rows, codigos: codigos.rows };
-};
-
-const normalizarCodigoCliente = (data) => ({
-    codigo: String(data.codigo || '').trim().toUpperCase(),
-    placa: String(data.placa || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase() || null,
-    fechaInicio: normalizarInicioDia(data.fechaInicio || null),
-    fechaFin: normalizarFinDia(data.fechaFin || null),
-    maxUsos: Number(data.maxUsos || 1)
-});
-
-const normalizarReglasCampana = (data) => (Array.isArray(data.reglas) ? data.reglas : []).map(item => ({
-        plantaKey: String(item.plantaKey || '').trim(),
-        servicioId: Number(item.servicioId),
-        tipoCalculo: String(item.tipoCalculo || '').trim().toUpperCase(),
-        valor: item.valor === '' || item.valor == null ? null : Number(item.valor),
-        valorContado: item.valorContado === '' || item.valorContado == null ? null : Number(item.valorContado),
-        valorCredito: item.valorCredito === '' || item.valorCredito == null ? null : Number(item.valorCredito)
-    }));
-
-const validarReglasCampana = (reglas) => {
-    if (reglas.length === 0) throw errorNegocio('SERVICIOS_DESCUENTO_REQUERIDOS', 400);
-    const combinaciones = new Set();
-    for (const detalle of reglas) {
-        if (!detalle.plantaKey || !Number.isInteger(detalle.servicioId)) throw errorNegocio('REFERENCIA_DESCUENTO_INVALIDA', 400);
-        if (!['FLAT', 'MONTO', 'PORCENTAJE'].includes(detalle.tipoCalculo)) throw errorNegocio('TIPO_CALCULO_INVALIDO', 400);
-        if (detalle.tipoCalculo === 'FLAT') {
-            if (detalle.valor != null || (detalle.valorContado == null && detalle.valorCredito == null)) {
-                throw errorNegocio('VALOR_DESCUENTO_INVALIDO', 400);
-            }
-            if ([detalle.valorContado, detalle.valorCredito].filter(v => v != null)
-                .some(valor => !Number.isFinite(valor) || valor <= 0)) throw errorNegocio('VALOR_DESCUENTO_INVALIDO', 400);
-        } else {
-            if (!Number.isFinite(detalle.valor) || detalle.valor <= 0
-                || detalle.valorContado != null || detalle.valorCredito != null
-                || (detalle.tipoCalculo === 'PORCENTAJE' && detalle.valor > 100)) {
-                throw errorNegocio('VALOR_DESCUENTO_INVALIDO', 400);
-            }
-        }
-        const combinacion = `${detalle.plantaKey}:${detalle.servicioId}`;
-        if (combinaciones.has(combinacion)) throw errorNegocio('REGLA_DESCUENTO_DUPLICADA', 400);
-        combinaciones.add(combinacion);
-    }
-};
-
-const validarCodigoCliente = (regla, tipoCampana) => {
-    if (!/^[A-Z0-9_-]{2,80}$/.test(regla.codigo)) throw errorNegocio('CODIGO_CLIENTE_INVALIDO', 400);
-    if (!Number.isInteger(regla.maxUsos) || regla.maxUsos <= 0) throw errorNegocio('MAX_USOS_INVALIDO', 400);
-    if ((regla.fechaInicio && !regla.fechaFin) || (!regla.fechaInicio && regla.fechaFin)) throw errorNegocio('VIGENCIA_CODIGO_INVALIDA', 400);
-    if (tipoCampana === 'PLACA' && !regla.placa) throw errorNegocio('PLACA_DESCUENTO_REQUERIDA', 400);
-};
-
-const guardarReglasCampana = async (client, descuentoId, reglas, username) => {
-    await client.query(`UPDATE fg_descuentodetalle SET activo=FALSE, usuario_modificacion=$2,
-        fecha_modificacion=CURRENT_TIMESTAMP WHERE descuento_id=$1 AND descuento_cliente_id IS NULL`, [descuentoId, username]);
-    for (const regla of reglas) {
-        const referencia = await client.query(`SELECT t.precio FROM fg_tarifa t
-            JOIN fg_planta p ON p.key=t.planta_key
-            JOIN fg_servicio s ON s.id=t.servicio_id
-            JOIN fg_categoria_servicio c ON c.id=s.categoria_id
-            WHERE t.planta_key=$1 AND t.servicio_id=$2 AND t.activo=TRUE
-              AND p.activo=TRUE AND s.activo=TRUE AND c.activo=TRUE
-              AND s.tipo_flujo='CERTIFICACION'`, [regla.plantaKey, regla.servicioId]);
-        if (!referencia.rowCount) throw errorNegocio('REFERENCIA_DESCUENTO_INVALIDA', 400);
-        const tarifa = Number(referencia.rows[0].precio);
-        const valoresFlat = [regla.valorContado, regla.valorCredito].filter(v => v != null);
-        if ((regla.tipoCalculo === 'FLAT' && valoresFlat.some(valor => valor >= tarifa))
-            || (regla.tipoCalculo === 'MONTO' && regla.valor > tarifa)) {
-            throw errorNegocio('IMPORTE_DESCUENTO_INVALIDO', 400);
-        }
-        await client.query(`INSERT INTO fg_descuentodetalle
-            (descuento_id, descuento_cliente_id, planta_key, servicio_id,
-             tipo_calculo, valor, valor_contado, valor_credito, activo, usuario_creacion)
-            VALUES ($1,NULL,$2,$3,$4,$5,$6,$7,TRUE,$8)
-            ON CONFLICT (descuento_id, planta_key, servicio_id) WHERE descuento_cliente_id IS NULL
-            DO UPDATE SET tipo_calculo=$4, valor=$5, valor_contado=$6, valor_credito=$7,
-                activo=TRUE, usuario_modificacion=$8, fecha_modificacion=CURRENT_TIMESTAMP`,
-        [descuentoId, regla.plantaKey, regla.servicioId, regla.tipoCalculo,
-            regla.valor, regla.valorContado, regla.valorCredito, username]);
-    }
-};
-
-exports.guardarReglasDescuento = async (descuentoId, data, userContext) => {
-    const reglas = normalizarReglasCampana(data);
-    validarReglasCampana(reglas);
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        const campana = await client.query('SELECT id FROM fg_descuento WHERE id=$1 FOR UPDATE', [descuentoId]);
-        if (!campana.rowCount) throw errorNegocio('DESCUENTO_NOT_FOUND', 404);
-        await guardarReglasCampana(client, descuentoId, reglas, userContext.username);
+        const check = await client.query('SELECT * FROM fg_descuento WHERE id=$1', [id]);
+        if (!check.rowCount) throw errorNegocio('DESCUENTO_NOT_FOUND', 404);
+        const anterior = check.rows[0];
+
+        await client.query(`UPDATE fg_descuento SET activo=$2, usuario_modificacion=$3,
+            fecha_modificacion=CURRENT_TIMESTAMP WHERE id=$1`, [id, Boolean(activo), userContext.username]);
+
+        // Registrar auditoria en tabla de acceso/eventos (fg_auditoria_acceso) para que salga en la pestaña DESCUENTOS
+        await auditoriaService.registrarEvento({
+            username: userContext.username,
+            evento: activo ? 'ACTIVAR_DESCUENTO' : 'DESACTIVAR_DESCUENTO',
+            exitoso: true,
+            mensaje: `Se ha ${activo ? 'activado' : 'desactivado'} el descuento ${anterior.nombre}`,
+            ip_direccion: userContext.ip_direccion,
+            categoria: 'DESCUENTO',
+            entidad: 'fg_descuento',
+            entidad_id: id,
+            datos: { antes: { activo: anterior.activo }, despues: { activo } }
+        });
+
         await client.query('COMMIT');
         return { success: true };
-    } catch (error) {
+    } catch (e) {
         await client.query('ROLLBACK');
-        if (error.code === '23503') throw errorNegocio('REFERENCIA_DESCUENTO_INVALIDA', 400);
-        throw error;
-    } finally { client.release(); }
-};
-
-exports.crearCodigoCliente = async (descuentoId, data, userContext) => {
-    const regla = normalizarCodigoCliente(data);
-    const client = await db.connect();
-    try {
-        await client.query('BEGIN');
-        const campana = await client.query('SELECT tipo, fecha_inicio, fecha_fin FROM fg_descuento WHERE id=$1 FOR UPDATE', [descuentoId]);
-        if (!campana.rowCount) throw errorNegocio('DESCUENTO_NOT_FOUND', 404);
-        validarCodigoCliente(regla, campana.rows[0].tipo);
-        if (regla.fechaInicio && (new Date(regla.fechaInicio) < new Date(campana.rows[0].fecha_inicio) || new Date(regla.fechaFin) > new Date(campana.rows[0].fecha_fin))) {
-            throw errorNegocio('VIGENCIA_CODIGO_FUERA_DE_CAMPANA', 400);
-        }
-        const reglasConfiguradas = await client.query(`SELECT 1 FROM fg_descuentodetalle
-            WHERE descuento_id=$1 AND descuento_cliente_id IS NULL AND activo=TRUE LIMIT 1`, [descuentoId]);
-        if (!reglasConfiguradas.rowCount) throw errorNegocio('REGLAS_DESCUENTO_REQUERIDAS', 409);
-        const result = await client.query(`INSERT INTO fg_descuentocliente
-            (descuento_id, codigo, tipo_documento, nro_documento, placa, planta_key,
-             tipo_calculo, valor_contado, valor_credito, fecha_inicio, fecha_fin,
-             max_usos, usuario_creacion)
-            VALUES ($1,$2,NULL,NULL,$3,NULL,NULL,NULL,NULL,$4,$5,$6,$7) RETURNING id`,
-        [descuentoId, regla.codigo, campana.rows[0].tipo === 'PLACA' ? regla.placa : null,
-            regla.fechaInicio, regla.fechaFin, regla.maxUsos, userContext.username]);
-        await client.query('COMMIT');
-        return { id: Number(result.rows[0].id) };
-    } catch (error) {
-        await client.query('ROLLBACK');
-        if (error.code === '23503') throw errorNegocio('REFERENCIA_DESCUENTO_INVALIDA', 400);
-        if (error.code === '23505') throw errorNegocio('CODIGO_CLIENTE_DUPLICADO', 409);
-        throw error;
-    } finally { client.release(); }
-};
-
-exports.actualizarCodigoCliente = async (codigoId, data, userContext) => {
-    const regla = normalizarCodigoCliente(data);
-    const client = await db.connect();
-    try {
-        await client.query('BEGIN');
-        const actual = await client.query(`SELECT dc.descuento_id, d.tipo, d.fecha_inicio, d.fecha_fin
-            FROM fg_descuentocliente dc JOIN fg_descuento d ON d.id=dc.descuento_id
-            WHERE dc.id=$1 FOR UPDATE OF dc`, [codigoId]);
-        if (!actual.rowCount) throw errorNegocio('CODIGO_NOT_FOUND', 404);
-        validarCodigoCliente(regla, actual.rows[0].tipo);
-        if (regla.fechaInicio && (new Date(regla.fechaInicio) < new Date(actual.rows[0].fecha_inicio) || new Date(regla.fechaFin) > new Date(actual.rows[0].fecha_fin))) {
-            throw errorNegocio('VIGENCIA_CODIGO_FUERA_DE_CAMPANA', 400);
-        }
-        await client.query(`UPDATE fg_descuentocliente SET codigo=$2, placa=$3, planta_key=NULL,
-            tipo_calculo=NULL, valor_contado=NULL, valor_credito=NULL, fecha_inicio=$4, fecha_fin=$5,
-            max_usos=$6, usuario_modificacion=$7, fecha_modificacion=CURRENT_TIMESTAMP
-            WHERE id=$1`, [codigoId, regla.codigo, actual.rows[0].tipo === 'PLACA' ? regla.placa : null,
-            regla.fechaInicio, regla.fechaFin, regla.maxUsos, userContext.username]);
-        await client.query('COMMIT');
-        return { success: true };
-    } catch (error) {
-        await client.query('ROLLBACK');
-        if (error.code === '23503') throw errorNegocio('REFERENCIA_DESCUENTO_INVALIDA', 400);
-        if (error.code === '23505') throw errorNegocio('CODIGO_CLIENTE_DUPLICADO', 409);
-        throw error;
-    } finally { client.release(); }
-};
-
-exports.cambiarEstadoCodigo = async (id, activo, userContext) => {
-    const result = await db.query(`UPDATE fg_descuentocliente SET activo=$2, usuario_modificacion=$3,
-        fecha_modificacion=CURRENT_TIMESTAMP WHERE id=$1 RETURNING id`, [id, Boolean(activo), userContext.username]);
-    if (!result.rowCount) throw errorNegocio('CODIGO_NOT_FOUND', 404);
-    return { success: true };
+        throw e;
+    } finally {
+        client.release();
+    }
 };
 
 exports._private = {

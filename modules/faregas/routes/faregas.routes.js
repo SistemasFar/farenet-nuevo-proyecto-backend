@@ -1,8 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const healthController = require('../controllers/health.controller');
+const auditoriaOperativaMiddleware = require('../middlewares/faregas-auditoria-operativa.middleware');
 
 const usuariosRoutes = require('./faregas-usuarios.routes');
+
+// Registra cambios administrativos después de que cada submódulo autentica al usuario.
+router.use(auditoriaOperativaMiddleware);
 
 // Endpoint inicial de comprobación
 router.get('/ping', healthController.ping);

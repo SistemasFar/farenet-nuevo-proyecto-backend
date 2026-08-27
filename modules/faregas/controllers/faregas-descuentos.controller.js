@@ -1,4 +1,5 @@
 const descuentosService = require('../services/faregas-descuentos.service');
+const auditoriaService = require('../services/faregas-auditoria.service');
 
 const MENSAJES = {
     CODIGO_NOT_FOUND: 'El código indicado no existe.', CODIGO_INACTIVO: 'El código está inactivo.',
@@ -16,6 +17,7 @@ const MENSAJES = {
     SERVICIOS_DESCUENTO_REQUERIDOS: 'Seleccione al menos un servicio para este descuento.',
     REGLAS_DESCUENTO_REQUERIDAS: 'Configure primero las sedes, servicios y valores del descuento antes de crear códigos.',
     REGLA_DESCUENTO_NO_CONFIGURADA: 'El descuento no tiene una regla válida para esta sede, servicio y forma de pago.',
+    EJECUTIVO_NO_REGISTRADO: 'No se pudo registrar el ejecutivo de la alianza.',
     REFERENCIA_DESCUENTO_INVALIDA: 'La sede o uno de los servicios seleccionados no existe o no tiene una tarifa activa.',
     REGLA_DESCUENTO_DUPLICADA: 'No se puede repetir el mismo servicio dentro de una sede.'
 };
@@ -26,6 +28,16 @@ const responderError = (res, error) => res.status(error.statusCode || 500).json(
     message: MENSAJES[error.code || error.message] || error.message || 'Error interno del servidor',
     detalles: error.detalles
 });
+
+const registrarAdministracion = (req, evento, mensaje, entidad, entidadId, datos = {}) =>
+    auditoriaService.registrarEvento(auditoriaService.contextoRequest(req, {
+        categoria: 'DESCUENTO',
+        evento,
+        mensaje,
+        entidad,
+        entidad_id: Number(entidadId) || null,
+        datos
+    }));
 
 exports.consultarDescuento = async (req, res, next) => {
     try {
@@ -46,6 +58,17 @@ exports.aplicarDescuentoBorrador = async (req, res, next) => {
             return res.status(400).json({ codigo: 'DATOS_REQUERIDOS', message: 'Debe indicar el código y el certificado.' });
         }
         const resultado = await descuentosService.aplicarDescuentoBorrador(certificadoId, codigo, req.user);
+        await auditoriaService.registrarEventoCertificado(auditoriaService.contextoRequest(req, {
+            certificado_id: Number(certificadoId),
+            categoria: 'DESCUENTO',
+            evento: 'DESCUENTO_APLICADO',
+            entidad: 'fg_descuentocomprobante',
+            mensaje: 'Se aplicó un descuento al borrador.',
+            datos: {
+                tipoCalculo: resultado?.tipoCalculo || resultado?.tipo_calculo || null,
+                importeDescuento: resultado?.importeDescuento || resultado?.importe_descuento || null
+            }
+        }));
         res.json(resultado);
     } catch (error) { responderError(res, error); }
 };
@@ -54,6 +77,13 @@ exports.quitarDescuentoBorrador = async (req, res, next) => {
     try {
         const { certificadoId } = req.params;
         const resultado = await descuentosService.quitarDescuentoBorrador(certificadoId, req.user);
+        await auditoriaService.registrarEventoCertificado(auditoriaService.contextoRequest(req, {
+            certificado_id: Number(certificadoId),
+            categoria: 'DESCUENTO',
+            evento: 'DESCUENTO_QUITADO',
+            entidad: 'fg_descuentocomprobante',
+            mensaje: 'Se retiró el descuento reservado del borrador.'
+        }));
         res.json(resultado);
     } catch (error) { responderError(res, error); }
 };
@@ -85,36 +115,78 @@ exports.obtenerDetalle = async (req, res) => {
 };
 
 exports.crearDescuento = async (req, res) => {
-    try { res.status(201).json({ success: true, ...(await descuentosService.crearDescuento(req.body, req.user)) }); }
+    try {
+        const resultado = await descuentosService.crearDescuento(req.body, req.user);
+        await registrarAdministracion(req, 'DESCUENTO_CREADO', 'Creó un nuevo descuento.',
+            'fg_descuento', resultado.id, { nombre: req.body.nombre, tipo: req.body.tipo });
+        res.status(201).json({ success: true, ...resultado });
+    }
     catch (error) { responderError(res, error); }
 };
 
 exports.actualizarDescuento = async (req, res) => {
-    try { res.json({ success: true, ...(await descuentosService.actualizarDescuento(req.params.id, req.body, req.user)) }); }
+    try {
+        const resultado = await descuentosService.actualizarDescuento(req.params.id, req.body, req.user);
+        await registrarAdministracion(req, 'DESCUENTO_ACTUALIZADO', 'Actualizó los datos generales de un descuento.',
+            'fg_descuento', req.params.id, { nombre: req.body.nombre, tipo: req.body.tipo });
+        res.json({ success: true, ...resultado });
+    }
     catch (error) { responderError(res, error); }
 };
 
 exports.cambiarEstadoDescuento = async (req, res) => {
-    try { res.json(await descuentosService.cambiarEstadoDescuento(req.params.id, req.body.activo, req.user)); }
+    try {
+        const resultado = await descuentosService.cambiarEstadoDescuento(req.params.id, req.body.activo, req.user);
+        await registrarAdministracion(req, 'DESCUENTO_ESTADO_ACTUALIZADO',
+            `${req.body.activo ? 'Activó' : 'Desactivó'} un descuento.`,
+            'fg_descuento', req.params.id, { activo: Boolean(req.body.activo) });
+        res.json(resultado);
+    }
     catch (error) { responderError(res, error); }
 };
 
 exports.guardarReglasDescuento = async (req, res) => {
-    try { res.json(await descuentosService.guardarReglasDescuento(req.params.id, req.body, req.user)); }
+    try {
+        const resultado = await descuentosService.guardarReglasDescuento(req.params.id, req.body, req.user);
+        await registrarAdministracion(req, 'REGLAS_DESCUENTO_GUARDADAS',
+            'Guardó el alcance y beneficio de un descuento.', 'fg_descuento', req.params.id,
+            { cantidadReglas: Array.isArray(req.body.reglas) ? req.body.reglas.length : 0 });
+        res.json(resultado);
+    }
     catch (error) { responderError(res, error); }
 };
 
 exports.crearCodigo = async (req, res) => {
-    try { res.status(201).json({ success: true, ...(await descuentosService.crearCodigoCliente(req.params.id, req.body, req.user)) }); }
+    try {
+        const resultado = await descuentosService.crearCodigoCliente(req.params.id, req.body, req.user);
+        await registrarAdministracion(req, 'CODIGO_DESCUENTO_CREADO',
+            `Creó el código de descuento ${String(req.body.codigo || '').trim().toUpperCase()}.`,
+            'fg_descuentocliente', resultado.id,
+            { descuentoId: Number(req.params.id), codigo: String(req.body.codigo || '').trim().toUpperCase() });
+        res.status(201).json({ success: true, ...resultado });
+    }
     catch (error) { responderError(res, error); }
 };
 
 exports.actualizarCodigo = async (req, res) => {
-    try { res.json(await descuentosService.actualizarCodigoCliente(req.params.id, req.body, req.user)); }
+    try {
+        const resultado = await descuentosService.actualizarCodigoCliente(req.params.id, req.body, req.user);
+        await registrarAdministracion(req, 'CODIGO_DESCUENTO_ACTUALIZADO',
+            `Actualizó el código de descuento ${String(req.body.codigo || '').trim().toUpperCase()}.`,
+            'fg_descuentocliente', req.params.id,
+            { codigo: String(req.body.codigo || '').trim().toUpperCase() });
+        res.json(resultado);
+    }
     catch (error) { responderError(res, error); }
 };
 
 exports.cambiarEstadoCodigo = async (req, res) => {
-    try { res.json(await descuentosService.cambiarEstadoCodigo(req.params.id, req.body.activo, req.user)); }
+    try {
+        const resultado = await descuentosService.cambiarEstadoCodigo(req.params.id, req.body.activo, req.user);
+        await registrarAdministracion(req, 'CODIGO_DESCUENTO_ESTADO',
+            `${req.body.activo ? 'Activó' : 'Desactivó'} un código de descuento.`,
+            'fg_descuentocliente', req.params.id, { activo: Boolean(req.body.activo) });
+        res.json(resultado);
+    }
     catch (error) { responderError(res, error); }
 };
