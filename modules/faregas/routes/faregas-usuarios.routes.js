@@ -17,10 +17,10 @@ const adminMiddleware = async (req, res, next) => {
         const decoded = jwt.verify(token, JWT_SECRET_FAREGAS);
         
         if (decoded.faregas_flow !== 'authenticated') {
-            return res.status(403).json({ message: 'Flujo inválido' });
+            return res.status(403).json({ message: 'Flujo invalido' });
         }
 
-        // Validación estricta contra base de datos
+        // Validacion estricta contra base de datos
         const userDb = await db.query(
             'SELECT estado, perfil_id FROM fg_usuario WHERE username = $1 LIMIT 1', 
             [decoded.username]
@@ -49,8 +49,8 @@ const adminMiddleware = async (req, res, next) => {
         req.user = decoded;
         next();
     } catch (e) {
-        console.error("Error validando token FAREGAS en ADMIN", e);
-        return res.status(401).json({ message: 'Token inválido o expirado' });
+        console.error('Error validando token FAREGAS en ADMIN', e);
+        return res.status(401).json({ message: 'Token invalido o expirado' });
     }
 };
 
@@ -70,5 +70,11 @@ router.put('/perfiles/:clave', controller.actualizarPerfil);
 router.delete('/perfiles/:clave', controller.eliminarPerfil);
 
 router.get('/plantas', controller.obtenerPlantas);
+
+// MAESTROS
+router.get('/maestros/persona', controller.getMaestrosPersona);
+router.get('/maestros/departamentos/:paisKey', controller.getDepartamentos);
+router.get('/maestros/provincias/:departamentoKey', controller.getProvincias);
+router.get('/maestros/distritos/:provinciaKey', controller.getDistritos);
 
 module.exports = router;

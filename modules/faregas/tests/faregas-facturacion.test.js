@@ -5,7 +5,8 @@ const {
     validarFacturacion,
     validarFacturacionNubefact,
     validarSerieNubefact,
-    validarCuotasContraTotal
+    validarCuotasContraTotal,
+    derivarMedioPago
 } = require('../services/faregas-facturacion.rules');
 const {
     construirPayloadNubefact,
@@ -66,6 +67,17 @@ test('construye el contrato Nubefact desde importes controlados por backend', ()
     assert.equal(payload.items[0].total, 150);
     assert.equal(payload.codigo_unico, 'FG-55');
     assert.equal(typeof payload.total, 'number');
+});
+
+test('deriva el medio de pago desde los pagos persistidos y elimina duplicados', () => {
+    const medio = derivarMedioPago([
+        { tipocontado_key: 'tarjeta' },
+        { tipocontado_key: 'efectivo' },
+        { tipocontado_key: 'TARJETA' },
+        { tipocontado_key: 'desconocido' }
+    ]);
+    assert.equal(medio, 'EFECTIVO, TARJETA');
+    assert.equal(derivarMedioPago([]), null);
 });
 
 test('valida limites y formatos exigidos por Nubefact', () => {

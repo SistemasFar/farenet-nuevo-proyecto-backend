@@ -1,4 +1,5 @@
 const db = require('../../../config/database');
+const integrationsConfig = require('../../../config/integrations.config');
 const { paraPlantilla } = require('../mappers/faregas-vehiculo.mapper');
 const tarifasService = require('./faregas-tarifas.service');
 
@@ -1392,15 +1393,17 @@ exports.validarEmision = async (id, userContext) => {
         }
     }
 
-    // La facturacion electronica debe estar aceptada antes de consumir el
-    // correlativo definitivo del certificado.
+    // En producción, la facturación electrónica debe estar aceptada antes de
+    // consumir el correlativo definitivo. El modo de simulación es explícito,
+    // solo funciona fuera de producción y nunca altera el estado SUNAT.
+    const facturacionSimulada = integrationsConfig.nubefact.simulationEnabled;
     const rFacturacion = await db.query(
         'SELECT estado, nro_comprobante, aceptada_sunat FROM fg_facturacion WHERE certificado_id = $1',
         [id]
     );
     if (rFacturacion.rowCount === 0) {
         pushError('facturacion', 'general', 'FACTURACION_FALTANTE', 'Faltan los datos de facturacion');
-    } else if (rFacturacion.rows[0].estado !== 'ACEPTADO' || rFacturacion.rows[0].aceptada_sunat !== true) {
+    } else if (!facturacionSimulada && (rFacturacion.rows[0].estado !== 'ACEPTADO' || rFacturacion.rows[0].aceptada_sunat !== true)) {
         pushError('facturacion', 'estado', 'FACTURACION_NO_EMITIDA', 'El comprobante debe estar aceptado por Nubefact/SUNAT antes de emitir el certificado');
     }
 
@@ -1523,7 +1526,8 @@ exports.validarEmision = async (id, userContext) => {
 
     return {
         valido: errores.length === 0,
-        errores
+        errores,
+        modoFacturacion: facturacionSimulada ? 'SIMULACION' : 'NUBEFACT'
     };
 };
 

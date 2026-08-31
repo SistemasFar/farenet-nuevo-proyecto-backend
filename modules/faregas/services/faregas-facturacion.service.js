@@ -7,7 +7,8 @@ const {
     validarFacturacion,
     validarFacturacionNubefact,
     validarSerieNubefact,
-    validarCuotasContraTotal
+    validarCuotasContraTotal,
+    derivarMedioPago
 } = require('./faregas-facturacion.rules');
 const {
     construirPayloadNubefact,
@@ -127,6 +128,13 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
         const certificado = await obtenerCertificado(client, certificadoId, userContext, true);
         if (certificado.estado !== 'BORRADOR') throw errorNegocio('CERTIFICADO_NO_EDITABLE', 409);
         const orden = await obtenerOrdenFacturable(client, certificadoId, normalizada.condicionPago);
+        const pagosPersistidos = await client.query(
+            `SELECT tipocontado_key
+             FROM fg_pago
+             WHERE orden_pago_id = $1 AND estado = 'CAN'`,
+            [orden.id]
+        );
+        const medioPagoPersistido = derivarMedioPago(pagosPersistidos.rows);
         const totalCuotasEsperado = Number(orden.saldo_pendiente);
         if (normalizada.condicionPago === 'CREDITO'
             && !validarCuotasContraTotal(normalizada.cuotas, totalCuotasEsperado)) {
@@ -190,7 +198,7 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
                 orden.importe_total,
                 normalizada.condicionPago,
                 normalizada.fechaVencimiento,
-                normalizada.medioPago,
+                medioPagoPersistido,
                 orden.operacion_id || null,
                 userContext.username
             ]

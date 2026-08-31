@@ -2,3 +2,7 @@ node_modules/
 .env
 npm-debug.log*
 scripts/
+
+# Scripts locales de diagnostico que pueden contener credenciales o ejecutar emisiones.
+query.js
+test-nubefact.js

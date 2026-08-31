@@ -4,6 +4,7 @@ const controller = require('../controllers/faregas-certificados.controller');
 const pagosController = require('../controllers/faregas-pagos.controller');
 const facturacionController = require('../controllers/faregas-facturacion.controller');
 const documentosElectronicosController = require('../controllers/faregas-documentos-electronicos.controller');
+const facturacionAdminController = require('../controllers/faregas-facturacion-admin.controller');
 const jwt = require('jsonwebtoken');
 const db = require('../../../config/database');
 
@@ -41,6 +42,23 @@ const authMiddleware = async (req, res, next) => {
 };
 
 router.use(authMiddleware);
+
+const facturacionAdminMiddleware = async (req, res, next) => {
+    if (req.user?.perfil_id === 'SISTEMAS') return next();
+    try {
+        const permiso = await db.query(`
+            SELECT 1 FROM fg_perfil_permiso
+            WHERE perfil_clave = $1
+              AND permiso_clave IN ('MENU_CONFIGURACION', 'CONFIGURACION_SERIES')
+            LIMIT 1
+        `, [req.user?.perfil_id]);
+        if (permiso.rowCount === 0) return res.status(403).json({ message: 'No tiene permiso para consultar comprobantes.' });
+        return next();
+    } catch (error) {
+        console.error('[FAREGAS FACTURACION ADMIN AUTH]', error);
+        return res.status(500).json({ message: 'No se pudo validar el permiso de facturación.' });
+    }
+};
 
 // Catálogo
 router.get('/catalogos/verificaciones', controller.obtenerCatalogoVerificaciones);
@@ -88,6 +106,8 @@ router.get('/borradores/:id/pagos', pagosController.obtenerPagos);
 router.put('/borradores/:id/pagos', pagosController.guardarPagos);
 
 // FACTURACION ELECTRONICA
+router.get('/facturacion/admin/documentos', facturacionAdminMiddleware, facturacionAdminController.listar);
+router.get('/facturacion/admin/documentos/:facturacionId', facturacionAdminMiddleware, facturacionAdminController.obtenerDetalle);
 router.get('/borradores/:id/facturacion', facturacionController.obtener);
 router.put('/borradores/:id/facturacion', facturacionController.guardar);
 router.post('/borradores/:id/facturacion/emitir', facturacionController.emitir);

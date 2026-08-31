@@ -42,10 +42,16 @@ const obtenerCredencialesNubefact = (credencialClave) => {
   return Object.freeze({ apiUrl: '', token: '', source: prefijo || null });
 };
 
+const nubefactEnabled = getBooleanEnv('NUBEFACT_ENABLED', false);
+const nubefactSimulationEnabled = !nubefactEnabled
+  && process.env.NODE_ENV !== 'production'
+  && getBooleanEnv('NUBEFACT_SIMULATION_ENABLED', false);
+
 // Se congelan los objetos exportados para mantenerlos inmutables
 const config = Object.freeze({
   nubefact: Object.freeze({
-    enabled: getBooleanEnv('NUBEFACT_ENABLED', false),
+    enabled: nubefactEnabled,
+    simulationEnabled: nubefactSimulationEnabled,
     environment: String(process.env.NUBEFACT_ENVIRONMENT || 'DEMO').trim().toUpperCase(),
     allowGlobalFallback: getBooleanEnv('NUBEFACT_ALLOW_GLOBAL_FALLBACK', false),
     timeoutMs: getIntegerEnv('NUBEFACT_TIMEOUT_MS', 10000),

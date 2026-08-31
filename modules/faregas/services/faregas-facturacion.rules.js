@@ -105,6 +105,16 @@ const validarCuotasContraTotal = (cuotas, total) => {
     return Math.abs(suma - redondear(total)) <= 0.009;
 };
 
+const derivarMedioPago = (pagos = []) => {
+    const orden = ['EFECTIVO', 'TARJETA', 'BANCO'];
+    const registrados = new Set(
+        pagos
+            .map(pago => limpiarTexto(pago?.tipocontado_key ?? pago?.tipo).toUpperCase())
+            .filter(tipo => orden.includes(tipo))
+    );
+    return orden.filter(tipo => registrados.has(tipo)).join(', ') || null;
+};
+
 const validarSerieNubefact = (serie, tipoComprobante) => {
     const normalizada = limpiarTexto(serie).toUpperCase();
     const prefijoEsperado = tipoComprobante === 'FACTURA' ? 'F' : tipoComprobante === 'BOLETA' ? 'B' : '';
@@ -120,6 +130,7 @@ module.exports = {
     validarFacturacionNubefact,
     validarSerieNubefact,
     validarCuotasContraTotal,
+    derivarMedioPago,
     esFechaIsoValida,
     redondear
 };

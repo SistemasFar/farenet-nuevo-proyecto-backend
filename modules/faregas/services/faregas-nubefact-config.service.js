@@ -10,6 +10,7 @@ const errorConfiguracion = (code, message = code) => {
 
 const contextoPublico = (row, credentials = null) => ({
     enabled: integrationsConfig.nubefact.enabled,
+    simulationEnabled: integrationsConfig.nubefact.simulationEnabled,
     configured: Boolean(credentials?.apiUrl && credentials?.token),
     provider: 'NUBEFACT',
     environment: row?.entorno || integrationsConfig.nubefact.environment,
