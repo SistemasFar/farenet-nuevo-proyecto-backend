@@ -85,6 +85,7 @@ exports.obtenerTarifaOperativaPorCodigo = async (plantaKey, tarifaCodigo, querya
             t.precio,
             s.id AS servicio_id,
             s.codigo AS servicio_codigo,
+            s.nombre AS servicio_nombre,
             s.tipo_flujo,
             s.tipo_certificado_clave,
             s.modalidad,

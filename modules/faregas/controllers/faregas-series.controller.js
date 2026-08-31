@@ -38,6 +38,18 @@ const ultimoNumero = (value) => {
     if (!Number.isSafeInteger(result) || result < 0) fallo('El último número debe ser un entero mayor o igual a cero.');
     return result;
 };
+const validarSerie = (value, tipoComprobante) => {
+    const serie = texto(value, 'Serie');
+    const prefijoEsperado = tipoComprobante === 'FACTURA'
+        ? 'F'
+        : tipoComprobante === 'BOLETA'
+            ? 'B'
+            : tipoComprobante.includes('_FACTURA') ? 'F' : 'B';
+    if (!/^[A-Z0-9]{4}$/.test(serie) || !serie.startsWith(prefijoEsperado)) {
+        fallo(`La serie debe tener exactamente 4 caracteres alfanumericos y comenzar con ${prefijoEsperado}.`);
+    }
+    return serie;
+};
 const responder = (res, error) => {
     const mapa = {
         SEDE_NO_ENCONTRADA: [404, 'Sede no encontrada.'],
@@ -66,11 +78,11 @@ exports.listar = async (req, res) => {
 };
 exports.crear = async (req, res) => {
     try {
-        const serie = texto(req.body.serie, 'Serie');
-        if (serie.length > 30) fallo('La serie admite como máximo 30 caracteres.');
+        const tipoComprobante = tipo(req.body.tipo_comprobante);
+        const serie = validarSerie(req.body.serie, tipoComprobante);
         const serieId = await service.crear({
             planta_key: texto(req.body.planta_key, 'Sede'),
-            tipo_comprobante: tipo(req.body.tipo_comprobante), serie,
+            tipo_comprobante: tipoComprobante, serie,
             ultimo_numero: ultimoNumero(req.body.ultimo_numero),
             es_predeterminada: booleano(req.body.es_predeterminada, 'Predeterminada', false),
             autogenerada: booleano(req.body.autogenerada, 'Autogenerada', true),

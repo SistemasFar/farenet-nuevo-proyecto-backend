@@ -62,7 +62,7 @@ test('crear orden de pago rechaza una tarifa de servicio complementario', async 
     await conMocks(() => ({
         async query(sql) {
             if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rowCount: 0, rows: [] };
-            if (/SELECT id, estado, planta_key, tipo_certificado_clave, tarifa_codigo FROM fg_certificado/i.test(sql)) {
+            if (/SELECT id, estado, planta_key, tipo_certificado_clave, tarifa_codigo, cliente_id FROM fg_certificado/i.test(sql)) {
                 return {
                     rowCount: 1,
                     rows: [{ id: 50, estado: 'BORRADOR', planta_key: '201', tipo_certificado_clave: 'GLP_ANUAL', tarifa_codigo: 'TEST_COMPLEMENTARIO' }]

@@ -14,7 +14,7 @@ const response = () => ({
 
 const request = (overrides = {}) => ({
     body: {
-        planta_key: '201', tipo_comprobante: 'FACTURA', serie: 'TEST',
+        planta_key: '201', tipo_comprobante: 'FACTURA', serie: 'FE99',
         ultimo_numero: 0, es_predeterminada: false, autogenerada: true,
         contingencia: false, activo: true, ...overrides
     },
@@ -51,11 +51,26 @@ test('acepta las notas por tipo de comprobante de referencia como series adminis
         ];
         for (const tipoComprobante of tiposNota) {
             const res = response();
-            await controller.crear(request({ tipo_comprobante: tipoComprobante }), res);
+            await controller.crear(request({
+                tipo_comprobante: tipoComprobante,
+                serie: tipoComprobante.includes('_FACTURA') ? 'FC99' : 'BC99'
+            }), res);
             assert.equal(res.statusCode, 201);
         }
         assert.deepEqual(recibidos, tiposNota);
     } finally {
         seriesService.crear = crearOriginal;
     }
+});
+
+test('rechaza series que no cumplen los cuatro caracteres y el prefijo F/B', async () => {
+    const resPrefijo = response();
+    await controller.crear(request({ tipo_comprobante: 'FACTURA', serie: 'BE01' }), resPrefijo);
+    assert.equal(resPrefijo.statusCode, 400);
+    assert.match(resPrefijo.payload.message, /comenzar con F/i);
+
+    const resLongitud = response();
+    await controller.crear(request({ tipo_comprobante: 'BOLETA', serie: 'B0010' }), resLongitud);
+    assert.equal(resLongitud.statusCode, 400);
+    assert.match(resLongitud.payload.message, /exactamente 4/i);
 });

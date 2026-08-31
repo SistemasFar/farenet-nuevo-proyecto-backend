@@ -3,8 +3,9 @@ const configService = require('./faregas-config.service');
 
 const normalizarFila = (row) => ({
     ...row,
+    serie: row.serie_operativa || row.serie,
     id: Number(row.id),
-    ultimo_numero: Number(row.ultimo_numero)
+    ultimo_numero: Number(row.ultimo_numero_operativo ?? row.ultimo_numero)
 });
 
 exports.listarSedes = async () => {
@@ -26,9 +27,30 @@ exports.listar = async ({ plantaKey, tipo, activo, buscar } = {}) => {
     if (activo === true || activo === false) { valores.push(activo); condiciones.push(`s.activo = $${valores.length}`); }
     if (buscar) { valores.push(`%${buscar}%`); condiciones.push(`s.serie ILIKE $${valores.length}`); }
     const result = await db.query(`
-        SELECT s.*, p.nombre AS sede_nombre
+        SELECT s.*, p.nombre AS sede_nombre,
+               CASE s.tipo_comprobante
+                   WHEN 'FACTURA' THEN base.seriefactura
+                   WHEN 'BOLETA' THEN base.serieboleta
+                   WHEN 'NOTA_CREDITO_FACTURA' THEN base.serienotacreditofactura
+                   WHEN 'NOTA_CREDITO_BOLETA' THEN base.serienotacreditoboleta
+                   ELSE NULL
+               END AS serie_operativa,
+               CASE s.tipo_comprobante
+                   WHEN 'FACTURA' THEN base.nroactualfactura
+                   WHEN 'BOLETA' THEN base.nroactualboleta
+                   WHEN 'NOTA_CREDITO_FACTURA' THEN base.nroactualnotacreditofactura
+                   WHEN 'NOTA_CREDITO_BOLETA' THEN base.nroactualnotacreditoboleta
+                   ELSE s.ultimo_numero
+               END AS ultimo_numero_operativo,
+               CASE WHEN s.tipo_comprobante IN ('FACTURA', 'BOLETA', 'NOTA_CREDITO_FACTURA', 'NOTA_CREDITO_BOLETA')
+                    THEN 'COMPARTIDO_FARENET' ELSE 'FAREGAS' END AS fuente_correlativo
         FROM fg_serie_comprobante s
         JOIN fg_planta p ON p.key = s.planta_key
+        LEFT JOIN LATERAL (
+            SELECT b.* FROM seriedocumentobase b
+            WHERE b.planta_key = s.planta_key AND COALESCE(b.estado, TRUE) = TRUE
+            ORDER BY b.id DESC LIMIT 1
+        ) base ON TRUE
         WHERE ${condiciones.join(' AND ')}
         ORDER BY s.tipo_comprobante, s.es_predeterminada DESC, s.serie
     `, valores);
@@ -86,11 +108,11 @@ exports.crear = async (serie, username, ipDireccion) => {
             INSERT INTO fg_serie_comprobante (
                 planta_key, tipo_comprobante, serie, ultimo_numero,
                 es_predeterminada, autogenerada, contingencia, activo
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
             RETURNING id
         `, [
             serie.planta_key, serie.tipo_comprobante, serie.serie, serie.ultimo_numero,
-            serie.es_predeterminada, serie.autogenerada, serie.contingencia, serie.activo, serie.tipo_documento_referencia || null, serie.serie_pos || false
+            serie.es_predeterminada, serie.autogenerada, serie.contingencia, serie.activo
         ]);
         const despues = { ...serie, sede_nombre: planta.rows[0].nombre };
         await configService.registrarAuditoria(client, {
@@ -130,14 +152,12 @@ exports.editar = async (id, cambios, username, ipDireccion) => {
             SET es_predeterminada = $1, autogenerada = $2,
                 contingencia = $3, fecha_modificacion = CURRENT_TIMESTAMP
             WHERE id = $4
-        `, [cambios.es_predeterminada, cambios.autogenerada, cambios.contingencia, cambios.tipo_documento_referencia || null, cambios.serie_pos || false, id]);
+        `, [cambios.es_predeterminada, cambios.autogenerada, cambios.contingencia, id]);
         const despues = {
             ...actual,
             es_predeterminada: cambios.es_predeterminada,
             autogenerada: cambios.autogenerada,
-            contingencia: cambios.contingencia,
-            tipo_documento_referencia: cambios.tipo_documento_referencia,
-            serie_pos: cambios.serie_pos
+            contingencia: cambios.contingencia
         };
         await configService.registrarAuditoria(client, {
             username, entidad: 'SERIE_COMPROBANTE', accion: 'EDITAR_SERIE',

@@ -6,7 +6,7 @@ const { redondear, obtenerTarifaConfigurada, normalizarPagos } = require('./fare
 
 const obtenerCertificado = async (queryable, certificadoId, userContext, bloquear = false) => {
     const result = await queryable.query(
-        `SELECT id, estado, planta_key, tipo_certificado_clave, tarifa_codigo FROM fg_certificado WHERE id = $1${bloquear ? ' FOR UPDATE' : ''}`,
+        `SELECT id, estado, planta_key, tipo_certificado_clave, tarifa_codigo, cliente_id FROM fg_certificado WHERE id = $1${bloquear ? ' FOR UPDATE' : ''}`,
         [certificadoId]
     );
     if (result.rowCount === 0) throw new Error('CERTIFICADO_NOT_FOUND');
@@ -18,6 +18,51 @@ const obtenerCertificado = async (queryable, certificadoId, userContext, bloquea
     );
     if (!acceso) throw new Error('PLANTA_NO_AUTORIZADA');
     return certificado;
+};
+
+const asegurarOperacionComercial = async (client, certificado, orden, username) => {
+    if (orden.operacion_id) return Number(orden.operacion_id);
+    const existente = await client.query(`
+        SELECT operacion_id FROM fg_operacion_detalle
+        WHERE certificado_id = $1 LIMIT 1
+    `, [certificado.id]);
+    if (existente.rowCount > 0) {
+        const operacionId = Number(existente.rows[0].operacion_id);
+        await client.query('UPDATE fg_orden_pago SET operacion_id = $2 WHERE id = $1', [orden.id, operacionId]);
+        orden.operacion_id = operacionId;
+        return operacionId;
+    }
+
+    const tarifa = tarifasService.validarTarifaCertificacion(
+        await tarifasService.obtenerTarifaOperativaPorCodigo(certificado.planta_key, certificado.tarifa_codigo, client)
+    );
+    const vehiculo = await client.query('SELECT placa FROM fg_certificado_vehiculo WHERE certificado_id = $1', [certificado.id]);
+    const operacion = await client.query(`
+        INSERT INTO fg_operacion_comercial (
+            planta_key, cliente_id, placa, moneda_key, base_imponible, igv,
+            importe_total, estado, usuario_creacion
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id
+    `, [
+        certificado.planta_key, certificado.cliente_id || null, vehiculo.rows[0]?.placa || null,
+        orden.moneda_key, orden.baseimponible, orden.igv, orden.importe_total,
+        orden.estado === 'PAGADO' ? 'PAGADO' : 'PENDIENTE_PAGO', username
+    ]);
+    const operacionId = Number(operacion.rows[0].id);
+    await client.query(`
+        INSERT INTO fg_operacion_detalle (
+            operacion_id, tipo_item, servicio_id, tarifa_id, certificado_id,
+            cantidad, codigo_sku_snapshot, descripcion_snapshot, unidad_snapshot,
+            afectacion_igv_snapshot, valor_unitario, precio_unitario,
+            base_imponible, igv, importe_total, genera_certificado_snapshot, orden
+        ) VALUES ($1,'SERVICIO',$2,$3,$4,1,$5,$6,'ZZ','10',$7,$8,$7,$9,$8,TRUE,1)
+    `, [
+        operacionId, tarifa.servicio_id, tarifa.id, certificado.id,
+        tarifa.servicio_codigo, tarifa.servicio_nombre || `CERTIFICACION ${certificado.tipo_certificado_clave}`,
+        orden.baseimponible, orden.importe_total, orden.igv
+    ]);
+    await client.query('UPDATE fg_orden_pago SET operacion_id = $2 WHERE id = $1', [orden.id, operacionId]);
+    orden.operacion_id = operacionId;
+    return operacionId;
 };
 
 const validarReferenciaPago = async (client, pago) => {
@@ -100,6 +145,8 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             }
         }
 
+        const operacionId = await asegurarOperacionComercial(client, certificado, orden, userContext.username);
+
         await client.query(`UPDATE fg_descuentocomprobante
             SET orden_pago_id=$2,
                 reservado_hasta=GREATEST(reservado_hasta, CURRENT_TIMESTAMP + INTERVAL '30 days'),
@@ -149,6 +196,11 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             WHERE id = $1
             RETURNING *
         `, [orden.id, totalPagado, saldo, estado, userContext.username]);
+        await client.query(`
+            UPDATE fg_operacion_comercial
+            SET estado = $2, usuario_modificacion = $3, fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $1
+        `, [operacionId, estado === 'PAGADO' ? 'PAGADO' : 'PENDIENTE_PAGO', userContext.username]);
 
         // INTEGRACION DESCUENTOS: Consumir el descuento
         if (estado === 'PAGADO') {

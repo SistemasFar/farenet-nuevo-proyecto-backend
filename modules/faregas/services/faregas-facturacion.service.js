@@ -1,8 +1,19 @@
 const db = require('../../../config/database');
 const nubefactService = require('../../../services/integrations/nubefact.service');
+const nubefactConfigService = require('./faregas-nubefact-config.service');
 const { validarAccesoPlanta } = require('./faregas-auth.service');
-const { normalizarFacturacion, validarFacturacion } = require('./faregas-facturacion.rules');
-const { construirPayloadNubefact, limpiarRespuestaProveedor } = require('../integrations/nubefact-faregas.adapter');
+const {
+    normalizarFacturacion,
+    validarFacturacion,
+    validarFacturacionNubefact,
+    validarSerieNubefact,
+    validarCuotasContraTotal
+} = require('./faregas-facturacion.rules');
+const {
+    construirPayloadNubefact,
+    limpiarRespuestaProveedor,
+    crearCodigoUnico
+} = require('../integrations/nubefact-faregas.adapter');
 
 const errorNegocio = (codigo, statusCode = 400, detalles) => {
     const error = new Error(codigo);
@@ -27,20 +38,23 @@ const obtenerCertificado = async (client, id, userContext, bloquear = false) => 
     return certificado;
 };
 
-const obtenerOrdenPagada = async (client, certificadoId) => {
+const obtenerOrdenFacturable = async (client, certificadoId, condicionPago = 'CONTADO') => {
     const result = await client.query(
         `SELECT * FROM fg_orden_pago WHERE certificado_id = $1${client === db ? '' : ' FOR UPDATE'}`,
         [certificadoId]
     );
     if (result.rowCount === 0) throw errorNegocio('ORDEN_PAGO_FALTANTE', 409);
     const orden = result.rows[0];
-    if (orden.estado !== 'PAGADO' || Number(orden.saldo_pendiente) > 0.009) {
+    if (condicionPago === 'CONTADO' && (orden.estado !== 'PAGADO' || Number(orden.saldo_pendiente) > 0.009)) {
         throw errorNegocio('PAGO_INCOMPLETO', 409);
+    }
+    if (condicionPago === 'CREDITO' && Number(orden.saldo_pendiente) <= 0.009) {
+        throw errorNegocio('VENTA_CREDITO_SIN_SALDO', 409);
     }
     return orden;
 };
 
-const respuestaPublica = (row) => {
+const respuestaPublica = (row, cuotas = []) => {
     if (!row) return null;
     return {
         id: Number(row.id),
@@ -52,6 +66,16 @@ const respuestaPublica = (row) => {
         direccion: row.direccion,
         email: row.email,
         telefono: row.telefono,
+        condicionPago: row.condicion_pago || 'CONTADO',
+        fechaVencimiento: row.fecha_vencimiento || null,
+        medioPago: row.medio_pago || null,
+        cuotas: cuotas.map(cuota => ({
+            id: Number(cuota.id),
+            numeroCuota: Number(cuota.numero_cuota),
+            fechaPago: cuota.fecha_pago,
+            importe: Number(cuota.importe),
+            estado: cuota.estado
+        })),
         monedaKey: row.moneda_key,
         baseImponible: Number(row.base_imponible),
         igv: Number(row.igv),
@@ -61,6 +85,12 @@ const respuestaPublica = (row) => {
         numero: row.numero === null ? null : Number(row.numero),
         nroComprobante: row.nro_comprobante,
         proveedor: row.proveedor,
+        plantaKey: row.planta_key || null,
+        empresaKey: row.empresa_key || null,
+        rucEmisor: row.ruc_emisor || null,
+        razonSocialEmisor: row.razon_social_emisor || null,
+        entornoFacturador: row.entorno_facturador || null,
+        codigoUnico: row.codigo_unico || null,
         aceptadaSunat: row.aceptada_sunat,
         sunatDescription: row.sunat_description,
         sunatResponsecode: row.sunat_responsecode,
@@ -75,11 +105,14 @@ const respuestaPublica = (row) => {
 };
 
 exports.obtenerFacturacion = async (certificadoId, userContext) => {
-    await obtenerCertificado(db, certificadoId, userContext);
+    const certificado = await obtenerCertificado(db, certificadoId, userContext);
     const result = await db.query('SELECT * FROM fg_facturacion WHERE certificado_id = $1', [certificadoId]);
+    const cuotas = result.rowCount > 0
+        ? await db.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [result.rows[0].id])
+        : { rows: [] };
     return {
-        facturacion: respuestaPublica(result.rows[0]),
-        integracion: nubefactService.obtenerEstadoConfiguracion()
+        facturacion: respuestaPublica(result.rows[0], cuotas.rows),
+        integracion: await nubefactConfigService.obtenerEstadoParaPlanta(certificado.planta_key)
     };
 };
 
@@ -93,7 +126,14 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
         await client.query('BEGIN');
         const certificado = await obtenerCertificado(client, certificadoId, userContext, true);
         if (certificado.estado !== 'BORRADOR') throw errorNegocio('CERTIFICADO_NO_EDITABLE', 409);
-        const orden = await obtenerOrdenPagada(client, certificadoId);
+        const orden = await obtenerOrdenFacturable(client, certificadoId, normalizada.condicionPago);
+        const totalCuotasEsperado = Number(orden.saldo_pendiente);
+        if (normalizada.condicionPago === 'CREDITO'
+            && !validarCuotasContraTotal(normalizada.cuotas, totalCuotasEsperado)) {
+            throw errorNegocio('CUOTAS_NO_COINCIDEN_CON_SALDO', 400, {
+                saldoPendiente: totalCuotasEsperado
+            });
+        }
 
         const actual = await client.query(
             'SELECT * FROM fg_facturacion WHERE certificado_id = $1 FOR UPDATE',
@@ -107,8 +147,9 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
             `INSERT INTO fg_facturacion (
                 certificado_id, tipo_comprobante, tipo_documento_cliente, nro_documento,
                 nombre_razon_social, direccion, email, telefono, moneda_key,
-                base_imponible, igv, importe_total, estado, usuario_creacion
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'BORRADOR',$13)
+                base_imponible, igv, importe_total, condicion_pago,
+                fecha_vencimiento, medio_pago, operacion_id, estado, usuario_creacion
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'BORRADOR',$17)
              ON CONFLICT (certificado_id) DO UPDATE SET
                 tipo_comprobante = EXCLUDED.tipo_comprobante,
                 tipo_documento_cliente = EXCLUDED.tipo_documento_cliente,
@@ -121,6 +162,10 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
                 base_imponible = EXCLUDED.base_imponible,
                 igv = EXCLUDED.igv,
                 importe_total = EXCLUDED.importe_total,
+                condicion_pago = EXCLUDED.condicion_pago,
+                fecha_vencimiento = EXCLUDED.fecha_vencimiento,
+                medio_pago = EXCLUDED.medio_pago,
+                operacion_id = EXCLUDED.operacion_id,
                 estado = 'BORRADOR',
                 aceptada_sunat = NULL,
                 sunat_description = NULL,
@@ -143,8 +188,28 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
                 orden.baseimponible,
                 orden.igv,
                 orden.importe_total,
+                normalizada.condicionPago,
+                normalizada.fechaVencimiento,
+                normalizada.medioPago,
+                orden.operacion_id || null,
                 userContext.username
             ]
+        );
+
+        await client.query('DELETE FROM fg_facturacion_cuota WHERE facturacion_id = $1', [result.rows[0].id]);
+        for (const cuota of normalizada.cuotas) {
+            await client.query(
+                `INSERT INTO fg_facturacion_cuota
+                    (facturacion_id, numero_cuota, fecha_pago, importe)
+                 VALUES ($1,$2,$3,$4)`,
+                [result.rows[0].id, cuota.numeroCuota, cuota.fechaPago, cuota.importe]
+            );
+        }
+        await client.query(
+            `UPDATE fg_orden_pago SET formapago_key = $2, fechmodi = CURRENT_TIMESTAMP,
+                    usuariomodi_username = $3
+             WHERE id = $1`,
+            [orden.id, normalizada.condicionPago === 'CREDITO' ? 'credito' : 'contado', userContext.username]
         );
 
         // INTEGRACION DESCUENTOS: Vincular facturacion a comprobante de descuento
@@ -156,7 +221,11 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
         );
 
         await client.query('COMMIT');
-        return respuestaPublica(result.rows[0]);
+        const cuotasGuardadas = await db.query(
+            'SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota',
+            [result.rows[0].id]
+        );
+        return respuestaPublica(result.rows[0], cuotasGuardadas.rows);
     } catch (error) {
         await client.query('ROLLBACK');
         throw error;
@@ -166,26 +235,41 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
 };
 
 const reservarEmision = async (certificadoId, userContext) => {
-    const estadoIntegracion = nubefactService.obtenerEstadoConfiguracion();
-    if (!estadoIntegracion.enabled) throw errorNegocio('NUBEFACT_DESHABILITADO', 503);
-    if (!estadoIntegracion.configured) throw errorNegocio('NUBEFACT_NO_CONFIGURADO', 503);
-
+    if (!nubefactService.obtenerEstadoConfiguracion().enabled) {
+        throw errorNegocio('NUBEFACT_DESHABILITADO', 503);
+    }
     const client = await db.connect();
     try {
         await client.query('BEGIN');
         const certificado = await obtenerCertificado(client, certificadoId, userContext, true);
         if (certificado.estado !== 'BORRADOR') throw errorNegocio('CERTIFICADO_NO_EDITABLE', 409);
-        await obtenerOrdenPagada(client, certificadoId);
-
         const factResult = await client.query(
             'SELECT * FROM fg_facturacion WHERE certificado_id = $1 FOR UPDATE',
             [certificadoId]
         );
         if (factResult.rowCount === 0) throw errorNegocio('FACTURACION_FALTANTE', 409);
         let facturacion = factResult.rows[0];
+        const orden = await obtenerOrdenFacturable(client, certificadoId, facturacion.condicion_pago || 'CONTADO');
+        const cuotasResult = await client.query(
+            'SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota',
+            [facturacion.id]
+        );
+        if (facturacion.condicion_pago === 'CREDITO'
+            && !validarCuotasContraTotal(cuotasResult.rows, orden.saldo_pendiente)) {
+            throw errorNegocio('CUOTAS_NO_COINCIDEN_CON_SALDO', 409);
+        }
         if (facturacion.estado === 'ACEPTADO') {
             await client.query('COMMIT');
             return { yaAceptada: true, facturacion };
+        }
+
+        const configuracionEmisor = await nubefactConfigService.resolverParaPlanta(
+            certificado.planta_key,
+            client
+        );
+        const erroresContrato = validarFacturacionNubefact(facturacion);
+        if (erroresContrato.length > 0) {
+            throw errorNegocio('DATOS_NUBEFACT_INVALIDOS', 409, erroresContrato);
         }
         if (facturacion.estado === 'PENDIENTE' && facturacion.fecha_ultimo_intento) {
             const antiguedad = Date.now() - new Date(facturacion.fecha_ultimo_intento).getTime();
@@ -202,9 +286,10 @@ const reservarEmision = async (certificadoId, userContext) => {
             if (serieResult.rowCount === 0) throw errorNegocio('SERIE_COMPROBANTE_NO_CONFIGURADA', 409);
             const serieBase = serieResult.rows[0];
             const esFactura = facturacion.tipo_comprobante === 'FACTURA';
-            const serie = esFactura ? serieBase.seriefactura : serieBase.serieboleta;
+            const serie = String(esFactura ? serieBase.seriefactura : serieBase.serieboleta).trim().toUpperCase();
             const numero = Number(esFactura ? serieBase.nroactualfactura : serieBase.nroactualboleta) + 1;
-            if (!serie || !Number.isSafeInteger(numero) || numero <= 0) {
+            if (!validarSerieNubefact(serie, facturacion.tipo_comprobante)
+                || !Number.isSafeInteger(numero) || numero <= 0) {
                 throw errorNegocio('SERIE_COMPROBANTE_INVALIDA', 409);
             }
             await client.query(
@@ -213,10 +298,18 @@ const reservarEmision = async (certificadoId, userContext) => {
                  WHERE id = $2`,
                 [numero, serieBase.id]
             );
+            await client.query(
+                `UPDATE fg_serie_comprobante
+                 SET ultimo_numero = GREATEST(ultimo_numero, $1), fecha_modificacion = CURRENT_TIMESTAMP
+                 WHERE planta_key = $2 AND tipo_comprobante = $3 AND UPPER(BTRIM(serie)) = $4`,
+                [numero, certificado.planta_key, facturacion.tipo_comprobante, serie]
+            );
             facturacion.serie = serie;
             facturacion.numero = numero;
             facturacion.nro_comprobante = `${serie}-${String(numero).padStart(8, '0')}`;
         }
+
+        const codigoUnico = facturacion.codigo_unico || crearCodigoUnico(facturacion.id);
 
         const intento = Number(facturacion.intentos || 0) + 1;
         const vehiculoResult = await client.query(
@@ -224,6 +317,13 @@ const reservarEmision = async (certificadoId, userContext) => {
             [certificadoId]
         );
         if (vehiculoResult.rowCount === 0) throw errorNegocio('VEHICULO_FALTANTE', 409);
+
+        const detallesResult = facturacion.operacion_id
+            ? await client.query(
+                'SELECT * FROM fg_operacion_detalle WHERE operacion_id = $1 ORDER BY orden',
+                [facturacion.operacion_id]
+            )
+            : { rows: [] };
 
         // INTEGRACION DESCUENTOS
         const reservaResult = await client.query(
@@ -239,9 +339,26 @@ const reservarEmision = async (certificadoId, userContext) => {
             `UPDATE fg_facturacion SET
                 estado = 'PENDIENTE', serie = $1, numero = $2, nro_comprobante = $3,
                 intentos = $4, fecha_ultimo_intento = CURRENT_TIMESTAMP,
-                usuario_modificacion = $5, fecha_modificacion = CURRENT_TIMESTAMP
-             WHERE id = $6 RETURNING *`,
-            [facturacion.serie, facturacion.numero, facturacion.nro_comprobante, intento, userContext.username, facturacion.id]
+                planta_key = $5, empresa_key = $6, ruc_emisor = $7,
+                razon_social_emisor = $8, direccion_emisor = $9,
+                entorno_facturador = $10, codigo_unico = $11,
+                usuario_modificacion = $12, fecha_modificacion = CURRENT_TIMESTAMP
+             WHERE id = $13 RETURNING *`,
+            [
+                facturacion.serie,
+                facturacion.numero,
+                facturacion.nro_comprobante,
+                intento,
+                certificado.planta_key,
+                configuracionEmisor.empresaKey,
+                configuracionEmisor.rucEmisor,
+                configuracionEmisor.razonSocialEmisor,
+                configuracionEmisor.direccionEmisor,
+                configuracionEmisor.environment,
+                codigoUnico,
+                userContext.username,
+                facturacion.id
+            ]
         );
         facturacion = updated.rows[0];
         
@@ -249,7 +366,9 @@ const reservarEmision = async (certificadoId, userContext) => {
             facturacion,
             certificado,
             vehiculo: vehiculoResult.rows[0],
-            reservaDescuento: reservaResult.rowCount > 0 ? reservaResult.rows[0] : null
+            reservaDescuento: reservaResult.rowCount > 0 ? reservaResult.rows[0] : null,
+            detalles: detallesResult.rows,
+            cuotas: cuotasResult.rows
         });
         
         const intentoResult = await client.query(
@@ -264,7 +383,8 @@ const reservarEmision = async (certificadoId, userContext) => {
             facturacion,
             payload,
             intento,
-            intentoId: intentoResult.rows[0].id
+            intentoId: intentoResult.rows[0].id,
+            credentials: configuracionEmisor.credentials
         };
     } catch (error) {
         await client.query('ROLLBACK');
@@ -274,13 +394,56 @@ const reservarEmision = async (certificadoId, userContext) => {
     }
 };
 
+const esPosibleDuplicadoNubefact = (resultado) => {
+    const data = resultado?.data || {};
+    const codigo = String(data.sunat_responsecode || data.codigo || '').trim();
+    const mensaje = JSON.stringify({
+        errors: data.errors || null,
+        description: data.sunat_description || null,
+        reason: resultado?.reason || null
+    }).toLowerCase();
+    return codigo === '23'
+        || mensaje.includes('duplic')
+        || mensaje.includes('ya existe')
+        || mensaje.includes('previamente informado');
+};
+
+const consultarEmisionIncierta = async (proveedor, reserva, resultadoEmision) => {
+    const debeConsultar = resultadoEmision.status === 'ERROR' || esPosibleDuplicadoNubefact(resultadoEmision);
+    if (!debeConsultar || typeof proveedor.consultarComprobante !== 'function') {
+        return { resultado: resultadoEmision, consulta: null };
+    }
+
+    const consulta = await proveedor.consultarComprobante({
+        tipoDeComprobante: reserva.facturacion.tipo_comprobante === 'FACTURA' ? 1 : 2,
+        serie: reserva.facturacion.serie,
+        numero: reserva.facturacion.numero
+    }, { credentials: reserva.credentials });
+
+    return {
+        resultado: consulta.status === 'ACCEPTED' ? consulta : resultadoEmision,
+        consulta
+    };
+};
+
 exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}) => {
     const reserva = await reservarEmision(certificadoId, userContext);
     if (reserva.yaAceptada) return respuestaPublica(reserva.facturacion);
 
     const proveedor = dependencies.nubefactService || nubefactService;
-    const resultado = await proveedor.emitirComprobante(reserva.payload);
+    const resultadoEmision = await proveedor.emitirComprobante(
+        reserva.payload,
+        { credentials: reserva.credentials }
+    );
+    const recuperacion = await consultarEmisionIncierta(proveedor, reserva, resultadoEmision);
+    const resultado = recuperacion.resultado;
     const respuesta = limpiarRespuestaProveedor(resultado.data);
+    const respuestaPersistida = recuperacion.consulta
+        ? {
+            emision: limpiarRespuestaProveedor(resultadoEmision.data),
+            consulta_recuperacion: limpiarRespuestaProveedor(recuperacion.consulta.data)
+        }
+        : respuesta;
     const aceptada = resultado.status === 'ACCEPTED';
     const rechazada = resultado.status === 'REJECTED';
     const estado = aceptada ? 'ACEPTADO' : rechazada ? 'RECHAZADO' : 'ERROR';
@@ -317,7 +480,7 @@ exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}
                 body.enlace_del_cdr || body.enlace_cdr || null,
                 body.cadena_para_codigo_qr || null,
                 body.codigo_hash || null,
-                JSON.stringify(respuesta),
+                JSON.stringify(respuestaPersistida),
                 userContext.username,
                 reserva.facturacion.id
             ]
@@ -327,8 +490,22 @@ exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}
                 estado = $1, respuesta = $2::jsonb, http_status = $3,
                 error = $4, fecha_finalizacion = CURRENT_TIMESTAMP
              WHERE id = $5`,
-            [estado, JSON.stringify(respuesta), resultado.httpStatus || null, resultado.error || resultado.reason || null, reserva.intentoId]
+            [
+                estado,
+                JSON.stringify(respuestaPersistida),
+                resultado.httpStatus || resultadoEmision.httpStatus || null,
+                resultado.error || resultado.reason || resultadoEmision.error || resultadoEmision.reason || null,
+                reserva.intentoId
+            ]
         );
+        if (aceptada && reserva.facturacion.operacion_id) {
+            await client.query(`
+                UPDATE fg_operacion_comercial
+                SET estado = 'FACTURADO', usuario_modificacion = $2,
+                    fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE id = $1
+            `, [reserva.facturacion.operacion_id, userContext.username]);
+        }
         await client.query('COMMIT');
     } catch (error) {
         await client.query('ROLLBACK');
@@ -337,8 +514,11 @@ exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}
         client.release();
     }
 
-    const final = await db.query('SELECT * FROM fg_facturacion WHERE id = $1', [reserva.facturacion.id]);
-    const facturacion = respuestaPublica(final.rows[0]);
+    const [final, cuotasFinales] = await Promise.all([
+        db.query('SELECT * FROM fg_facturacion WHERE id = $1', [reserva.facturacion.id]),
+        db.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [reserva.facturacion.id])
+    ]);
+    const facturacion = respuestaPublica(final.rows[0], cuotasFinales.rows);
     if (!aceptada) {
         throw errorNegocio(rechazada ? 'NUBEFACT_RECHAZADO' : 'NUBEFACT_ERROR', rechazada ? 422 : 502, {
             facturacion,
@@ -350,5 +530,7 @@ exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}
 
 exports._private = {
     respuestaPublica,
-    errorNegocio
+    errorNegocio,
+    esPosibleDuplicadoNubefact,
+    consultarEmisionIncierta
 };
