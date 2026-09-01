@@ -2,7 +2,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const configPath = require.resolve('../../../config/integrations.config');
-const envKeys = ['NODE_ENV', 'NUBEFACT_ENABLED', 'NUBEFACT_SIMULATION_ENABLED'];
+const envKeys = [
+    'NODE_ENV',
+    'NUBEFACT_ENABLED',
+    'NUBEFACT_SIMULATION_ENABLED',
+    'NUBEFACT_ENVIRONMENT',
+    'NUBEFACT_PRODUCTION_CONFIRMED',
+    'NUBEFACT_DETRACCION_DECISION'
+];
 
 const cargarConfig = (env) => {
     const previous = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
@@ -47,4 +54,13 @@ test('deshabilita la simulacion cuando Nubefact real esta habilitado', () => {
         NUBEFACT_SIMULATION_ENABLED: 'true'
     });
     assert.equal(config.nubefact.simulationEnabled, false);
+});
+
+test('mantiene cerrados por defecto los seguros de producción', () => {
+    const config = cargarConfig({
+        NUBEFACT_PRODUCTION_CONFIRMED: undefined,
+        NUBEFACT_DETRACCION_DECISION: undefined
+    });
+    assert.equal(config.nubefact.productionConfirmed, false);
+    assert.equal(config.nubefact.detractionDecision, 'PENDIENTE');
 });

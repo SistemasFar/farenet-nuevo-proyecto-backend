@@ -8,6 +8,7 @@ const serializarTarifa = (row) => ({
     servicio_id: row.servicio_id,
     servicio_codigo: row.servicio_codigo,
     servicio_nombre: row.servicio_nombre,
+    servicio_tipo_flujo: row.servicio_tipo_flujo,
     categoria_codigo: row.categoria_codigo,
     categoria_nombre: row.categoria_nombre,
     precio: Number(row.precio),
@@ -19,6 +20,8 @@ const serializarTarifa = (row) => ({
     producto_cuenta_por_cobrar: row.producto_cuenta_por_cobrar,
     producto_precio_referencia: row.producto_precio_referencia === null ? null : Number(row.producto_precio_referencia),
     producto_activo: row.producto_activo,
+    producto_es_para_venta: row.producto_es_para_venta,
+    producto_codigo_sunat: row.producto_codigo_sunat,
     activo: row.activo
 });
 
@@ -52,13 +55,17 @@ exports.listar = async ({ plantaKey, buscar, categoria, activo } = {}) => {
     const result = await db.query(`
         SELECT t.id, t.planta_key, p.nombre AS sede_nombre,
                t.servicio_id, s.codigo AS servicio_codigo, s.nombre AS servicio_nombre,
+               s.tipo_flujo AS servicio_tipo_flujo,
                c.codigo AS categoria_codigo, c.nombre AS categoria_nombre,
                t.precio, t.producto_facturacion_id,
                pf.codigo_sku AS producto_sku, pf.descripcion AS producto_descripcion,
                pf.unidad AS producto_unidad, pf.tipo_afectacion_igv AS producto_afectacion_igv,
                pf.cuenta_por_cobrar AS producto_cuenta_por_cobrar,
                pf.precio_referencia AS producto_precio_referencia,
-               pf.activo AS producto_activo, t.activo
+               pf.activo AS producto_activo,
+               pf.es_para_venta AS producto_es_para_venta,
+               pf.codigo_clasificacion_sunat AS producto_codigo_sunat,
+               t.activo
         FROM fg_tarifa t
         JOIN fg_planta p ON p.key = t.planta_key
         JOIN fg_servicio s ON s.id = t.servicio_id
@@ -90,7 +97,8 @@ exports.listarServiciosDisponibles = async (plantaKey) => {
 exports.buscarProductos = async (texto) => {
     const result = await db.query(`
         SELECT id, codigo_sku, descripcion, unidad, tipo_afectacion_igv,
-               cuenta_por_cobrar, precio_referencia, activo
+               cuenta_por_cobrar, precio_referencia, activo, es_para_venta,
+               codigo_clasificacion_sunat
         FROM fg_producto_facturacion
         WHERE activo = TRUE
           AND (codigo_sku ILIKE $1 OR descripcion ILIKE $1)
@@ -103,16 +111,30 @@ exports.buscarProductos = async (texto) => {
     }));
 };
 
-const obtenerProducto = async (client, productoId, productoAnteriorId = null) => {
+const validarProducto = (producto, exigeDatosTributarios = false) => {
+    if (!producto.activo) throw new Error('PRODUCTO_INACTIVO');
+    if (!producto.es_para_venta) throw new Error('PRODUCTO_NO_VENTA');
+    if (exigeDatosTributarios && String(producto.unidad || '').trim().toUpperCase() !== 'ZZ') {
+        throw new Error('PRODUCTO_UNIDAD_INVALIDA');
+    }
+    const codigoSunat = String(producto.codigo_clasificacion_sunat || '').trim();
+    if (exigeDatosTributarios && codigoSunat && !/^\d{8}$/.test(codigoSunat)) {
+        throw new Error('PRODUCTO_CODIGO_SUNAT_INVALIDO');
+    }
+    if (exigeDatosTributarios && String(producto.tipo_afectacion_igv || '').trim() !== '10') {
+        throw new Error('PRODUCTO_AFECTACION_IGV_INVALIDA');
+    }
+};
+
+const obtenerProducto = async (client, productoId, exigeDatosTributarios = false) => {
     if (productoId === null) return null;
     const result = await client.query(`
-        SELECT id, codigo_sku, descripcion, activo
+        SELECT id, codigo_sku, descripcion, unidad, codigo_clasificacion_sunat,
+               tipo_afectacion_igv, es_para_venta, activo
         FROM fg_producto_facturacion WHERE id = $1
     `, [productoId]);
     if (result.rowCount === 0) throw new Error('PRODUCTO_NO_ENCONTRADO');
-    if (!result.rows[0].activo && Number(productoAnteriorId) !== Number(productoId)) {
-        throw new Error('PRODUCTO_INACTIVO');
-    }
+    validarProducto(result.rows[0], exigeDatosTributarios);
     return result.rows[0];
 };
 
@@ -128,8 +150,12 @@ exports.crear = async (tarifa, username, ipDireccion) => {
             WHERE s.id = $1 AND s.activo = TRUE AND c.activo = TRUE
         `, [tarifa.servicio_id]);
         if (servicio.rowCount === 0) throw new Error('SERVICIO_NO_DISPONIBLE');
-        const producto = await obtenerProducto(client, tarifa.producto_facturacion_id);
         const s = servicio.rows[0];
+        const producto = await obtenerProducto(
+            client,
+            tarifa.producto_facturacion_id,
+            s.tipo_flujo === 'CERTIFICACION'
+        );
         const result = await client.query(`
             INSERT INTO fg_tarifa (
                 planta_key, codigo, familia, nombre, tipo_certificado_clave,
@@ -167,6 +193,7 @@ exports.editar = async (id, cambios, username, ipDireccion) => {
         await client.query('BEGIN');
         const actualResult = await client.query(`
             SELECT t.*, s.codigo AS servicio_codigo, s.nombre AS servicio_nombre,
+                   s.tipo_flujo AS servicio_tipo_flujo,
                    p.nombre AS sede_nombre, pf.codigo_sku AS producto_sku
             FROM fg_tarifa t
             JOIN fg_servicio s ON s.id = t.servicio_id
@@ -176,7 +203,11 @@ exports.editar = async (id, cambios, username, ipDireccion) => {
         `, [id]);
         if (actualResult.rowCount === 0) throw new Error('TARIFA_NO_ENCONTRADA');
         const actual = actualResult.rows[0];
-        const producto = await obtenerProducto(client, cambios.producto_facturacion_id, actual.producto_facturacion_id);
+        const producto = await obtenerProducto(
+            client,
+            cambios.producto_facturacion_id,
+            actual.servicio_tipo_flujo === 'CERTIFICACION'
+        );
         await client.query(`
             UPDATE fg_tarifa
             SET precio = $1, producto_facturacion_id = $2, activo = $3
@@ -242,3 +273,5 @@ exports.cambiarEstado = async (id, activo, username, ipDireccion) => {
         client.release();
     }
 };
+
+exports._private = { validarProducto };

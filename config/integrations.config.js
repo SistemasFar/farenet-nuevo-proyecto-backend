@@ -46,13 +46,19 @@ const nubefactEnabled = getBooleanEnv('NUBEFACT_ENABLED', false);
 const nubefactSimulationEnabled = !nubefactEnabled
   && process.env.NODE_ENV !== 'production'
   && getBooleanEnv('NUBEFACT_SIMULATION_ENABLED', false);
+const nubefactEnvironment = String(process.env.NUBEFACT_ENVIRONMENT || 'DEMO').trim().toUpperCase();
+const nubefactDetractionDecision = String(
+  process.env.NUBEFACT_DETRACCION_DECISION || 'PENDIENTE'
+).trim().toUpperCase();
 
 // Se congelan los objetos exportados para mantenerlos inmutables
 const config = Object.freeze({
   nubefact: Object.freeze({
     enabled: nubefactEnabled,
     simulationEnabled: nubefactSimulationEnabled,
-    environment: String(process.env.NUBEFACT_ENVIRONMENT || 'DEMO').trim().toUpperCase(),
+    environment: nubefactEnvironment,
+    productionConfirmed: getBooleanEnv('NUBEFACT_PRODUCTION_CONFIRMED', false),
+    detractionDecision: nubefactDetractionDecision,
     allowGlobalFallback: getBooleanEnv('NUBEFACT_ALLOW_GLOBAL_FALLBACK', false),
     timeoutMs: getIntegerEnv('NUBEFACT_TIMEOUT_MS', 10000),
     enviarSunat: getBooleanEnv('NUBEFACT_ENVIAR_SUNAT', false),

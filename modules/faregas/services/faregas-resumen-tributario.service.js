@@ -53,13 +53,13 @@ const construirResumen = ({ contexto, detalle, descuento, pagos, serie }) => {
     agregarSi(errores, !descripcion, 'Falta la descripción tributaria del servicio.');
     agregarSi(errores, !unidad, 'Falta la unidad de medida tributaria del servicio.');
     agregarSi(errores, Boolean(unidad) && unidad !== 'ZZ', 'La unidad tributaria del servicio debe ser ZZ.');
-    agregarSi(errores, !codigoSunat, 'Falta el código de clasificación SUNAT del servicio.');
     agregarSi(errores, Boolean(codigoSunat) && !/^\d{8}$/.test(codigoSunat), 'El código de clasificación SUNAT debe contener 8 dígitos.');
-    agregarSi(errores, !/^\d{2}$/.test(afectacionIgv), 'Falta el tipo de afectación IGV del servicio.');
+    agregarSi(errores, afectacionIgv !== '10', 'El tipo de afectación IGV del servicio debe ser 10.');
     agregarSi(errores, !seriePrevista, `No existe una serie productiva de ${esFactura ? 'factura' : 'boleta'} para la sede.`);
     agregarSi(errores, !Number.isFinite(total) || total <= 0, 'El total de la operación no es válido.');
     agregarSi(errores, Math.abs(redondear(baseImponible + igv) - total) > 0.01, 'La base imponible y el IGV no coinciden con el total.');
     agregarSi(advertencias, !texto(contexto.email), 'No se registró un correo; Nubefact no enviará automáticamente el comprobante al cliente.');
+    agregarSi(advertencias, !codigoSunat, 'No se registró código de clasificación SUNAT/UNSPSC; es un dato opcional.');
     agregarSi(advertencias, !integrationsConfig.nubefact.enabled, 'Nubefact está deshabilitado en el backend.');
     agregarSi(advertencias, integrationsConfig.nubefact.simulationEnabled, 'El backend está en modo simulación y no enviará el comprobante a Nubefact/SUNAT.');
     agregarSi(advertencias, Boolean(contexto.credencial_clave) && !(credenciales?.apiUrl && credenciales?.token), 'La empresa emisora no tiene ruta y token Nubefact disponibles en variables de entorno.');
@@ -110,7 +110,7 @@ const construirResumen = ({ contexto, detalle, descuento, pagos, serie }) => {
                 ? null
                 : Number(contexto.numero_asignado),
             numeroAsignado: contexto.numero_asignado !== null && contexto.numero_asignado !== undefined,
-            fuenteSerie: 'COMPARTIDO_FARENET'
+            fuenteSerie: 'CONFIGURACION_SEDE'
         },
         cliente: {
             tipoDocumento: texto(contexto.tipo_documento_cliente) || null,

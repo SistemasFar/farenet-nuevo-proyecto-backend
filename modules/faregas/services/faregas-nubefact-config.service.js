@@ -8,12 +8,40 @@ const errorConfiguracion = (code, message = code) => {
     return error;
 };
 
+const esEntornoProduccion = (environment) => ['PRODUCCION', 'PRODUCTION'].includes(
+    String(environment || '').trim().toUpperCase()
+);
+
+const validarSeguridadProduccion = ({
+    environment = integrationsConfig.nubefact.environment,
+    productionConfirmed = integrationsConfig.nubefact.productionConfirmed,
+    enviarSunat = integrationsConfig.nubefact.enviarSunat,
+    detractionDecision = integrationsConfig.nubefact.detractionDecision
+} = {}) => {
+    if (!esEntornoProduccion(environment)) return;
+    if (!productionConfirmed) throw errorConfiguracion('NUBEFACT_PRODUCCION_NO_CONFIRMADA');
+    if (!enviarSunat) throw errorConfiguracion('NUBEFACT_ENVIO_SUNAT_DESHABILITADO');
+
+    const decision = String(detractionDecision || '').trim().toUpperCase();
+    if (decision === 'PENDIENTE') {
+        throw errorConfiguracion('NUBEFACT_DETRACCION_PENDIENTE_CONFIRMACION');
+    }
+    if (decision === 'APLICA') {
+        throw errorConfiguracion('NUBEFACT_DETRACCION_CONFIGURACION_PENDIENTE');
+    }
+    if (decision !== 'NO_APLICA') {
+        throw errorConfiguracion('NUBEFACT_DETRACCION_DECISION_INVALIDA');
+    }
+};
+
 const contextoPublico = (row, credentials = null) => ({
     enabled: integrationsConfig.nubefact.enabled,
     simulationEnabled: integrationsConfig.nubefact.simulationEnabled,
     configured: Boolean(credentials?.apiUrl && credentials?.token),
     provider: 'NUBEFACT',
     environment: row?.entorno || integrationsConfig.nubefact.environment,
+    productionConfirmed: integrationsConfig.nubefact.productionConfirmed,
+    detractionDecision: integrationsConfig.nubefact.detractionDecision,
     empresaKey: row?.empresa_key || null,
     rucEmisor: row?.ruc_emisor || null
 });
@@ -63,6 +91,7 @@ exports.resolverParaPlanta = async (plantaKey, executor = db) => {
     if (!integrationsConfig.nubefact.enabled) {
         throw errorConfiguracion('NUBEFACT_DESHABILITADO');
     }
+    validarSeguridadProduccion();
     let row;
     try {
         row = await obtenerFilaConfiguracion(plantaKey, executor);
@@ -93,4 +122,10 @@ exports.resolverParaPlanta = async (plantaKey, executor = db) => {
     };
 };
 
-exports._private = { obtenerFilaConfiguracion, contextoPublico, errorConfiguracion };
+exports._private = {
+    obtenerFilaConfiguracion,
+    contextoPublico,
+    errorConfiguracion,
+    esEntornoProduccion,
+    validarSeguridadProduccion
+};

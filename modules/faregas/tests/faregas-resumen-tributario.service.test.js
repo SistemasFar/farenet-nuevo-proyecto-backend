@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const resumenService = require('../services/faregas-resumen-tributario.service');
+const db = require('../../../config/database');
+
+test.after(() => db.end());
 
 const contextoBase = {
     certificado_id: 10,
@@ -94,7 +97,21 @@ test('bloquea el resumen cuando la tarifa no tiene producto fiscal vinculado', (
 
     assert.equal(resumen.estado, 'INCOMPLETO');
     assert.ok(resumen.errores.some(error => error.includes('producto de facturación')));
-    assert.ok(resumen.errores.some(error => error.includes('clasificación SUNAT')));
+    assert.ok(resumen.advertencias.some(advertencia => advertencia.includes('opcional')));
+});
+
+test('permite emitir sin código SUNAT y lo reporta como advertencia', () => {
+    const resumen = resumenService._private.construirResumen({
+        contexto: contextoBase,
+        detalle: { ...detalleBase, producto_codigo_sunat: null },
+        descuento: null,
+        pagos: [{ medio_pago: 'efectivo' }],
+        serie: { serieboleta: 'BE03', seriefactura: 'FE03' }
+    });
+
+    assert.equal(resumen.estado, 'LISTO');
+    assert.equal(resumen.items[0].codigoSunat, null);
+    assert.ok(resumen.advertencias.some(advertencia => advertencia.includes('opcional')));
 });
 
 test('rechaza una unidad que no sea servicio y un código SUNAT incompleto', () => {

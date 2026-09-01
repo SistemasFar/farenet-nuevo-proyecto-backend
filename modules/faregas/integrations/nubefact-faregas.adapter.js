@@ -26,23 +26,39 @@ const tipoIgvNubefact = (value) => {
     return Number.isInteger(numero) && numero >= 1 && numero <= 20 ? numero : 1;
 };
 
-const construirItem = (item) => ({
-    unidad_de_medida: String(item.unidad_snapshot || item.unidad_de_medida || 'ZZ').trim().toUpperCase(),
-    codigo: String(item.codigo_sku_snapshot || item.codigo || '').trim().slice(0, 250),
-    codigo_producto_sunat: String(item.codigo_sunat_snapshot || item.codigo_producto_sunat || '').trim().slice(0, 8),
-    descripcion: String(item.descripcion_snapshot || item.descripcion || '').trim().slice(0, 250),
-    cantidad: Number(item.cantidad || 1),
-    valor_unitario: dosDecimales(item.valor_unitario),
-    precio_unitario: dosDecimales(item.precio_unitario),
-    descuento: dosDecimales(item.descuento || 0),
-    subtotal: dosDecimales(item.base_imponible ?? item.subtotal),
-    tipo_de_igv: tipoIgvNubefact(item.afectacion_igv_snapshot ?? item.tipo_de_igv),
-    igv: dosDecimales(item.igv),
-    total: dosDecimales(item.importe_total ?? item.total),
-    anticipo_regularizacion: false,
-    anticipo_documento_serie: '',
-    anticipo_documento_numero: ''
-});
+const construirItem = (item) => {
+    const codigoProductoSunat = String(
+        item.codigo_sunat_snapshot || item.codigo_producto_sunat || ''
+    ).trim().slice(0, 8);
+    const resultado = {
+        unidad_de_medida: String(item.unidad_snapshot || item.unidad_de_medida || 'ZZ').trim().toUpperCase(),
+        codigo: String(item.codigo_sku_snapshot || item.codigo || '').trim().slice(0, 250),
+        descripcion: String(item.descripcion_snapshot || item.descripcion || '').trim().slice(0, 250),
+        cantidad: Number(item.cantidad || 1),
+        valor_unitario: dosDecimales(item.valor_unitario),
+        precio_unitario: dosDecimales(item.precio_unitario),
+        descuento: dosDecimales(item.descuento || 0),
+        subtotal: dosDecimales(item.base_imponible ?? item.subtotal),
+        tipo_de_igv: tipoIgvNubefact(item.afectacion_igv_snapshot ?? item.tipo_de_igv),
+        igv: dosDecimales(item.igv),
+        total: dosDecimales(item.importe_total ?? item.total),
+        anticipo_regularizacion: false,
+        anticipo_documento_serie: '',
+        anticipo_documento_numero: ''
+    };
+    if (codigoProductoSunat) resultado.codigo_producto_sunat = codigoProductoSunat;
+    return resultado;
+};
+
+const obtenerIndicadorDetraccion = () => {
+    const decision = String(config.nubefact.detractionDecision || 'PENDIENTE').trim().toUpperCase();
+    if (decision === 'APLICA') {
+        const error = new Error('NUBEFACT_DETRACCION_CONFIGURACION_PENDIENTE');
+        error.code = 'NUBEFACT_DETRACCION_CONFIGURACION_PENDIENTE';
+        throw error;
+    }
+    return false;
+};
 
 const fechaPeru = (date = new Date()) => {
     const parts = new Intl.DateTimeFormat('en-GB', {
@@ -140,7 +156,7 @@ const construirPayloadNubefact = ({
         percepcion_base_imponible: 0,
         total_percepcion: 0,
         total_incluido_percepcion: 0,
-        detraccion: false,
+        detraccion: obtenerIndicadorDetraccion(),
         observaciones: `EXPEDIENTE FAREGAS ${certificado.id}`,
         documento_que_se_modifica_tipo: '',
         documento_que_se_modifica_serie: '',
@@ -226,5 +242,6 @@ module.exports = {
     crearCodigoUnico,
     construirPayloadNota,
     construirItem,
+    obtenerIndicadorDetraccion,
     fechaDocumento
 };

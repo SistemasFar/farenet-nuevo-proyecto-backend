@@ -27,7 +27,11 @@ const responderError = (res, error) => {
         SEDE_NO_ENCONTRADA: [404, 'Sede no encontrada.'],
         SERVICIO_NO_DISPONIBLE: [409, 'El servicio no está disponible para asignación.'],
         PRODUCTO_NO_ENCONTRADO: [404, 'Producto de facturación no encontrado.'],
-        PRODUCTO_INACTIVO: [409, 'No se puede asignar un SKU inactivo.']
+        PRODUCTO_INACTIVO: [409, 'No se puede asignar un SKU inactivo.'],
+        PRODUCTO_NO_VENTA: [409, 'El SKU debe estar habilitado para venta.'],
+        PRODUCTO_UNIDAD_INVALIDA: [409, 'Los servicios de certificación requieren la unidad tributaria ZZ.'],
+        PRODUCTO_CODIGO_SUNAT_INVALIDO: [409, 'El código de clasificación SUNAT debe contener 8 dígitos.'],
+        PRODUCTO_AFECTACION_IGV_INVALIDA: [409, 'Los servicios gravados de certificación requieren afectación IGV 10.']
     };
     const [status, message] = mapa[error.message] || [error.status || 500, error.message || 'Error interno de tarifas.'];
     res.status(status).json({ success: false, message });

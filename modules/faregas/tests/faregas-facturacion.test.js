@@ -11,7 +11,8 @@ const {
 const {
     construirPayloadNubefact,
     limpiarRespuestaProveedor,
-    crearCodigoUnico
+    crearCodigoUnico,
+    construirItem
 } = require('../integrations/nubefact-faregas.adapter');
 
 test('normaliza una factura con RUC y valida sus campos fiscales', () => {
@@ -67,6 +68,24 @@ test('construye el contrato Nubefact desde importes controlados por backend', ()
     assert.equal(payload.items[0].total, 150);
     assert.equal(payload.codigo_unico, 'FG-55');
     assert.equal(typeof payload.total, 'number');
+});
+
+test('omite el código de producto SUNAT cuando no fue configurado', () => {
+    const item = construirItem({
+        unidad_snapshot: 'ZZ',
+        codigo_sku_snapshot: 'GLP-INICIAL',
+        codigo_sunat_snapshot: null,
+        descripcion_snapshot: 'CERTIFICACIÓN GLP INICIAL',
+        cantidad: 1,
+        valor_unitario: 67.8,
+        precio_unitario: 80,
+        base_imponible: 67.8,
+        afectacion_igv_snapshot: '10',
+        igv: 12.2,
+        importe_total: 80
+    });
+
+    assert.equal(Object.hasOwn(item, 'codigo_producto_sunat'), false);
 });
 
 test('deriva el medio de pago desde los pagos persistidos y elimina duplicados', () => {
