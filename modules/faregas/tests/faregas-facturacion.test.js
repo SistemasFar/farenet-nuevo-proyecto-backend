@@ -134,6 +134,34 @@ test('construye venta al credito con cuotas y multiples items', () => {
     assert.equal(payload.fecha_de_vencimiento, '31-12-2026');
 });
 
+test('usa el mismo resumen tributario para descuentos y totales Nubefact', () => {
+    const payload = construirPayloadNubefact({
+        facturacion: {
+            id: 101, tipo_comprobante: 'BOLETA', tipo_documento_cliente: 'DNI',
+            nro_documento: '12345678', nombre_razon_social: 'CLIENTE', direccion: 'LIMA',
+            serie: 'BE03', numero: 10, base_imponible: 59.32, igv: 10.68, importe_total: 70
+        },
+        certificado: { id: 30, tipo_certificado_clave: 'GLP_INICIAL' },
+        vehiculo: { placa: 'ABC123' },
+        resumenTributario: {
+            totales: { precioAntesDescuento: 80, descuento: 10, baseImponible: 59.32, igv: 10.68, total: 70 }
+        },
+        detalles: [{
+            unidad_snapshot: 'ZZ', codigo_sku_snapshot: 'GLP-INICIAL',
+            codigo_sunat_snapshot: '84141607', descripcion_snapshot: 'CERTIFICACIÓN GLP INICIAL',
+            cantidad: 1, valor_unitario: 67.8, precio_unitario: 80, descuento: 8.47,
+            base_imponible: 59.32, afectacion_igv_snapshot: '10', igv: 10.68, importe_total: 70
+        }]
+    });
+
+    assert.equal(payload.total_descuento, 10);
+    assert.equal(payload.total_gravada, 59.32);
+    assert.equal(payload.total_igv, 10.68);
+    assert.equal(payload.total, 70);
+    assert.equal(payload.items[0].precio_unitario, 80);
+    assert.equal(payload.items[0].descuento, 8.47);
+});
+
 test('no persiste archivos base64 devueltos por el proveedor', () => {
     const limpia = limpiarRespuestaProveedor({
         aceptada_por_sunat: true,

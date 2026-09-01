@@ -1,6 +1,7 @@
 const db = require('../../../config/database');
 const nubefactService = require('../../../services/integrations/nubefact.service');
 const nubefactConfigService = require('./faregas-nubefact-config.service');
+const resumenTributarioService = require('./faregas-resumen-tributario.service');
 const { validarAccesoPlanta } = require('./faregas-auth.service');
 const {
     normalizarFacturacion,
@@ -111,9 +112,11 @@ exports.obtenerFacturacion = async (certificadoId, userContext) => {
     const cuotas = result.rowCount > 0
         ? await db.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [result.rows[0].id])
         : { rows: [] };
+    const resumenTributario = await resumenTributarioService.obtenerResumenTributario(certificadoId, db);
     return {
         facturacion: respuestaPublica(result.rows[0], cuotas.rows),
-        integracion: await nubefactConfigService.obtenerEstadoParaPlanta(certificado.planta_key)
+        integracion: await nubefactConfigService.obtenerEstadoParaPlanta(certificado.planta_key),
+        resumenTributario
     };
 };
 
@@ -276,6 +279,10 @@ const reservarEmision = async (certificadoId, userContext) => {
             client
         );
         const erroresContrato = validarFacturacionNubefact(facturacion);
+        const resumenTributario = await resumenTributarioService.obtenerResumenTributario(certificadoId, client);
+        if (resumenTributario.estado !== 'LISTO') {
+            erroresContrato.push(...resumenTributario.errores);
+        }
         if (erroresContrato.length > 0) {
             throw errorNegocio('DATOS_NUBEFACT_INVALIDOS', 409, erroresContrato);
         }
@@ -326,12 +333,7 @@ const reservarEmision = async (certificadoId, userContext) => {
         );
         if (vehiculoResult.rowCount === 0) throw errorNegocio('VEHICULO_FALTANTE', 409);
 
-        const detallesResult = facturacion.operacion_id
-            ? await client.query(
-                'SELECT * FROM fg_operacion_detalle WHERE operacion_id = $1 ORDER BY orden',
-                [facturacion.operacion_id]
-            )
-            : { rows: [] };
+        const detallesNubefact = resumenTributarioService.construirDetallesNubefact(resumenTributario);
 
         // INTEGRACION DESCUENTOS
         const reservaResult = await client.query(
@@ -375,7 +377,8 @@ const reservarEmision = async (certificadoId, userContext) => {
             certificado,
             vehiculo: vehiculoResult.rows[0],
             reservaDescuento: reservaResult.rowCount > 0 ? reservaResult.rows[0] : null,
-            detalles: detallesResult.rows,
+            detalles: detallesNubefact,
+            resumenTributario,
             cuotas: cuotasResult.rows
         });
         

@@ -65,20 +65,30 @@ const limpiarRespuestaProveedor = (value) => {
     return copia;
 };
 
-const construirPayloadNubefact = ({ facturacion, certificado, vehiculo, reservaDescuento = null, detalles = [], cuotas = [] }) => {
+const construirPayloadNubefact = ({
+    facturacion,
+    certificado,
+    vehiculo,
+    reservaDescuento = null,
+    detalles = [],
+    cuotas = [],
+    resumenTributario = null
+}) => {
     const descripcion = `CERTIFICACION VEHICULAR ${certificado.tipo_certificado_clave} - PLACA ${vehiculo.placa}`;
     const tipoComprobante = facturacion.tipo_comprobante === 'FACTURA' ? 1 : 2;
     const tipoDocumento = facturacion.tipo_documento_cliente === 'RUC' ? 6 : 1;
 
-    let descuentoTotal = 0;
-    let tarifaOriginal = Number(facturacion.importe_total);
-    let baseOriginal = Number(facturacion.base_imponible);
+    let descuentoTotal = Number(resumenTributario?.totales?.descuento || 0);
+    let tarifaOriginal = Number(resumenTributario?.totales?.precioAntesDescuento ?? facturacion.importe_total);
+    let baseOriginal = tarifaOriginal / 1.18;
     let baseDescuento = 0;
 
-    if (reservaDescuento && Number(reservaDescuento.importe_descuento) > 0) {
+    if (!resumenTributario && reservaDescuento && Number(reservaDescuento.importe_descuento) > 0) {
         descuentoTotal = Number(reservaDescuento.importe_descuento);
         tarifaOriginal = Number(reservaDescuento.importe_original);
         baseOriginal = tarifaOriginal / 1.18;
+        baseDescuento = descuentoTotal / 1.18;
+    } else if (resumenTributario) {
         baseDescuento = descuentoTotal / 1.18;
     }
 
@@ -119,13 +129,13 @@ const construirPayloadNubefact = ({ facturacion, certificado, vehiculo, reservaD
         porcentaje_de_igv: 18,
         total_descuento: dosDecimales(descuentoTotal),
         total_anticipo: 0,
-        total_gravada: dosDecimales(facturacion.base_imponible),
+        total_gravada: dosDecimales(resumenTributario?.totales?.baseImponible ?? facturacion.base_imponible),
         total_inafecta: 0,
         total_exonerada: 0,
-        total_igv: dosDecimales(facturacion.igv),
+        total_igv: dosDecimales(resumenTributario?.totales?.igv ?? facturacion.igv),
         total_gratuita: 0,
         total_otros_cargos: 0,
-        total: dosDecimales(facturacion.importe_total),
+        total: dosDecimales(resumenTributario?.totales?.total ?? facturacion.importe_total),
         percepcion_tipo: '',
         percepcion_base_imponible: 0,
         total_percepcion: 0,
