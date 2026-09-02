@@ -151,7 +151,8 @@ exports.obtenerBorradores = async (req, res) => {
         const search = String(req.query.search || '').trim();
         const fechaDesde = String(req.query.fechaDesde || '').trim();
         const fechaHasta = String(req.query.fechaHasta || '').trim();
-        const data = await service.obtenerBorradores(page, pageSize, search, req.user, { fechaDesde, fechaHasta });
+        const estado = String(req.query.estado || '').trim();
+        const data = await service.obtenerBorradores(page, pageSize, search, req.user, { fechaDesde, fechaHasta, estado });
         res.status(200).json({ ok: true, ...data });
     } catch (e) {
         if (e.message === 'FECHA_INVALIDA') return res.status(400).json({ ok: false, message: 'La fecha indicada no es válida.' });

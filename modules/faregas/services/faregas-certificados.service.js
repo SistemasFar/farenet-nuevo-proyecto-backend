@@ -244,8 +244,8 @@ const PASOS_BORRADOR = Object.freeze([
     'DATOS_INICIALES',
     'PAGO',
     'VEHICULO',
-    'FACTURACION',
     'PREVISUALIZACION',
+    'FACTURACION',
     'VERIFICACION_EMISION'
 ]);
 
@@ -295,7 +295,13 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
     if (fechaDesde && fechaDesde > fechaHasta) throw new Error('RANGO_FECHAS_INVALIDO');
 
     const parametrosBase = [userContext.planta_key];
-    const condiciones = ["c.estado = 'BORRADOR'", 'c.planta_key = $1'];
+    const condiciones = ['c.planta_key = $1']; // Se removio filtro de estado para mostrar todos
+    const estadoCertificado = filtrosFecha && filtrosFecha.estado ? filtrosFecha.estado : '';
+    if (estadoCertificado && estadoCertificado !== 'TODOS') {
+        parametrosBase.push(estadoCertificado);
+        const indiceEstado = parametrosBase.length;
+        condiciones.push(`c.estado = $${indiceEstado}`);
+    }
     if (termino) {
         parametrosBase.push(`%${termino}%`);
         const indiceBusqueda = parametrosBase.length;
