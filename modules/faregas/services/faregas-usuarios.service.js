@@ -62,7 +62,7 @@ exports.crearUsuario = async (data, creadorUsername) => {
                     nombres, apellidos, nombrerazonsocial,
                     pais_key, departamento_key, provincia_key, distrito_key,
                     direccion, email, telefono, persona_contacto,
-                    estado, usuario_creacion
+                    estado, usuariocreacion_username
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true, $14)
                 ON CONFLICT (nrodocumentoidentidad) DO UPDATE SET
                     tipodocumentoidentidad_key = EXCLUDED.tipodocumentoidentidad_key,
@@ -77,8 +77,8 @@ exports.crearUsuario = async (data, creadorUsername) => {
                     email = EXCLUDED.email,
                     telefono = EXCLUDED.telefono,
                     persona_contacto = EXCLUDED.persona_contacto,
-                    usuario_modificacion = EXCLUDED.usuario_creacion,
-                    fecha_modificacion = CURRENT_TIMESTAMP
+                    usuariomodi_id = EXCLUDED.usuariocreacion_username,
+                    fechmodi = CURRENT_TIMESTAMP
             `, [
                 nroDocumento, tipoDocumentoKey, nombres, apellidos, nombreRazonSocial,
                 paisKey, departamentoKey, provinciaKey, distritoKey,
@@ -108,7 +108,7 @@ exports.crearUsuario = async (data, creadorUsername) => {
             const nomApe = (nombres || '') + ' ' + (apellidos || '');
             const nomToSave = nomApe.trim() || nombreRazonSocial || cleanUsername;
             await client.query(`
-                INSERT INTO fg_ejecutivo (nombre, activo, usuario_username)
+                INSERT INTO fg_ejecutivo (nombre, activo, username)
                 VALUES ($1, $2, $3)
             `, [nomToSave, estadoBool, cleanUsername]);
         }
@@ -152,7 +152,7 @@ exports.actualizarUsuario = async (oldUsername, data, modificadorUsername) => {
                     nombres, apellidos, nombrerazonsocial,
                     pais_key, departamento_key, provincia_key, distrito_key,
                     direccion, email, telefono, persona_contacto,
-                    estado, usuario_creacion
+                    estado, usuariocreacion_username
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true, $14)
                 ON CONFLICT (nrodocumentoidentidad) DO UPDATE SET
                     tipodocumentoidentidad_key = EXCLUDED.tipodocumentoidentidad_key,
@@ -167,8 +167,8 @@ exports.actualizarUsuario = async (oldUsername, data, modificadorUsername) => {
                     email = EXCLUDED.email,
                     telefono = EXCLUDED.telefono,
                     persona_contacto = EXCLUDED.persona_contacto,
-                    usuario_modificacion = EXCLUDED.usuario_creacion,
-                    fecha_modificacion = CURRENT_TIMESTAMP
+                    usuariomodi_id = EXCLUDED.usuariocreacion_username,
+                    fechmodi = CURRENT_TIMESTAMP
             `, [
                 nroDocumento, tipoDocumentoKey, nombres, apellidos, nombreRazonSocial,
                 paisKey, departamentoKey, provinciaKey, distritoKey,
@@ -200,18 +200,18 @@ exports.actualizarUsuario = async (oldUsername, data, modificadorUsername) => {
             const nomApe = (nombres || '') + ' ' + (apellidos || '');
             const nomToSave = nomApe.trim() || nombreRazonSocial || newUsername;
             
-            const checkEjec = await client.query('SELECT id FROM fg_ejecutivo WHERE usuario_username = $1', [newUsername]);
+            const checkEjec = await client.query('SELECT id FROM fg_ejecutivo WHERE username = $1', [newUsername]);
             if (checkEjec.rowCount > 0) {
-                await client.query('UPDATE fg_ejecutivo SET nombre = $1, activo = $2 WHERE usuario_username = $3', [nomToSave, estadoBool, newUsername]);
+                await client.query('UPDATE fg_ejecutivo SET nombre = $1, activo = $2 WHERE username = $3', [nomToSave, estadoBool, newUsername]);
             } else {
                 await client.query(`
-                    INSERT INTO fg_ejecutivo (nombre, activo, usuario_username)
+                    INSERT INTO fg_ejecutivo (nombre, activo, username)
                     VALUES ($1, $2, $3)
                 `, [nomToSave, estadoBool, newUsername]);
             }
         } else {
             // Si ya no es ejecutivo, lo desactivamos (no eliminamos historicos)
-            await client.query('UPDATE fg_ejecutivo SET activo = false WHERE usuario_username = $1', [newUsername]);
+            await client.query('UPDATE fg_ejecutivo SET activo = false WHERE username = $1', [newUsername]);
         }
 
         await client.query('COMMIT');
@@ -390,9 +390,9 @@ exports.eliminarUsuario = async (username) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        const sesiones = await client.query('SELECT 1 FROM fg_usuario_sesion WHERE usuario_username = $1 LIMIT 1', [username]);
+        const sesiones = await client.query('SELECT 1 FROM fg_usuario_sesion WHERE username = $1 LIMIT 1', [username]);
         if (sesiones.rowCount > 0) throw new Error('HAS_SESSIONS');
-        await client.query('DELETE FROM fg_usuario_planta WHERE usuario_username = $1', [username]);
+        await client.query('DELETE FROM fg_usuario_planta WHERE username = $1', [username]);
         await client.query('DELETE FROM fg_usuario WHERE username = $1', [username]);
         await client.query('COMMIT');
     } catch (e) {
