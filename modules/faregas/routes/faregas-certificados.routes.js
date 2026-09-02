@@ -5,6 +5,7 @@ const pagosController = require('../controllers/faregas-pagos.controller');
 const facturacionController = require('../controllers/faregas-facturacion.controller');
 const documentosElectronicosController = require('../controllers/faregas-documentos-electronicos.controller');
 const facturacionAdminController = require('../controllers/faregas-facturacion-admin.controller');
+const nubefactReadinessController = require('../controllers/faregas-nubefact-readiness.controller');
 const jwt = require('jsonwebtoken');
 const db = require('../../../config/database');
 
@@ -107,8 +108,10 @@ router.put('/borradores/:id/pagos', pagosController.guardarPagos);
 
 // FACTURACION ELECTRONICA
 router.get('/facturacion/admin/documentos', facturacionAdminMiddleware, facturacionAdminController.listar);
+router.get('/facturacion/admin/readiness', facturacionAdminMiddleware, nubefactReadinessController.obtenerPanel);
 router.get('/facturacion/admin/documentos/:facturacionId', facturacionAdminMiddleware, facturacionAdminController.obtenerDetalle);
 router.get('/borradores/:id/facturacion', facturacionController.obtener);
+router.get('/borradores/:id/facturacion/preflight', facturacionController.preflight);
 router.put('/borradores/:id/facturacion', facturacionController.guardar);
 router.post('/borradores/:id/facturacion/emitir', facturacionController.emitir);
 router.get('/borradores/:id/facturacion/documentos', documentosElectronicosController.listar);

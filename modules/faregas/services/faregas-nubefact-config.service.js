@@ -16,11 +16,13 @@ const validarSeguridadProduccion = ({
     environment = integrationsConfig.nubefact.environment,
     productionConfirmed = integrationsConfig.nubefact.productionConfirmed,
     enviarSunat = integrationsConfig.nubefact.enviarSunat,
-    detractionDecision = integrationsConfig.nubefact.detractionDecision
+    detractionDecision = integrationsConfig.nubefact.detractionDecision,
+    correlativosV2Enabled = integrationsConfig.nubefact.correlativosV2Enabled
 } = {}) => {
     if (!esEntornoProduccion(environment)) return;
     if (!productionConfirmed) throw errorConfiguracion('NUBEFACT_PRODUCCION_NO_CONFIRMADA');
     if (!enviarSunat) throw errorConfiguracion('NUBEFACT_ENVIO_SUNAT_DESHABILITADO');
+    if (!correlativosV2Enabled) throw errorConfiguracion('NUBEFACT_CORRELATIVOS_V2_DESHABILITADOS');
 
     const decision = String(detractionDecision || '').trim().toUpperCase();
     if (decision === 'PENDIENTE') {
@@ -42,6 +44,7 @@ const contextoPublico = (row, credentials = null) => ({
     environment: row?.entorno || integrationsConfig.nubefact.environment,
     productionConfirmed: integrationsConfig.nubefact.productionConfirmed,
     detractionDecision: integrationsConfig.nubefact.detractionDecision,
+    correlativosV2Enabled: integrationsConfig.nubefact.correlativosV2Enabled,
     empresaKey: row?.empresa_key || null,
     rucEmisor: row?.ruc_emisor || null
 });

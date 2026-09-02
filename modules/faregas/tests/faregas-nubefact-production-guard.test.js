@@ -10,6 +10,7 @@ const validar = (overrides = {}) => configService._private.validarSeguridadProdu
     productionConfirmed: true,
     enviarSunat: true,
     detractionDecision: 'NO_APLICA',
+    correlativosV2Enabled: true,
     ...overrides
 });
 
@@ -33,6 +34,13 @@ test('bloquea producción si el envío automático a SUNAT está apagado', () =>
     assert.throws(
         () => validar({ enviarSunat: false }),
         error => error.code === 'NUBEFACT_ENVIO_SUNAT_DESHABILITADO'
+    );
+});
+
+test('bloquea producción si el motor seguro de correlativos está apagado', () => {
+    assert.throws(
+        () => validar({ correlativosV2Enabled: false }),
+        error => error.code === 'NUBEFACT_CORRELATIVOS_V2_DESHABILITADOS'
     );
 });
 

@@ -18,11 +18,15 @@ const responderError = (res, error) => {
         NUBEFACT_DESHABILITADO: 'La integracion con Nubefact esta deshabilitada.',
         NUBEFACT_NO_CONFIGURADO: 'Faltan la URL o el token de Nubefact.',
         NUBEFACT_CONFIGURACION_PENDIENTE: 'Falta aplicar la configuracion Nubefact por empresa.',
+        NUBEFACT_CORRELATIVOS_V2_DESHABILITADOS: 'El motor seguro de correlativos tributarios no está habilitado.',
         EMPRESA_EMISORA_NO_CONFIGURADA: 'La sede no tiene una empresa emisora Nubefact activa.',
         EMPRESA_EMISORA_RUC_INVALIDO: 'El RUC de la empresa emisora no es valido.',
         NUBEFACT_CREDENCIALES_EMPRESA_FALTANTES: 'Faltan la ruta o el token Nubefact de la empresa emisora.',
         NUBEFACT_RUTA_EMPRESA_INVALIDA: 'La ruta Nubefact de la empresa emisora no es valida.',
         EMISION_EN_PROCESO: 'Ya existe una emision de comprobante en proceso.',
+        NUBEFACT_MAX_INTENTOS_ALCANZADO: 'Se alcanzó el máximo de intentos automáticos; requiere revisión de Sistemas.',
+        SERIE_PRODUCCION_NO_CONFIRMADA: 'La serie tributaria todavía no fue confirmada para producción.',
+        CORRELATIVO_CONCURRENCIA: 'Otro proceso reservó el correlativo; vuelva a intentarlo.',
         SERIE_COMPROBANTE_NO_CONFIGURADA: 'La planta no tiene una serie de comprobantes configurada.',
         SERIE_COMPROBANTE_INVALIDA: 'La serie de comprobantes de la planta es invalida.',
         NUBEFACT_RECHAZADO: 'Nubefact o SUNAT rechazaron el comprobante.',
@@ -35,6 +39,15 @@ const responderError = (res, error) => {
         message: messages[error.code || error.message] || 'Error interno del servidor.',
         detalles: error.detalles || undefined
     });
+};
+
+exports.preflight = async (req, res) => {
+    try {
+        const data = await facturacionService.obtenerPreflight(Number(req.params.id), req.user);
+        return res.json({ ok: true, data });
+    } catch (error) {
+        return responderError(res, error);
+    }
 };
 
 exports.obtener = async (req, res) => {

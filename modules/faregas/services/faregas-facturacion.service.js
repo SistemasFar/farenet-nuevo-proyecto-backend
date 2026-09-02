@@ -2,6 +2,9 @@ const db = require('../../../config/database');
 const nubefactService = require('../../../services/integrations/nubefact.service');
 const nubefactConfigService = require('./faregas-nubefact-config.service');
 const resumenTributarioService = require('./faregas-resumen-tributario.service');
+const correlativosNubefactService = require('./faregas-correlativos-nubefact.service');
+const readinessService = require('./faregas-nubefact-readiness.service');
+const integrationsConfig = require('../../../config/integrations.config');
 const { validarAccesoPlanta } = require('./faregas-auth.service');
 const {
     normalizarFacturacion,
@@ -118,6 +121,11 @@ exports.obtenerFacturacion = async (certificadoId, userContext) => {
         integracion: await nubefactConfigService.obtenerEstadoParaPlanta(certificado.planta_key),
         resumenTributario
     };
+};
+
+exports.obtenerPreflight = async (certificadoId, userContext) => {
+    await obtenerCertificado(db, certificadoId, userContext);
+    return readinessService.evaluarCertificado(certificadoId, db);
 };
 
 exports.guardarFacturacion = async (certificadoId, data, userContext) => {
@@ -288,40 +296,64 @@ const reservarEmision = async (certificadoId, userContext) => {
         }
         if (facturacion.estado === 'PENDIENTE' && facturacion.fecha_ultimo_intento) {
             const antiguedad = Date.now() - new Date(facturacion.fecha_ultimo_intento).getTime();
-            if (antiguedad < 120000) throw errorNegocio('EMISION_EN_PROCESO', 409);
+            if (antiguedad < integrationsConfig.nubefact.retryLockMs) {
+                throw errorNegocio('EMISION_EN_PROCESO', 409, {
+                    reintentoDisponibleEnMs: integrationsConfig.nubefact.retryLockMs - antiguedad
+                });
+            }
+        }
+        if (Number(facturacion.intentos || 0) >= integrationsConfig.nubefact.maxAttempts) {
+            throw errorNegocio('NUBEFACT_MAX_INTENTOS_ALCANZADO', 409, {
+                intentos: Number(facturacion.intentos || 0),
+                maximo: integrationsConfig.nubefact.maxAttempts
+            });
         }
 
         if (!facturacion.serie || facturacion.numero === null) {
-            const serieResult = await client.query(
-                `SELECT * FROM seriedocumentobase
-                 WHERE planta_key = $1 AND COALESCE(estado, true) = true
-                 ORDER BY id DESC LIMIT 1 FOR UPDATE`,
-                [certificado.planta_key]
-            );
-            if (serieResult.rowCount === 0) throw errorNegocio('SERIE_COMPROBANTE_NO_CONFIGURADA', 409);
-            const serieBase = serieResult.rows[0];
-            const esFactura = facturacion.tipo_comprobante === 'FACTURA';
-            const serie = String(esFactura ? serieBase.seriefactura : serieBase.serieboleta).trim().toUpperCase();
-            const numero = Number(esFactura ? serieBase.nroactualfactura : serieBase.nroactualboleta) + 1;
-            if (!validarSerieNubefact(serie, facturacion.tipo_comprobante)
-                || !Number.isSafeInteger(numero) || numero <= 0) {
-                throw errorNegocio('SERIE_COMPROBANTE_INVALIDA', 409);
+            if (integrationsConfig.nubefact.correlativosV2Enabled) {
+                const reservaCorrelativo = await correlativosNubefactService.reservarSiguiente({
+                    plantaKey: certificado.planta_key,
+                    tipoComprobante: facturacion.tipo_comprobante,
+                    environment: configuracionEmisor.environment
+                }, client);
+                facturacion.serie = reservaCorrelativo.serie;
+                facturacion.numero = reservaCorrelativo.numero;
+                facturacion.nro_comprobante = reservaCorrelativo.nroComprobante;
+                facturacion.serie_comprobante_id = reservaCorrelativo.id;
+            } else {
+                // Compatibilidad temporal: conserva exactamente el flujo anterior
+                // mientras el motor tributario V2 permanezca deshabilitado.
+                const serieResult = await client.query(
+                    `SELECT * FROM seriedocumentobase
+                     WHERE planta_key = $1 AND COALESCE(estado, true) = true
+                     ORDER BY id DESC LIMIT 1 FOR UPDATE`,
+                    [certificado.planta_key]
+                );
+                if (serieResult.rowCount === 0) throw errorNegocio('SERIE_COMPROBANTE_NO_CONFIGURADA', 409);
+                const serieBase = serieResult.rows[0];
+                const esFactura = facturacion.tipo_comprobante === 'FACTURA';
+                const serie = String(esFactura ? serieBase.seriefactura : serieBase.serieboleta).trim().toUpperCase();
+                const numero = Number(esFactura ? serieBase.nroactualfactura : serieBase.nroactualboleta) + 1;
+                if (!validarSerieNubefact(serie, facturacion.tipo_comprobante)
+                    || !Number.isSafeInteger(numero) || numero <= 0) {
+                    throw errorNegocio('SERIE_COMPROBANTE_INVALIDA', 409);
+                }
+                await client.query(
+                    `UPDATE seriedocumentobase
+                     SET ${esFactura ? 'nroactualfactura' : 'nroactualboleta'} = $1, fechmodi = CURRENT_TIMESTAMP
+                     WHERE id = $2`,
+                    [numero, serieBase.id]
+                );
+                await client.query(
+                    `UPDATE fg_serie_comprobante
+                     SET ultimo_numero = GREATEST(ultimo_numero, $1), fecha_modificacion = CURRENT_TIMESTAMP
+                     WHERE planta_key = $2 AND tipo_comprobante = $3 AND UPPER(BTRIM(serie)) = $4`,
+                    [numero, certificado.planta_key, facturacion.tipo_comprobante, serie]
+                );
+                facturacion.serie = serie;
+                facturacion.numero = numero;
+                facturacion.nro_comprobante = `${serie}-${String(numero).padStart(8, '0')}`;
             }
-            await client.query(
-                `UPDATE seriedocumentobase
-                 SET ${esFactura ? 'nroactualfactura' : 'nroactualboleta'} = $1, fechmodi = CURRENT_TIMESTAMP
-                 WHERE id = $2`,
-                [numero, serieBase.id]
-            );
-            await client.query(
-                `UPDATE fg_serie_comprobante
-                 SET ultimo_numero = GREATEST(ultimo_numero, $1), fecha_modificacion = CURRENT_TIMESTAMP
-                 WHERE planta_key = $2 AND tipo_comprobante = $3 AND UPPER(BTRIM(serie)) = $4`,
-                [numero, certificado.planta_key, facturacion.tipo_comprobante, serie]
-            );
-            facturacion.serie = serie;
-            facturacion.numero = numero;
-            facturacion.nro_comprobante = `${serie}-${String(numero).padStart(8, '0')}`;
         }
 
         const codigoUnico = facturacion.codigo_unico || crearCodigoUnico(facturacion.id);
@@ -345,6 +377,12 @@ const reservarEmision = async (certificadoId, userContext) => {
             throw errorNegocio('DESCUENTO_FACTURACION_INCONSISTENTE', 409);
         }
 
+        const columnasReservaV2 = integrationsConfig.nubefact.correlativosV2Enabled
+            ? ', serie_comprobante_id = $14, fecha_reserva_correlativo = CURRENT_TIMESTAMP'
+            : '';
+        const valoresReservaV2 = integrationsConfig.nubefact.correlativosV2Enabled
+            ? [facturacion.serie_comprobante_id]
+            : [];
         const updated = await client.query(
             `UPDATE fg_facturacion SET
                 estado = 'PENDIENTE', serie = $1, numero = $2, nro_comprobante = $3,
@@ -353,6 +391,7 @@ const reservarEmision = async (certificadoId, userContext) => {
                 razon_social_emisor = $8, direccion_emisor = $9,
                 entorno_facturador = $10, codigo_unico = $11,
                 usuario_modificacion = $12, fecha_modificacion = CURRENT_TIMESTAMP
+                ${columnasReservaV2}
              WHERE id = $13 RETURNING *`,
             [
                 facturacion.serie,
@@ -367,7 +406,8 @@ const reservarEmision = async (certificadoId, userContext) => {
                 configuracionEmisor.environment,
                 codigoUnico,
                 userContext.username,
-                facturacion.id
+                facturacion.id,
+                ...valoresReservaV2
             ]
         );
         facturacion = updated.rows[0];

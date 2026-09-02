@@ -2,6 +2,9 @@ node_modules/
 .env
 npm-debug.log*
 scripts/
+!/scripts/
+/scripts/*
+!/scripts/run-faregas-tests.js
 
 # Scripts locales de diagnostico que pueden contener credenciales o ejecutar emisiones.
 query.js

@@ -1,6 +1,8 @@
 const db = require('../../../config/database');
 const nubefactService = require('../../../services/integrations/nubefact.service');
 const nubefactConfigService = require('./faregas-nubefact-config.service');
+const correlativosNubefactService = require('./faregas-correlativos-nubefact.service');
+const integrationsConfig = require('../../../config/integrations.config');
 const { validarAccesoPlanta } = require('./faregas-auth.service');
 const {
     construirPayloadNota,
@@ -65,6 +67,19 @@ const validarDatosNota = (tipo, data, facturacion) => {
 
 const reservarSerieNota = async (client, facturacion, tipo) => {
     const referencia = facturacion.tipo_comprobante === 'FACTURA' ? 'FACTURA' : 'BOLETA';
+    const tipoAdmin = `NOTA_${tipo}_${referencia}`;
+    if (integrationsConfig.nubefact.correlativosV2Enabled) {
+        const reserva = await correlativosNubefactService.reservarSiguiente({
+            plantaKey: facturacion.planta_key,
+            tipoComprobante: tipoAdmin,
+            environment: facturacion.entorno_facturador || integrationsConfig.nubefact.environment
+        }, client);
+        return {
+            serie: reserva.serie,
+            numero: reserva.numero,
+            serieComprobanteId: reserva.id
+        };
+    }
     if (tipo === 'CREDITO') {
         const serieCol = referencia === 'FACTURA' ? 'serienotacreditofactura' : 'serienotacreditoboleta';
         const numeroCol = referencia === 'FACTURA' ? 'nroactualnotacreditofactura' : 'nroactualnotacreditoboleta';
@@ -80,7 +95,6 @@ const reservarSerieNota = async (client, facturacion, tipo) => {
             throw errorNegocio('SERIE_NOTA_INVALIDA', 409);
         }
         await client.query(`UPDATE seriedocumentobase SET ${numeroCol} = $1, fechmodi = CURRENT_TIMESTAMP WHERE id = $2`, [numero, result.rows[0].id]);
-        const tipoAdmin = `NOTA_CREDITO_${referencia}`;
         const admin = await client.query(`
             UPDATE fg_serie_comprobante SET ultimo_numero = GREATEST(ultimo_numero, $1),
                 fecha_modificacion = CURRENT_TIMESTAMP
@@ -90,7 +104,6 @@ const reservarSerieNota = async (client, facturacion, tipo) => {
         return { serie, numero, serieComprobanteId: admin.rows[0]?.id || null };
     }
 
-    const tipoAdmin = `NOTA_DEBITO_${referencia}`;
     const result = await client.query(`
         SELECT * FROM fg_serie_comprobante
         WHERE planta_key = $1 AND tipo_comprobante = $2

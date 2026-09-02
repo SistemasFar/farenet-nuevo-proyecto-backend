@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const integrationsConfig = require('../../../config/integrations.config');
+const correlativosNubefactService = require('./faregas-correlativos-nubefact.service');
 
 const redondear = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 const texto = (value) => String(value ?? '').trim();
@@ -110,7 +111,7 @@ const construirResumen = ({ contexto, detalle, descuento, pagos, serie }) => {
                 ? null
                 : Number(contexto.numero_asignado),
             numeroAsignado: contexto.numero_asignado !== null && contexto.numero_asignado !== undefined,
-            fuenteSerie: 'CONFIGURACION_SEDE'
+            fuenteSerie: serie?.fuente || 'SIN_CONFIGURAR'
         },
         cliente: {
             tipoDocumento: texto(contexto.tipo_documento_cliente) || null,
@@ -225,7 +226,17 @@ const obtenerPagos = async (ordenPagoId, queryable) => {
     return result.rows;
 };
 
-const obtenerSerie = async (plantaKey, queryable) => {
+const obtenerSerie = async (plantaKey, tipoComprobante, queryable) => {
+    if (integrationsConfig.nubefact.correlativosV2Enabled) {
+        const serie = await correlativosNubefactService.obtenerSeriePrevista(
+            plantaKey,
+            tipoComprobante,
+            queryable
+        );
+        return tipoComprobante === 'FACTURA'
+            ? { seriefactura: serie.serie, fuente: 'FG_SERIE_COMPROBANTE' }
+            : { serieboleta: serie.serie, fuente: 'FG_SERIE_COMPROBANTE' };
+    }
     const result = await queryable.query(`
         SELECT serieboleta, seriefactura, nroactualboleta, nroactualfactura
         FROM seriedocumentobase
@@ -234,7 +245,7 @@ const obtenerSerie = async (plantaKey, queryable) => {
         ORDER BY id DESC
         LIMIT 1
     `, [plantaKey]);
-    return result.rows[0] || null;
+    return result.rows[0] ? { ...result.rows[0], fuente: 'SERIE_DOCUMENTO_BASE' } : null;
 };
 
 exports.obtenerResumenTributario = async (certificadoId, queryable = db) => {
@@ -243,7 +254,7 @@ exports.obtenerResumenTributario = async (certificadoId, queryable = db) => {
         obtenerDetalle(contexto, queryable),
         obtenerDescuento(certificadoId, queryable),
         obtenerPagos(contexto.orden_pago_id, queryable),
-        obtenerSerie(contexto.planta_key, queryable)
+        obtenerSerie(contexto.planta_key, contexto.tipo_comprobante, queryable)
     ]);
     return construirResumen({ contexto, detalle, descuento, pagos, serie });
 };

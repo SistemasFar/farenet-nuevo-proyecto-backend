@@ -4,6 +4,7 @@ const configController = require('../controllers/faregas-config.controller');
 const productosController = require('../controllers/faregas-productos.controller');
 const tarifasAdminController = require('../controllers/faregas-tarifas-admin.controller');
 const seriesController = require('../controllers/faregas-series.controller');
+const nubefactReadinessController = require('../controllers/faregas-nubefact-readiness.controller');
 const { authFaregasMiddleware } = require('../middlewares/faregas-auth.middleware');
 const db = require('../../../config/database');
 
@@ -198,6 +199,9 @@ router.get('/tarifas/sedes', requireConfigTarifasPerm, tarifasAdminController.li
 router.get('/tarifas/servicios-disponibles', requireConfigTarifasPerm, tarifasAdminController.listarServiciosDisponibles);
 router.get('/tarifas/productos', requireConfigTarifasPerm, tarifasAdminController.buscarProductos);
 router.get('/tarifas', requireConfigTarifasPerm, tarifasAdminController.listar);
+router.get('/nubefact/readiness', requireConfigTarifasPerm, nubefactReadinessController.obtenerPanel);
+router.post('/tarifas/importar/previsualizar', requireConfigTarifasPerm, nubefactReadinessController.previsualizarCatalogo);
+router.post('/tarifas/importar/aplicar', requireConfigTarifasPerm, nubefactReadinessController.aplicarCatalogo);
 router.post('/tarifas', requireConfigTarifasPerm, tarifasAdminController.crear);
 router.put('/tarifas/:id', requireConfigTarifasPerm, tarifasAdminController.editar);
 router.put('/tarifas/:id/estado', requireConfigTarifasPerm, tarifasAdminController.cambiarEstado);
@@ -207,5 +211,6 @@ router.get('/series', requireConfigSeriesPerm, seriesController.listar);
 router.post('/series', requireConfigSeriesPerm, seriesController.crear);
 router.put('/series/:id', requireConfigSeriesPerm, seriesController.editar);
 router.put('/series/:id/estado', requireConfigSeriesPerm, seriesController.cambiarEstado);
+router.put('/series/:id/confirmacion-produccion', requireConfigSeriesPerm, seriesController.confirmarProduccion);
 
 module.exports = router;

@@ -57,7 +57,9 @@ const responder = (res, error) => {
         SERIE_DUPLICADA: [409, 'La serie ya existe para esta sede y tipo de comprobante.'],
         SERIE_PREDETERMINADA_DUPLICADA: [409, 'Ya existe una serie activa predeterminada para esta sede y tipo.'],
         SERIE_NO_CONFIGURADA: [409, 'No existe una serie activa predeterminada para esta sede y tipo.'],
-        SERIE_NO_AUTOGENERADA: [409, 'La serie predeterminada no está configurada como autogenerada.']
+        SERIE_NO_AUTOGENERADA: [409, 'La serie predeterminada no está configurada como autogenerada.'],
+        SERIE_NO_APTA_PRODUCCION: [409, 'La serie debe estar activa, predeterminada y autogenerada.'],
+        SERIE_NUMERO_CONFIRMADO_MENOR: [409, 'El último número confirmado no puede ser menor al correlativo registrado.']
     };
     const [status, message] = mapa[error.message] || [error.status || 500, error.message || 'Error interno de series.'];
     res.status(status).json({ success: false, message });
@@ -106,5 +108,22 @@ exports.cambiarEstado = async (req, res) => {
     try {
         await service.cambiarEstado(id(req.params.id), booleano(req.body.activo, 'Estado'), req.user.username, req.ip);
         res.json({ success: true, message: `Serie ${req.body.activo ? 'activada' : 'desactivada'} correctamente.` });
+    } catch (error) { responder(res, error); }
+};
+
+exports.confirmarProduccion = async (req, res) => {
+    try {
+        const confirmada = booleano(req.body.confirmada, 'Confirmación');
+        const numeroConfirmado = ultimoNumero(req.body.numero_inicial_confirmado);
+        const sistemaOrigen = texto(req.body.sistema_origen, 'Sistema de origen');
+        const fechaCorte = String(req.body.fecha_corte || '').trim();
+        if (confirmada && (!fechaCorte || Number.isNaN(Date.parse(fechaCorte)))) fallo('La fecha de corte es inválida.');
+        await service.confirmarProduccion(id(req.params.id), {
+            confirmada,
+            numero_inicial_confirmado: numeroConfirmado,
+            sistema_origen: sistemaOrigen,
+            fecha_corte: fechaCorte || null
+        }, req.user.username, req.ip);
+        res.json({ success: true, message: confirmada ? 'Serie confirmada para producción.' : 'Confirmación productiva revocada.' });
     } catch (error) { responder(res, error); }
 };

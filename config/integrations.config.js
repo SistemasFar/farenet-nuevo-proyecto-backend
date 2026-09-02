@@ -61,8 +61,11 @@ const config = Object.freeze({
     detractionDecision: nubefactDetractionDecision,
     allowGlobalFallback: getBooleanEnv('NUBEFACT_ALLOW_GLOBAL_FALLBACK', false),
     timeoutMs: getIntegerEnv('NUBEFACT_TIMEOUT_MS', 10000),
+    retryLockMs: getIntegerEnv('NUBEFACT_RETRY_LOCK_MS', 120000),
+    maxAttempts: getIntegerEnv('NUBEFACT_MAX_ATTEMPTS', 5),
     enviarSunat: getBooleanEnv('NUBEFACT_ENVIAR_SUNAT', false),
     enviarCliente: getBooleanEnv('NUBEFACT_ENVIAR_CLIENTE', false),
+    correlativosV2Enabled: getBooleanEnv('NUBEFACT_CORRELATIVOS_V2_ENABLED', false),
     obtenerCredenciales: obtenerCredencialesNubefact
   })
 });

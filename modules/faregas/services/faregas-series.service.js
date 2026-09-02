@@ -210,3 +210,56 @@ exports.cambiarEstado = async (id, activo, username, ipDireccion) => {
         throw error;
     } finally { client.release(); }
 };
+
+exports.confirmarProduccion = async (id, datos, username, ipDireccion) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const actualResult = await client.query('SELECT * FROM fg_serie_comprobante WHERE id = $1 FOR UPDATE', [id]);
+        if (actualResult.rowCount === 0) throw new Error('SERIE_NO_ENCONTRADA');
+        const actual = actualResult.rows[0];
+        if (!actual.activo || !actual.es_predeterminada || !actual.autogenerada) {
+            throw new Error('SERIE_NO_APTA_PRODUCCION');
+        }
+        if (datos.confirmada && datos.numero_inicial_confirmado < Number(actual.ultimo_numero)) {
+            throw new Error('SERIE_NUMERO_CONFIRMADO_MENOR');
+        }
+        const numero = datos.confirmada ? datos.numero_inicial_confirmado : Number(actual.ultimo_numero);
+        await client.query(`
+            UPDATE fg_serie_comprobante
+            SET confirmada_produccion = $1,
+                numero_inicial_confirmado = CASE WHEN $1 THEN $2 ELSE numero_inicial_confirmado END,
+                ultimo_numero = CASE WHEN $1 THEN $2 ELSE ultimo_numero END,
+                sistema_origen = CASE WHEN $1 THEN $3 ELSE sistema_origen END,
+                fecha_corte = CASE WHEN $1 THEN $4 ELSE fecha_corte END,
+                usuario_confirmacion = $5,
+                fecha_confirmacion = CURRENT_TIMESTAMP,
+                fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $6
+        `, [datos.confirmada, numero, datos.sistema_origen, datos.fecha_corte, username, id]);
+        await configService.registrarAuditoria(client, {
+            username,
+            entidad: 'SERIE_COMPROBANTE',
+            accion: datos.confirmada ? 'CONFIRMAR_SERIE_PRODUCCION' : 'REVOCAR_SERIE_PRODUCCION',
+            identificador: `${actual.planta_key}:${actual.tipo_comprobante}:${actual.serie}`,
+            detalles: {
+                antes: {
+                    confirmadaProduccion: actual.confirmada_produccion,
+                    ultimoNumero: Number(actual.ultimo_numero)
+                },
+                despues: {
+                    confirmadaProduccion: datos.confirmada,
+                    ultimoNumero: numero,
+                    sistemaOrigen: datos.sistema_origen,
+                    fechaCorte: datos.fecha_corte
+                }
+            },
+            planta_key: actual.planta_key,
+            ip_direccion: ipDireccion
+        });
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally { client.release(); }
+};
