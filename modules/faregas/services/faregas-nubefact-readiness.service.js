@@ -11,9 +11,12 @@ const obtenerMigracionV2 = async (queryable) => {
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'fg_serie_comprobante'
-          AND column_name IN ('confirmada_produccion', 'numero_inicial_confirmado', 'fecha_corte')
+          AND column_name IN (
+            'empresa_key', 'proveedor_emision', 'entorno_emision',
+            'confirmada_produccion', 'numero_inicial_confirmado', 'fecha_corte'
+          )
     `);
-    return Number(result.rows[0]?.columnas || 0) === 3;
+    return Number(result.rows[0]?.columnas || 0) === 6;
 };
 
 const construirChecksCertificado = ({ resumen, integracion }) => {
@@ -46,7 +49,9 @@ const construirChecksCertificado = ({ resumen, integracion }) => {
         checks.push(check('ADVERTENCIA_TRIBUTARIA', 'ADVERTENCIA', mensaje));
     }
     for (const mensaje of resumen?.errores || []) {
-        if (!checks.some(item => item.mensaje === mensaje)) {
+        const esCatalogoYaReportado = /producto (fiscal|de facturaci[oó]n)/i.test(mensaje)
+            && checks.some(item => item.codigo === 'CATALOGO_FISCAL' && item.estado === 'BLOQUEO');
+        if (!esCatalogoYaReportado && !checks.some(item => item.mensaje === mensaje)) {
             checks.push(check('VALIDACION_TRIBUTARIA', 'BLOQUEO', mensaje));
         }
     }
@@ -75,7 +80,15 @@ exports.obtenerPanel = async ({ plantaKey = null } = {}, queryable = db) => {
     const filtroSerie = plantaKey ? 'AND s.planta_key = $1' : '';
     const valores = plantaKey ? [plantaKey] : [];
     const migracionV2Aplicada = await obtenerMigracionV2(queryable);
-    const [tarifas, series, facturadores, documentos] = await Promise.all([
+    const valoresSeries = [...valores];
+    if (migracionV2Aplicada) valoresSeries.push(integrationsConfig.nubefact.environment);
+    const entornoParam = `$${valoresSeries.length}`;
+    const valoresCredenciales = [integrationsConfig.nubefact.environment];
+    const filtroCredenciales = plantaKey
+        ? 'AND EXISTS (SELECT 1 FROM fg_planta p WHERE p.empresa_key = f.empresa_key AND p.key = $2)'
+        : '';
+    if (plantaKey) valoresCredenciales.push(plantaKey);
+    const [tarifas, series, facturadores, documentos, configuracionesCredenciales] = await Promise.all([
         queryable.query(`
             SELECT COUNT(*) FILTER (WHERE t.activo)::int AS activas,
                    COUNT(*) FILTER (WHERE t.activo AND t.producto_facturacion_id IS NOT NULL)::int AS vinculadas,
@@ -93,9 +106,18 @@ exports.obtenerPanel = async ({ plantaKey = null } = {}, queryable = db) => {
             SELECT COUNT(*) FILTER (WHERE s.activo)::int AS activas,
                    COUNT(*) FILTER (WHERE s.activo AND s.es_predeterminada)::int AS predeterminadas,
                    COUNT(*) FILTER (WHERE s.activo AND s.ultimo_numero >= 99999000)::int AS proximas_agotarse
-                   ${migracionV2Aplicada ? ", COUNT(*) FILTER (WHERE s.activo AND s.confirmada_produccion)::int AS confirmadas_produccion" : ''}
+                   ${migracionV2Aplicada ? `,
+                   COUNT(*) FILTER (WHERE s.activo AND s.proveedor_emision = 'LEGACY')::int AS legacy,
+                   COUNT(*) FILTER (WHERE s.activo AND s.proveedor_emision = 'NUBEFACT'
+                     AND s.entorno_emision = ${entornoParam})::int AS nubefact_exclusivas,
+                   COUNT(*) FILTER (WHERE s.activo AND s.es_predeterminada
+                     AND s.proveedor_emision = 'NUBEFACT'
+                     AND s.entorno_emision = ${entornoParam})::int AS nubefact_predeterminadas,
+                   COUNT(*) FILTER (WHERE s.activo AND s.confirmada_produccion
+                     AND s.proveedor_emision = 'NUBEFACT'
+                     AND s.entorno_emision = 'PRODUCCION')::int AS confirmadas_produccion` : ''}
             FROM fg_serie_comprobante s WHERE TRUE ${filtroSerie}
-        `, valores),
+        `, valoresSeries),
         queryable.query(`
             SELECT entorno, COUNT(*)::int AS cantidad
             FROM fg_empresa_facturador
@@ -106,17 +128,42 @@ exports.obtenerPanel = async ({ plantaKey = null } = {}, queryable = db) => {
             SELECT estado, COUNT(*)::int AS cantidad
             FROM fg_facturacion
             GROUP BY estado ORDER BY estado
-        `)
+        `),
+        queryable.query(`
+            SELECT f.empresa_key, f.entorno, f.credencial_clave, e.ruc AS ruc_emisor
+            FROM fg_empresa_facturador f
+            JOIN fg_empresa e ON e.key = f.empresa_key AND e.activo = TRUE
+            WHERE f.proveedor = 'NUBEFACT'
+              AND f.entorno = $1
+              AND f.activo = TRUE
+              ${filtroCredenciales}
+            ORDER BY f.empresa_key
+        `, valoresCredenciales)
     ]);
 
     const t = tarifas.rows[0] || {};
     const s = series.rows[0] || {};
+    const credencialesFaltantes = configuracionesCredenciales.rows
+        .filter(row => {
+            const credentials = integrationsConfig.nubefact.obtenerCredenciales(row.credencial_clave, row.entorno);
+            return !(credentials.apiUrl && credentials.token
+                && credentials.rucEmisor === String(row.ruc_emisor || ''));
+        })
+        .map(row => row.empresa_key);
     const bloqueos = [];
     if (Number(t.sin_vincular || 0) > 0) bloqueos.push(`${t.sin_vincular} tarifas activas no tienen producto fiscal.`);
     if (!migracionV2Aplicada) bloqueos.push('La migración del motor de correlativos V2 no está aplicada.');
+    if (migracionV2Aplicada && Number(s.nubefact_predeterminadas || 0) === 0) {
+        bloqueos.push(`No existen series exclusivas Nubefact predeterminadas para ${integrationsConfig.nubefact.environment}.`);
+    }
     if (!integrationsConfig.nubefact.correlativosV2Enabled) bloqueos.push('El motor de correlativos V2 está deshabilitado.');
     if (integrationsConfig.nubefact.detractionDecision === 'PENDIENTE') bloqueos.push('La decisión sobre detracción está pendiente.');
     if (!integrationsConfig.nubefact.enabled) bloqueos.push('Nubefact está deshabilitado.');
+    if (configuracionesCredenciales.rowCount === 0) {
+        bloqueos.push(`No existe configuración empresarial Nubefact para ${integrationsConfig.nubefact.environment}.`);
+    } else if (credencialesFaltantes.length > 0) {
+        bloqueos.push(`${credencialesFaltantes.length} empresa(s) no tienen ruta y token ${integrationsConfig.nubefact.environment}.`);
+    }
 
     return {
         estado: bloqueos.length === 0 ? 'LISTO' : 'BLOQUEADO',
@@ -138,10 +185,19 @@ exports.obtenerPanel = async ({ plantaKey = null } = {}, queryable = db) => {
         series: {
             activas: Number(s.activas || 0),
             predeterminadas: Number(s.predeterminadas || 0),
+            legacy: migracionV2Aplicada ? Number(s.legacy || 0) : Number(s.activas || 0),
+            nubefactExclusivas: migracionV2Aplicada ? Number(s.nubefact_exclusivas || 0) : 0,
+            nubefactPredeterminadas: migracionV2Aplicada ? Number(s.nubefact_predeterminadas || 0) : 0,
             confirmadasProduccion: migracionV2Aplicada ? Number(s.confirmadas_produccion || 0) : 0,
             proximasAgotarse: Number(s.proximas_agotarse || 0)
         },
         facturadores: facturadores.rows,
+        credenciales: {
+            ambiente: integrationsConfig.nubefact.environment,
+            total: configuracionesCredenciales.rowCount,
+            configuradas: configuracionesCredenciales.rowCount - credencialesFaltantes.length,
+            faltantes: credencialesFaltantes
+        },
         documentos: documentos.rows,
         monitoreo: {
             pendientes: Number(documentos.rows.find(row => row.estado === 'PENDIENTE')?.cantidad || 0),

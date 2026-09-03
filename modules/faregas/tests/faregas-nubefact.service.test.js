@@ -81,19 +81,36 @@ test('la anulacion asincrona conserva el ticket como pendiente de SUNAT', async 
     assert.equal(payloadEnviado.codigo_unico, 'FGA-42');
 });
 
-test('resuelve las credenciales por clave de empresa sin exponerlas en el estado publico', () => {
-    process.env.NUBEFACT_EMPRESA_PRUEBA_API_URL = credentials.apiUrl;
-    process.env.NUBEFACT_EMPRESA_PRUEBA_TOKEN = credentials.token;
+test('resuelve las credenciales por empresa y ambiente sin exponerlas en el estado publico', () => {
+    process.env.NUBEFACT_EMPRESA_PRUEBA_DEMO_API_URL = credentials.apiUrl;
+    process.env.NUBEFACT_EMPRESA_PRUEBA_DEMO_TOKEN = credentials.token;
+    process.env.NUBEFACT_EMPRESA_PRUEBA_DEMO_RUC = '20600444531';
     try {
-        const resolved = integrationsConfig.nubefact.obtenerCredenciales('empresa-prueba');
+        const resolved = integrationsConfig.nubefact.obtenerCredenciales('empresa-prueba', 'DEMO');
         assert.equal(resolved.apiUrl, credentials.apiUrl);
         assert.equal(resolved.token, credentials.token);
+        assert.equal(resolved.rucEmisor, '20600444531');
         const estado = nubefactService.obtenerEstadoConfiguracion(resolved);
         assert.deepEqual(Object.keys(estado).sort(), ['configured', 'enabled', 'environment', 'provider']);
         assert.equal(JSON.stringify(estado).includes(credentials.token), false);
         assert.equal(JSON.stringify(estado).includes(credentials.apiUrl), false);
     } finally {
-        delete process.env.NUBEFACT_EMPRESA_PRUEBA_API_URL;
-        delete process.env.NUBEFACT_EMPRESA_PRUEBA_TOKEN;
+        delete process.env.NUBEFACT_EMPRESA_PRUEBA_DEMO_API_URL;
+        delete process.env.NUBEFACT_EMPRESA_PRUEBA_DEMO_TOKEN;
+        delete process.env.NUBEFACT_EMPRESA_PRUEBA_DEMO_RUC;
+    }
+});
+
+test('no reutiliza credenciales DEMO cuando se solicita PRODUCCION', () => {
+    process.env.NUBEFACT_EMPRESA_AISLADA_DEMO_API_URL = credentials.apiUrl;
+    process.env.NUBEFACT_EMPRESA_AISLADA_DEMO_TOKEN = credentials.token;
+    try {
+        const resolved = integrationsConfig.nubefact.obtenerCredenciales('EMPRESA_AISLADA', 'PRODUCCION');
+        assert.equal(resolved.apiUrl, '');
+        assert.equal(resolved.token, '');
+        assert.equal(resolved.source, 'NUBEFACT_EMPRESA_AISLADA_PRODUCCION');
+    } finally {
+        delete process.env.NUBEFACT_EMPRESA_AISLADA_DEMO_API_URL;
+        delete process.env.NUBEFACT_EMPRESA_AISLADA_DEMO_TOKEN;
     }
 });

@@ -19,6 +19,10 @@ const validarSeguridadProduccion = ({
     detractionDecision = integrationsConfig.nubefact.detractionDecision,
     correlativosV2Enabled = integrationsConfig.nubefact.correlativosV2Enabled
 } = {}) => {
+    const entorno = String(environment || '').trim().toUpperCase();
+    if (!['DEMO', 'PRODUCCION', 'PRODUCTION'].includes(entorno)) {
+        throw errorConfiguracion('NUBEFACT_ENTORNO_INVALIDO');
+    }
     if (!esEntornoProduccion(environment)) return;
     if (!productionConfirmed) throw errorConfiguracion('NUBEFACT_PRODUCCION_NO_CONFIRMADA');
     if (!enviarSunat) throw errorConfiguracion('NUBEFACT_ENVIO_SUNAT_DESHABILITADO');
@@ -39,7 +43,8 @@ const validarSeguridadProduccion = ({
 const contextoPublico = (row, credentials = null) => ({
     enabled: integrationsConfig.nubefact.enabled,
     simulationEnabled: integrationsConfig.nubefact.simulationEnabled,
-    configured: Boolean(credentials?.apiUrl && credentials?.token),
+    configured: Boolean(credentials?.apiUrl && credentials?.token
+        && credentials?.rucEmisor === String(row?.ruc_emisor || '')),
     provider: 'NUBEFACT',
     environment: row?.entorno || integrationsConfig.nubefact.environment,
     productionConfirmed: integrationsConfig.nubefact.productionConfirmed,
@@ -75,11 +80,10 @@ const obtenerFilaConfiguracion = async (plantaKey, executor = db) => {
 };
 
 exports.obtenerEstadoParaPlanta = async (plantaKey, executor = db) => {
-    if (!integrationsConfig.nubefact.enabled) return contextoPublico(null, null);
     try {
         const row = await obtenerFilaConfiguracion(plantaKey, executor);
         const credentials = row.credencial_clave
-            ? integrationsConfig.nubefact.obtenerCredenciales(row.credencial_clave)
+            ? integrationsConfig.nubefact.obtenerCredenciales(row.credencial_clave, row.entorno)
             : null;
         return contextoPublico(row, credentials);
     } catch (error) {
@@ -107,11 +111,17 @@ exports.resolverParaPlanta = async (plantaKey, executor = db) => {
         throw errorConfiguracion('EMPRESA_EMISORA_RUC_INVALIDO');
     }
 
-    const credentials = integrationsConfig.nubefact.obtenerCredenciales(row.credencial_clave);
+    const credentials = integrationsConfig.nubefact.obtenerCredenciales(row.credencial_clave, row.entorno);
     if (!credentials.apiUrl || !credentials.token) {
         throw errorConfiguracion('NUBEFACT_CREDENCIALES_EMPRESA_FALTANTES');
     }
-    if (!/^https?:\/\//i.test(credentials.apiUrl)) {
+    if (!/^\d{11}$/.test(credentials.rucEmisor || '')) {
+        throw errorConfiguracion('NUBEFACT_CREDENCIALES_RUC_FALTANTE');
+    }
+    if (credentials.rucEmisor !== String(row.ruc_emisor)) {
+        throw errorConfiguracion('NUBEFACT_CREDENCIALES_RUC_NO_COINCIDE');
+    }
+    if (!/^https:\/\//i.test(credentials.apiUrl)) {
         throw errorConfiguracion('NUBEFACT_RUTA_EMPRESA_INVALIDA');
     }
 

@@ -4,7 +4,7 @@ const db = require('../../../config/database');
 const auth = require('../services/faregas-auth.service');
 const service = require('../services/faregas-certificados.service');
 
-test('lista por defecto los borradores del día actual y mantiene la búsqueda backend', async () => {
+test('lista por defecto todos los certificados del día para permitir acciones sobre emitidos', async () => {
     const queryOriginal = db.query;
     const plantasOriginal = auth.getPlantasPorUsuario;
     const consultas = [];
@@ -21,7 +21,7 @@ test('lista por defecto los borradores del día actual y mantiene la búsqueda b
         assert.equal(result.total, 1);
         assert.equal(result.data[0].id, 44);
         assert.equal(consultas[0].params[0], '201');
-        assert.match(consultas[0].sql, /c\.estado = 'BORRADOR'/);
+        assert.doesNotMatch(consultas[0].sql, /c\.estado = 'BORRADOR'/);
         assert.match(consultas[0].sql, /CURRENT_DATE/);
         assert.match(consultas[1].sql, /COALESCE\(c\.fecha_modificacion, c\.fecha_creacion\) DESC/);
         assert.equal(consultas[1].params[1], '%ABC123%');

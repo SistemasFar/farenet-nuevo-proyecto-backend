@@ -22,6 +22,13 @@ const esProduccion = (environment = integrationsConfig.nubefact.environment) => 
     ['PRODUCCION', 'PRODUCTION'].includes(String(environment || '').trim().toUpperCase())
 );
 
+const normalizarEntorno = (environment = integrationsConfig.nubefact.environment) => {
+    const value = String(environment || '').trim().toUpperCase();
+    if (value === 'PRODUCTION') return 'PRODUCCION';
+    if (value === 'DEMO' || value === 'PRODUCCION') return value;
+    throw errorCorrelativo('ENTORNO_NUBEFACT_INVALIDO');
+};
+
 const validarTipo = (tipoComprobante) => {
     const tipo = String(tipoComprobante || '').trim().toUpperCase();
     if (!TIPOS_PERMITIDOS.has(tipo)) throw errorCorrelativo('TIPO_COMPROBANTE_NO_SOPORTADO');
@@ -42,6 +49,8 @@ const mapSerie = (row) => ({
     serie: String(row.serie || '').trim().toUpperCase(),
     ultimoNumero: Number(row.ultimo_numero),
     autogenerada: row.autogenerada,
+    proveedorEmision: row.proveedor_emision,
+    entornoEmision: row.entorno_emision,
     confirmadaProduccion: row.confirmada_produccion,
     numeroInicialConfirmado: row.numero_inicial_confirmado === null
         ? null
@@ -50,24 +59,37 @@ const mapSerie = (row) => ({
     fechaCorte: row.fecha_corte || null
 });
 
-const consultarSerie = async ({ plantaKey, tipoComprobante, bloquear = false }, executor = db) => {
+const consultarSerie = async ({ plantaKey, tipoComprobante, environment, bloquear = false }, executor = db) => {
     const tipo = validarTipo(tipoComprobante);
-    const result = await executor.query(`
-        SELECT s.*, p.empresa_key
-        FROM fg_serie_comprobante s
-        JOIN fg_planta p ON p.key = s.planta_key
-        WHERE s.planta_key = $1
-          AND s.tipo_comprobante = $2
-          AND s.activo = TRUE
-          AND s.es_predeterminada = TRUE
-          AND p.activo = TRUE
-        LIMIT 1${bloquear ? ' FOR UPDATE OF s' : ''}
-    `, [plantaKey, tipo]);
+    const entorno = normalizarEntorno(environment);
+    let result;
+    try {
+        result = await executor.query(`
+            SELECT s.*, p.empresa_key
+            FROM fg_serie_comprobante s
+            JOIN fg_planta p ON p.key = s.planta_key
+            WHERE s.planta_key = $1
+              AND s.tipo_comprobante = $2
+              AND s.proveedor_emision = 'NUBEFACT'
+              AND s.entorno_emision = $3
+              AND s.activo = TRUE
+              AND s.es_predeterminada = TRUE
+              AND p.activo = TRUE
+            LIMIT 1${bloquear ? ' FOR UPDATE OF s' : ''}
+        `, [plantaKey, tipo, entorno]);
+    } catch (error) {
+        if (error.code === '42703') throw errorCorrelativo('MIGRACION_NUBEFACT_PENDIENTE');
+        throw error;
+    }
     if (result.rowCount === 0) throw errorCorrelativo('SERIE_COMPROBANTE_NO_CONFIGURADA');
     return mapSerie(result.rows[0]);
 };
 
 const validarSerieOperativa = (serie, environment) => {
+    const entorno = normalizarEntorno(environment);
+    if (serie.proveedorEmision !== 'NUBEFACT' || serie.entornoEmision !== entorno) {
+        throw errorCorrelativo('SERIE_NUBEFACT_NO_EXCLUSIVA');
+    }
     if (!serie.autogenerada) throw errorCorrelativo('SERIE_NO_AUTOGENERADA');
     if (!validarSerieTributaria(serie.serie, serie.tipoComprobante)) {
         throw errorCorrelativo('SERIE_COMPROBANTE_INVALIDA');
@@ -81,15 +103,17 @@ const validarSerieOperativa = (serie, environment) => {
     }
 };
 
-exports.obtenerSeriePrevista = async (plantaKey, tipoComprobante, executor = db) => {
-    const serie = await consultarSerie({ plantaKey, tipoComprobante }, executor);
-    validarSerieOperativa(serie, integrationsConfig.nubefact.environment);
+exports.obtenerSeriePrevista = async ({ plantaKey, tipoComprobante, environment }, executor = db) => {
+    const entorno = normalizarEntorno(environment);
+    const serie = await consultarSerie({ plantaKey, tipoComprobante, environment: entorno }, executor);
+    validarSerieOperativa(serie, entorno);
     return serie;
 };
 
 exports.reservarSiguiente = async ({ plantaKey, tipoComprobante, environment }, executor = db) => {
-    const serie = await consultarSerie({ plantaKey, tipoComprobante, bloquear: true }, executor);
-    validarSerieOperativa(serie, environment);
+    const entorno = normalizarEntorno(environment);
+    const serie = await consultarSerie({ plantaKey, tipoComprobante, environment: entorno, bloquear: true }, executor);
+    validarSerieOperativa(serie, entorno);
     const numero = serie.ultimoNumero + 1;
     if (!Number.isSafeInteger(numero) || numero <= 0) {
         throw errorCorrelativo('CORRELATIVO_COMPROBANTE_INVALIDO');
@@ -118,5 +142,6 @@ exports._private = {
     esProduccion,
     mapSerie,
     validarSerieTributaria,
+    normalizarEntorno,
     errorCorrelativo
 };

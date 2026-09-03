@@ -1,6 +1,24 @@
 const db = require('../../../config/database');
 const configService = require('./faregas-config.service');
 
+const COLUMNAS_NUBEFACT = [
+    'empresa_key', 'proveedor_emision', 'entorno_emision',
+    'confirmada_produccion', 'numero_inicial_confirmado', 'fecha_corte'
+];
+
+const migracionNubefactAplicada = async (executor = db) => {
+    const result = await executor.query(`
+        SELECT COUNT(*)::int AS columnas
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'fg_serie_comprobante'
+          AND column_name = ANY($1::text[])
+    `, [COLUMNAS_NUBEFACT]);
+    return Number(result.rows[0]?.columnas || 0) === COLUMNAS_NUBEFACT.length;
+};
+
+exports.migracionNubefactAplicada = migracionNubefactAplicada;
+
 const normalizarFila = (row) => ({
     ...row,
     serie: row.serie_operativa || row.serie,
@@ -26,24 +44,29 @@ exports.listar = async ({ plantaKey, tipo, activo, buscar } = {}) => {
     if (tipo) { valores.push(tipo); condiciones.push(`s.tipo_comprobante = $${valores.length}`); }
     if (activo === true || activo === false) { valores.push(activo); condiciones.push(`s.activo = $${valores.length}`); }
     if (buscar) { valores.push(`%${buscar}%`); condiciones.push(`s.serie ILIKE $${valores.length}`); }
+    const migracionAplicada = await migracionNubefactAplicada(db);
+    const serieOperativa = migracionAplicada
+        ? "CASE WHEN s.proveedor_emision = 'LEGACY' THEN "
+            + "CASE s.tipo_comprobante WHEN 'FACTURA' THEN base.seriefactura WHEN 'BOLETA' THEN base.serieboleta "
+            + "WHEN 'NOTA_CREDITO_FACTURA' THEN base.serienotacreditofactura WHEN 'NOTA_CREDITO_BOLETA' THEN base.serienotacreditoboleta ELSE s.serie END ELSE s.serie END"
+        : "CASE s.tipo_comprobante WHEN 'FACTURA' THEN base.seriefactura WHEN 'BOLETA' THEN base.serieboleta "
+            + "WHEN 'NOTA_CREDITO_FACTURA' THEN base.serienotacreditofactura WHEN 'NOTA_CREDITO_BOLETA' THEN base.serienotacreditoboleta ELSE s.serie END";
+    const numeroOperativo = migracionAplicada
+        ? "CASE WHEN s.proveedor_emision = 'LEGACY' THEN "
+            + "CASE s.tipo_comprobante WHEN 'FACTURA' THEN base.nroactualfactura WHEN 'BOLETA' THEN base.nroactualboleta "
+            + "WHEN 'NOTA_CREDITO_FACTURA' THEN base.nroactualnotacreditofactura WHEN 'NOTA_CREDITO_BOLETA' THEN base.nroactualnotacreditoboleta ELSE s.ultimo_numero END ELSE s.ultimo_numero END"
+        : "CASE s.tipo_comprobante WHEN 'FACTURA' THEN base.nroactualfactura WHEN 'BOLETA' THEN base.nroactualboleta "
+            + "WHEN 'NOTA_CREDITO_FACTURA' THEN base.nroactualnotacreditofactura WHEN 'NOTA_CREDITO_BOLETA' THEN base.nroactualnotacreditoboleta ELSE s.ultimo_numero END";
+    const fuente = migracionAplicada
+        ? "CASE WHEN s.proveedor_emision = 'NUBEFACT' THEN 'NUBEFACT_EXCLUSIVA' "
+            + "WHEN s.tipo_comprobante IN ('FACTURA','BOLETA','NOTA_CREDITO_FACTURA','NOTA_CREDITO_BOLETA') THEN 'COMPARTIDO_FARENET' ELSE 'FAREGAS' END"
+        : "CASE WHEN s.tipo_comprobante IN ('FACTURA','BOLETA','NOTA_CREDITO_FACTURA','NOTA_CREDITO_BOLETA') THEN 'COMPARTIDO_FARENET' ELSE 'FAREGAS' END";
     const result = await db.query(`
         SELECT s.*, p.nombre AS sede_nombre,
-               CASE s.tipo_comprobante
-                   WHEN 'FACTURA' THEN base.seriefactura
-                   WHEN 'BOLETA' THEN base.serieboleta
-                   WHEN 'NOTA_CREDITO_FACTURA' THEN base.serienotacreditofactura
-                   WHEN 'NOTA_CREDITO_BOLETA' THEN base.serienotacreditoboleta
-                   ELSE NULL
-               END AS serie_operativa,
-               CASE s.tipo_comprobante
-                   WHEN 'FACTURA' THEN base.nroactualfactura
-                   WHEN 'BOLETA' THEN base.nroactualboleta
-                   WHEN 'NOTA_CREDITO_FACTURA' THEN base.nroactualnotacreditofactura
-                   WHEN 'NOTA_CREDITO_BOLETA' THEN base.nroactualnotacreditoboleta
-                   ELSE s.ultimo_numero
-               END AS ultimo_numero_operativo,
-               CASE WHEN s.tipo_comprobante IN ('FACTURA', 'BOLETA', 'NOTA_CREDITO_FACTURA', 'NOTA_CREDITO_BOLETA')
-                    THEN 'COMPARTIDO_FARENET' ELSE 'FAREGAS' END AS fuente_correlativo
+               ${serieOperativa} AS serie_operativa,
+               ${numeroOperativo} AS ultimo_numero_operativo,
+               ${fuente} AS fuente_correlativo,
+               ${migracionAplicada ? 'TRUE' : 'FALSE'} AS migracion_nubefact_aplicada
         FROM fg_serie_comprobante s
         JOIN fg_planta p ON p.key = s.planta_key
         LEFT JOIN LATERAL (
@@ -102,17 +125,21 @@ exports.crear = async (serie, username, ipDireccion) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+        if (!await migracionNubefactAplicada(client)) throw new Error('MIGRACION_NUBEFACT_PENDIENTE');
         const planta = await client.query('SELECT key, nombre FROM fg_planta WHERE key = $1', [serie.planta_key]);
         if (planta.rowCount === 0) throw new Error('SEDE_NO_ENCONTRADA');
         const result = await client.query(`
             INSERT INTO fg_serie_comprobante (
-                planta_key, tipo_comprobante, serie, ultimo_numero,
-                es_predeterminada, autogenerada, contingencia, activo
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                planta_key, empresa_key, tipo_comprobante, serie, ultimo_numero,
+                es_predeterminada, autogenerada, contingencia, activo,
+                proveedor_emision, entorno_emision,
+                tipo_documento_referencia, serie_pos
+            ) VALUES ($1,(SELECT empresa_key FROM fg_planta WHERE key = $1),$2,$3,$4,$5,$6,$7,$8,'NUBEFACT',$9,$10,$11)
             RETURNING id
         `, [
             serie.planta_key, serie.tipo_comprobante, serie.serie, serie.ultimo_numero,
-            serie.es_predeterminada, serie.autogenerada, serie.contingencia, serie.activo
+            serie.es_predeterminada, serie.autogenerada, serie.contingencia, serie.activo,
+            serie.entorno_emision, serie.tipo_documento_referencia, serie.serie_pos
         ]);
         const despues = { ...serie, sede_nombre: planta.rows[0].nombre };
         await configService.registrarAuditoria(client, {
@@ -135,6 +162,9 @@ exports.crear = async (serie, username, ipDireccion) => {
         if (error.code === '23505' && error.constraint === 'uk_fg_serie_comprobante_predeterminada_activa') {
             throw new Error('SERIE_PREDETERMINADA_DUPLICADA');
         }
+        if (error.code === '23505' && error.constraint === 'uq_fg_serie_nubefact_empresa_documento') {
+            throw new Error('SERIE_NUBEFACT_EMPRESA_DUPLICADA');
+        }
         if (error.code === '23505') throw new Error('SERIE_DUPLICADA');
         throw error;
     } finally { client.release(); }
@@ -147,17 +177,26 @@ exports.editar = async (id, cambios, username, ipDireccion) => {
         const actualResult = await client.query('SELECT * FROM fg_serie_comprobante WHERE id = $1 FOR UPDATE', [id]);
         if (actualResult.rowCount === 0) throw new Error('SERIE_NO_ENCONTRADA');
         const actual = actualResult.rows[0];
+        const tipoDocumentoReferencia = actual.tipo_comprobante.endsWith('_FACTURA')
+            ? '01'
+            : actual.tipo_comprobante.endsWith('_BOLETA') ? '03' : null;
         await client.query(`
             UPDATE fg_serie_comprobante
             SET es_predeterminada = $1, autogenerada = $2,
-                contingencia = $3, fecha_modificacion = CURRENT_TIMESTAMP
-            WHERE id = $4
-        `, [cambios.es_predeterminada, cambios.autogenerada, cambios.contingencia, id]);
+                contingencia = $3, tipo_documento_referencia = $4,
+                serie_pos = $5, fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $6
+        `, [
+            cambios.es_predeterminada, cambios.autogenerada, cambios.contingencia,
+            tipoDocumentoReferencia, cambios.serie_pos, id
+        ]);
         const despues = {
             ...actual,
             es_predeterminada: cambios.es_predeterminada,
             autogenerada: cambios.autogenerada,
-            contingencia: cambios.contingencia
+            contingencia: cambios.contingencia,
+            tipo_documento_referencia: tipoDocumentoReferencia,
+            serie_pos: cambios.serie_pos
         };
         await configService.registrarAuditoria(client, {
             username, entidad: 'SERIE_COMPROBANTE', accion: 'EDITAR_SERIE',
@@ -218,6 +257,9 @@ exports.confirmarProduccion = async (id, datos, username, ipDireccion) => {
         const actualResult = await client.query('SELECT * FROM fg_serie_comprobante WHERE id = $1 FOR UPDATE', [id]);
         if (actualResult.rowCount === 0) throw new Error('SERIE_NO_ENCONTRADA');
         const actual = actualResult.rows[0];
+        if (actual.proveedor_emision !== 'NUBEFACT' || actual.entorno_emision !== 'PRODUCCION') {
+            throw new Error('SERIE_NO_APTA_PRODUCCION');
+        }
         if (!actual.activo || !actual.es_predeterminada || !actual.autogenerada) {
             throw new Error('SERIE_NO_APTA_PRODUCCION');
         }
@@ -263,3 +305,5 @@ exports.confirmarProduccion = async (id, datos, username, ipDireccion) => {
         throw error;
     } finally { client.release(); }
 };
+
+exports._private = { migracionNubefactAplicada, COLUMNAS_NUBEFACT };

@@ -16,7 +16,7 @@ const request = (overrides = {}) => ({
     body: {
         planta_key: '201', tipo_comprobante: 'FACTURA', serie: 'FE99',
         ultimo_numero: 0, es_predeterminada: false, autogenerada: true,
-        contingencia: false, activo: true, ...overrides
+        contingencia: false, activo: true, entorno_emision: 'DEMO', ...overrides
     },
     user: { username: 'TEST' }, ip: '127.0.0.1'
 });
@@ -61,6 +61,13 @@ test('acepta las notas por tipo de comprobante de referencia como series adminis
     } finally {
         seriesService.crear = crearOriginal;
     }
+});
+
+test('rechaza ambientes de serie distintos de DEMO o PRODUCCION', async () => {
+    const res = response();
+    await controller.crear(request({ entorno_emision: 'PRUEBAS' }), res);
+    assert.equal(res.statusCode, 400);
+    assert.match(res.payload.message, /entorno inválido/i);
 });
 
 test('rechaza series que no cumplen los cuatro caracteres y el prefijo F/B', async () => {

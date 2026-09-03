@@ -13,6 +13,8 @@ const serie = {
     serie: 'BE02',
     ultimo_numero: 1443,
     autogenerada: true,
+    proveedor_emision: 'NUBEFACT',
+    entorno_emision: 'PRODUCCION',
     confirmada_produccion: true,
     numero_inicial_confirmado: 1443,
     sistema_origen: 'DMS_FACT',
@@ -34,6 +36,9 @@ test('reserva el siguiente correlativo tributario dentro del executor recibido',
     assert.equal(result.numero, 1444);
     assert.equal(result.nroComprobante, 'BE02-00001444');
     assert.match(calls[0].sql, /FOR UPDATE OF s/);
+    assert.match(calls[0].sql, /proveedor_emision = 'NUBEFACT'/);
+    assert.match(calls[0].sql, /entorno_emision = \$3/);
+    assert.deepEqual(calls[0].params, ['201', 'BOLETA', 'PRODUCCION']);
     assert.deepEqual(calls[1].params, [1444, 8, 1443]);
 });
 
@@ -47,10 +52,20 @@ test('no permite usar en producción una serie no confirmada', async () => {
 
 test('detecta una actualización concurrente y no entrega un número ambiguo', async () => {
     let call = 0;
-    const executor = { query: async () => (++call === 1 ? { rowCount: 1, rows: [serie] } : { rowCount: 0, rows: [] }) };
+    const executor = { query: async () => (++call === 1 ? { rowCount: 1, rows: [{ ...serie, entorno_emision: 'DEMO' }] } : { rowCount: 0, rows: [] }) };
     await assert.rejects(
         service.reservarSiguiente({ plantaKey: '201', tipoComprobante: 'BOLETA', environment: 'DEMO' }, executor),
         error => error.code === 'CORRELATIVO_CONCURRENCIA'
+    );
+});
+
+test('rechaza una serie que no sea exclusiva del ambiente solicitado', () => {
+    assert.throws(
+        () => service._private.validarSerieOperativa({
+            ...service._private.mapSerie(serie),
+            entornoEmision: 'DEMO'
+        }, 'PRODUCCION'),
+        error => error.code === 'SERIE_NUBEFACT_NO_EXCLUSIVA'
     );
 });
 

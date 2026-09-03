@@ -38,6 +38,16 @@ const ultimoNumero = (value) => {
     if (!Number.isSafeInteger(result) || result < 0) fallo('El último número debe ser un entero mayor o igual a cero.');
     return result;
 };
+const entorno = (value) => {
+    const result = texto(value, 'Entorno');
+    if (!['DEMO', 'PRODUCCION'].includes(result)) fallo('Entorno inválido.');
+    return result;
+};
+const referenciaPorTipo = (tipoComprobante) => {
+    if (tipoComprobante.endsWith('_FACTURA')) return '01';
+    if (tipoComprobante.endsWith('_BOLETA')) return '03';
+    return null;
+};
 const validarSerie = (value, tipoComprobante) => {
     const serie = texto(value, 'Serie');
     const prefijoEsperado = tipoComprobante === 'FACTURA'
@@ -55,7 +65,9 @@ const responder = (res, error) => {
         SEDE_NO_ENCONTRADA: [404, 'Sede no encontrada.'],
         SERIE_NO_ENCONTRADA: [404, 'Serie no encontrada.'],
         SERIE_DUPLICADA: [409, 'La serie ya existe para esta sede y tipo de comprobante.'],
-        SERIE_PREDETERMINADA_DUPLICADA: [409, 'Ya existe una serie activa predeterminada para esta sede y tipo.'],
+        SERIE_PREDETERMINADA_DUPLICADA: [409, 'Ya existe una serie activa predeterminada para esta sede, tipo, proveedor y entorno.'],
+        SERIE_NUBEFACT_EMPRESA_DUPLICADA: [409, 'La empresa ya tiene registrada esta serie Nubefact para el mismo tipo de comprobante.'],
+        MIGRACION_NUBEFACT_PENDIENTE: [409, 'Primero debe aplicarse la migración tributaria de Nubefact aprobada.'],
         SERIE_NO_CONFIGURADA: [409, 'No existe una serie activa predeterminada para esta sede y tipo.'],
         SERIE_NO_AUTOGENERADA: [409, 'La serie predeterminada no está configurada como autogenerada.'],
         SERIE_NO_APTA_PRODUCCION: [409, 'La serie debe estar activa, predeterminada y autogenerada.'],
@@ -72,10 +84,11 @@ exports.listar = async (req, res) => {
     try {
         const plantaKey = texto(req.query.planta_key, 'Sede');
         const activo = req.query.activo === 'true' ? true : req.query.activo === 'false' ? false : undefined;
-        res.json({ success: true, series: await service.listar({
+        const [series, migracionNubefactAplicada] = await Promise.all([service.listar({
             plantaKey, tipo: tipo(req.query.tipo, true), activo,
             buscar: String(req.query.buscar || '').trim() || null
-        }) });
+        }), service.migracionNubefactAplicada()]);
+        res.json({ success: true, series, migracionNubefactAplicada });
     } catch (error) { responder(res, error); }
 };
 exports.crear = async (req, res) => {
@@ -89,7 +102,10 @@ exports.crear = async (req, res) => {
             es_predeterminada: booleano(req.body.es_predeterminada, 'Predeterminada', false),
             autogenerada: booleano(req.body.autogenerada, 'Autogenerada', true),
             contingencia: booleano(req.body.contingencia, 'Contingencia', false),
-            activo: booleano(req.body.activo, 'Estado', true)
+            activo: booleano(req.body.activo, 'Estado', true),
+            entorno_emision: entorno(req.body.entorno_emision),
+            tipo_documento_referencia: referenciaPorTipo(tipoComprobante),
+            serie_pos: booleano(req.body.serie_pos, 'Serie POS', false)
         }, req.user.username, req.ip);
         res.status(201).json({ success: true, id: serieId, message: 'Serie creada correctamente.' });
     } catch (error) { responder(res, error); }
@@ -99,7 +115,8 @@ exports.editar = async (req, res) => {
         await service.editar(id(req.params.id), {
             es_predeterminada: booleano(req.body.es_predeterminada, 'Predeterminada'),
             autogenerada: booleano(req.body.autogenerada, 'Autogenerada'),
-            contingencia: booleano(req.body.contingencia, 'Contingencia')
+            contingencia: booleano(req.body.contingencia, 'Contingencia'),
+            serie_pos: booleano(req.body.serie_pos, 'Serie POS', false)
         }, req.user.username, req.ip);
         res.json({ success: true, message: 'Serie actualizada correctamente.' });
     } catch (error) { responder(res, error); }

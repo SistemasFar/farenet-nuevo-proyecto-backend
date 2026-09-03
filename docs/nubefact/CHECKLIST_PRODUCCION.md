@@ -3,7 +3,7 @@
 ## Datos y responsables
 
 - [ ] RUC, razón social y dirección verificados por cada empresa.
-- [ ] Ruta y token productivos entregados mediante canal seguro.
+- [ ] Ruta y token DEMO/productivos entregados por separado mediante canal seguro.
 - [ ] Cuenta Nubefact activa y conectada con SUNAT.
 - [ ] Decisión de detracción documentada.
 - [ ] Responsable de Sistemas y responsable administrativo identificados.
@@ -19,13 +19,13 @@
 
 ## Series
 
-- [ ] Serie por RUC, sede y tipo de documento.
-- [ ] Último número de DMS Fact confirmado justo antes del corte.
+- [ ] Serie exclusiva Nubefact por RUC, sede, ambiente y tipo de documento.
+- [ ] Confirmado que la serie Nubefact no se utiliza en DMS Fact ni otro facturador.
+- [ ] Último número real de cada serie confirmado; usar cero sólo si es realmente nueva.
 - [ ] Próximo número revisado por dos personas.
-- [ ] Fecha y hora de corte registrada.
-- [ ] DMS Fact congelado para las series migradas.
+- [ ] Fecha y hora de activación registrada.
 - [ ] Migración `20260902_faregas_nubefact_preparacion.sql` revisada y aplicada.
-- [ ] Series marcadas como confirmadas sólo después de la conciliación.
+- [ ] Sólo las series `NUBEFACT / PRODUCCION` se marcan como confirmadas después de la conciliación.
 
 ## Pruebas
 

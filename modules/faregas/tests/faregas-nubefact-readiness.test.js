@@ -32,3 +32,16 @@ test('no confunde una advertencia tributaria con un bloqueo', () => {
     });
     assert.ok(result.checks.some(item => item.estado === 'ADVERTENCIA'));
 });
+
+test('no duplica el bloqueo de catálogo cuando el resumen usa otra redacción', () => {
+    const result = service._private.construirChecksCertificado({
+        resumen: {
+            ...resumen,
+            items: [{ productoFacturacionId: null }],
+            errores: ['La tarifa seleccionada no tiene un producto de facturación vinculado.']
+        },
+        integracion: { configured: true }
+    });
+    assert.equal(result.checks.filter(item => item.codigo === 'CATALOGO_FISCAL').length, 1);
+    assert.equal(result.checks.filter(item => /producto (fiscal|de facturación)/i.test(item.mensaje)).length, 1);
+});

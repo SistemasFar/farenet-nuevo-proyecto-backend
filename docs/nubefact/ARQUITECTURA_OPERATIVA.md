@@ -7,7 +7,8 @@ Integrar Nubefact sin alterar el flujo de certificados Faregas ni los correlativ
 ## Límites
 
 - `fg_correlativo_certificado` y los rangos DG no forman parte de esta integración.
-- Las series tributarias pertenecen a `fg_serie_comprobante`.
+- Las series tributarias pertenecen a `fg_serie_comprobante` y se aíslan por `proveedor_emision` y `entorno_emision`.
+- El motor V2 sólo acepta series `NUBEFACT`; una fila `LEGACY` nunca es elegible.
 - Los tokens existen únicamente en variables de entorno del backend.
 - Ningún dato fiscal se infiere o inventa.
 - Un error del proveedor no elimina ni modifica el certificado guardado.
@@ -35,3 +36,6 @@ Para producción deben estar simultáneamente habilitados:
 - `NUBEFACT_DETRACCION_DECISION=NO_APLICA`, o implementación SPOT validada.
 
 Mientras cualquiera permanezca cerrado, la emisión productiva debe fallar de forma segura.
+
+Las credenciales también están separadas por ambiente: `NUBEFACT_<CLAVE>_DEMO_*` y
+`NUBEFACT_<CLAVE>_PRODUCCION_*`. El backend nunca devuelve ruta ni token al frontend.

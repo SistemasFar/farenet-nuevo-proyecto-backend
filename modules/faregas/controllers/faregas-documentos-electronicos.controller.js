@@ -26,6 +26,17 @@ const mensajes = {
     EMPRESA_EMISORA_NO_CONFIGURADA: 'La sede no tiene una empresa emisora Nubefact activa.',
     EMPRESA_EMISORA_RUC_INVALIDO: 'El RUC de la empresa emisora no es válido.',
     NUBEFACT_CREDENCIALES_EMPRESA_FALTANTES: 'Faltan la ruta o el token Nubefact de la empresa emisora.',
+    NUBEFACT_CREDENCIALES_RUC_FALTANTE: 'Declare el RUC al que pertenecen la ruta y el token Nubefact.',
+    NUBEFACT_CREDENCIALES_RUC_NO_COINCIDE: 'El RUC de las credenciales Nubefact no coincide con la empresa emisora.',
+    NUBEFACT_ENTORNO_INVALIDO: 'El ambiente Nubefact debe ser DEMO o PRODUCCION.',
+    NUBEFACT_PRODUCCION_NO_CONFIRMADA: 'La activación productiva de Nubefact no fue confirmada.',
+    NUBEFACT_ENVIO_SUNAT_DESHABILITADO: 'El envío productivo a SUNAT continúa deshabilitado.',
+    NUBEFACT_DETRACCION_PENDIENTE_CONFIRMACION: 'La decisión tributaria sobre detracción continúa pendiente.',
+    NUBEFACT_DETRACCION_CONFIGURACION_PENDIENTE: 'La detracción aplica, pero sus datos SPOT aún no están implementados.',
+    MIGRACION_NUBEFACT_PENDIENTE: 'Falta aplicar la migración tributaria de Nubefact.',
+    ENTORNO_NUBEFACT_INVALIDO: 'El ambiente de la serie Nubefact no es válido.',
+    SERIE_NUBEFACT_NO_EXCLUSIVA: 'La serie no es exclusiva de Nubefact o pertenece a otro ambiente.',
+    SERIE_PRODUCCION_NO_CONFIRMADA: 'La serie tributaria todavía no fue confirmada para producción.',
     NUBEFACT_RUTA_EMPRESA_INVALIDA: 'La ruta Nubefact de la empresa emisora no es válida.'
 };
 

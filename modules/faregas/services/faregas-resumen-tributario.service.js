@@ -41,7 +41,7 @@ const construirResumen = ({ contexto, detalle, descuento, pagos, serie }) => {
     const condicionPago = mayusculas(contexto.condicion_pago || contexto.formapago_key || 'CONTADO');
     const medioPago = texto(contexto.medio_pago) || mediosPago(pagos) || null;
     const credenciales = contexto.credencial_clave
-        ? integrationsConfig.nubefact.obtenerCredenciales(contexto.credencial_clave)
+        ? integrationsConfig.nubefact.obtenerCredenciales(contexto.credencial_clave, contexto.entorno_facturador)
         : null;
 
     agregarSi(errores, !facturacionGuardada, 'Guarde los datos de facturación antes de emitir.');
@@ -64,6 +64,9 @@ const construirResumen = ({ contexto, detalle, descuento, pagos, serie }) => {
     agregarSi(advertencias, !integrationsConfig.nubefact.enabled, 'Nubefact está deshabilitado en el backend.');
     agregarSi(advertencias, integrationsConfig.nubefact.simulationEnabled, 'El backend está en modo simulación y no enviará el comprobante a Nubefact/SUNAT.');
     agregarSi(advertencias, Boolean(contexto.credencial_clave) && !(credenciales?.apiUrl && credenciales?.token), 'La empresa emisora no tiene ruta y token Nubefact disponibles en variables de entorno.');
+    agregarSi(advertencias, Boolean(credenciales?.apiUrl && credenciales?.token)
+        && credenciales.rucEmisor !== texto(contexto.ruc_emisor),
+    'El RUC declarado para las credenciales Nubefact no coincide con la empresa emisora.');
 
     const item = {
         orden: Number(detalle?.orden || 1),
@@ -102,7 +105,8 @@ const construirResumen = ({ contexto, detalle, descuento, pagos, serie }) => {
             entorno: mayusculas(contexto.entorno_facturador || integrationsConfig.nubefact.environment || 'DEMO'),
             habilitada: integrationsConfig.nubefact.enabled,
             simulacion: integrationsConfig.nubefact.simulationEnabled,
-            configurada: Boolean(credenciales?.apiUrl && credenciales?.token)
+            configurada: Boolean(credenciales?.apiUrl && credenciales?.token
+                && credenciales.rucEmisor === texto(contexto.ruc_emisor))
         },
         comprobante: {
             tipo: tipoComprobante || null,
@@ -228,11 +232,11 @@ const obtenerPagos = async (ordenPagoId, queryable) => {
 
 const obtenerSerie = async (plantaKey, tipoComprobante, queryable) => {
     if (integrationsConfig.nubefact.correlativosV2Enabled) {
-        const serie = await correlativosNubefactService.obtenerSeriePrevista(
+        const serie = await correlativosNubefactService.obtenerSeriePrevista({
             plantaKey,
             tipoComprobante,
-            queryable
-        );
+            environment: integrationsConfig.nubefact.environment
+        }, queryable);
         return tipoComprobante === 'FACTURA'
             ? { seriefactura: serie.serie, fuente: 'FG_SERIE_COMPROBANTE' }
             : { serieboleta: serie.serie, fuente: 'FG_SERIE_COMPROBANTE' };

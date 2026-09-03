@@ -22,13 +22,39 @@ const normalizarClaveCredencial = (value) => String(value || '')
   .replace(/_+/g, '_')
   .replace(/^_|_$/g, '');
 
-const obtenerCredencialesNubefact = (credencialClave) => {
-  const clave = normalizarClaveCredencial(credencialClave);
-  const prefijo = clave ? `NUBEFACT_${clave}` : '';
-  const apiUrl = prefijo ? process.env[`${prefijo}_API_URL`] || '' : '';
-  const token = prefijo ? process.env[`${prefijo}_TOKEN`] || '' : '';
+const normalizarEntornoNubefact = (value = 'DEMO') => {
+  const entorno = String(value || '').trim().toUpperCase();
+  if (entorno === 'PRODUCTION') return 'PRODUCCION';
+  return entorno || 'DEMO';
+};
 
-  if (apiUrl && token) return Object.freeze({ apiUrl, token, source: prefijo });
+const obtenerCredencialesNubefact = (credencialClave, environment = 'DEMO') => {
+  const clave = normalizarClaveCredencial(credencialClave);
+  const entorno = normalizarEntornoNubefact(environment);
+  const prefijo = clave ? `NUBEFACT_${clave}_${entorno}` : '';
+  const apiUrl = prefijo ? String(process.env[`${prefijo}_API_URL`] || '').trim() : '';
+  const token = prefijo ? String(process.env[`${prefijo}_TOKEN`] || '').trim() : '';
+  const rucEmisor = prefijo ? String(process.env[`${prefijo}_RUC`] || '').trim() : '';
+
+  if (apiUrl && token) return Object.freeze({ apiUrl, token, rucEmisor, source: prefijo });
+
+  // Compatibilidad limitada para instalaciones DEMO anteriores. En producción
+  // las credenciales siempre deben estar separadas por ambiente.
+  const permitirClaveLegacy = entorno === 'DEMO'
+    && getBooleanEnv('NUBEFACT_ALLOW_LEGACY_CREDENTIAL_KEYS', false);
+  const prefijoLegacy = clave ? `NUBEFACT_${clave}` : '';
+  const legacyApiUrl = permitirClaveLegacy
+    ? String(process.env[`${prefijoLegacy}_API_URL`] || '').trim()
+    : '';
+  const legacyToken = permitirClaveLegacy
+    ? String(process.env[`${prefijoLegacy}_TOKEN`] || '').trim()
+    : '';
+  const legacyRuc = permitirClaveLegacy
+    ? String(process.env[`${prefijoLegacy}_RUC`] || '').trim()
+    : '';
+  if (legacyApiUrl && legacyToken) {
+    return Object.freeze({ apiUrl: legacyApiUrl, token: legacyToken, rucEmisor: legacyRuc, source: prefijoLegacy });
+  }
 
   const permitirGlobal = getBooleanEnv('NUBEFACT_ALLOW_GLOBAL_FALLBACK', false);
   if (permitirGlobal && process.env.NUBEFACT_API_URL && process.env.NUBEFACT_TOKEN) {
@@ -39,14 +65,14 @@ const obtenerCredencialesNubefact = (credencialClave) => {
     });
   }
 
-  return Object.freeze({ apiUrl: '', token: '', source: prefijo || null });
+  return Object.freeze({ apiUrl: '', token: '', rucEmisor: '', source: prefijo || null });
 };
 
 const nubefactEnabled = getBooleanEnv('NUBEFACT_ENABLED', false);
 const nubefactSimulationEnabled = !nubefactEnabled
   && process.env.NODE_ENV !== 'production'
   && getBooleanEnv('NUBEFACT_SIMULATION_ENABLED', false);
-const nubefactEnvironment = String(process.env.NUBEFACT_ENVIRONMENT || 'DEMO').trim().toUpperCase();
+const nubefactEnvironment = normalizarEntornoNubefact(process.env.NUBEFACT_ENVIRONMENT || 'DEMO');
 const nubefactDetractionDecision = String(
   process.env.NUBEFACT_DETRACCION_DECISION || 'PENDIENTE'
 ).trim().toUpperCase();

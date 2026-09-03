@@ -29,13 +29,17 @@ const pool = new Pool({
     connectionTimeoutMillis: 10000
 });
 
-pool.query('SELECT NOW()', (err) => {
-    if (err) {
-        console.log('❌ ERROR DETALLADO DE POSTGRES:');
-        console.error(err);
-    } else {
-        console.log('✅ CONEXIÓN EXITOSA A POSTGRESQL');
-    }
-});
+// La comprobación de arranque no debe abrir conexiones laterales durante las
+// pruebas unitarias: cada worker de node:test importa este módulo por separado.
+if (process.env.NODE_ENV !== 'test') {
+    pool.query('SELECT NOW()', (err) => {
+        if (err) {
+            console.log('❌ ERROR DETALLADO DE POSTGRES:');
+            console.error(err);
+        } else {
+            console.log('✅ CONEXIÓN EXITOSA A POSTGRESQL');
+        }
+    });
+}
 
 module.exports = pool;

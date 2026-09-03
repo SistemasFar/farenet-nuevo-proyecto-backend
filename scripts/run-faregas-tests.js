@@ -33,7 +33,7 @@ if (files.length === 0) {
 
 const result = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...files], {
     stdio: 'inherit',
-    env: process.env
+    env: { ...process.env, NODE_ENV: 'test' }
 });
 
 if (result.error) {

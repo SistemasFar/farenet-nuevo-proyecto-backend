@@ -23,6 +23,23 @@ test('no aplica los seguros productivos en DEMO', () => {
     }));
 });
 
+test('rechaza un nombre de ambiente ambiguo', () => {
+    assert.throws(
+        () => validar({ environment: 'PROD' }),
+        error => error.code === 'NUBEFACT_ENTORNO_INVALIDO'
+    );
+});
+
+test('el estado público sólo marca credenciales si su RUC coincide', () => {
+    const row = { entorno: 'DEMO', empresa_key: 'CAMBRIDGE', ruc_emisor: '20600444531' };
+    assert.equal(configService._private.contextoPublico(row, {
+        apiUrl: 'https://api.example.test', token: 'secreto', rucEmisor: '20521536463'
+    }).configured, false);
+    assert.equal(configService._private.contextoPublico(row, {
+        apiUrl: 'https://api.example.test', token: 'secreto', rucEmisor: '20600444531'
+    }).configured, true);
+});
+
 test('bloquea producción sin confirmación explícita', () => {
     assert.throws(
         () => validar({ productionConfirmed: false }),
