@@ -15,20 +15,22 @@ const obtenerEstadoConfiguracion = (credentials = null) => ({
 
 const normalizarRespuesta = (response, options = {}) => {
   const body = response.data || {};
-  const aceptada = body.aceptada_por_sunat === true || body.aceptada_por_sunat === 'true';
+  const aceptadaSunat = body.aceptada_por_sunat === true || body.aceptada_por_sunat === 'true';
   const httpOk = response.status >= 200 && response.status < 300;
   const tieneTicket = Boolean(body.sunat_ticket_numero || body.ticket || body.numero_ticket);
+  
+  // NUBEFACT DEMO FIX: Si no hay errores y hay enlace (o ya aceptó SUNAT), consideramos aceptada.
+  const aceptadaNubefact = httpOk && !body.errors && (aceptadaSunat || Boolean(body.enlace) || Boolean(body.enlace_del_pdf));
+  
   const procesando = httpOk
     && options.responseMode === 'ASYNC_TICKET'
-    && !aceptada
+    && !aceptadaNubefact
     && tieneTicket
     && !body.sunat_responsecode
     && !body.errors;
   return {
-    status: httpOk && aceptada ? 'ACCEPTED' : procesando ? 'PROCESSING' : 'REJECTED',
-    reason: httpOk
-      ? (aceptada ? 'ACCEPTED_BY_SUNAT' : procesando ? 'PENDING_SUNAT' : 'REJECTED_BY_PROVIDER')
-      : 'HTTP_ERROR',
+    status: aceptadaNubefact ? 'ACCEPTED' : procesando ? 'PROCESSING' : 'REJECTED',
+    reason: aceptadaNubefact ? 'ACCEPTED_BY_PROVIDER' : procesando ? 'PENDING_SUNAT' : (httpOk ? 'REJECTED_BY_PROVIDER' : 'HTTP_ERROR'),
     provider: 'NUBEFACT',
     httpStatus: response.status,
     data: body
