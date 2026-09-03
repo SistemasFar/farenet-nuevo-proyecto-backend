@@ -68,56 +68,19 @@ const validarDatosNota = (tipo, data, facturacion) => {
 const reservarSerieNota = async (client, facturacion, tipo) => {
     const referencia = facturacion.tipo_comprobante === 'FACTURA' ? 'FACTURA' : 'BOLETA';
     const tipoAdmin = `NOTA_${tipo}_${referencia}`;
-    if (integrationsConfig.nubefact.correlativosV2Enabled) {
-        const reserva = await correlativosNubefactService.reservarSiguiente({
-            plantaKey: facturacion.planta_key,
-            tipoComprobante: tipoAdmin,
-            environment: facturacion.entorno_facturador || integrationsConfig.nubefact.environment
-        }, client);
-        return {
-            serie: reserva.serie,
-            numero: reserva.numero,
-            serieComprobanteId: reserva.id
-        };
+    if (!integrationsConfig.nubefact.correlativosV2Enabled) {
+        throw errorNegocio('MOTOR_SERIES_V2_DESHABILITADO', 503, 'El motor de series legacy fue retirado. Habilite V2.');
     }
-    if (tipo === 'CREDITO') {
-        const serieCol = referencia === 'FACTURA' ? 'serienotacreditofactura' : 'serienotacreditoboleta';
-        const numeroCol = referencia === 'FACTURA' ? 'nroactualnotacreditofactura' : 'nroactualnotacreditoboleta';
-        const result = await client.query(`
-            SELECT * FROM seriedocumentobase
-            WHERE planta_key = $1 AND COALESCE(estado, TRUE) = TRUE
-            ORDER BY id DESC LIMIT 1 FOR UPDATE
-        `, [facturacion.planta_key]);
-        if (result.rowCount === 0) throw errorNegocio('SERIE_NOTA_NO_CONFIGURADA', 409);
-        const serie = String(result.rows[0][serieCol] || '').trim().toUpperCase();
-        const numero = Number(result.rows[0][numeroCol] || 0) + 1;
-        if (!/^[FB][A-Z0-9]{3}$/.test(serie) || !Number.isSafeInteger(numero) || numero <= 0) {
-            throw errorNegocio('SERIE_NOTA_INVALIDA', 409);
-        }
-        await client.query(`UPDATE seriedocumentobase SET ${numeroCol} = $1, fechmodi = CURRENT_TIMESTAMP WHERE id = $2`, [numero, result.rows[0].id]);
-        const admin = await client.query(`
-            UPDATE fg_serie_comprobante SET ultimo_numero = GREATEST(ultimo_numero, $1),
-                fecha_modificacion = CURRENT_TIMESTAMP
-            WHERE planta_key = $2 AND tipo_comprobante = $3 AND UPPER(BTRIM(serie)) = $4
-            RETURNING id
-        `, [numero, facturacion.planta_key, tipoAdmin, serie]);
-        return { serie, numero, serieComprobanteId: admin.rows[0]?.id || null };
-    }
-
-    const result = await client.query(`
-        SELECT * FROM fg_serie_comprobante
-        WHERE planta_key = $1 AND tipo_comprobante = $2
-          AND activo = TRUE AND es_predeterminada = TRUE
-        ORDER BY id LIMIT 1 FOR UPDATE
-    `, [facturacion.planta_key, tipoAdmin]);
-    if (result.rowCount === 0) throw errorNegocio('SERIE_NOTA_NO_CONFIGURADA', 409);
-    const serie = String(result.rows[0].serie || '').trim().toUpperCase();
-    const numero = Number(result.rows[0].ultimo_numero || 0) + 1;
-    if (!/^[FB][A-Z0-9]{3}$/.test(serie) || !Number.isSafeInteger(numero) || numero <= 0) {
-        throw errorNegocio('SERIE_NOTA_INVALIDA', 409);
-    }
-    await client.query('UPDATE fg_serie_comprobante SET ultimo_numero = $1, fecha_modificacion = CURRENT_TIMESTAMP WHERE id = $2', [numero, result.rows[0].id]);
-    return { serie, numero, serieComprobanteId: result.rows[0].id };
+    const reserva = await correlativosNubefactService.reservarSiguiente({
+        plantaKey: facturacion.planta_key,
+        tipoComprobante: tipoAdmin,
+        environment: facturacion.entorno_facturador || integrationsConfig.nubefact.environment
+    }, client);
+    return {
+        serie: reserva.serie,
+        numero: reserva.numero,
+        serieComprobanteId: reserva.id
+    };
 };
 
 const registrarOperacion = async (executor, {

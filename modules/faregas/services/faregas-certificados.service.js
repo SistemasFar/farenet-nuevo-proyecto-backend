@@ -1409,7 +1409,7 @@ exports.validarEmision = async (id, userContext) => {
     );
     if (rFacturacion.rowCount === 0) {
         pushError('facturacion', 'general', 'FACTURACION_FALTANTE', 'Faltan los datos de facturacion');
-    } else if (!facturacionSimulada && (rFacturacion.rows[0].estado !== 'ACEPTADO' || rFacturacion.rows[0].aceptada_sunat !== true)) {
+    } else if (!facturacionSimulada && !(rFacturacion.rows[0].estado === 'ACEPTADO' && rFacturacion.rows[0].aceptada_sunat === true) && rFacturacion.rows[0].estado !== 'PENDIENTE_SUNAT') {
         pushError('facturacion', 'estado', 'FACTURACION_NO_EMITIDA', 'El comprobante debe estar aceptado por Nubefact/SUNAT antes de emitir el certificado');
     }
 
@@ -1794,3 +1794,4 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
         throw new Error('FORMATO_NUMERO_NO_CONFIGURADO');
     }
 };
+

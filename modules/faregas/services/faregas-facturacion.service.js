@@ -158,9 +158,7 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
             'SELECT * FROM fg_facturacion WHERE certificado_id = $1 FOR UPDATE',
             [certificadoId]
         );
-        if (actual.rowCount > 0 && ['PENDIENTE', 'ACEPTADO', 'ERROR'].includes(actual.rows[0].estado)) {
-            throw errorNegocio('FACTURACION_NO_EDITABLE', 409);
-        }
+        if (actual.rowCount > 0 && ['PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'ERROR'].includes(actual.rows[0].estado)) { const cuotas = await db.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id =  ORDER BY numero_cuota', [actual.rows[0].id]); return respuestaPublica(actual.rows[0], cuotas.rows); }
 
         const result = await client.query(
             `INSERT INTO fg_facturacion (
@@ -191,6 +189,7 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
                 sunat_responsecode = NULL,
                 sunat_soap_error = NULL,
                 respuesta_proveedor = NULL,
+                intentos = 0,
                 usuario_modificacion = EXCLUDED.usuario_creacion,
                 fecha_modificacion = CURRENT_TIMESTAMP
              RETURNING *`,
@@ -215,6 +214,7 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
             ]
         );
 
+        await client.query('DELETE FROM fg_facturacion_intento WHERE facturacion_id = $1', [result.rows[0].id]);
         await client.query('DELETE FROM fg_facturacion_cuota WHERE facturacion_id = $1', [result.rows[0].id]);
         for (const cuota of normalizada.cuotas) {
             await client.query(
@@ -277,7 +277,7 @@ const reservarEmision = async (certificadoId, userContext) => {
             && !validarCuotasContraTotal(cuotasResult.rows, orden.saldo_pendiente)) {
             throw errorNegocio('CUOTAS_NO_COINCIDEN_CON_SALDO', 409);
         }
-        if (facturacion.estado === 'ACEPTADO') {
+        if (['ACEPTADO', 'PENDIENTE_SUNAT'].includes(facturacion.estado)) {
             await client.query('COMMIT');
             return { yaAceptada: true, facturacion };
         }
@@ -310,50 +310,18 @@ const reservarEmision = async (certificadoId, userContext) => {
         }
 
         if (!facturacion.serie || facturacion.numero === null) {
-            if (integrationsConfig.nubefact.correlativosV2Enabled) {
-                const reservaCorrelativo = await correlativosNubefactService.reservarSiguiente({
-                    plantaKey: certificado.planta_key,
-                    tipoComprobante: facturacion.tipo_comprobante,
-                    environment: configuracionEmisor.environment
-                }, client);
-                facturacion.serie = reservaCorrelativo.serie;
-                facturacion.numero = reservaCorrelativo.numero;
-                facturacion.nro_comprobante = reservaCorrelativo.nroComprobante;
-                facturacion.serie_comprobante_id = reservaCorrelativo.id;
-            } else {
-                // Compatibilidad temporal: conserva exactamente el flujo anterior
-                // mientras el motor tributario V2 permanezca deshabilitado.
-                const serieResult = await client.query(
-                    `SELECT * FROM seriedocumentobase
-                     WHERE planta_key = $1 AND COALESCE(estado, true) = true
-                     ORDER BY id DESC LIMIT 1 FOR UPDATE`,
-                    [certificado.planta_key]
-                );
-                if (serieResult.rowCount === 0) throw errorNegocio('SERIE_COMPROBANTE_NO_CONFIGURADA', 409);
-                const serieBase = serieResult.rows[0];
-                const esFactura = facturacion.tipo_comprobante === 'FACTURA';
-                const serie = String(esFactura ? serieBase.seriefactura : serieBase.serieboleta).trim().toUpperCase();
-                const numero = Number(esFactura ? serieBase.nroactualfactura : serieBase.nroactualboleta) + 1;
-                if (!validarSerieNubefact(serie, facturacion.tipo_comprobante)
-                    || !Number.isSafeInteger(numero) || numero <= 0) {
-                    throw errorNegocio('SERIE_COMPROBANTE_INVALIDA', 409);
-                }
-                await client.query(
-                    `UPDATE seriedocumentobase
-                     SET ${esFactura ? 'nroactualfactura' : 'nroactualboleta'} = $1, fechmodi = CURRENT_TIMESTAMP
-                     WHERE id = $2`,
-                    [numero, serieBase.id]
-                );
-                await client.query(
-                    `UPDATE fg_serie_comprobante
-                     SET ultimo_numero = GREATEST(ultimo_numero, $1), fecha_modificacion = CURRENT_TIMESTAMP
-                     WHERE planta_key = $2 AND tipo_comprobante = $3 AND UPPER(BTRIM(serie)) = $4`,
-                    [numero, certificado.planta_key, facturacion.tipo_comprobante, serie]
-                );
-                facturacion.serie = serie;
-                facturacion.numero = numero;
-                facturacion.nro_comprobante = `${serie}-${String(numero).padStart(8, '0')}`;
+            if (!integrationsConfig.nubefact.correlativosV2Enabled) {
+                throw errorNegocio('MOTOR_SERIES_V2_DESHABILITADO', 503, 'El motor de series legacy fue retirado. Habilite V2.');
             }
+            const reservaCorrelativo = await correlativosNubefactService.reservarSiguiente({
+                plantaKey: certificado.planta_key,
+                tipoComprobante: facturacion.tipo_comprobante,
+                environment: configuracionEmisor.environment
+            }, client);
+            facturacion.serie = reservaCorrelativo.serie;
+            facturacion.numero = reservaCorrelativo.numero;
+            facturacion.nro_comprobante = reservaCorrelativo.nroComprobante;
+            facturacion.serie_comprobante_id = reservaCorrelativo.id;
         }
 
         const codigoUnico = facturacion.codigo_unico || crearCodigoUnico(facturacion.id);
@@ -472,7 +440,7 @@ const consultarEmisionIncierta = async (proveedor, reserva, resultadoEmision) =>
     }, { credentials: reserva.credentials });
 
     return {
-        resultado: consulta.status === 'ACCEPTED' ? consulta : resultadoEmision,
+        resultado: ['ACCEPTED', 'PENDING_SUNAT'].includes(consulta.status) ? consulta : resultadoEmision,
         consulta
     };
 };
@@ -496,8 +464,12 @@ exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}
         }
         : respuesta;
     const aceptada = resultado.status === 'ACCEPTED';
+    const pendienteSunat = resultado.status === 'PENDING_SUNAT';
     const rechazada = resultado.status === 'REJECTED';
-    const estado = aceptada ? 'ACEPTADO' : rechazada ? 'RECHAZADO' : 'ERROR';
+    let estado = 'ERROR';
+    if (aceptada) estado = 'ACEPTADO';
+    else if (pendienteSunat) estado = 'PENDIENTE_SUNAT';
+    else if (rechazada) estado = 'RECHAZADO';
     const body = respuesta || {};
 
     const client = await db.connect();
@@ -570,7 +542,7 @@ exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}
         db.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [reserva.facturacion.id])
     ]);
     const facturacion = respuestaPublica(final.rows[0], cuotasFinales.rows);
-    if (!aceptada) {
+    if (!aceptada && !pendienteSunat) {
         throw errorNegocio(rechazada ? 'NUBEFACT_RECHAZADO' : 'NUBEFACT_ERROR', rechazada ? 422 : 502, {
             facturacion,
             motivo: body.sunat_description || body.errors || resultado.reason
@@ -585,3 +557,5 @@ exports._private = {
     esPosibleDuplicadoNubefact,
     consultarEmisionIncierta
 };
+
+
