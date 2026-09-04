@@ -75,7 +75,7 @@ test('la anulacion asincrona conserva el ticket como pendiente de SUNAT', async 
         tipoDeComprobante: 1, serie: 'FE01', numero: 42,
         motivo: 'ERROR DE EMISION', codigoUnico: 'FGA-42'
     }, { credentials, httpClient, ignoreEnabled: true });
-    assert.equal(resultado.status, 'PROCESSING');
+    assert.equal(resultado.status, 'PENDING_SUNAT');
     assert.equal(resultado.reason, 'PENDING_SUNAT');
     assert.equal(payloadEnviado.operacion, 'generar_anulacion');
     assert.equal(payloadEnviado.codigo_unico, 'FGA-42');

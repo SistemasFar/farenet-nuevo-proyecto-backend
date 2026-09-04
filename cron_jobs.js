@@ -1,7 +1,8 @@
 const cron = require('node-cron');
 const pool = require('./config/database');
+const { reconciliarPendientesSunat } = require('./modules/faregas/services/faregas-nubefact-cron.service');
 
-// Se ejecuta todos los días a las 3:00 AM
+// Se ejecuta todos los d�as a las 3:00 AM
 const startCronJobs = () => {
   cron.schedule('0 3 * * *', async () => {
     console.log('[CRON] Iniciando recolector de basura de borradores...', new Date().toLocaleString());
@@ -9,8 +10,7 @@ const startCronJobs = () => {
     try {
       await client.query('BEGIN');
       
-
-      // Buscar inspecciones en PROCESO que tengan más de 24 horas y anularlas (ANU) o eliminarlas.
+      // Buscar inspecciones en PROCESO  que tengan m�s de 24 horas y anularlas (ANU) o eliminarlas.
       // Para replicar el comportamiento antiguo limpio, las marcaremos como ANU.
       const updateInspecciones = await client.query(`
         UPDATE inspeccion 
@@ -18,7 +18,7 @@ const startCronJobs = () => {
         WHERE inspeccionestado_key = 'PROCESO' 
           AND fechcreacion < NOW() - INTERVAL '1 day'
       `);
-      console.log(`[CRON] ${updateInspecciones.rowCount} inspecciones huérfanas en PROCESO marcadas como ANULADAS.`);
+      console.log(`[CRON] ${updateInspecciones.rowCount} inspecciones hu�rfanas en PROCESO marcadas como ANULADAS.`);
 
       await client.query('COMMIT');
     } catch (err) {
@@ -28,6 +28,13 @@ const startCronJobs = () => {
       client.release();
     }
     console.log('[CRON] Recolector de basura finalizado.');
+  });
+
+  // Se ejecuta cada 10 minutos
+  cron.schedule('*/10 * * * *', async () => {
+    console.log('[CRON] Iniciando reconciliador SUNAT...', new Date().toLocaleString());
+    await reconciliarPendientesSunat();
+    console.log('[CRON] Reconciliador SUNAT finalizado.');
   });
 };
 

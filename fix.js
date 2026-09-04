@@ -1,1 +1,0 @@
-const db = require('./config/database'); db.query(UPDATE fg_facturacion SET estado = 'PENDIENTE_SUNAT' WHERE certificado_id IN (215, 224)).then(res => { console.log('Updated', res.rowCount); process.exit(0); });
