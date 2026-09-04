@@ -92,6 +92,7 @@ const config = Object.freeze({
     enviarSunat: getBooleanEnv('NUBEFACT_ENVIAR_SUNAT', false),
     enviarCliente: getBooleanEnv('NUBEFACT_ENVIAR_CLIENTE', false),
     correlativosV2Enabled: getBooleanEnv('NUBEFACT_CORRELATIVOS_V2_ENABLED', false),
+    cronReconciliationEnabled: getBooleanEnv('NUBEFACT_RECONCILIATION_ENABLED', false),
     obtenerCredenciales: obtenerCredencialesNubefact
   })
 });

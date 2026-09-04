@@ -32,9 +32,14 @@ const startCronJobs = () => {
 
   // Se ejecuta cada 10 minutos
   cron.schedule('*/10 * * * *', async () => {
-    console.log('[CRON] Iniciando reconciliador SUNAT...', new Date().toLocaleString());
-    await reconciliarPendientesSunat();
-    console.log('[CRON] Reconciliador SUNAT finalizado.');
+    const integrationsConfig = require('./config/integrations.config');
+    if (integrationsConfig.nubefact.cronReconciliationEnabled) {
+      console.log('[CRON] Iniciando reconciliador SUNAT...', new Date().toLocaleString());
+      await reconciliarPendientesSunat();
+      console.log('[CRON] Reconciliador SUNAT finalizado.');
+    } else {
+      console.log('[CRON] Reconciliador SUNAT deshabilitado por configuracion.', new Date().toLocaleString());
+    }
   });
 };
 
