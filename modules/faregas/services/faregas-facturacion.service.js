@@ -160,6 +160,7 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
         );
         if (actual.rowCount > 0 && ['PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'ERROR'].includes(actual.rows[0].estado)) {
             const cuotas = await client.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [actual.rows[0].id]);
+            await client.query("COMMIT");
             return respuestaPublica(actual.rows[0], cuotas.rows);
         }
 
