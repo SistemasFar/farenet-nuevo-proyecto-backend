@@ -17,6 +17,8 @@ const {
 const {
     construirPayloadNubefact,
     limpiarRespuestaProveedor,
+    mapearEstadoProveedor,
+    mapearAceptacionSunat,
     crearCodigoUnico
 } = require('../integrations/nubefact-faregas.adapter');
 
@@ -467,13 +469,10 @@ exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}
             consulta_recuperacion: limpiarRespuestaProveedor(recuperacion.consulta.data)
         }
         : respuesta;
-    const aceptada = resultado.status === 'ACCEPTED';
+    const aceptada = mapearAceptacionSunat(resultado);
     const pendienteSunat = resultado.status === 'PENDING_SUNAT';
     const rechazada = resultado.status === 'REJECTED';
-    let estado = 'ERROR';
-    if (aceptada) estado = 'ACEPTADO';
-    else if (pendienteSunat) estado = 'PENDIENTE_SUNAT';
-    else if (rechazada) estado = 'RECHAZADO';
+    const estado = mapearEstadoProveedor(resultado, 'FACTURACION');
     const body = respuesta || {};
 
     const client = await db.connect();
@@ -525,7 +524,7 @@ exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}
                 reserva.intentoId
             ]
         );
-        if (aceptada && reserva.facturacion.operacion_id) {
+        if (aceptada === true && reserva.facturacion.operacion_id) {
             await client.query(`
                 UPDATE fg_operacion_comercial
                 SET estado = 'FACTURADO', usuario_modificacion = $2,

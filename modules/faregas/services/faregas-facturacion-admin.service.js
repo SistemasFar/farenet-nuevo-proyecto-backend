@@ -1,7 +1,7 @@
 const db = require('../../../config/database');
 const authService = require('./faregas-auth.service');
 
-const ESTADOS = new Set(['BORRADOR', 'PENDIENTE', 'ACEPTADO', 'RECHAZADO', 'ERROR', 'ANULADO']);
+const ESTADOS = new Set(['BORRADOR', 'PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'RECHAZADO', 'ERROR', 'ANULADO']);
 const FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 const enteroAcotado = (value, fallback, min, max) => {

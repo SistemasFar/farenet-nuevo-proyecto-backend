@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const pool = require('./config/database');
 const { reconciliarPendientesSunat } = require('./modules/faregas/services/faregas-nubefact-cron.service');
+const { reconciliarNotasPendientesSunat } = require('./modules/faregas/services/faregas-nubefact-notas-cron.service');
 
 // Se ejecuta todos los d�as a las 3:00 AM
 const startCronJobs = () => {
@@ -35,8 +36,14 @@ const startCronJobs = () => {
     const integrationsConfig = require('./config/integrations.config');
     if (integrationsConfig.nubefact.cronReconciliationEnabled) {
       console.log('[CRON] Iniciando reconciliador SUNAT...', new Date().toLocaleString());
-      await reconciliarPendientesSunat();
-      console.log('[CRON] Reconciliador SUNAT finalizado.');
+      try {
+        const resultado = await reconciliarPendientesSunat();
+        console.log('[CRON] Reconciliador SUNAT Facturas/Boletas finalizado.', resultado);
+        const resultadoNotas = await reconciliarNotasPendientesSunat();
+        console.log('[CRON] Reconciliador SUNAT Notas de Credito finalizado.', resultadoNotas);
+      } catch (error) {
+        console.error('[CRON] Fallo no controlado en reconciliador SUNAT:', error.message);
+      }
     } else {
       console.log('[CRON] Reconciliador SUNAT deshabilitado por configuracion.', new Date().toLocaleString());
     }

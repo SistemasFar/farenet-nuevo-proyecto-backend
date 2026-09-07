@@ -1,4 +1,4 @@
-﻿-- 20260904_faregas_facturacion_estado_pendiente_sunat.sql
+-- 20260904_faregas_facturacion_estado_pendiente_sunat.sql
 
 DO $$ 
 DECLARE

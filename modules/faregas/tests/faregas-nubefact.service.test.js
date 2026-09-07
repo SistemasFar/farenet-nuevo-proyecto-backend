@@ -81,6 +81,59 @@ test('la anulacion asincrona conserva el ticket como pendiente de SUNAT', async 
     assert.equal(payloadEnviado.codigo_unico, 'FGA-42');
 });
 
+test('no confunde credenciales inválidas con un rechazo tributario', async () => {
+    const resultado = await nubefactService.emitirComprobante(
+        { operacion: 'generar_comprobante' },
+        {
+            credentials,
+            ignoreEnabled: true,
+            httpClient: { post: async () => ({ status: 401, data: { errors: 'Token inválido' } }) }
+        }
+    );
+    assert.equal(resultado.status, 'ERROR');
+    assert.equal(resultado.reason, 'INVALID_CREDENTIALS');
+    assert.equal(resultado.httpStatus, 401);
+});
+
+test('clasifica una caída HTTP del proveedor como error reintentable', async () => {
+    const resultado = await nubefactService.emitirComprobante(
+        { operacion: 'generar_comprobante' },
+        {
+            credentials,
+            ignoreEnabled: true,
+            httpClient: { post: async () => ({ status: 503, data: { errors: 'No disponible' } }) }
+        }
+    );
+    assert.equal(resultado.status, 'ERROR');
+    assert.equal(resultado.reason, 'PROVIDER_HTTP_ERROR');
+});
+
+test('una respuesta 2xx sin contrato reconocible no se marca como rechazo SUNAT', async () => {
+    const resultado = await nubefactService.emitirComprobante(
+        { operacion: 'generar_comprobante' },
+        {
+            credentials,
+            ignoreEnabled: true,
+            httpClient: { post: async () => ({ status: 200, data: { mensaje: 'respuesta incompleta' } }) }
+        }
+    );
+    assert.equal(resultado.status, 'ERROR');
+    assert.equal(resultado.reason, 'UNEXPECTED_PROVIDER_RESPONSE');
+});
+
+test('conserva como rechazo una respuesta tributaria explícita', async () => {
+    const resultado = await nubefactService.emitirComprobante(
+        { operacion: 'generar_comprobante' },
+        {
+            credentials,
+            ignoreEnabled: true,
+            httpClient: { post: async () => ({ status: 200, data: { aceptada_por_sunat: false, sunat_responsecode: '1033' } }) }
+        }
+    );
+    assert.equal(resultado.status, 'REJECTED');
+    assert.equal(resultado.reason, 'REJECTED_BY_PROVIDER');
+});
+
 test('resuelve las credenciales por empresa y ambiente sin exponerlas en el estado publico', () => {
     process.env.NUBEFACT_EMPRESA_PRUEBA_DEMO_API_URL = credentials.apiUrl;
     process.env.NUBEFACT_EMPRESA_PRUEBA_DEMO_TOKEN = credentials.token;

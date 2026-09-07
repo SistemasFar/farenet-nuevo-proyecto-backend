@@ -71,14 +71,49 @@ const fechaPeru = (date = new Date()) => {
     return `${values.day}-${values.month}-${values.year}`;
 };
 
+const CAMPOS_BINARIOS_PROVEEDOR = new Set([
+    'pdf_zip_base64', 'xml_zip_base64', 'cdr_zip_base64',
+    'pdf_base64', 'xml_base64', 'cdr_base64'
+]);
+
+/**
+ * Conserva solamente metadatos útiles de la respuesta del proveedor.
+ * La limpieza es recursiva porque algunas operaciones agrupan la emisión y
+ * una consulta de recuperación dentro del mismo objeto de auditoría.
+ */
 const limpiarRespuestaProveedor = (value) => {
-    if (!value || typeof value !== 'object') return value || null;
-    const copia = { ...value };
-    [
-        'pdf_zip_base64', 'xml_zip_base64', 'cdr_zip_base64',
-        'pdf_base64', 'xml_base64', 'cdr_base64'
-    ].forEach(key => delete copia[key]);
-    return copia;
+    if (value === undefined || value === null) return null;
+    if (Array.isArray(value)) return value.map(limpiarRespuestaProveedor);
+    if (typeof value !== 'object') return value;
+
+    return Object.fromEntries(
+        Object.entries(value)
+            .filter(([key]) => !CAMPOS_BINARIOS_PROVEEDOR.has(key.toLowerCase()))
+            .map(([key, child]) => [key, limpiarRespuestaProveedor(child)])
+    );
+};
+
+const esResultadoPendiente = (resultado) => ['PENDING_SUNAT', 'PROCESSING'].includes(resultado?.status);
+
+const mapearAceptacionSunat = (resultado) => {
+    if (resultado?.status === 'ACCEPTED') return true;
+    if (resultado?.status === 'REJECTED') return false;
+    return null;
+};
+
+/**
+ * Traduce el contrato estable del cliente Nubefact a los estados permitidos
+ * por cada agregado. Las tablas históricas de notas y anulaciones usan
+ * PENDIENTE, mientras la factura distingue PENDIENTE_SUNAT.
+ */
+const mapearEstadoProveedor = (resultado, destino = 'FACTURACION') => {
+    if (resultado?.status === 'ACCEPTED') return 'ACEPTADO';
+    if (resultado?.status === 'REJECTED') return 'RECHAZADO';
+    if (esResultadoPendiente(resultado)) {
+        if (destino === 'OPERACION') return 'PROCESANDO';
+        return destino === 'FACTURACION' ? 'PENDIENTE_SUNAT' : 'PENDIENTE';
+    }
+    return 'ERROR';
 };
 
 const construirPayloadNubefact = ({
@@ -184,61 +219,73 @@ const construirPayloadNubefact = ({
 };
 
 const construirPayloadNota = ({ nota, facturacion, tipoNota }) => {
-    const esCredito = tipoNota === 'CREDITO';
-    const tipoDocumentoModificado = facturacion.tipo_comprobante === 'FACTURA' ? 1 : 2;
-    const tipoDocumentoCliente = facturacion.tipo_documento_cliente === 'RUC' ? 6 : 1;
-    const descripcion = String(nota.sustento || (esCredito ? 'NOTA DE CREDITO' : 'NOTA DE DEBITO')).trim().slice(0, 250);
-    return {
-        operacion: 'generar_comprobante',
-        tipo_de_comprobante: esCredito ? 3 : 4,
-        serie: nota.serie,
-        numero: Number(nota.numero),
-        sunat_transaction: 1,
-        cliente_tipo_de_documento: tipoDocumentoCliente,
-        cliente_numero_de_documento: facturacion.nro_documento,
-        cliente_denominacion: facturacion.nombre_razon_social,
-        cliente_direccion: facturacion.direccion,
-        cliente_email: facturacion.email || '',
-        fecha_de_emision: fechaPeru(),
-        moneda: 1,
-        porcentaje_de_igv: 18,
-        total_gravada: dosDecimales(nota.base_imponible),
-        total_inafecta: 0,
-        total_exonerada: 0,
-        total_igv: dosDecimales(nota.igv),
-        total_gratuita: 0,
-        total_otros_cargos: 0,
-        total: dosDecimales(nota.importe_total),
-        observaciones: descripcion,
-        documento_que_se_modifica_tipo: tipoDocumentoModificado,
-        documento_que_se_modifica_serie: facturacion.serie,
-        documento_que_se_modifica_numero: Number(facturacion.numero),
-        tipo_de_nota_de_credito: esCredito ? Number(nota.motivo_codigo) : '',
-        tipo_de_nota_de_debito: esCredito ? '' : Number(nota.motivo_codigo),
-        enviar_automaticamente_a_la_sunat: config.nubefact.enviarSunat,
-        enviar_automaticamente_al_cliente: Boolean(config.nubefact.enviarCliente && facturacion.email),
-        codigo_unico: nota.codigo_unico,
-        condiciones_de_pago: 'CONTADO',
-        cancelado: true,
-        items: [construirItem({
-            unidad_snapshot: 'ZZ',
-            codigo_sku_snapshot: esCredito ? 'FAREGAS-NC' : 'FAREGAS-ND',
-            descripcion_snapshot: descripcion,
-            cantidad: 1,
-            valor_unitario: nota.base_imponible,
-            precio_unitario: nota.importe_total,
-            base_imponible: nota.base_imponible,
-            afectacion_igv_snapshot: '10',
-            igv: nota.igv,
-            importe_total: nota.importe_total
-        })]
-    };
+      const esCredito = tipoNota === 'CREDITO';
+      const tipoDocumentoModificado = facturacion.tipo_comprobante === 'FACTURA' ? 1 : 2;
+      const tipoDocumentoCliente = facturacion.tipo_documento_cliente === 'RUC' ? 6 : 1;
+      
+      const isMotivo03 = esCredito && (nota.motivo_codigo === '3' || nota.motivo_codigo === '03');
+      
+      let descripcionGeneral = '';
+      let descripcionItem = '';
+      
+      if (isMotivo03) {
+          descripcionGeneral = 'CORRECCION DE DESCRIPCION';
+          descripcionItem = String(nota.sustento).trim().slice(0, 250);
+      } else {
+          descripcionGeneral = String(nota.sustento || (esCredito ? 'NOTA DE CREDITO' : 'NOTA DE DEBITO')).trim().slice(0, 250);
+          descripcionItem = descripcionGeneral;
+      }
+
+      return {
+          operacion: 'generar_comprobante',
+          tipo_de_comprobante: esCredito ? 3 : 4,
+          serie: nota.serie,
+          numero: Number(nota.numero),
+          sunat_transaction: 1,
+          cliente_tipo_de_documento: tipoDocumentoCliente,
+          cliente_numero_de_documento: facturacion.nro_documento,
+          cliente_denominacion: facturacion.nombre_razon_social,
+          cliente_direccion: facturacion.direccion,
+          cliente_email: facturacion.email || '',
+          fecha_de_emision: fechaPeru(),
+          moneda: 1,
+          porcentaje_de_igv: 18,
+          total_gravada: dosDecimales(nota.base_imponible),
+          total_inafecta: 0,
+          total_exonerada: 0,
+          total_igv: dosDecimales(nota.igv),
+          total_gratuita: 0,
+          total_otros_cargos: 0,
+          total: dosDecimales(nota.importe_total),
+          observaciones: descripcionGeneral,
+          documento_que_se_modifica_tipo: tipoDocumentoModificado,
+          documento_que_se_modifica_serie: facturacion.serie,
+          documento_que_se_modifica_numero: Number(facturacion.numero),
+          tipo_de_nota_de_credito: esCredito ? Number(nota.motivo_codigo) : '',
+          tipo_de_nota_de_debito: esCredito ? '' : Number(nota.motivo_codigo),
+          enviar_automaticamente_a_la_sunat: config.nubefact.enviarSunat,
+          enviar_automaticamente_al_cliente: Boolean(config.nubefact.enviarCliente && facturacion.email),
+          codigo_unico: nota.codigo_unico,
+          condiciones_de_pago: 'CONTADO',
+          cancelado: true,
+          items: [construirItem({
+              unidad_snapshot: 'ZZ',
+              codigo_sku_snapshot: esCredito ? 'FAREGAS-NC' : 'FAREGAS-ND',
+              descripcion_snapshot: descripcionItem,
+              importe_neto: dosDecimales(nota.base_imponible),
+              igv_aplicado: dosDecimales(nota.igv),
+              importe_total: dosDecimales(nota.importe_total),
+          })]
+      };
 };
 
 module.exports = {
     construirPayloadNubefact,
     fechaPeru,
     limpiarRespuestaProveedor,
+    esResultadoPendiente,
+    mapearAceptacionSunat,
+    mapearEstadoProveedor,
     crearCodigoUnico,
     construirPayloadNota,
     construirItem,

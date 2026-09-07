@@ -11,6 +11,7 @@ const nubefactFiles = new Set([
     'faregas-facturacion-admin.test.js',
     'faregas-facturacion.test.js',
     'faregas-nubefact-production-guard.test.js',
+    'faregas-nubefact-cron.service.test.js',
     'faregas-nubefact-readiness.test.js',
     'faregas-nubefact-simulation.test.js',
     'faregas-nubefact.service.test.js',

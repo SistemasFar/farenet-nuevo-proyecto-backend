@@ -18,6 +18,20 @@ const normalizarRespuesta = (response, options = {}) => {
   const aceptadaSunat = body.aceptada_por_sunat === true || body.aceptada_por_sunat === 'true';
   const httpOk = response.status >= 200 && response.status < 300;
   const tieneTicket = Boolean(body.sunat_ticket_numero || body.ticket || body.numero_ticket);
+
+  // Un HTTP no exitoso representa una falla de transporte, autenticación o
+  // disponibilidad del proveedor. Nunca equivale por sí solo a un rechazo
+  // tributario de SUNAT.
+  if (!httpOk) {
+    const autenticacion = response.status === 401 || response.status === 403;
+    return {
+      status: 'ERROR',
+      reason: autenticacion ? 'INVALID_CREDENTIALS' : 'PROVIDER_HTTP_ERROR',
+      provider: 'NUBEFACT',
+      httpStatus: response.status,
+      data: body
+    };
+  }
   
   const generadoEnNubefact = httpOk && !body.errors && (Boolean(body.enlace) || Boolean(body.enlace_del_pdf));
   
@@ -28,17 +42,24 @@ const normalizarRespuesta = (response, options = {}) => {
     && !body.sunat_responsecode
     && !body.errors;
 
-  let status = 'REJECTED';
-  let reason = httpOk ? 'REJECTED_BY_PROVIDER' : 'HTTP_ERROR';
+  let status = 'ERROR';
+  let reason = 'UNEXPECTED_PROVIDER_RESPONSE';
 
-  if (httpOk && !body.errors) {
+  if (!body.errors) {
     if (aceptadaSunat) {
       status = 'ACCEPTED';
       reason = 'ACCEPTED_BY_PROVIDER';
+    } else if ((body.aceptada_por_sunat === false || body.aceptada_por_sunat === 'false')
+      && (body.sunat_responsecode || body.sunat_description)) {
+      status = 'REJECTED';
+      reason = 'REJECTED_BY_PROVIDER';
     } else if (procesando || generadoEnNubefact) {
       status = 'PENDING_SUNAT';
       reason = 'PENDING_SUNAT';
     }
+  } else {
+    status = 'REJECTED';
+    reason = 'REJECTED_BY_PROVIDER';
   }
 
   return {

@@ -20,6 +20,11 @@ test('rechaza una sede fuera del alcance del usuario', () => {
     );
 });
 
+test('permite filtrar documentos pendientes de respuesta SUNAT', () => {
+    const filtros = service._construirFiltros({ estado: 'pendiente_sunat' }, ['201']);
+    assert.deepEqual(filtros.valores, [['201'], 'PENDIENTE_SUNAT']);
+});
+
 test('lista documentos sin exponer solicitudes ni respuestas del proveedor', async () => {
     const consultas = [];
     const fakeDb = {

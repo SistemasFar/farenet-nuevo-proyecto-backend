@@ -7,6 +7,8 @@ const { validarAccesoPlanta } = require('./faregas-auth.service');
 const {
     construirPayloadNota,
     limpiarRespuestaProveedor,
+    mapearEstadoProveedor,
+    mapearAceptacionSunat,
     crearCodigoUnico
 } = require('../integrations/nubefact-faregas.adapter');
 
@@ -21,6 +23,20 @@ const errorNegocio = (code, statusCode = 400, detalles) => {
     error.statusCode = statusCode;
     if (detalles) error.detalles = detalles;
     return error;
+};
+
+
+const esEmisionIncierta = async (client, referenciaColumna, referenciaId) => {
+    const result = await client.query(`
+        SELECT error, http_status FROM fg_documento_electronico_operacion
+        WHERE ${referenciaColumna} = $1 AND operacion = 'EMITIR'
+        ORDER BY id DESC LIMIT 1
+    `, [referenciaId]);
+    if (result.rowCount === 0) return false;
+    const { error, http_status } = result.rows[0];
+    if (http_status && http_status >= 400 && http_status < 500 && http_status !== 408) return false;
+    if (error && (error.includes('timeout') || error.includes('ECONNRESET') || error.includes('EPIPE'))) return true;
+    return true; // Ante la duda, asume incierto.
 };
 
 const normalizarTipoNota = (value) => {
@@ -43,25 +59,79 @@ const validarAccesoFacturacion = async (executor, certificadoId, userContext, bl
     return row;
 };
 
-const validarDatosNota = (tipo, data, facturacion) => {
+
+const validarPlazoNotaCredito = (motivoCodigo, fechaEmisionComprobante) => {
+    if (motivoCodigo === '2' || motivoCodigo === '02' || motivoCodigo === '3' || motivoCodigo === '03') {
+        const fechaComprobante = new Date(fechaEmisionComprobante);
+        const hoy = new Date();
+        
+        let diasHabiles = 0;
+        let iterDate = new Date(fechaComprobante.getTime());
+        // Reset times to compare dates
+        iterDate.setHours(0,0,0,0);
+        const limitDate = new Date(hoy.getTime());
+        limitDate.setHours(0,0,0,0);
+        
+        while (iterDate < limitDate) {
+            iterDate.setDate(iterDate.getDate() + 1);
+            const day = iterDate.getDay();
+            if (day !== 0 && day !== 6) { // Lunes a Viernes
+                diasHabiles++;
+            }
+        }
+        
+        // 15 días hábiles
+        if (diasHabiles > 15) {
+            throw errorNegocio('PLAZO_EXCEDIDO_NOTA_CREDITO', 409);
+        }
+    }
+};
+
+const validarDatosNota = (tipo, data, facturacion, totalNotasAceptadas = 0) => {
     const motivoCodigo = String(data.motivoCodigo || '').trim();
-    const sustento = String(data.sustento || '').trim();
+    let sustento = String(data.sustento || '').trim();
     const baseImponible = Number(data.baseImponible);
     const igv = Number(data.igv);
     const importeTotal = Number(data.importeTotal);
-    const limite = tipo === 'CREDITO' ? 13 : 3;
-    if (!/^\d{1,2}$/.test(motivoCodigo) || Number(motivoCodigo) < 1 || Number(motivoCodigo) > limite) {
-        throw errorNegocio('MOTIVO_NOTA_INVALIDO');
+
+    if (tipo === 'CREDITO') {
+        validarPlazoNotaCredito(motivoCodigo, facturacion.fecha_emision);
+        
+        if (!['1', '2', '3', '01', '02', '03'].includes(motivoCodigo)) {
+            throw errorNegocio('MOTIVO_NOTA_CREDITO_NO_PERMITIDO_O_INVALIDO');
+        }
+    } else {
+        const limite = 3;
+        if (!/^\d{1,2}$/.test(motivoCodigo) || Number(motivoCodigo) < 1 || Number(motivoCodigo) > limite) {
+            throw errorNegocio('MOTIVO_NOTA_INVALIDO');
+        }
     }
+
     if (!sustento || sustento.length > 250) throw errorNegocio('SUSTENTO_NOTA_INVALIDO');
+
+    if (tipo === 'CREDITO' && (motivoCodigo === '3' || motivoCodigo === '03')) {
+        // For motive 3, we require the user to provide a specific description correction.
+        if (sustento === 'CORRECCIÓN DE DESCRIPCIÓN' || sustento.length < 5) {
+            throw errorNegocio('SUSTENTO_NOTA_INVALIDO');
+        }
+    }
+
     if (![baseImponible, igv, importeTotal].every(Number.isFinite)
         || baseImponible < 0 || igv < 0 || importeTotal <= 0
         || Math.abs((baseImponible + igv) - importeTotal) > 0.02) {
         throw errorNegocio('IMPORTES_NOTA_INVALIDOS');
     }
-    if (tipo === 'CREDITO' && importeTotal - Number(facturacion.importe_total) > 0.009) {
-        throw errorNegocio('NOTA_CREDITO_EXCEDE_COMPROBANTE');
+
+    if (tipo === 'CREDITO') {
+        const originalTotal = Number(facturacion.importe_total);
+        if (Math.abs(importeTotal - originalTotal) > 0.02) {
+            throw errorNegocio('NOTA_CREDITO_DEBE_SER_TOTAL');
+        }
+        if (totalNotasAceptadas > 0) {
+             throw errorNegocio('NOTA_CREDITO_EXCEDE_COMPROBANTE');
+        }
     }
+
     return { motivoCodigo, sustento, baseImponible, igv, importeTotal };
 };
 
@@ -105,11 +175,7 @@ const registrarOperacion = async (executor, {
 };
 
 const finalizarOperacion = async (executor, id, resultado, respuesta) => {
-    const estado = resultado.status === 'ACCEPTED'
-        ? 'ACEPTADO'
-        : resultado.status === 'PROCESSING'
-            ? 'PROCESANDO'
-            : resultado.status === 'REJECTED' ? 'RECHAZADO' : 'ERROR';
+    const estado = mapearEstadoProveedor(resultado, 'OPERACION');
     await executor.query(`
         UPDATE fg_documento_electronico_operacion
         SET estado = $2, respuesta = $3::jsonb, http_status = $4, error = $5,
@@ -140,8 +206,19 @@ const respuestaNota = (row, tipo) => ({
     intentos: Number(row.intentos || 0)
 });
 
+const recuperarResultadoIncierto = async ({ resultado, consultar, payload, credentials }) => {
+    if (resultado.status !== 'ERROR' || typeof consultar !== 'function') return resultado;
+    const consulta = await consultar(payload, { credentials });
+    return ['ACCEPTED', 'PENDING_SUNAT', 'REJECTED'].includes(consulta.status)
+        ? consulta
+        : resultado;
+};
+
 const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaId = null) => {
     const tipo = normalizarTipoNota(tipoEntrada);
+    if (tipo === 'CREDITO' && (!userContext.permisos || !userContext.permisos.includes('FAREGAS_NOTA_CREDITO'))) {
+        throw errorNegocio('PERMISO_DENEGADO_NOTA_CREDITO', 403);
+    }
     const meta = TIPOS[tipo];
     const client = await db.connect();
     try {
@@ -157,7 +234,14 @@ const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaI
             nota = existente.rows[0];
             if (!['ERROR', 'RECHAZADO'].includes(nota.estado)) throw errorNegocio('NOTA_NO_REINTENTABLE', 409);
         } else {
-            const normalizada = validarDatosNota(tipo, data, facturacion);
+            const sumQuery = await client.query(`
+                SELECT COALESCE(SUM(importe_total), 0) AS total
+                FROM ${meta.tabla}
+                WHERE facturacion_id = $1 AND estado NOT IN ('RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO')
+                AND motivo_codigo NOT IN ('3', '03')
+            `, [facturacion.id]);
+            const totalNotasAceptadas = Number(sumQuery.rows[0].total);
+            const normalizada = validarDatosNota(tipo, data, facturacion, totalNotasAceptadas);
             const reserva = await reservarSerieNota(client, facturacion, tipo);
             const insert = await client.query(`
                 INSERT INTO ${meta.tabla} (
@@ -202,7 +286,7 @@ const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaI
 
 const completarNota = async (reserva, resultado, userContext) => {
     const respuesta = limpiarRespuestaProveedor(resultado.data) || {};
-    const estado = resultado.status === 'ACCEPTED' ? 'ACEPTADO' : resultado.status === 'REJECTED' ? 'RECHAZADO' : 'ERROR';
+    const estado = mapearEstadoProveedor(resultado, 'DOCUMENTO_RELACIONADO');
     const client = await db.connect();
     try {
         await client.query('BEGIN');
@@ -215,7 +299,7 @@ const completarNota = async (reserva, resultado, userContext) => {
                 usuario_modificacion = $11, fecha_modificacion = CURRENT_TIMESTAMP
             WHERE id = $1
         `, [
-            reserva.nota.id, estado, resultado.status === 'ACCEPTED',
+            reserva.nota.id, estado, mapearAceptacionSunat(resultado),
             respuesta.sunat_description || respuesta.errors || resultado.reason || null,
             respuesta.sunat_responsecode || null, respuesta.sunat_soap_error || resultado.error || null,
             respuesta.enlace_del_pdf || respuesta.enlace || null,
@@ -232,6 +316,7 @@ const completarNota = async (reserva, resultado, userContext) => {
     }
     const final = await db.query(`SELECT * FROM ${reserva.meta.tabla} WHERE id = $1`, [reserva.nota.id]);
     const nota = respuestaNota(final.rows[0], reserva.tipo);
+    if (estado === 'PENDIENTE') return nota;
     if (estado !== 'ACEPTADO') throw errorNegocio('NUBEFACT_NOTA_NO_ACEPTADA', resultado.status === 'REJECTED' ? 422 : 502, { nota });
     return nota;
 };
@@ -240,21 +325,47 @@ exports.emitirNota = async (certificadoId, tipo, data, userContext, dependencies
     const reserva = await reservarNota(certificadoId, tipo, data, userContext);
     const proveedor = dependencies.nubefactService || nubefactService;
     let resultado = await proveedor.emitirComprobante(reserva.payload, { credentials: reserva.credentials });
-    if (resultado.status === 'ERROR') {
-        const consulta = await proveedor.consultarComprobante({
+    resultado = await recuperarResultadoIncierto({
+        resultado,
+        consultar: proveedor.consultarComprobante?.bind(proveedor),
+        payload: {
             tipoDeComprobante: reserva.meta.comprobante,
             serie: reserva.nota.serie,
             numero: reserva.nota.numero
-        }, { credentials: reserva.credentials });
-        if (consulta.status === 'ACCEPTED') resultado = consulta;
-    }
+        },
+        credentials: reserva.credentials
+    });
     return completarNota(reserva, resultado, userContext);
 };
 
 exports.reintentarNota = async (certificadoId, tipo, notaId, userContext, dependencies = {}) => {
     const reserva = await reservarNota(certificadoId, tipo, {}, userContext, notaId);
     const proveedor = dependencies.nubefactService || nubefactService;
-    const resultado = await proveedor.emitirComprobante(reserva.payload, { credentials: reserva.credentials });
+    
+    // Idempotencia: Verificar si el intento previo fue ambiguo
+    const esIncierta = await esEmisionIncierta(db, reserva.meta.fk, notaId);
+    if (esIncierta) {
+        const consulta = await proveedor.consultarComprobante({
+            tipoDeComprobante: reserva.meta.comprobante,
+            serie: reserva.nota.serie,
+            numero: reserva.nota.numero
+        }, { credentials: reserva.credentials });
+        if (['ACCEPTED', 'PENDING_SUNAT', 'REJECTED'].includes(consulta.status)) {
+            return completarNota(reserva, consulta, userContext);
+        }
+    }
+
+    let resultado = await proveedor.emitirComprobante(reserva.payload, { credentials: reserva.credentials });
+    resultado = await recuperarResultadoIncierto({
+        resultado,
+        consultar: proveedor.consultarComprobante?.bind(proveedor),
+        payload: {
+            tipoDeComprobante: reserva.meta.comprobante,
+            serie: reserva.nota.serie,
+            numero: reserva.nota.numero
+        },
+        credentials: reserva.credentials
+    });
     return completarNota(reserva, resultado, userContext);
 };
 
@@ -302,19 +413,42 @@ exports.consultarFacturacion = async (certificadoId, userContext, dependencies =
     const proveedor = dependencies.nubefactService || nubefactService;
     const resultado = await proveedor.consultarComprobante(payload, { credentials: configuracion.credentials });
     const respuesta = limpiarRespuestaProveedor(resultado.data) || {};
-    await finalizarOperacion(db, operacionId, resultado, respuesta);
-    if (resultado.status === 'ACCEPTED') {
-        await db.query(`UPDATE fg_facturacion SET estado='ACEPTADO', aceptada_sunat=TRUE,
-            sunat_description=$2, sunat_responsecode=$3, sunat_soap_error=$4,
-            enlace_pdf=COALESCE($5,enlace_pdf), enlace_xml=COALESCE($6,enlace_xml),
-            enlace_cdr=COALESCE($7,enlace_cdr), respuesta_proveedor=$8::jsonb,
-            fecha_aceptacion=COALESCE(fecha_aceptacion,CURRENT_TIMESTAMP),
-            usuario_modificacion=$9, fecha_modificacion=CURRENT_TIMESTAMP WHERE id=$1`, [
-            facturacion.id, respuesta.sunat_description || null, respuesta.sunat_responsecode || null,
-            respuesta.sunat_soap_error || null, respuesta.enlace_del_pdf || respuesta.enlace || null,
-            respuesta.enlace_del_xml || null, respuesta.enlace_del_cdr || null,
+    const estadoProveedor = mapearEstadoProveedor(resultado, 'FACTURACION');
+    const estadoPersistido = estadoProveedor === 'ERROR' ? facturacion.estado : estadoProveedor;
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        await finalizarOperacion(client, operacionId, resultado, respuesta);
+        const actualizada = await client.query(`UPDATE fg_facturacion SET estado=$2,
+            aceptada_sunat=CASE WHEN $2='ACEPTADO' THEN TRUE WHEN $2='RECHAZADO' THEN FALSE ELSE aceptada_sunat END,
+            sunat_description=$3, sunat_responsecode=$4, sunat_soap_error=$5,
+            enlace_pdf=COALESCE($6,enlace_pdf), enlace_xml=COALESCE($7,enlace_xml),
+            enlace_cdr=COALESCE($8,enlace_cdr), respuesta_proveedor=$9::jsonb,
+            fecha_aceptacion=CASE WHEN $2='ACEPTADO' THEN COALESCE(fecha_aceptacion,CURRENT_TIMESTAMP) ELSE fecha_aceptacion END,
+            usuario_modificacion=$10, fecha_modificacion=CURRENT_TIMESTAMP
+            WHERE id=$1 AND estado IN ('PENDIENTE','PENDIENTE_SUNAT','ERROR')
+            RETURNING id`, [
+            facturacion.id, estadoPersistido,
+            respuesta.sunat_description || respuesta.errors || resultado.reason || null,
+            respuesta.sunat_responsecode || null,
+            respuesta.sunat_soap_error || resultado.error || null,
+            respuesta.enlace_del_pdf || respuesta.enlace_pdf || respuesta.enlace || null,
+            respuesta.enlace_del_xml || respuesta.enlace_xml || null,
+            respuesta.enlace_del_cdr || respuesta.enlace_cdr || null,
             JSON.stringify(respuesta), userContext.username
         ]);
+        if (actualizada.rowCount > 0 && estadoPersistido === 'ACEPTADO' && facturacion.operacion_id) {
+            await client.query(`UPDATE fg_operacion_comercial
+                SET estado='FACTURADO', usuario_modificacion=$2,
+                    fecha_modificacion=CURRENT_TIMESTAMP
+                WHERE id=$1`, [facturacion.operacion_id, userContext.username]);
+        }
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
     }
     return { estado: resultado.status, respuesta };
 };
@@ -374,15 +508,23 @@ exports.generarAnulacion = async (certificadoId, data, userContext, dependencies
     }
 
     const proveedor = dependencies.nubefactService || nubefactService;
-    const resultado = await proveedor.generarAnulacion(reserva.payload, { credentials: reserva.credentials });
+    let resultado = await proveedor.generarAnulacion(reserva.payload, { credentials: reserva.credentials });
+    resultado = await recuperarResultadoIncierto({
+        resultado,
+        consultar: proveedor.consultarAnulacion?.bind(proveedor),
+        payload: {
+            tipoDeComprobante: reserva.objetivo.tipoComprobante,
+            serie: reserva.objetivo.row.serie,
+            numero: reserva.objetivo.row.numero
+        },
+        credentials: reserva.credentials
+    });
     return completarAnulacion(reserva, resultado, userContext);
 };
 
 const completarAnulacion = async (reserva, resultado, userContext) => {
     const respuesta = limpiarRespuestaProveedor(resultado.data) || {};
-    const estado = resultado.status === 'ACCEPTED' ? 'ACEPTADO'
-        : resultado.status === 'PROCESSING' ? 'PENDIENTE'
-            : resultado.status === 'REJECTED' ? 'RECHAZADO' : 'ERROR';
+    const estado = mapearEstadoProveedor(resultado, 'DOCUMENTO_RELACIONADO');
     const client = await db.connect();
     try {
         await client.query('BEGIN');
@@ -393,7 +535,7 @@ const completarAnulacion = async (reserva, resultado, userContext) => {
             fecha_aceptacion=CASE WHEN $4 THEN CURRENT_TIMESTAMP ELSE fecha_aceptacion END,
             usuario_modificacion=$12, fecha_modificacion=CURRENT_TIMESTAMP WHERE id=$1`, [
             reserva.anulacion.id, estado, respuesta.sunat_ticket_numero || null,
-            resultado.status === 'ACCEPTED', respuesta.sunat_description || respuesta.errors || resultado.reason || null,
+            mapearAceptacionSunat(resultado), respuesta.sunat_description || respuesta.errors || resultado.reason || null,
             respuesta.sunat_responsecode || null, respuesta.sunat_soap_error || resultado.error || null,
             respuesta.enlace_del_pdf || respuesta.enlace || null, respuesta.enlace_del_xml || null,
             respuesta.enlace_del_cdr || null, JSON.stringify(respuesta), userContext.username
@@ -437,11 +579,12 @@ exports.consultarAnulacion = async (certificadoId, anulacionId, userContext, dep
     return completarAnulacion({ facturacion, objetivo, anulacion, payload, operacionId }, resultado, userContext);
 };
 
-exports._private = {
+exports._private = { validarPlazoNotaCredito,
     validarDatosNota,
     reservarSerieNota,
     registrarOperacion,
     finalizarOperacion,
+    recuperarResultadoIncierto,
     normalizarTipoNota,
     errorNegocio
 };

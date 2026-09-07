@@ -587,7 +587,7 @@ exports.actualizarBorrador = async (id, data, userContext) => {
                 const evidencia = await client.query(`
                     SELECT 1 FROM fg_orden_pago WHERE certificado_id = $1 AND estado = 'PAGADO'
                     UNION ALL
-                    SELECT 1 FROM fg_facturacion WHERE certificado_id = $1 AND estado IN ('PENDIENTE', 'ACEPTADO', 'ERROR')
+                    SELECT 1 FROM fg_facturacion WHERE certificado_id = $1 AND estado IN ('PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'ERROR')
                     LIMIT 1
                 `, [id]);
                 if (evidencia.rowCount > 0) throw new Error('DATOS_PREVIOS_NO_EDITABLES');
@@ -653,7 +653,7 @@ exports.guardarVehiculoBorrador = async (id, data, userContext) => {
             SELECT 1
             FROM fg_facturacion
             WHERE certificado_id = $1
-              AND estado IN ('PENDIENTE', 'ACEPTADO', 'ERROR')
+              AND estado IN ('PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'ERROR')
             LIMIT 1
         `, [id]);
         if (evidencia.rowCount > 0) throw new Error('DATOS_PREVIOS_NO_EDITABLES');

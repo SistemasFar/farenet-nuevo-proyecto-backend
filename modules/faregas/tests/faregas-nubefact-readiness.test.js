@@ -45,3 +45,68 @@ test('no duplica el bloqueo de catálogo cuando el resumen usa otra redacción',
     assert.equal(result.checks.filter(item => item.codigo === 'CATALOGO_FISCAL').length, 1);
     assert.equal(result.checks.filter(item => /producto (fiscal|de facturación)/i.test(item.mensaje)).length, 1);
 });
+
+const entradaFase2Lista = (pruebaDemo = { aceptadas: 0, aceptadasConArchivos: 0 }) => ({
+    configuracion: { environment: 'DEMO', detractionDecision: 'NO_APLICA' },
+    esquema: { seriesV2Aplicada: true, pendienteSunatAplicado: true, completo: true },
+    catalogo: { activas: 81, listas: 81 },
+    series: {
+        nubefactPredeterminadas: 2,
+        seriesBasicasRequeridas: 2,
+        seriesBasicasConfiguradas: 2,
+        seriesBasicasFaltantes: []
+    },
+    credenciales: { total: 14, configuradas: 14 },
+    pruebaDemo
+});
+
+test('fase 2 queda lista para prueba cuando las cinco puertas previas están completas', () => {
+    const result = service._private.construirFase2(entradaFase2Lista());
+    assert.equal(result.estado, 'LISTA_PARA_PRUEBA_DEMO');
+    assert.equal(result.completados, 5);
+    assert.equal(result.progreso, 83);
+    assert.equal(result.pasos.find(item => item.codigo === 'PRUEBA_DEMO').estado, 'PENDIENTE');
+});
+
+test('fase 2 solamente termina con evidencia de PDF, XML y CDR en DEMO', () => {
+    const result = service._private.construirFase2(entradaFase2Lista({
+        aceptadas: 1,
+        aceptadasConArchivos: 1
+    }));
+    assert.equal(result.estado, 'COMPLETADA');
+    assert.equal(result.completados, 6);
+    assert.equal(result.progreso, 100);
+});
+
+test('fase 2 identifica cada puerta pendiente sin habilitar operaciones', () => {
+    const result = service._private.construirFase2({
+        configuracion: { environment: 'PRODUCCION', detractionDecision: 'PENDIENTE' },
+        esquema: { seriesV2Aplicada: false, pendienteSunatAplicado: false, completo: false },
+        catalogo: { activas: 81, listas: 0 },
+        series: {
+            nubefactPredeterminadas: 0,
+            seriesBasicasRequeridas: 2,
+            seriesBasicasConfiguradas: 0,
+            seriesBasicasFaltantes: ['201:FACTURA', '201:BOLETA']
+        },
+        credenciales: { total: 14, configuradas: 0 },
+        pruebaDemo: { aceptadas: 0, aceptadasConArchivos: 0 }
+    });
+    assert.equal(result.estado, 'EN_PREPARACION');
+    assert.equal(result.completados, 0);
+    assert.ok(result.pasos.every(item => item.siguienteAccion));
+});
+
+test('verifica de forma independiente las dos migraciones exigidas por fase 2', async () => {
+    const queryable = {
+        query: async (sql) => sql.includes('information_schema.columns')
+            ? { rows: [{ columnas: 6 }] }
+            : { rows: [{ pendiente_sunat_aplicado: true }] }
+    };
+    const result = await service._private.obtenerEstadoEsquema(queryable);
+    assert.deepEqual(result, {
+        seriesV2Aplicada: true,
+        pendienteSunatAplicado: true,
+        completo: true
+    });
+});
