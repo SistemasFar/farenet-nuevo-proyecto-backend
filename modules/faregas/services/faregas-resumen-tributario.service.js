@@ -1,6 +1,7 @@
 const db = require('../../../config/database');
 const integrationsConfig = require('../../../config/integrations.config');
 const correlativosNubefactService = require('./faregas-correlativos-nubefact.service');
+const { esUnidadTributariaAdmitida } = require('./faregas-producto-fiscal.rules');
 
 const redondear = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 const texto = (value) => String(value ?? '').trim();
@@ -53,7 +54,11 @@ const construirResumen = ({ contexto, detalle, descuento, pagos, serie }) => {
     agregarSi(errores, !codigoInterno, 'Falta el código interno/SKU del servicio.');
     agregarSi(errores, !descripcion, 'Falta la descripción tributaria del servicio.');
     agregarSi(errores, !unidad, 'Falta la unidad de medida tributaria del servicio.');
-    agregarSi(errores, Boolean(unidad) && unidad !== 'ZZ', 'La unidad tributaria del servicio debe ser ZZ.');
+    agregarSi(
+        errores,
+        Boolean(unidad) && !esUnidadTributariaAdmitida(unidad),
+        'La unidad tributaria debe ser NIU o ZZ.'
+    );
     agregarSi(errores, Boolean(codigoSunat) && !/^\d{8}$/.test(codigoSunat), 'El código de clasificación SUNAT debe contener 8 dígitos.');
     agregarSi(errores, afectacionIgv !== '10', 'El tipo de afectación IGV del servicio debe ser 10.');
     agregarSi(errores, !seriePrevista, `No existe una serie productiva de ${esFactura ? 'factura' : 'boleta'} para la sede.`);

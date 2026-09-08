@@ -107,6 +107,61 @@ test('verifica de forma independiente las dos migraciones exigidas por fase 2', 
     assert.deepEqual(result, {
         seriesV2Aplicada: true,
         pendienteSunatAplicado: true,
+        chipsAplicado: false,
         completo: true
     });
+});
+
+const entradaProduccionLista = (pruebas = {
+    boletaAceptadaConArchivos: false,
+    facturaAceptadaConArchivos: false
+}) => ({
+    configuracion: {
+        environment: 'PRODUCCION', enabled: true, productionConfirmed: true,
+        correlativosV2Enabled: true, cronReconciliationEnabled: true,
+        enviarSunat: true, detractionDecision: 'NO_APLICA'
+    },
+    esquema: { completo: true },
+    catalogo: { activas: 5, listasProduccion: 5 },
+    credenciales: { total: 1, configuradas: 1 },
+    series: {
+        requeridas: 2,
+        confirmadas: 2,
+        detalle: [
+            {
+                tipoComprobante: 'FACTURA', configurada: true, serie: 'F001', ultimoNumero: 4562,
+                confirmadaProduccion: true, numeroInicialConfirmado: 4562, fechaCorte: '2026-09-07'
+            },
+            {
+                tipoComprobante: 'BOLETA', configurada: true, serie: 'B001', ultimoNumero: 12058,
+                confirmadaProduccion: true, numeroInicialConfirmado: 12058, fechaCorte: '2026-09-07'
+            }
+        ]
+    },
+    pruebas
+});
+
+test('producción puede quedar lista sin exigir que DEMO esté al 100%', () => {
+    const result = service._private.construirPreparacionProduccion(entradaProduccionLista());
+    assert.equal(result.requiereDemo, false);
+    assert.equal(result.estado, 'LISTA_PARA_EMISION_CONTROLADA');
+    assert.equal(result.pasos.find(item => item.codigo === 'BOLETA_PRODUCTIVA').estado, 'PENDIENTE');
+    assert.ok(result.pasos.every(item => !item.codigo.includes('DEMO')));
+});
+
+test('producción solo queda operativa con boleta y factura aceptadas con archivos', () => {
+    const result = service._private.construirPreparacionProduccion(entradaProduccionLista({
+        boletaAceptadaConArchivos: true,
+        facturaAceptadaConArchivos: true
+    }));
+    assert.equal(result.estado, 'OPERATIVA');
+    assert.equal(result.progreso, 100);
+});
+
+test('catálogo con marcadores DEMO bloquea el preflight productivo', () => {
+    const input = entradaProduccionLista();
+    input.catalogo.listasProduccion = 0;
+    const result = service._private.construirPreparacionProduccion(input);
+    assert.equal(result.estado, 'EN_PREPARACION');
+    assert.equal(result.pasos.find(item => item.codigo === 'CATALOGO_PRODUCTIVO').estado, 'PENDIENTE');
 });

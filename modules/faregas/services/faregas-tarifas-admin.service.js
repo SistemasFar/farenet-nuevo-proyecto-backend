@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const configService = require('./faregas-config.service');
+const { esUnidadTributariaAdmitida } = require('./faregas-producto-fiscal.rules');
 
 const serializarTarifa = (row) => ({
     id: row.id,
@@ -114,7 +115,7 @@ exports.buscarProductos = async (texto) => {
 const validarProducto = (producto, exigeDatosTributarios = false) => {
     if (!producto.activo) throw new Error('PRODUCTO_INACTIVO');
     if (!producto.es_para_venta) throw new Error('PRODUCTO_NO_VENTA');
-    if (exigeDatosTributarios && String(producto.unidad || '').trim().toUpperCase() !== 'ZZ') {
+    if (exigeDatosTributarios && !esUnidadTributariaAdmitida(producto.unidad)) {
         throw new Error('PRODUCTO_UNIDAD_INVALIDA');
     }
     const codigoSunat = String(producto.codigo_clasificacion_sunat || '').trim();

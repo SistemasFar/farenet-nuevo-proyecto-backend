@@ -29,7 +29,7 @@ const responderError = (res, error) => {
         PRODUCTO_NO_ENCONTRADO: [404, 'Producto de facturación no encontrado.'],
         PRODUCTO_INACTIVO: [409, 'No se puede asignar un SKU inactivo.'],
         PRODUCTO_NO_VENTA: [409, 'El SKU debe estar habilitado para venta.'],
-        PRODUCTO_UNIDAD_INVALIDA: [409, 'Los servicios de certificación requieren la unidad tributaria ZZ.'],
+        PRODUCTO_UNIDAD_INVALIDA: [409, 'La unidad tributaria debe ser NIU o ZZ.'],
         PRODUCTO_CODIGO_SUNAT_INVALIDO: [409, 'El código de clasificación SUNAT debe contener 8 dígitos.'],
         PRODUCTO_AFECTACION_IGV_INVALIDA: [409, 'Los servicios gravados de certificación requieren afectación IGV 10.']
     };

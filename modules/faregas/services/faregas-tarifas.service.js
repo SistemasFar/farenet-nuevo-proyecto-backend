@@ -83,6 +83,7 @@ exports.obtenerTarifaOperativaPorCodigo = async (plantaKey, tarifaCodigo, querya
             t.id,
             t.codigo,
             t.precio,
+            t.producto_facturacion_id,
             s.id AS servicio_id,
             s.codigo AS servicio_codigo,
             s.nombre AS servicio_nombre,
@@ -92,11 +93,17 @@ exports.obtenerTarifaOperativaPorCodigo = async (plantaKey, tarifaCodigo, querya
             s.requiere_certificado,
             s.requiere_vehiculo,
             c.codigo AS categoria_codigo,
-            c.nombre AS categoria_nombre
+            c.nombre AS categoria_nombre,
+            pf.codigo_sku AS producto_sku,
+            pf.descripcion AS producto_descripcion,
+            pf.unidad AS producto_unidad,
+            pf.tipo_afectacion_igv AS producto_afectacion_igv,
+            pf.codigo_clasificacion_sunat AS producto_codigo_sunat
         FROM fg_tarifa t
         JOIN fg_servicio s ON s.id = t.servicio_id
         JOIN fg_planta p ON p.key = t.planta_key
         JOIN fg_categoria_servicio c ON c.id = s.categoria_id
+        LEFT JOIN fg_producto_facturacion pf ON pf.id = t.producto_facturacion_id
         WHERE t.planta_key = $1
           AND t.codigo = $2
           AND p.activo = TRUE

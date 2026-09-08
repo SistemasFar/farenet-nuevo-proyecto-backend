@@ -2,6 +2,17 @@ const limpiarTexto = (value) => String(value ?? '').trim();
 
 const redondear = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 
+const esRucValido = (value) => {
+    const ruc = limpiarTexto(value);
+    if (!/^\d{11}$/.test(ruc)) return false;
+
+    const pesos = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
+    const suma = pesos.reduce((total, peso, index) => total + Number(ruc[index]) * peso, 0);
+    const diferencia = 11 - (suma % 11);
+    const digitoCalculado = diferencia === 10 ? 0 : diferencia === 11 ? 1 : diferencia;
+    return digitoCalculado === Number(ruc[10]);
+};
+
 const esFechaIsoValida = (value) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return false;
     const [anio, mes, dia] = value.split('-').map(Number);
@@ -43,6 +54,11 @@ const validarFacturacion = (facturacion) => {
     }
     if (facturacion.tipoComprobante === 'FACTURA' && facturacion.tipoDocumentoCliente !== 'RUC') {
         errores.push('Una FACTURA requiere un RUC de 11 digitos.');
+    }
+    if (facturacion.tipoComprobante === 'FACTURA'
+        && facturacion.tipoDocumentoCliente === 'RUC'
+        && !esRucValido(facturacion.nroDocumento)) {
+        errores.push('El RUC no tiene un digito verificador valido.');
     }
     if (!facturacion.nombreRazonSocial || facturacion.nombreRazonSocial.length > 100) {
         errores.push('El nombre o razon social es obligatorio y admite hasta 100 caracteres.');
@@ -91,6 +107,10 @@ const validarFacturacion = (facturacion) => {
 
 const validarFacturacionNubefact = (facturacion) => {
     const errores = [];
+    if (facturacion?.tipo_comprobante === 'FACTURA'
+        && !esRucValido(facturacion?.nro_documento)) {
+        errores.push('El RUC no tiene un digito verificador valido.');
+    }
     if (limpiarTexto(facturacion?.nombre_razon_social).length > 100) {
         errores.push('El nombre o razon social admite hasta 100 caracteres para Nubefact.');
     }
@@ -125,6 +145,7 @@ const validarSerieNubefact = (serie, tipoComprobante) => {
 };
 
 module.exports = {
+    esRucValido,
     normalizarFacturacion,
     validarFacturacion,
     validarFacturacionNubefact,

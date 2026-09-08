@@ -287,6 +287,11 @@ const reservarEmision = async (certificadoId, userContext) => {
             await client.query('COMMIT');
             return { yaAceptada: true, facturacion };
         }
+        if (facturacion.estado === 'RECHAZADO') {
+            throw errorNegocio('NUBEFACT_RECHAZADO', 422, {
+                motivo: facturacion.sunat_description || 'El comprobante fue rechazado por Nubefact/SUNAT.'
+            });
+        }
 
         const configuracionEmisor = await nubefactConfigService.resolverParaPlanta(
             certificado.planta_key,

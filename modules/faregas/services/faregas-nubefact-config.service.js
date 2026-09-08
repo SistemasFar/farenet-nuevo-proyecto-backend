@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const integrationsConfig = require('../../../config/integrations.config');
+const { esRucValido } = require('./faregas-facturacion.rules');
 
 const errorConfiguracion = (code, message = code) => {
     const error = new Error(message);
@@ -17,7 +18,8 @@ const validarSeguridadProduccion = ({
     productionConfirmed = integrationsConfig.nubefact.productionConfirmed,
     enviarSunat = integrationsConfig.nubefact.enviarSunat,
     detractionDecision = integrationsConfig.nubefact.detractionDecision,
-    correlativosV2Enabled = integrationsConfig.nubefact.correlativosV2Enabled
+    correlativosV2Enabled = integrationsConfig.nubefact.correlativosV2Enabled,
+    cronReconciliationEnabled = integrationsConfig.nubefact.cronReconciliationEnabled
 } = {}) => {
     const entorno = String(environment || '').trim().toUpperCase();
     if (!['DEMO', 'PRODUCCION', 'PRODUCTION'].includes(entorno)) {
@@ -27,6 +29,9 @@ const validarSeguridadProduccion = ({
     if (!productionConfirmed) throw errorConfiguracion('NUBEFACT_PRODUCCION_NO_CONFIRMADA');
     if (!enviarSunat) throw errorConfiguracion('NUBEFACT_ENVIO_SUNAT_DESHABILITADO');
     if (!correlativosV2Enabled) throw errorConfiguracion('NUBEFACT_CORRELATIVOS_V2_DESHABILITADOS');
+    if (!cronReconciliationEnabled) {
+        throw errorConfiguracion('NUBEFACT_RECONCILIACION_DESHABILITADA');
+    }
 
     const decision = String(detractionDecision || '').trim().toUpperCase();
     if (decision === 'PENDIENTE') {
@@ -44,12 +49,15 @@ const contextoPublico = (row, credentials = null) => ({
     enabled: integrationsConfig.nubefact.enabled,
     simulationEnabled: integrationsConfig.nubefact.simulationEnabled,
     configured: Boolean(credentials?.apiUrl && credentials?.token
+        && esRucValido(credentials?.rucEmisor)
+        && esRucValido(row?.ruc_emisor)
         && credentials?.rucEmisor === String(row?.ruc_emisor || '')),
     provider: 'NUBEFACT',
     environment: row?.entorno || integrationsConfig.nubefact.environment,
     productionConfirmed: integrationsConfig.nubefact.productionConfirmed,
     detractionDecision: integrationsConfig.nubefact.detractionDecision,
     correlativosV2Enabled: integrationsConfig.nubefact.correlativosV2Enabled,
+    cronReconciliationEnabled: integrationsConfig.nubefact.cronReconciliationEnabled,
     empresaKey: row?.empresa_key || null,
     rucEmisor: row?.ruc_emisor || null
 });
@@ -107,7 +115,7 @@ exports.resolverParaPlanta = async (plantaKey, executor = db) => {
         throw error;
     }
     if (!row.credencial_clave) throw errorConfiguracion('EMPRESA_EMISORA_NO_CONFIGURADA');
-    if (!/^\d{11}$/.test(String(row.ruc_emisor || ''))) {
+    if (!esRucValido(row.ruc_emisor)) {
         throw errorConfiguracion('EMPRESA_EMISORA_RUC_INVALIDO');
     }
 
@@ -115,7 +123,7 @@ exports.resolverParaPlanta = async (plantaKey, executor = db) => {
     if (!credentials.apiUrl || !credentials.token) {
         throw errorConfiguracion('NUBEFACT_CREDENCIALES_EMPRESA_FALTANTES');
     }
-    if (!/^\d{11}$/.test(credentials.rucEmisor || '')) {
+    if (!esRucValido(credentials.rucEmisor)) {
         throw errorConfiguracion('NUBEFACT_CREDENCIALES_RUC_FALTANTE');
     }
     if (credentials.rucEmisor !== String(row.ruc_emisor)) {

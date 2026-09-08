@@ -34,18 +34,28 @@ const startCronJobs = () => {
   // Se ejecuta cada 10 minutos
   cron.schedule('*/10 * * * *', async () => {
     const integrationsConfig = require('./config/integrations.config');
-    if (integrationsConfig.nubefact.cronReconciliationEnabled) {
-      console.log('[CRON] Iniciando reconciliador SUNAT...', new Date().toLocaleString());
+    if (integrationsConfig.nubefact.enabled
+        && integrationsConfig.nubefact.cronReconciliationEnabled) {
+      console.log('[CRON] Iniciando reconciliador SUNAT Facturas/Boletas...', new Date().toLocaleString());
       try {
         const resultado = await reconciliarPendientesSunat();
         console.log('[CRON] Reconciliador SUNAT Facturas/Boletas finalizado.', resultado);
+      } catch (error) {
+        console.error('[CRON] Fallo no controlado en reconciliador SUNAT Facturas/Boletas:', error.message);
+      }
+    }
+
+    // Las notas de crédito se habilitan de manera independiente para que activar
+    // Facturas/Boletas no ponga en marcha accidentalmente un flujo aún no liberado.
+    if (integrationsConfig.nubefact.enabled
+        && integrationsConfig.nubefact.notasCronReconciliationEnabled) {
+      console.log('[CRON] Iniciando reconciliador SUNAT Notas de Credito...', new Date().toLocaleString());
+      try {
         const resultadoNotas = await reconciliarNotasPendientesSunat();
         console.log('[CRON] Reconciliador SUNAT Notas de Credito finalizado.', resultadoNotas);
       } catch (error) {
-        console.error('[CRON] Fallo no controlado en reconciliador SUNAT:', error.message);
+        console.error('[CRON] Fallo no controlado en reconciliador SUNAT Notas de Credito:', error.message);
       }
-    } else {
-      console.log('[CRON] Reconciliador SUNAT deshabilitado por configuracion.', new Date().toLocaleString());
     }
   });
 };

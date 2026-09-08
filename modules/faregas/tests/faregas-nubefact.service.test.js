@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const nubefactService = require('../../../services/integrations/nubefact.service');
 const integrationsConfig = require('../../../config/integrations.config');
+const facturacionService = require('../services/faregas-facturacion.service');
 
 const credentials = {
     apiUrl: 'https://demo.example.test/api',
@@ -106,6 +107,80 @@ test('clasifica una caída HTTP del proveedor como error reintentable', async ()
     );
     assert.equal(resultado.status, 'ERROR');
     assert.equal(resultado.reason, 'PROVIDER_HTTP_ERROR');
+});
+
+test('clasifica un HTTP 400 funcional como rechazo definitivo', async () => {
+    const resultado = await nubefactService.emitirComprobante(
+        { operacion: 'generar_comprobante' },
+        {
+            credentials,
+            ignoreEnabled: true,
+            httpClient: {
+                post: async () => ({
+                    status: 400,
+                    data: { errors: 'RUC incorrecto, el último dígito debería ser 3' }
+                })
+            }
+        }
+    );
+    assert.equal(resultado.status, 'REJECTED');
+    assert.equal(resultado.reason, 'REJECTED_BY_PROVIDER');
+    assert.equal(resultado.httpStatus, 400);
+});
+
+test('clasifica también un HTTP 400 con mensaje funcional anidado', async () => {
+    const resultado = await nubefactService.emitirComprobante(
+        { operacion: 'generar_comprobante' },
+        {
+            credentials,
+            ignoreEnabled: true,
+            httpClient: {
+                post: async () => ({
+                    status: 400,
+                    data: { error: { mensaje: 'RUC incorrecto' } }
+                })
+            }
+        }
+    );
+    assert.equal(resultado.status, 'REJECTED');
+    assert.equal(resultado.reason, 'REJECTED_BY_PROVIDER');
+});
+
+test('RUC inválido recibe un solo POST y no entra a recuperación automática', async () => {
+    let posts = 0;
+    let consultas = 0;
+    const resultadoEmision = await nubefactService.emitirComprobante(
+        { operacion: 'generar_comprobante' },
+        {
+            credentials,
+            ignoreEnabled: true,
+            httpClient: {
+                post: async () => {
+                    posts += 1;
+                    return { status: 400, data: { errors: 'RUC incorrecto' } };
+                }
+            }
+        }
+    );
+    const proveedorRecuperacion = {
+        consultarComprobante: async () => {
+            consultas += 1;
+            return { status: 'PENDING_SUNAT' };
+        }
+    };
+    const recuperacion = await facturacionService._private.consultarEmisionIncierta(
+        proveedorRecuperacion,
+        {
+            facturacion: { tipo_comprobante: 'FACTURA', serie: 'FFF1', numero: 1 },
+            credentials
+        },
+        resultadoEmision
+    );
+
+    assert.equal(resultadoEmision.status, 'REJECTED');
+    assert.equal(posts, 1);
+    assert.equal(consultas, 0);
+    assert.equal(recuperacion.resultado, resultadoEmision);
 });
 
 test('una respuesta 2xx sin contrato reconocible no se marca como rechazo SUNAT', async () => {

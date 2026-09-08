@@ -114,12 +114,34 @@ test('permite emitir sin código SUNAT y lo reporta como advertencia', () => {
     assert.ok(resumen.advertencias.some(advertencia => advertencia.includes('opcional')));
 });
 
-test('rechaza una unidad que no sea servicio y un código SUNAT incompleto', () => {
+test('conserva NIU en el resumen y en el detalle Nubefact sin transformarlo', () => {
     const resumen = resumenService._private.construirResumen({
         contexto: contextoBase,
         detalle: {
             ...detalleBase,
+            producto_sku: '0221',
+            producto_descripcion: 'CERTIFICACION ANUAL DE GLP',
             producto_unidad: 'NIU',
+            producto_codigo_sunat: null,
+            tarifa_precio: 60
+        },
+        descuento: null,
+        pagos: [],
+        serie: { serieboleta: 'BE15', seriefactura: 'FE15' }
+    });
+    const [item] = resumenService.construirDetallesNubefact(resumen);
+
+    assert.equal(resumen.estado, 'LISTO');
+    assert.equal(resumen.items[0].unidad, 'NIU');
+    assert.equal(item.unidad_snapshot, 'NIU');
+});
+
+test('rechaza una unidad no admitida y un código SUNAT incompleto', () => {
+    const resumen = resumenService._private.construirResumen({
+        contexto: contextoBase,
+        detalle: {
+            ...detalleBase,
+            producto_unidad: 'INVALIDA',
             producto_codigo_sunat: '42'
         },
         descuento: null,
@@ -128,6 +150,6 @@ test('rechaza una unidad que no sea servicio y un código SUNAT incompleto', () 
     });
 
     assert.equal(resumen.estado, 'INCOMPLETO');
-    assert.ok(resumen.errores.some(error => error.includes('debe ser ZZ')));
+    assert.ok(resumen.errores.some(error => error.includes('NIU o ZZ')));
     assert.ok(resumen.errores.some(error => error.includes('8 dígitos')));
 });

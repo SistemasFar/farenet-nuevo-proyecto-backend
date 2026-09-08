@@ -11,6 +11,7 @@ const validar = (overrides = {}) => configService._private.validarSeguridadProdu
     enviarSunat: true,
     detractionDecision: 'NO_APLICA',
     correlativosV2Enabled: true,
+    cronReconciliationEnabled: true,
     ...overrides
 });
 
@@ -40,6 +41,13 @@ test('el estado público sólo marca credenciales si su RUC coincide', () => {
     }).configured, true);
 });
 
+test('el estado público rechaza un RUC emisor con dígito verificador inválido', () => {
+    const row = { entorno: 'PRODUCCION', empresa_key: 'CAMBRIDGE', ruc_emisor: '10101234561' };
+    assert.equal(configService._private.contextoPublico(row, {
+        apiUrl: 'https://api.example.test', token: 'secreto', rucEmisor: '10101234561'
+    }).configured, false);
+});
+
 test('bloquea producción sin confirmación explícita', () => {
     assert.throws(
         () => validar({ productionConfirmed: false }),
@@ -58,6 +66,13 @@ test('bloquea producción si el motor seguro de correlativos está apagado', () 
     assert.throws(
         () => validar({ correlativosV2Enabled: false }),
         error => error.code === 'NUBEFACT_CORRELATIVOS_V2_DESHABILITADOS'
+    );
+});
+
+test('bloquea producción si la reconciliación automática está apagada', () => {
+    assert.throws(
+        () => validar({ cronReconciliationEnabled: false }),
+        error => error.code === 'NUBEFACT_RECONCILIACION_DESHABILITADA'
     );
 });
 

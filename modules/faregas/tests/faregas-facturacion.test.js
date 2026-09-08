@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+    esRucValido,
     normalizarFacturacion,
     validarFacturacion,
     validarFacturacionNubefact,
@@ -14,11 +15,12 @@ const {
     crearCodigoUnico,
     construirItem
 } = require('../integrations/nubefact-faregas.adapter');
+const facturacionService = require('../services/faregas-facturacion.service');
 
 test('normaliza una factura con RUC y valida sus campos fiscales', () => {
     const data = normalizarFacturacion({
         tipoComprobante: 'factura',
-        nroDocumento: '20123456789',
+        nroDocumento: '20521536463',
         nombreRazonSocial: 'Empresa de Prueba SAC',
         direccion: 'Av. Prueba 123',
         email: 'VENTAS@PRUEBA.PE'
@@ -70,6 +72,54 @@ test('construye el contrato Nubefact desde importes controlados por backend', ()
     assert.equal(typeof payload.total, 'number');
 });
 
+test('un rechazo funcional no dispara consulta ni segundo POST', async () => {
+    let consultas = 0;
+    const resultado = {
+        status: 'REJECTED',
+        reason: 'REJECTED_BY_PROVIDER',
+        httpStatus: 400,
+        data: { errors: 'RUC incorrecto' }
+    };
+    const proveedor = {
+        consultarComprobante: async () => {
+            consultas += 1;
+            return { status: 'REJECTED' };
+        }
+    };
+    const reserva = {
+        facturacion: { tipo_comprobante: 'FACTURA', serie: 'FFF1', numero: 1 },
+        credentials: { apiUrl: 'https://example.test', token: 'secreto' }
+    };
+
+    const recuperacion = await facturacionService._private.consultarEmisionIncierta(
+        proveedor,
+        reserva,
+        resultado
+    );
+
+    assert.equal(consultas, 0);
+    assert.equal(recuperacion.resultado, resultado);
+});
+
+test('rechaza una factura con RUC cuyo digito verificador es invalido', () => {
+    const data = normalizarFacturacion({
+        tipoComprobante: 'FACTURA',
+        nroDocumento: '10101234561',
+        nombreRazonSocial: 'CLIENTE EMPRESA',
+        direccion: 'LIMA'
+    });
+
+    assert.equal(esRucValido('10101234561'), false);
+    assert.equal(esRucValido('20521536463'), true);
+    assert.ok(validarFacturacion(data).some(error => error.includes('verificador')));
+    assert.ok(validarFacturacionNubefact({
+        tipo_comprobante: 'FACTURA',
+        nro_documento: '10101234561',
+        nombre_razon_social: 'CLIENTE EMPRESA',
+        direccion: 'LIMA'
+    }).some(error => error.includes('verificador')));
+});
+
 test('omite el código de producto SUNAT cuando no fue configurado', () => {
     const item = construirItem({
         unidad_snapshot: 'ZZ',
@@ -86,6 +136,24 @@ test('omite el código de producto SUNAT cuando no fue configurado', () => {
     });
 
     assert.equal(Object.hasOwn(item, 'codigo_producto_sunat'), false);
+});
+
+test('el adapter conserva NIU cuando el snapshot fiscal lo declara', () => {
+    const item = construirItem({
+        unidad_snapshot: 'niu',
+        codigo_sku_snapshot: '0221',
+        descripcion_snapshot: 'CERTIFICACION ANUAL DE GLP',
+        cantidad: 1,
+        valor_unitario: 50.85,
+        precio_unitario: 60,
+        base_imponible: 50.85,
+        afectacion_igv_snapshot: '10',
+        igv: 9.15,
+        importe_total: 60
+    });
+
+    assert.equal(item.unidad_de_medida, 'NIU');
+    assert.equal(item.codigo, '0221');
 });
 
 test('deriva el medio de pago desde los pagos persistidos y elimina duplicados', () => {
@@ -117,7 +185,7 @@ test('valida limites y formatos exigidos por Nubefact', () => {
 
 test('construye venta al credito con cuotas y multiples items', () => {
     const data = normalizarFacturacion({
-        tipoComprobante: 'FACTURA', nroDocumento: '20123456789',
+        tipoComprobante: 'FACTURA', nroDocumento: '20521536463',
         nombreRazonSocial: 'CLIENTE EMPRESA', direccion: 'LIMA',
         condicionPago: 'CREDITO', fechaVencimiento: '2026-12-31',
         cuotas: [
@@ -130,7 +198,7 @@ test('construye venta al credito con cuotas y multiples items', () => {
     const payload = construirPayloadNubefact({
         facturacion: {
             id: 90, tipo_comprobante: 'FACTURA', tipo_documento_cliente: 'RUC',
-            nro_documento: '20123456789', nombre_razon_social: 'CLIENTE EMPRESA',
+            nro_documento: '20521536463', nombre_razon_social: 'CLIENTE EMPRESA',
             direccion: 'LIMA', serie: 'FE01', numero: 7, base_imponible: 100,
             igv: 18, importe_total: 118, condicion_pago: 'CREDITO',
             fecha_vencimiento: '2026-12-31'

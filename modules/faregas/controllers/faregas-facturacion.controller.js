@@ -19,6 +19,7 @@ const responderError = (res, error) => {
         NUBEFACT_NO_CONFIGURADO: 'Faltan la URL o el token de Nubefact.',
         NUBEFACT_CONFIGURACION_PENDIENTE: 'Falta aplicar la configuracion Nubefact por empresa.',
         NUBEFACT_CORRELATIVOS_V2_DESHABILITADOS: 'El motor seguro de correlativos tributarios no está habilitado.',
+        NUBEFACT_RECONCILIACION_DESHABILITADA: 'La reconciliación automática debe estar habilitada antes de operar en producción.',
         EMPRESA_EMISORA_NO_CONFIGURADA: 'La sede no tiene una empresa emisora Nubefact activa.',
         EMPRESA_EMISORA_RUC_INVALIDO: 'El RUC de la empresa emisora no es valido.',
         NUBEFACT_CREDENCIALES_EMPRESA_FALTANTES: 'Faltan la ruta o el token Nubefact de la empresa emisora.',

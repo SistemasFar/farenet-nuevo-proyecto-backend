@@ -18,15 +18,27 @@ const normalizarRespuesta = (response, options = {}) => {
   const aceptadaSunat = body.aceptada_por_sunat === true || body.aceptada_por_sunat === 'true';
   const httpOk = response.status >= 200 && response.status < 300;
   const tieneTicket = Boolean(body.sunat_ticket_numero || body.ticket || body.numero_ticket);
+  const autenticacion = response.status === 401 || response.status === 403;
+  const rechazoFuncional = response.status >= 400
+    && response.status < 500
+    && !autenticacion
+    && Boolean(
+      body.errors
+      || body.error
+      || body.mensaje
+      || body.message
+      || body.sunat_description
+      || body.sunat_responsecode
+    );
 
-  // Un HTTP no exitoso representa una falla de transporte, autenticación o
-  // disponibilidad del proveedor. Nunca equivale por sí solo a un rechazo
-  // tributario de SUNAT.
+  // Nubefact utiliza HTTP 400 para validaciones determinísticas del documento.
+  // Esos casos no son fallas de red y no deben entrar al circuito de reintento.
   if (!httpOk) {
-    const autenticacion = response.status === 401 || response.status === 403;
     return {
-      status: 'ERROR',
-      reason: autenticacion ? 'INVALID_CREDENTIALS' : 'PROVIDER_HTTP_ERROR',
+      status: rechazoFuncional ? 'REJECTED' : 'ERROR',
+      reason: rechazoFuncional
+        ? 'REJECTED_BY_PROVIDER'
+        : autenticacion ? 'INVALID_CREDENTIALS' : 'PROVIDER_HTTP_ERROR',
       provider: 'NUBEFACT',
       httpStatus: response.status,
       data: body

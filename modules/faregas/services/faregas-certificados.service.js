@@ -350,7 +350,10 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             t.clave AS "tipoCertificadoClave",
             COALESCE(s.nombre, t.nombre) AS "conceptoVehicular",
             op.estado AS "estadoPago",
-            f.estado AS "estadoFacturacion"
+            f.estado AS "estadoFacturacion",
+            f.aceptada_sunat AS "aceptadaSunat",
+            f.enlace_pdf AS "enlacePdf",
+            f.nro_comprobante AS "nroComprobante"
         FROM fg_certificado c
         LEFT JOIN fg_certificado_vehiculo v ON c.id = v.certificado_id
         LEFT JOIN fg_certificado_titular tit ON c.id = tit.certificado_id AND tit.orden = 1

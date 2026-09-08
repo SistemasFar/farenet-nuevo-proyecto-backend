@@ -55,6 +55,14 @@ test('acepta un SKU de certificación sin código SUNAT porque es opcional', () 
     }, true));
 });
 
+test('acepta NIU cuando el catálogo productivo lo conserva explícitamente', () => {
+    assert.doesNotThrow(() => tarifasService._private.validarProducto({
+        ...productoValido,
+        unidad: 'NIU',
+        codigo_clasificacion_sunat: null
+    }, true));
+});
+
 test('rechaza desde backend un SKU que no está habilitado para venta', () => {
     assert.throws(
         () => tarifasService._private.validarProducto({ ...productoValido, es_para_venta: false }, true),
@@ -62,9 +70,9 @@ test('rechaza desde backend un SKU que no está habilitado para venta', () => {
     );
 });
 
-test('rechaza desde backend unidad o código SUNAT inválidos en certificación', () => {
+test('rechaza desde backend unidad fuera de la política o código SUNAT inválido', () => {
     assert.throws(
-        () => tarifasService._private.validarProducto({ ...productoValido, unidad: 'NIU' }, true),
+        () => tarifasService._private.validarProducto({ ...productoValido, unidad: 'INVALIDA' }, true),
         /PRODUCTO_UNIDAD_INVALIDA/
     );
     assert.throws(

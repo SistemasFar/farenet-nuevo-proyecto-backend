@@ -25,4 +25,20 @@ const normalizarPagos = (pagos = []) => {
     return normalizados;
 };
 
-module.exports = { redondear, obtenerTarifaConfigurada, normalizarPagos };
+const construirSnapshotProducto = (tarifa, certificado) => ({
+    productoFacturacionId: tarifa.producto_facturacion_id || null,
+    codigoSku: tarifa.producto_sku || tarifa.servicio_codigo,
+    descripcion: tarifa.producto_descripcion
+        || tarifa.servicio_nombre
+        || `CERTIFICACION ${certificado.tipo_certificado_clave}`,
+    unidad: String(tarifa.producto_unidad || 'ZZ').trim().toUpperCase(),
+    afectacionIgv: String(tarifa.producto_afectacion_igv || '10').trim(),
+    codigoSunat: tarifa.producto_codigo_sunat || null
+});
+
+module.exports = {
+    redondear,
+    obtenerTarifaConfigurada,
+    normalizarPagos,
+    construirSnapshotProducto
+};

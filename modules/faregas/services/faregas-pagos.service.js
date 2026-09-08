@@ -2,7 +2,12 @@ const db = require('../../../config/database');
 const faregasAuthService = require('./faregas-auth.service');
 const tarifasService = require('./faregas-tarifas.service');
 const descuentosService = require('./faregas-descuentos.service');
-const { redondear, obtenerTarifaConfigurada, normalizarPagos } = require('./faregas-pagos.rules');
+const {
+    redondear,
+    obtenerTarifaConfigurada,
+    normalizarPagos,
+    construirSnapshotProducto
+} = require('./faregas-pagos.rules');
 
 const obtenerCertificado = async (queryable, certificadoId, userContext, bloquear = false) => {
     const result = await queryable.query(
@@ -36,6 +41,7 @@ const asegurarOperacionComercial = async (client, certificado, orden, username) 
     const tarifa = tarifasService.validarTarifaCertificacion(
         await tarifasService.obtenerTarifaOperativaPorCodigo(certificado.planta_key, certificado.tarifa_codigo, client)
     );
+    const snapshot = construirSnapshotProducto(tarifa, certificado);
     const vehiculo = await client.query('SELECT placa FROM fg_certificado_vehiculo WHERE certificado_id = $1', [certificado.id]);
     const operacion = await client.query(`
         INSERT INTO fg_operacion_comercial (
@@ -52,12 +58,18 @@ const asegurarOperacionComercial = async (client, certificado, orden, username) 
         INSERT INTO fg_operacion_detalle (
             operacion_id, tipo_item, servicio_id, tarifa_id, certificado_id,
             cantidad, codigo_sku_snapshot, descripcion_snapshot, unidad_snapshot,
-            afectacion_igv_snapshot, valor_unitario, precio_unitario,
+            afectacion_igv_snapshot, codigo_sunat_snapshot, producto_facturacion_id,
+            valor_unitario, precio_unitario,
             base_imponible, igv, importe_total, genera_certificado_snapshot, orden
-        ) VALUES ($1,'SERVICIO',$2,$3,$4,1,$5,$6,'ZZ','10',$7,$8,$7,$9,$8,TRUE,1)
+        ) VALUES ($1,'SERVICIO',$2,$3,$4,1,$5,$6,$7,$8,$9,$10,$11,$12,$11,$13,$12,TRUE,1)
     `, [
         operacionId, tarifa.servicio_id, tarifa.id, certificado.id,
-        tarifa.servicio_codigo, tarifa.servicio_nombre || `CERTIFICACION ${certificado.tipo_certificado_clave}`,
+        snapshot.codigoSku,
+        snapshot.descripcion,
+        snapshot.unidad,
+        snapshot.afectacionIgv,
+        snapshot.codigoSunat,
+        snapshot.productoFacturacionId,
         orden.baseimponible, orden.importe_total, orden.igv
     ]);
     await client.query('UPDATE fg_orden_pago SET operacion_id = $2 WHERE id = $1', [orden.id, operacionId]);
