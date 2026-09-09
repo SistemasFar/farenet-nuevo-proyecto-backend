@@ -38,4 +38,10 @@ router.use('/descuentos', descuentosRoutes);
 const chipsRoutes = require('./faregas-chips.routes');
 router.use('/chips', chipsRoutes);
 
+
+// Módulo de operaciones comerciales sin certificado
+const operacionesRoutes = require('./faregas-operaciones.routes');
+router.use('/operaciones', operacionesRoutes);
+
 module.exports = router;
+

@@ -43,6 +43,24 @@ const asegurarOperacionComercial = async (client, certificado, orden, username) 
     );
     const snapshot = construirSnapshotProducto(tarifa, certificado);
     const vehiculo = await client.query('SELECT placa FROM fg_certificado_vehiculo WHERE certificado_id = $1', [certificado.id]);
+    
+    // Check if there's a chip reserved for this certificate
+    const chipRes = await client.query(`
+        SELECT c.*, pis.precio, pf.id as producto_facturacion_id, pf.codigo_sku, pf.descripcion, pf.unidad, pf.tipo_afectacion_igv, pf.codigo_clasificacion_sunat
+        FROM fg_chip c
+        JOIN fg_certificado_chip cc ON cc.chip_id = c.id
+        JOIN fg_producto_inventariable_sede pis ON pis.planta_key = c.planta_actual_key AND pis.producto_inventariable_id = c.producto_inventariable_id
+        JOIN fg_producto_facturacion pf ON pf.id = (SELECT producto_facturacion_id FROM fg_producto_inventariable WHERE id = c.producto_inventariable_id)
+        WHERE cc.certificado_id = $1 AND c.estado = 'RESERVADO'
+    `, [certificado.id]);
+    
+    const hasChip = chipRes.rowCount > 0;
+    const chipData = hasChip ? chipRes.rows[0] : null;
+
+    let totalCalculado = Number(orden.importe_total);
+    // Note: The total in orden.importe_total might already include the chip if the frontend sent the combined total.
+    // However, the base_imponible and igv in orden are calculated based on importe_total. We should insert the details based on that.
+    
     const operacion = await client.query(`
         INSERT INTO fg_operacion_comercial (
             planta_key, cliente_id, placa, moneda_key, base_imponible, igv,
@@ -54,6 +72,12 @@ const asegurarOperacionComercial = async (client, certificado, orden, username) 
         orden.estado === 'PAGADO' ? 'PAGADO' : 'PENDIENTE_PAGO', username
     ]);
     const operacionId = Number(operacion.rows[0].id);
+
+    // Detalle certificado
+    const certImporteTotal = hasChip ? redondear(totalCalculado - Number(chipData.precio)) : totalCalculado;
+    const certBase = redondear(certImporteTotal / 1.18);
+    const certIgv = redondear(certImporteTotal - certBase);
+
     await client.query(`
         INSERT INTO fg_operacion_detalle (
             operacion_id, tipo_item, servicio_id, tarifa_id, certificado_id,
@@ -64,14 +88,34 @@ const asegurarOperacionComercial = async (client, certificado, orden, username) 
         ) VALUES ($1,'SERVICIO',$2,$3,$4,1,$5,$6,$7,$8,$9,$10,$11,$12,$11,$13,$12,TRUE,1)
     `, [
         operacionId, tarifa.servicio_id, tarifa.id, certificado.id,
-        snapshot.codigoSku,
-        snapshot.descripcion,
-        snapshot.unidad,
-        snapshot.afectacionIgv,
-        snapshot.codigoSunat,
-        snapshot.productoFacturacionId,
-        orden.baseimponible, orden.importe_total, orden.igv
+        snapshot.codigoSku, snapshot.descripcion, snapshot.unidad,
+        snapshot.afectacionIgv, snapshot.codigoSunat, snapshot.productoFacturacionId,
+        certBase, certImporteTotal, certIgv
     ]);
+
+    // Detalle chip
+    if (hasChip) {
+        const chipPrecio = Number(chipData.precio);
+        const chipBase = redondear(chipPrecio / 1.18);
+        const chipIgv = redondear(chipPrecio - chipBase);
+
+        await client.query(`
+            INSERT INTO fg_operacion_detalle (
+                operacion_id, tipo_item, cantidad, codigo_sku_snapshot, descripcion_snapshot,
+                unidad_snapshot, afectacion_igv_snapshot, codigo_sunat_snapshot,
+                producto_facturacion_id, valor_unitario, precio_unitario, base_imponible, igv,
+                importe_total, genera_certificado_snapshot, orden
+            ) VALUES ($1,'PRODUCTO',1,$2,$3,$4,$5,$6,$7,$8,$9,$8,$10,$9,FALSE,2)
+        `, [
+            operacionId, chipData.codigo_sku, chipData.descripcion, chipData.unidad,
+            chipData.tipo_afectacion_igv, chipData.codigo_clasificacion_sunat, chipData.producto_facturacion_id,
+            chipBase, chipPrecio, chipIgv
+        ]);
+
+        await client.query(`UPDATE fg_chip SET operacion_reserva_id=$2 WHERE id=$1`, [chipData.id, operacionId]);
+        await client.query(`UPDATE fg_chip_movimiento SET operacion_comercial_id=$2 WHERE chip_id=$1 AND tipo_movimiento='RESERVA' AND operacion_comercial_id IS NULL`, [chipData.id, operacionId]);
+    }
+
     await client.query('UPDATE fg_orden_pago SET operacion_id = $2 WHERE id = $1', [orden.id, operacionId]);
     orden.operacion_id = operacionId;
     return operacionId;
@@ -109,6 +153,105 @@ const validarReferenciaPago = async (client, pago) => {
         const hoy = new Date();
         hoy.setHours(23, 59, 59, 999);
         if (fechaDeposito > hoy) throw new Error('FECHA_DEPOSITO_FUTURA');
+    }
+};
+
+exports.guardarPagosOperacion = async (operacionId, data, userContext) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        
+        const operacionResult = await client.query('SELECT * FROM fg_operacion_comercial WHERE id = $1 FOR UPDATE', [operacionId]);
+        if (!operacionResult.rowCount) throw new Error('OPERACION_NOT_FOUND');
+        const operacion = operacionResult.rows[0];
+
+        if (!['BORRADOR', 'PENDIENTE_PAGO'].includes(operacion.estado)) throw new Error('OPERACION_NO_EDITABLE');
+
+        const importeSolicitado = redondear(data.importeTotal);
+        if (!Number.isFinite(importeSolicitado) || importeSolicitado < 0) throw new Error('IMPORTE_TOTAL_INVALIDO');
+        
+        if (Math.abs(Number(operacion.importe_total) - importeSolicitado) > 0.009) throw new Error('IMPORTE_NO_COINCIDE');
+
+        const pagos = normalizarPagos(data.pagos);
+        for (const pago of pagos) await validarReferenciaPago(client, pago);
+
+        let ordenResult = await client.query(
+            'SELECT * FROM fg_orden_pago WHERE operacion_id = $1 FOR UPDATE',
+            [operacionId]
+        );
+        let orden;
+        if (ordenResult.rowCount === 0) {
+            const base = redondear(importeSolicitado / 1.18);
+            const igv = redondear(importeSolicitado - base);
+            ordenResult = await client.query(`
+                INSERT INTO fg_orden_pago (
+                    operacion_id, importe_total, baseimponible, igv, importe_pagado,
+                    saldo_pendiente, moneda_key, formapago_key, estado, usuariocreacion_username
+                ) VALUES ($1, $2, $3, $4, 0, $2, 'sol', 'contado', 'PENDIENTE', $5)
+                RETURNING *
+            `, [operacionId, importeSolicitado, base, igv, userContext.username]);
+            orden = ordenResult.rows[0];
+        } else {
+            orden = ordenResult.rows[0];
+        }
+
+        const totalPagado = redondear(pagos.reduce((total, pago) => total + pago.importe, 0));
+        if (totalPagado - Number(orden.importe_total) > 0.009) throw new Error('PAGO_EXCEDE_TOTAL');
+
+        await client.query('DELETE FROM fg_pago WHERE orden_pago_id = $1', [orden.id]);
+        for (const pago of pagos) {
+            const base = redondear(pago.importe / 1.18);
+            const igv = redondear(pago.importe - base);
+            await client.query(`
+                INSERT INTO fg_pago (
+                    baseimponible, digitotarjeta, estado, fechacreacion, fechdeposito,
+                    igv, importe, nrooperacionbanco, nrooperaciontarjeta, sendedtooffisis,
+                    orden_pago_id, cuentacorriente_key, entidadfinanciera_key, moneda_key,
+                    tarjeta_key, tipocontado_key
+                ) VALUES (
+                    $1, $2, 'CAN', CURRENT_TIMESTAMP, $3, $4, $5, $6, $7, false,
+                    $8, $9, $10, 'sol', $11, $12
+                )
+            `, [
+                base,
+                pago.tipo === 'tarjeta' ? pago.digitosTarjeta || null : null,
+                pago.tipo === 'banco' ? pago.fechaDeposito : null,
+                igv,
+                pago.importe,
+                pago.tipo === 'banco' ? String(pago.nroOperacion).trim() : null,
+                pago.tipo === 'tarjeta' ? String(pago.nroOperacion).trim() : null,
+                orden.id,
+                pago.tipo === 'banco' ? pago.cuentaCorrienteKey : null,
+                pago.tipo === 'banco' ? pago.entidadFinancieraKey : null,
+                pago.tipo === 'tarjeta' ? pago.tarjetaKey : null,
+                pago.tipo
+            ]);
+        }
+
+        const saldo = redondear(Number(orden.importe_total) - totalPagado);
+        const estado = saldo === 0 ? 'PAGADO' : 'PENDIENTE';
+        const ordenActualizada = await client.query(`
+            UPDATE fg_orden_pago
+            SET importe_pagado = $2, saldo_pendiente = $3, estado = $4,
+                fechmodi = CURRENT_TIMESTAMP, usuariomodi_username = $5
+            WHERE id = $1
+            RETURNING *
+        `, [orden.id, totalPagado, saldo, estado, userContext.username]);
+        
+        await client.query(`
+            UPDATE fg_operacion_comercial
+            SET estado = $2, usuario_modificacion = $3, fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $1
+        `, [operacionId, estado === 'PAGADO' ? 'PAGADO' : 'PENDIENTE_PAGO', userContext.username]);
+
+        const pagosGuardados = await exports.listarPagosPorOrden(orden.id, client);
+        await client.query('COMMIT');
+        return { orden: ordenActualizada.rows[0], pagos: pagosGuardados };
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
     }
 };
 
@@ -243,6 +386,18 @@ exports.listarPagosPorOrden = async (ordenId, queryable = db) => {
         FROM fg_pago WHERE orden_pago_id = $1 ORDER BY id
     `, [ordenId]);
     return result.rows;
+};
+
+exports.obtenerPagosOperacion = async (operacionId, userContext) => {
+    const operacionResult = await db.query('SELECT * FROM fg_operacion_comercial WHERE id = $1', [operacionId]);
+    if (!operacionResult.rowCount) throw new Error('OPERACION_NOT_FOUND');
+    
+    const ordenResult = await db.query('SELECT * FROM fg_orden_pago WHERE operacion_id = $1', [operacionId]);
+    if (ordenResult.rowCount === 0) {
+        return { orden: null, pagos: [], importeTotal: Number(operacionResult.rows[0].importe_total) };
+    }
+    const orden = ordenResult.rows[0];
+    return { orden, pagos: await exports.listarPagosPorOrden(orden.id), importeTotal: Number(orden.importe_total) };
 };
 
 exports.obtenerPagos = async (certificadoId, userContext) => {

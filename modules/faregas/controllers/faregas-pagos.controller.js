@@ -29,6 +29,30 @@ const responderError = (res, error) => {
     return res.status(status).json({ ok: false, message, code: error.message });
 };
 
+exports.obtenerPorOperacion = async (req, res) => {
+    try {
+        const operacionId = req.params.operacionId;
+        if (!operacionId) return res.status(400).json({ success: false, message: 'Operacion requerida' });
+        const result = await pagosService.obtenerPagosOperacion(operacionId, req.user);
+        res.json({ success: true, ...result });
+    } catch (error) {
+        const status = ['OPERACION_NOT_FOUND'].includes(error.message) ? 404 : 400;
+        res.status(status).json({ success: false, message: error.message });
+    }
+};
+
+exports.guardarPorOperacion = async (req, res) => {
+    try {
+        const operacionId = req.params.operacionId;
+        if (!operacionId) return res.status(400).json({ success: false, message: 'Operacion requerida' });
+        const result = await pagosService.guardarPagosOperacion(operacionId, req.body, req.user);
+        res.json({ success: true, ...result });
+    } catch (error) {
+        const status = ['OPERACION_NOT_FOUND'].includes(error.message) ? 404 : 400;
+        res.status(status).json({ success: false, message: error.message });
+    }
+};
+
 exports.obtenerPagos = async (req, res) => {
     try {
         const data = await pagosService.obtenerPagos(req.params.id, req.user);

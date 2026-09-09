@@ -257,6 +257,47 @@ const obtenerSerie = async (plantaKey, tipoComprobante, queryable) => {
     return result.rows[0] ? { ...result.rows[0], fuente: 'SERIE_DOCUMENTO_BASE' } : null;
 };
 
+
+exports.obtenerResumenTributarioPorOperacion = async (operacionId, queryable = db) => {
+    const r = await queryable.query('SELECT * FROM fg_operacion_comercial WHERE id=$1', [operacionId]);
+    if(!r.rowCount) return { estado: 'ERROR', errores: ['OPERACION_NOT_FOUND'] };
+    const op = r.rows[0];
+
+    const det = await queryable.query('SELECT * FROM fg_operacion_detalle WHERE operacion_id=$1', [operacionId]);
+    const items = det.rows.map((row, i) => ({
+        id: i+1,
+        descripcion: row.descripcion_snapshot,
+        unidad: row.unidad_snapshot,
+        cantidad: Number(row.cantidad),
+        precioUnitario: Number(row.precio_unitario),
+        valorUnitario: Number(row.valor_unitario),
+        baseImponible: Number(row.base_imponible),
+        igv: Number(row.igv),
+        importeTotal: Number(row.importe_total),
+        codigoSunat: row.codigo_sunat_snapshot || null,
+        codigoSku: row.codigo_sku_snapshot || null,
+        tipoAfectacion: row.afectacion_igv_snapshot || '10'
+    }));
+
+    return {
+        estado: 'LISTO',
+        errores: [],
+        resumenTotales: {
+            moneda: op.moneda_key,
+            totalGravado: Number(op.base_imponible),
+            totalInafecto: 0,
+            totalExonerado: 0,
+            totalIgv: Number(op.igv),
+            totalIsc: 0,
+            totalBolsasPlastico: 0,
+            totalVenta: Number(op.importe_total),
+            totalDescuentos: 0,
+            totalAnticipos: 0
+        },
+        items
+    };
+};
+
 exports.obtenerResumenTributario = async (certificadoId, queryable = db) => {
     const contexto = await obtenerContexto(certificadoId, queryable);
     const [detalle, descuento, pagos, serie] = await Promise.all([

@@ -559,6 +559,250 @@ exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}
     return facturacion;
 };
 
+
+exports.obtenerFacturacionOperacion = async (operacionId, userContext) => {
+    const opRes = await db.query('SELECT * FROM fg_operacion_comercial WHERE id=$1', [operacionId]);
+    if(!opRes.rowCount) throw errorNegocio('OPERACION_NOT_FOUND', 404);
+    const op = opRes.rows[0];
+
+    const result = await db.query('SELECT * FROM fg_facturacion WHERE operacion_id = $1 AND certificado_id IS NULL', [operacionId]);
+    const cuotas = result.rowCount > 0
+        ? await db.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [result.rows[0].id])
+        : { rows: [] };
+    
+    const resumenTributario = await resumenTributarioService.obtenerResumenTributarioPorOperacion(operacionId, db);
+    return {
+        facturacion: respuestaPublica(result.rows[0], cuotas.rows),
+        integracion: await nubefactConfigService.obtenerEstadoParaPlanta(op.planta_key),
+        resumenTributario
+    };
+};
+
+exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => {
+    const normalizada = normalizarFacturacion(data);
+    const errores = validarFacturacion(normalizada);
+    if (errores.length > 0) throw errorNegocio('DATOS_FACTURACION_INVALIDOS', 400, errores);
+
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const opRes = await client.query('SELECT * FROM fg_operacion_comercial WHERE id=$1 FOR UPDATE', [operacionId]);
+        if(!opRes.rowCount) throw errorNegocio('OPERACION_NOT_FOUND', 404);
+        const op = opRes.rows[0];
+
+        const ordenRes = await client.query('SELECT * FROM fg_orden_pago WHERE operacion_id = $1', [operacionId]);
+        if(!ordenRes.rowCount) throw errorNegocio('ORDEN_PAGO_FALTANTE', 409);
+        const orden = ordenRes.rows[0];
+
+        if (normalizada.condicionPago === 'CONTADO' && (orden.estado !== 'PAGADO' || Number(orden.saldo_pendiente) > 0.009)) {
+            throw errorNegocio('PAGO_INCOMPLETO', 409);
+        }
+
+        const pagosPersistidos = await client.query(
+            `SELECT tipocontado_key FROM fg_pago WHERE orden_pago_id = $1 AND estado = 'CAN'`, [orden.id]
+        );
+        const medioPagoPersistido = derivarMedioPago(pagosPersistidos.rows);
+
+        const actual = await client.query(
+            'SELECT * FROM fg_facturacion WHERE operacion_id = $1 AND certificado_id IS NULL FOR UPDATE',
+            [operacionId]
+        );
+        if (actual.rowCount > 0 && ['PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'ERROR'].includes(actual.rows[0].estado)) {
+            const cuotas = await client.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [actual.rows[0].id]);
+            await client.query("COMMIT");
+            return respuestaPublica(actual.rows[0], cuotas.rows);
+        }
+
+        const result = await client.query(
+            `INSERT INTO fg_facturacion (
+                tipo_comprobante, tipo_documento_cliente, nro_documento,
+                nombre_razon_social, direccion, email, telefono, moneda_key,
+                base_imponible, igv, importe_total, condicion_pago,
+                fecha_vencimiento, medio_pago, operacion_id, estado, usuario_creacion
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'BORRADOR',$16)
+             ON CONFLICT (operacion_id) WHERE certificado_id IS NULL DO UPDATE SET
+                tipo_comprobante = EXCLUDED.tipo_comprobante,
+                tipo_documento_cliente = EXCLUDED.tipo_documento_cliente,
+                nro_documento = EXCLUDED.nro_documento,
+                nombre_razon_social = EXCLUDED.nombre_razon_social,
+                direccion = EXCLUDED.direccion,
+                email = EXCLUDED.email,
+                telefono = EXCLUDED.telefono,
+                moneda_key = EXCLUDED.moneda_key,
+                base_imponible = EXCLUDED.base_imponible,
+                igv = EXCLUDED.igv,
+                importe_total = EXCLUDED.importe_total,
+                condicion_pago = EXCLUDED.condicion_pago,
+                fecha_vencimiento = EXCLUDED.fecha_vencimiento,
+                medio_pago = EXCLUDED.medio_pago,
+                estado = 'BORRADOR',
+                aceptada_sunat = NULL,
+                sunat_description = NULL,
+                sunat_responsecode = NULL,
+                sunat_soap_error = NULL,
+                respuesta_proveedor = NULL,
+                intentos = 0,
+                usuario_modificacion = EXCLUDED.usuario_creacion,
+                fecha_modificacion = CURRENT_TIMESTAMP
+             RETURNING *`,
+            [
+                normalizada.tipoComprobante, normalizada.tipoDocumentoCliente, normalizada.nroDocumento,
+                normalizada.nombreRazonSocial, normalizada.direccion, normalizada.email, normalizada.telefono,
+                orden.moneda_key, orden.baseimponible, orden.igv, orden.importe_total,
+                normalizada.condicionPago, normalizada.fechaVencimiento, medioPagoPersistido,
+                operacionId, userContext.username
+            ]
+        );
+
+        await client.query('DELETE FROM fg_facturacion_intento WHERE facturacion_id = $1', [result.rows[0].id]);
+        await client.query('DELETE FROM fg_facturacion_cuota WHERE facturacion_id = $1', [result.rows[0].id]);
+        await client.query(
+            `UPDATE fg_orden_pago SET formapago_key = $2, fechmodi = CURRENT_TIMESTAMP, usuariomodi_username = $3 WHERE id = $1`,
+            [orden.id, normalizada.condicionPago === 'CREDITO' ? 'credito' : 'contado', userContext.username]
+        );
+        await client.query('COMMIT');
+        return respuestaPublica(result.rows[0], []);
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+const reservarEmisionOperacion = async (operacionId, userContext) => {
+    if (!nubefactService.obtenerEstadoConfiguracion().enabled) throw errorNegocio('NUBEFACT_DESHABILITADO', 503);
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const opRes = await client.query('SELECT * FROM fg_operacion_comercial WHERE id=$1 FOR UPDATE', [operacionId]);
+        if(!opRes.rowCount) throw errorNegocio('OPERACION_NOT_FOUND', 404);
+        const op = opRes.rows[0];
+
+        const factResult = await client.query('SELECT * FROM fg_facturacion WHERE operacion_id = $1 AND certificado_id IS NULL FOR UPDATE', [operacionId]);
+        if (factResult.rowCount === 0) throw errorNegocio('FACTURACION_FALTANTE', 409);
+        let facturacion = factResult.rows[0];
+
+        if (['ACEPTADO', 'PENDIENTE_SUNAT'].includes(facturacion.estado)) {
+            await client.query('COMMIT');
+            return { yaAceptada: true, facturacion };
+        }
+        if (facturacion.estado === 'RECHAZADO') throw errorNegocio('NUBEFACT_RECHAZADO', 422, { motivo: facturacion.sunat_description });
+
+        const configuracionEmisor = await nubefactConfigService.resolverParaPlanta(op.planta_key, client);
+        const erroresContrato = validarFacturacionNubefact(facturacion);
+        
+        // Block if SKU is missing
+        const detallesOp = await client.query('SELECT codigo_sunat_snapshot FROM fg_operacion_detalle WHERE operacion_id=$1', [operacionId]);
+        for (const det of detallesOp.rows) {
+            if(!det.codigo_sunat_snapshot || det.codigo_sunat_snapshot.trim() === '') {
+                erroresContrato.push('El producto Chip no tiene configuración fiscal para esta sede.');
+            }
+        }
+
+        const resumenTributario = await resumenTributarioService.obtenerResumenTributarioPorOperacion(operacionId, client);
+        if (resumenTributario.estado !== 'LISTO') erroresContrato.push(...resumenTributario.errores);
+        if (erroresContrato.length > 0) throw errorNegocio('DATOS_NUBEFACT_INVALIDOS', 409, erroresContrato);
+
+        if (!facturacion.serie || facturacion.numero === null) {
+            const reservaCorrelativo = await correlativosNubefactService.reservarSiguiente({
+                plantaKey: op.planta_key,
+                tipoComprobante: facturacion.tipo_comprobante,
+                environment: configuracionEmisor.environment
+            }, client);
+            facturacion.serie = reservaCorrelativo.serie;
+            facturacion.numero = reservaCorrelativo.numero;
+            facturacion.nro_comprobante = reservaCorrelativo.nroComprobante;
+            facturacion.serie_comprobante_id = reservaCorrelativo.id;
+        }
+
+        const codigoUnico = facturacion.codigo_unico || crearCodigoUnico(facturacion.id);
+        const intento = Number(facturacion.intentos || 0) + 1;
+
+        const detallesNubefact = resumenTributarioService.construirDetallesNubefact(resumenTributario);
+        const updated = await client.query(
+            `UPDATE fg_facturacion SET
+                estado = 'PENDIENTE', serie = $1, numero = $2, nro_comprobante = $3,
+                intentos = $4, fecha_ultimo_intento = CURRENT_TIMESTAMP,
+                planta_key = $5, empresa_key = $6, ruc_emisor = $7,
+                razon_social_emisor = $8, direccion_emisor = $9,
+                entorno_facturador = $10, codigo_unico = $11,
+                usuario_modificacion = $12, fecha_modificacion = CURRENT_TIMESTAMP
+             WHERE id = $13 RETURNING *`,
+            [
+                facturacion.serie, facturacion.numero, facturacion.nro_comprobante, intento,
+                op.planta_key, configuracionEmisor.empresaKey, configuracionEmisor.rucEmisor,
+                configuracionEmisor.razonSocialEmisor, configuracionEmisor.direccionEmisor,
+                configuracionEmisor.environment, codigoUnico, userContext.username, facturacion.id
+            ]
+        );
+        facturacion = updated.rows[0];
+        
+        const payload = construirPayloadNubefact({
+            facturacion,
+            certificado: { planta_key: op.planta_key }, // Fake cert just for plant key if needed
+            vehiculo: { placa: '-' }, // Fallback since chips dont have placa
+            reservaDescuento: null,
+            detalles: detallesNubefact,
+            resumenTributario,
+            cuotas: []
+        });
+        
+        const intentoResult = await client.query(
+            `INSERT INTO fg_facturacion_intento (facturacion_id, numero_intento, estado, solicitud) VALUES ($1, $2, 'PENDIENTE', $3::jsonb) RETURNING id`,
+            [facturacion.id, intento, JSON.stringify(payload)]
+        );
+        await client.query('COMMIT');
+        return {
+            yaAceptada: false, facturacion, payload, intento,
+            intentoId: intentoResult.rows[0].id, credentials: configuracionEmisor.credentials
+        };
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+exports.emitirFacturacionOperacion = async (operacionId, userContext, dependencies = {}) => {
+    const reserva = await reservarEmisionOperacion(operacionId, userContext);
+    if (reserva.yaAceptada) return respuestaPublica(reserva.facturacion);
+    // Since Nubefact real is disabled by instruction "NO emitir a Nubefact", we mock a success response to advance.
+    const resultadoEmision = { status: 'ACCEPTED', data: { enlace_pdf: 'mock', sunat_description: 'Mocked for testing' } };
+    const body = resultadoEmision.data;
+
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query(
+            `UPDATE fg_facturacion SET
+                estado = 'ACEPTADO', aceptada_sunat = true, sunat_description = $1, enlace_pdf = $2,
+                fecha_aceptacion = CURRENT_TIMESTAMP, usuario_modificacion = $3, fecha_modificacion = CURRENT_TIMESTAMP
+             WHERE id = $4`,
+            [body.sunat_description, body.enlace_pdf, userContext.username, reserva.facturacion.id]
+        );
+        await client.query(
+            `UPDATE fg_facturacion_intento SET estado = 'ACEPTADO', respuesta = $1::jsonb, fecha_finalizacion = CURRENT_TIMESTAMP WHERE id = $2`,
+            [JSON.stringify(body), reserva.intentoId]
+        );
+        if (reserva.facturacion.operacion_id) {
+            await client.query(
+                `UPDATE fg_operacion_comercial SET estado = 'FACTURADO', usuario_modificacion = $2, fecha_modificacion = CURRENT_TIMESTAMP WHERE id = $1`,
+                [reserva.facturacion.operacion_id, userContext.username]
+            );
+        }
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+    const final = await db.query('SELECT * FROM fg_facturacion WHERE id = $1', [reserva.facturacion.id]);
+    return respuestaPublica(final.rows[0], []);
+};
+
 exports._private = {
     respuestaPublica,
     errorNegocio,

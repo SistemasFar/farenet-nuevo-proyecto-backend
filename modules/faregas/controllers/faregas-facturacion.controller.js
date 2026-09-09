@@ -113,3 +113,24 @@ exports.emitir = async (req, res) => {
         return responderError(res, error);
     }
 };
+
+exports.obtenerPorOperacion = async (req, res) => {
+    try {
+        const result = await facturacionService.obtenerFacturacionOperacion(req.params.operacionId, req.user);
+        res.json({ success: true, ...result });
+    } catch (error) { res.status(error.statusCode || 400).json({ success: false, message: error.message, detalles: error.detalles }); }
+};
+
+exports.guardarPorOperacion = async (req, res) => {
+    try {
+        const facturacion = await facturacionService.guardarFacturacionOperacion(req.params.operacionId, req.body, req.user);
+        res.json({ success: true, facturacion });
+    } catch (error) { res.status(error.statusCode || 400).json({ success: false, message: error.message, detalles: error.detalles }); }
+};
+
+exports.emitirPorOperacion = async (req, res) => {
+    try {
+        const facturacion = await facturacionService.emitirFacturacionOperacion(req.params.operacionId, req.user);
+        res.json({ success: true, facturacion });
+    } catch (error) { res.status(error.statusCode || 400).json({ success: false, message: error.message, detalles: error.detalles }); }
+};

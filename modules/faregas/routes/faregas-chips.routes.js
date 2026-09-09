@@ -14,6 +14,7 @@ const permiso = (...claves) => async(req,res,next)=>{
 router.use(authFaregasMiddleware);
 router.get('/',permiso('CHIPS_VER'),controller.listar);
 router.get('/resumen',permiso('CHIPS_VER'),controller.resumen);
+router.get('/disponibilidad/:numeroChip',controller.consultarDisponibilidad);
 router.post('/ingresos',permiso('CHIPS_INGRESAR'),controller.ingresar);
 router.post('/transferencias',permiso('CHIPS_TRANSFERIR'),controller.transferir);
 router.post('/reservas',permiso('CHIPS_VER'),controller.reservar);

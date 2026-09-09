@@ -2,6 +2,8 @@ const db = require('../../../config/database');
 const integrationsConfig = require('../../../config/integrations.config');
 const { paraPlantilla } = require('../mappers/faregas-vehiculo.mapper');
 const tarifasService = require('./faregas-tarifas.service');
+const chipCertificadoService = require('./faregas-chip-certificado.service');
+const { normalizarNumeroChip, esNumeroChipCertificadoValido } = require('./faregas-chips.rules');
 
 const TIPOS_CORRELATIVO = Object.freeze({
     GNV_INICIAL: { tipoBase: 'GNV_ANUAL', modalidad: 'INICIAL' },
@@ -897,7 +899,7 @@ exports.guardarGNV = async (id, data, userContext) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        await obtenerYValidarBorrador(client, id, 'GNV_ANUAL', userContext);
+        const certificado = await obtenerYValidarBorrador(client, id, 'GNV_ANUAL', userContext);
 
         let snapshotTaller = null;
         if (data.tallerAutorizadoId) {
@@ -913,9 +915,9 @@ exports.guardarGNV = async (id, data, userContext) => {
         }
 
         // Validar numero_chip
-        let numeroChip = data.numeroChip ? data.numeroChip.trim().toUpperCase() : null;
+        let numeroChip = data.numeroChip ? normalizarNumeroChip(data.numeroChip) : null;
         if (numeroChip) {
-            if (!/^[A-Z0-9]{1,15}$/.test(numeroChip)) {
+            if (!esNumeroChipCertificadoValido(numeroChip)) {
                 throw new Error('NUMERO_CHIP_INVALIDO');
             }
         }
@@ -967,6 +969,14 @@ exports.guardarGNV = async (id, data, userContext) => {
             data.combustiblePosterior || null,
             data.pesoNetoPosterior || null
         ]);
+
+        await chipCertificadoService.sincronizarReserva(client, {
+            certificadoId: Number(id),
+            plantaKey: certificado.planta_key,
+            modalidad: modalidadGNV,
+            numeroChip,
+            username: userContext.username
+        });
 
         await client.query('COMMIT');
         return true;
@@ -1434,8 +1444,29 @@ exports.validarEmision = async (id, userContext) => {
                 pushError('gnv', 'formato', 'FORMATO_INICIAL_PENDIENTE', 'La captura GNV INICIAL está habilitada, pero su formato de emisión todavía no está configurado');
                 if (!g.numero_chip) {
                     pushError('gnv', 'numero_chip', 'CAMPO_REQUERIDO', 'N° Chip requerido para GNV INICIAL');
-                } else if (!/^[A-Z0-9]{1,15}$/.test(g.numero_chip)) {
+                } else if (!esNumeroChipCertificadoValido(g.numero_chip)) {
                     pushError('gnv', 'numero_chip', 'FORMATO_INVALIDO', 'N° Chip inválido: solo alfanumérico, máx 15 caracteres');
+                } else {
+                    const rChip = await db.query(`
+                        SELECT c.numero_chip, c.estado, c.planta_actual_key
+                        FROM fg_certificado_chip cc
+                        JOIN fg_chip c ON c.id = cc.chip_id
+                        WHERE cc.certificado_id = $1
+                    `, [id]);
+                    const chip = rChip.rows[0];
+                    if (
+                        rChip.rowCount !== 1
+                        || chip.numero_chip !== normalizarNumeroChip(g.numero_chip)
+                        || chip.planta_actual_key !== cert.planta_key
+                        || !['RESERVADO', 'VENDIDO'].includes(chip.estado)
+                    ) {
+                        pushError(
+                            'gnv',
+                            'numero_chip',
+                            'CHIP_NO_RESERVADO',
+                            'El N° Chip debe estar reservado en el inventario de esta sede antes de emitir'
+                        );
+                    }
                 }
             }
         }

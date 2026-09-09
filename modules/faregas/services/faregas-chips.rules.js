@@ -1,5 +1,7 @@
 const normalizarNumeroChip = (valor) => String(valor || '').trim().toUpperCase();
 
+const esNumeroChipCertificadoValido = (valor) => /^[A-Z0-9]{1,15}$/.test(normalizarNumeroChip(valor));
+
 const normalizarLoteScanner = (valor) => {
     const vistos = new Set();
     const validos = [];
@@ -20,4 +22,4 @@ const normalizarLoteScanner = (valor) => {
     return { validos, duplicados, errores };
 };
 
-module.exports = { normalizarNumeroChip, normalizarLoteScanner };
+module.exports = { normalizarNumeroChip, esNumeroChipCertificadoValido, normalizarLoteScanner };

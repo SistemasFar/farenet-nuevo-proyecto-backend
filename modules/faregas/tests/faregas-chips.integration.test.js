@@ -8,7 +8,7 @@ const user = { username: 'ramirez', perfil_id: 'OPERADOR' };
 test.after(async () => db.end());
 
 test('inventario chip: ingreso, concurrencia, transferencia, liberación y guards de venta', async (t) => {
-    const marker = `CODEXTEST${Date.now()}`;
+    const marker = `CX${Date.now().toString(36).toUpperCase()}`;
     const chipA = `${marker}A`;
     const chipB = `${marker}B`;
     const operaciones = [];
@@ -29,6 +29,16 @@ test('inventario chip: ingreso, concurrencia, transferencia, liberación y guard
             assert.equal(stock.stockPermitido, true);
             assert.equal(stock.ventaHabilitada, false);
             assert.equal(stock.mappingFiscalCompleto, false);
+        });
+
+        await t.test('consulta de escáner reconoce un chip disponible en la sede', async () => {
+            const disponibilidad = await service.consultarDisponibilidad({
+                plantaKey: '201',
+                numeroChip: chipA
+            }, user);
+            assert.equal(disponibilidad.encontrado, true);
+            assert.equal(disponibilidad.disponible, true);
+            assert.equal(disponibilidad.codigo, 'DISPONIBLE');
         });
 
         await t.test('transferencia y rechazo desde sede incorrecta', async () => {

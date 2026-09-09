@@ -1,6 +1,11 @@
 const db = require('../../../config/database');
 const authService = require('./faregas-auth.service');
-const { normalizarNumeroChip, normalizarLoteScanner } = require('./faregas-chips.rules');
+const {
+    normalizarNumeroChip,
+    esNumeroChipCertificadoValido,
+    normalizarLoteScanner
+} = require('./faregas-chips.rules');
+const { redondear } = require('./faregas-pagos.rules');
 
 const validarAcceso = async (user, plantaKey) => {
     if (!await authService.validarAccesoPlanta(user.username, user.perfil_id, plantaKey)) {
@@ -85,6 +90,68 @@ exports.resumen = async (plantaKey, user) => {
     };
 };
 
+exports.consultarDisponibilidad = async ({ plantaKey, numeroChip, certificadoId }, user) => {
+    await validarAcceso(user, plantaKey);
+    const numero = normalizarNumeroChip(numeroChip);
+    if (!esNumeroChipCertificadoValido(numero)) throw new Error('NUMERO_CHIP_INVALIDO');
+    exigirStockPermitido(await productoChip(db, plantaKey));
+
+    const idCertificado = certificadoId === undefined || certificadoId === null || certificadoId === ''
+        ? null
+        : Number(certificadoId);
+    if (idCertificado !== null && (!Number.isSafeInteger(idCertificado) || idCertificado <= 0)) {
+        throw new Error('CERTIFICADO_INVALIDO');
+    }
+    if (idCertificado !== null) {
+        const certificado = await db.query(
+            'SELECT planta_key FROM fg_certificado WHERE id = $1',
+            [idCertificado]
+        );
+        if (!certificado.rowCount || certificado.rows[0].planta_key !== plantaKey) {
+            throw new Error('CERTIFICADO_INVALIDO');
+        }
+    }
+
+    const result = await db.query(`
+        SELECT c.id, c.numero_chip, c.estado, c.planta_actual_key,
+               p.nombre AS planta_nombre,
+               cc.certificado_id
+        FROM fg_chip c
+        JOIN fg_planta p ON p.key = c.planta_actual_key
+        LEFT JOIN fg_certificado_chip cc ON cc.chip_id = c.id
+        WHERE c.numero_chip = $1
+    `, [numero]);
+
+    if (!result.rowCount) {
+        return {
+            numeroChip: numero,
+            encontrado: false,
+            disponible: false,
+            asignadoAlCertificado: false,
+            codigo: 'CHIP_NO_ENCONTRADO'
+        };
+    }
+
+    const chip = result.rows[0];
+    const asignadoAlCertificado = idCertificado !== null
+        && Number(chip.certificado_id) === idCertificado;
+    let codigo = 'CHIP_NO_DISPONIBLE';
+    if (chip.planta_actual_key !== plantaKey) codigo = 'CHIP_OTRA_SEDE';
+    else if (asignadoAlCertificado && chip.estado === 'RESERVADO') codigo = 'ASIGNADO_CERTIFICADO';
+    else if (chip.estado === 'DISPONIBLE') codigo = 'DISPONIBLE';
+
+    return {
+        id: Number(chip.id),
+        numeroChip: chip.numero_chip,
+        encontrado: true,
+        disponible: codigo === 'DISPONIBLE' || codigo === 'ASIGNADO_CERTIFICADO',
+        asignadoAlCertificado,
+        estado: chip.estado,
+        plantaNombre: chip.planta_nombre,
+        codigo
+    };
+};
+
 exports.ingresar = async ({ plantaKey, numeros, referencia }, user) => {
     await validarAcceso(user, plantaKey);
     const lote = normalizarLoteScanner(Array.isArray(numeros) ? numeros.join('\n') : numeros);
@@ -159,9 +226,9 @@ exports.reservar = async ({ plantaKey, numeroChip, operacionId, certificadoId },
             if (!cert.rowCount || cert.rows[0].planta_key !== plantaKey) throw new Error('CERTIFICADO_INVALIDO');
             await client.query('INSERT INTO fg_certificado_chip(certificado_id,chip_id) VALUES($1,$2)', [certificadoId,chip.id]);
         }
-        await client.query(`UPDATE fg_chip SET estado='RESERVADO',operacion_reserva_id=$2,reservado_en=NOW(),actualizado_por=$3,actualizado_en=NOW() WHERE id=$1`, [chip.id,operacionId,user.username]);
+        await client.query(`UPDATE fg_chip SET estado='RESERVADO',operacion_reserva_id=$2,reservado_en=NOW(),actualizado_por=$3,actualizado_en=NOW() WHERE id=$1`, [chip.id,operacionId||null,user.username]);
         await client.query(`INSERT INTO fg_chip_movimiento(chip_id,tipo_movimiento,planta_origen_key,usuario,certificado_id,operacion_comercial_id)
-            VALUES($1,'RESERVA',$2,$3,$4,$5)`, [chip.id,plantaKey,user.username,certificadoId||null,operacionId]);
+            VALUES($1,'RESERVA',$2,$3,$4,$5)`, [chip.id,plantaKey,user.username,certificadoId||null,operacionId||null]);
         await client.query('COMMIT'); return { id: chip.id, numeroChip: chip.numero_chip, estado: 'RESERVADO' };
     } catch(e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 };
@@ -179,6 +246,71 @@ exports.liberar = async ({ plantaKey, numeroChip, operacionId, referencia }, use
         await client.query(`INSERT INTO fg_chip_movimiento(chip_id,tipo_movimiento,planta_origen_key,usuario,operacion_comercial_id,referencia) VALUES($1,'LIBERACION',$2,$3,$4,$5)`,[chip.id,plantaKey,user.username,operacionId,referencia||null]);
         await client.query('COMMIT');
     } catch(e){await client.query('ROLLBACK');throw e;} finally{client.release();}
+};
+
+exports.iniciarVentaSoloChip = async ({ plantaKey, numeroChip, clienteId }, user) => {
+    await validarAcceso(user, plantaKey);
+    const numero = normalizarNumeroChip(numeroChip);
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const config = await productoChip(client, plantaKey, true);
+        exigirStockPermitido(config);
+        exigirVentaHabilitada(config);
+
+        const chipRes = await client.query('SELECT * FROM fg_chip WHERE numero_chip=$1 FOR UPDATE', [numero]);
+        if (!chipRes.rowCount) throw new Error('CHIP_NO_ENCONTRADO');
+        const chip = chipRes.rows[0];
+        if (chip.planta_actual_key !== plantaKey) throw new Error('CHIP_OTRA_SEDE');
+        if (chip.estado !== 'DISPONIBLE') throw new Error('CHIP_NO_DISPONIBLE');
+
+        const pf = await client.query('SELECT * FROM fg_producto_facturacion WHERE id=$1', [config.producto_facturacion_id]);
+        if (!pf.rowCount) throw new Error('PRODUCTO_FISCAL_CHIP_INVALIDO');
+        const pfData = pf.rows[0];
+
+        const base = redondear(Number(config.precio) / 1.18);
+        const igv = redondear(Number(config.precio) - base);
+
+        const operacion = await client.query(`
+            INSERT INTO fg_operacion_comercial (
+                planta_key, cliente_id, moneda_key, base_imponible, igv,
+                importe_total, estado, usuario_creacion
+            ) VALUES ($1,$2,'sol',$3,$4,$5,'PENDIENTE_PAGO',$6) RETURNING id
+        `, [plantaKey, clienteId || null, base, igv, Number(config.precio), user.username]);
+        const operacionId = Number(operacion.rows[0].id);
+
+        await client.query(`
+            INSERT INTO fg_operacion_detalle (
+                operacion_id, tipo_item, cantidad, codigo_sku_snapshot, descripcion_snapshot,
+                unidad_snapshot, afectacion_igv_snapshot, codigo_sunat_snapshot,
+                producto_facturacion_id, valor_unitario, precio_unitario, base_imponible, igv,
+                importe_total, genera_certificado_snapshot, orden
+            ) VALUES ($1,'PRODUCTO',1,$2,$3,$4,$5,$6,$7,$8,$9,$8,$10,$9,FALSE,1)
+        `, [
+            operacionId,
+            pfData.codigo_sku,
+            pfData.descripcion,
+            pfData.unidad,
+            pfData.tipo_afectacion_igv,
+            pfData.codigo_clasificacion_sunat,
+            pfData.id,
+            base,
+            Number(config.precio),
+            igv
+        ]);
+
+        await client.query(`UPDATE fg_chip SET estado='RESERVADO',operacion_reserva_id=$2,reservado_en=NOW(),actualizado_por=$3,actualizado_en=NOW() WHERE id=$1`, [chip.id,operacionId,user.username]);
+        await client.query(`INSERT INTO fg_chip_movimiento(chip_id,tipo_movimiento,planta_origen_key,usuario,operacion_comercial_id)
+            VALUES($1,'RESERVA',$2,$3,$4)`, [chip.id,plantaKey,user.username,operacionId]);
+        
+        await client.query('COMMIT');
+        return { operacionId, chipId: chip.id, numeroChip: chip.numero_chip, precio: Number(config.precio) };
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
 };
 
 exports.vender = async ({ plantaKey, numeroChip, operacionId, detalleId }, user) => {
