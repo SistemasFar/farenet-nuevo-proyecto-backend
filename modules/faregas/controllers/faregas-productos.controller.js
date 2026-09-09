@@ -36,6 +36,16 @@ const idProducto = (value) => {
     return id;
 };
 
+const idCategoria = (value) => {
+    const id = Number(value);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        const error = new Error('La categoría es obligatoria.');
+        error.status = 400;
+        throw error;
+    }
+    return id;
+};
+
 const normalizar = (body, { crear = false } = {}) => {
     const codigoSku = textoNullable(body.codigo_sku);
     const descripcion = textoNullable(body.descripcion);
@@ -60,6 +70,7 @@ const normalizar = (body, { crear = false } = {}) => {
         descripcion,
         tipo_producto: textoNullable(body.tipo_producto),
         categoria_dms: textoNullable(body.categoria_dms),
+        categoria_id: idCategoria(body.categoria_id),
         cuenta_por_cobrar: textoNullable(body.cuenta_por_cobrar),
         unidad: textoNullable(body.unidad),
         precio_unitario: numeroNullable(body.precio_unitario, 'Precio unitario'),
@@ -79,9 +90,11 @@ const normalizar = (body, { crear = false } = {}) => {
 const responderError = (res, error, fallback) => {
     const mensajes = {
         SKU_DUPLICADO: 'Ya existe un producto con ese código SKU.',
-        PRODUCTO_NO_ENCONTRADO: 'Producto no encontrado.'
+        PRODUCTO_NO_ENCONTRADO: 'Producto no encontrado.',
+        CATEGORIA_NO_DISPONIBLE: 'La categoría seleccionada no existe o está inactiva.'
     };
-    res.status(error.status || (error.message === 'SKU_DUPLICADO' ? 409 : 500)).json({
+    const conflicto = ['SKU_DUPLICADO', 'CATEGORIA_NO_DISPONIBLE'].includes(error.message);
+    res.status(error.status || (conflicto ? 409 : 500)).json({
         success: false,
         message: mensajes[error.message] || error.message || fallback
     });
@@ -94,7 +107,8 @@ exports.listar = async (req, res) => {
             buscar: textoNullable(req.query.buscar),
             estado: convertirBooleano(req.query.activo),
             paraVenta: convertirBooleano(req.query.es_para_venta),
-            unidad: textoNullable(req.query.unidad)
+            unidad: textoNullable(req.query.unidad),
+            categoriaId: req.query.categoria_id ? idCategoria(req.query.categoria_id) : undefined
         });
         res.json({ success: true, productos });
     } catch (error) {

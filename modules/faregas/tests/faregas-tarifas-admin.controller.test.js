@@ -92,3 +92,18 @@ test('permite otra unidad en productos no vinculados a certificación', () => {
         codigo_clasificacion_sunat: null
     }, false));
 });
+
+test('exige que producto fiscal y operación pertenezcan a la misma categoría', () => {
+    assert.doesNotThrow(() => tarifasService._private.validarCategoriaProducto({ categoria_id: 7 }, 7));
+    assert.throws(
+        () => tarifasService._private.validarCategoriaProducto({ categoria_id: null }, 7),
+        /PRODUCTO_SIN_CATEGORIA/
+    );
+    assert.doesNotThrow(() => tarifasService._private.validarCategoriaProducto(
+        { categoria_id: null }, 7, { permitirSinCategoria: true }
+    ));
+    assert.throws(
+        () => tarifasService._private.validarCategoriaProducto({ categoria_id: 8 }, 7),
+        /PRODUCTO_CATEGORIA_INCOMPATIBLE/
+    );
+});

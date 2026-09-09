@@ -73,7 +73,7 @@ const requireLecturaCategoriasPerm = async (req, res, next) => {
                AND EXISTS (
                    SELECT 1 FROM fg_perfil_permiso fp
                    WHERE fp.perfil_clave = $1
-                     AND fp.permiso_clave IN ('CONFIGURACION_CATEGORIAS', 'CONFIGURACION_SERVICIOS')
+                     AND fp.permiso_clave IN ('CONFIGURACION_CATEGORIAS', 'CONFIGURACION_SERVICIOS', 'CONFIGURACION_PRODUCTOS')
                )`,
             [req.user.perfil_id]
         );

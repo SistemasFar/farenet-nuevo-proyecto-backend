@@ -10,16 +10,16 @@ const crearExecutor = ({ productoActualId = null, categoriaDms = null, productoA
         if (sql.includes('FROM fg_planta WHERE')) return { rows: [{ key: '201', nombre: 'INDEPENDENCIA', activo: true }] };
         if (sql.includes('FROM fg_servicio')) return { rows: [{
             id: 3, codigo: 'GLP_INICIAL', nombre: 'Certificado inicial',
-            tipo_flujo: 'CERTIFICACION', activo: true
+            tipo_flujo: 'CERTIFICACION', categoria_id: 1, activo: true
         }] };
         if (sql.includes('FROM fg_tarifa')) return { rows: [{
             id: 50, planta_key: '201', producto_facturacion_id: productoActualId,
             servicio_codigo: 'GLP_INICIAL', servicio_nombre: 'Certificado inicial',
-            tipo_flujo: 'CERTIFICACION', planta_nombre: 'INDEPENDENCIA'
+            tipo_flujo: 'CERTIFICACION', categoria_id: 1, planta_nombre: 'INDEPENDENCIA'
         }] };
         if (sql.includes('FROM fg_producto_facturacion')) return { rows: [{
             id: 22, codigo_sku: '0022', descripcion: 'CERTIFICADO INICIAL DE GLP',
-            categoria_dms: categoriaDms, unidad: 'NIU', codigo_clasificacion_sunat: null,
+            categoria_dms: categoriaDms, categoria_id: 1, unidad: 'NIU', codigo_clasificacion_sunat: null,
             tipo_afectacion_igv: '10', es_para_venta: true, activo: productoActivo
         }] };
         if (sql.includes('FROM fg_producto_sede')) return { rows: [] };

@@ -31,7 +31,9 @@ const responderError = (res, error) => {
         PRODUCTO_NO_VENTA: [409, 'El SKU debe estar habilitado para venta.'],
         PRODUCTO_UNIDAD_INVALIDA: [409, 'La unidad tributaria debe ser NIU o ZZ.'],
         PRODUCTO_CODIGO_SUNAT_INVALIDO: [409, 'El código de clasificación SUNAT debe contener 8 dígitos.'],
-        PRODUCTO_AFECTACION_IGV_INVALIDA: [409, 'Los servicios gravados de certificación requieren afectación IGV 10.']
+        PRODUCTO_AFECTACION_IGV_INVALIDA: [409, 'Los servicios gravados de certificación requieren afectación IGV 10.'],
+        PRODUCTO_SIN_CATEGORIA: [409, 'El producto fiscal debe tener una categoría antes de vincularlo.'],
+        PRODUCTO_CATEGORIA_INCOMPATIBLE: [409, 'La categoría del producto fiscal no coincide con la categoría de la operación.']
     };
     const [status, message] = mapa[error.message] || [error.status || 500, error.message || 'Error interno de tarifas.'];
     res.status(status).json({ success: false, message });

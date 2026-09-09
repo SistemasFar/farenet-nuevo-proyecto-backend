@@ -10,6 +10,7 @@ const serializarTarifa = (row) => ({
     servicio_codigo: row.servicio_codigo,
     servicio_nombre: row.servicio_nombre,
     servicio_tipo_flujo: row.servicio_tipo_flujo,
+    categoria_id: row.categoria_id,
     categoria_codigo: row.categoria_codigo,
     categoria_nombre: row.categoria_nombre,
     precio: Number(row.precio),
@@ -23,6 +24,9 @@ const serializarTarifa = (row) => ({
     producto_activo: row.producto_activo,
     producto_es_para_venta: row.producto_es_para_venta,
     producto_codigo_sunat: row.producto_codigo_sunat,
+    producto_categoria_id: row.producto_categoria_id,
+    producto_categoria_codigo: row.producto_categoria_codigo,
+    producto_categoria_nombre: row.producto_categoria_nombre,
     activo: row.activo
 });
 
@@ -57,7 +61,7 @@ exports.listar = async ({ plantaKey, buscar, categoria, activo } = {}) => {
         SELECT t.id, t.planta_key, p.nombre AS sede_nombre,
                t.servicio_id, s.codigo AS servicio_codigo, s.nombre AS servicio_nombre,
                s.tipo_flujo AS servicio_tipo_flujo,
-               c.codigo AS categoria_codigo, c.nombre AS categoria_nombre,
+               c.id AS categoria_id, c.codigo AS categoria_codigo, c.nombre AS categoria_nombre,
                t.precio, t.producto_facturacion_id,
                pf.codigo_sku AS producto_sku, pf.descripcion AS producto_descripcion,
                pf.unidad AS producto_unidad, pf.tipo_afectacion_igv AS producto_afectacion_igv,
@@ -66,12 +70,16 @@ exports.listar = async ({ plantaKey, buscar, categoria, activo } = {}) => {
                pf.activo AS producto_activo,
                pf.es_para_venta AS producto_es_para_venta,
                pf.codigo_clasificacion_sunat AS producto_codigo_sunat,
+               pf.categoria_id AS producto_categoria_id,
+               pc.codigo AS producto_categoria_codigo,
+               pc.nombre AS producto_categoria_nombre,
                t.activo
         FROM fg_tarifa t
         JOIN fg_planta p ON p.key = t.planta_key
         JOIN fg_servicio s ON s.id = t.servicio_id
         JOIN fg_categoria_servicio c ON c.id = s.categoria_id
         LEFT JOIN fg_producto_facturacion pf ON pf.id = t.producto_facturacion_id
+        LEFT JOIN fg_categoria_servicio pc ON pc.id = pf.categoria_id
         WHERE ${condiciones.join(' AND ')}
         ORDER BY c.orden, s.orden, s.nombre
     `, valores);
@@ -81,7 +89,7 @@ exports.listar = async ({ plantaKey, buscar, categoria, activo } = {}) => {
 exports.listarServiciosDisponibles = async (plantaKey) => {
     const result = await db.query(`
         SELECT s.id, s.codigo, s.nombre, s.familia, s.tipo_flujo, s.tipo_certificado_clave,
-               s.modalidad, s.orden, c.codigo AS categoria_codigo,
+               s.modalidad, s.orden, c.id AS categoria_id, c.codigo AS categoria_codigo,
                c.nombre AS categoria_nombre
         FROM fg_servicio s
         JOIN fg_categoria_servicio c ON c.id = s.categoria_id
@@ -97,13 +105,15 @@ exports.listarServiciosDisponibles = async (plantaKey) => {
 
 exports.buscarProductos = async (texto) => {
     const result = await db.query(`
-        SELECT id, codigo_sku, descripcion, unidad, tipo_afectacion_igv,
-               cuenta_por_cobrar, precio_referencia, activo, es_para_venta,
-               codigo_clasificacion_sunat
-        FROM fg_producto_facturacion
-        WHERE activo = TRUE
-          AND (codigo_sku ILIKE $1 OR descripcion ILIKE $1)
-        ORDER BY CASE WHEN codigo_sku = $2 THEN 0 ELSE 1 END, codigo_sku
+        SELECT p.id, p.codigo_sku, p.descripcion, p.unidad, p.tipo_afectacion_igv,
+               p.cuenta_por_cobrar, p.precio_referencia, p.activo, p.es_para_venta,
+               p.codigo_clasificacion_sunat, p.categoria_id,
+               c.codigo AS categoria_codigo, c.nombre AS categoria_nombre
+        FROM fg_producto_facturacion p
+        LEFT JOIN fg_categoria_servicio c ON c.id = p.categoria_id
+        WHERE p.activo = TRUE
+          AND (p.codigo_sku ILIKE $1 OR p.descripcion ILIKE $1)
+        ORDER BY CASE WHEN p.codigo_sku = $2 THEN 0 ELSE 1 END, p.codigo_sku
         LIMIT 30
     `, [`%${texto}%`, texto]);
     return result.rows.map((row) => ({
@@ -127,11 +137,22 @@ const validarProducto = (producto, exigeDatosTributarios = false) => {
     }
 };
 
+const validarCategoriaProducto = (producto, categoriaServicioId, { permitirSinCategoria = false } = {}) => {
+    if (!producto) return;
+    if (!producto.categoria_id) {
+        if (permitirSinCategoria) return;
+        throw new Error('PRODUCTO_SIN_CATEGORIA');
+    }
+    if (Number(producto.categoria_id) !== Number(categoriaServicioId)) {
+        throw new Error('PRODUCTO_CATEGORIA_INCOMPATIBLE');
+    }
+};
+
 const obtenerProducto = async (client, productoId, exigeDatosTributarios = false) => {
     if (productoId === null) return null;
     const result = await client.query(`
         SELECT id, codigo_sku, descripcion, unidad, codigo_clasificacion_sunat,
-               tipo_afectacion_igv, es_para_venta, activo
+               tipo_afectacion_igv, es_para_venta, activo, categoria_id
         FROM fg_producto_facturacion WHERE id = $1
     `, [productoId]);
     if (result.rowCount === 0) throw new Error('PRODUCTO_NO_ENCONTRADO');
@@ -157,6 +178,7 @@ exports.crear = async (tarifa, username, ipDireccion) => {
             tarifa.producto_facturacion_id,
             s.tipo_flujo === 'CERTIFICACION'
         );
+        validarCategoriaProducto(producto, s.categoria_id);
         const result = await client.query(`
             INSERT INTO fg_tarifa (
                 planta_key, codigo, familia, nombre, tipo_certificado_clave,
@@ -194,7 +216,7 @@ exports.editar = async (id, cambios, username, ipDireccion) => {
         await client.query('BEGIN');
         const actualResult = await client.query(`
             SELECT t.*, s.codigo AS servicio_codigo, s.nombre AS servicio_nombre,
-                   s.tipo_flujo AS servicio_tipo_flujo,
+                   s.tipo_flujo AS servicio_tipo_flujo, s.categoria_id,
                    p.nombre AS sede_nombre, pf.codigo_sku AS producto_sku
             FROM fg_tarifa t
             JOIN fg_servicio s ON s.id = t.servicio_id
@@ -209,6 +231,9 @@ exports.editar = async (id, cambios, username, ipDireccion) => {
             cambios.producto_facturacion_id,
             actual.servicio_tipo_flujo === 'CERTIFICACION'
         );
+        validarCategoriaProducto(producto, actual.categoria_id, {
+            permitirSinCategoria: Number(actual.producto_facturacion_id) === Number(cambios.producto_facturacion_id)
+        });
         await client.query(`
             UPDATE fg_tarifa
             SET precio = $1, producto_facturacion_id = $2, activo = $3
@@ -275,4 +300,4 @@ exports.cambiarEstado = async (id, activo, username, ipDireccion) => {
     }
 };
 
-exports._private = { validarProducto };
+exports._private = { validarProducto, validarCategoriaProducto };

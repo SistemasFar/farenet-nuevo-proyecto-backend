@@ -1,4 +1,4 @@
-const campanaModel = require('../models/campana_descuento.model');
+ const campanaModel = require('../models/campana_descuento.model');
 
 const obtenerDescuentosYReinspeccion = async (placa, plantaKey, concepto, ruc = null) => {
   const reinspeccion = await campanaModel.verificarReinspeccion(placa, plantaKey, concepto);

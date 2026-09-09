@@ -17,6 +17,7 @@ const nubefactFiles = new Set([
     'faregas-nubefact-simulation.test.js',
     'faregas-nubefact.service.test.js',
     'faregas-pagos.service.test.js',
+    'faregas-productos-categorias.test.js',
     'faregas-resumen-tributario.service.test.js',
     'faregas-series.controller.test.js',
     'faregas-tarifas-admin.controller.test.js'

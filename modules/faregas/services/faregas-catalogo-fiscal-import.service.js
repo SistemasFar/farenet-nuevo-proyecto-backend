@@ -56,7 +56,7 @@ const consultarContexto = async (rows, queryable, { bloquearTarifas = false } = 
     const serviciosResult = servicios.length === 0
         ? { rows: [] }
         : await queryable.query(`
-                SELECT id, codigo, nombre, tipo_flujo, activo
+                SELECT id, codigo, nombre, tipo_flujo, categoria_id, activo
                 FROM fg_servicio
                 WHERE UPPER(BTRIM(codigo)) = ANY($1::text[])
             `, [servicios]);
@@ -65,7 +65,7 @@ const consultarContexto = async (rows, queryable, { bloquearTarifas = false } = 
         : await queryable.query(`
                 SELECT t.id, t.planta_key, t.producto_facturacion_id,
                        s.codigo AS servicio_codigo, s.nombre AS servicio_nombre,
-                       s.tipo_flujo, p.nombre AS planta_nombre
+                       s.tipo_flujo, s.categoria_id, p.nombre AS planta_nombre
                 FROM fg_tarifa t
                 JOIN fg_servicio s ON s.id = t.servicio_id
                 JOIN fg_planta p ON p.key = t.planta_key
@@ -78,7 +78,7 @@ const consultarContexto = async (rows, queryable, { bloquearTarifas = false } = 
     const productosResult = skus.length === 0
         ? { rows: [] }
         : await queryable.query(`
-                SELECT id, codigo_sku, descripcion, categoria_dms, unidad,
+                SELECT id, codigo_sku, descripcion, categoria_dms, categoria_id, unidad,
                        codigo_clasificacion_sunat, tipo_afectacion_igv,
                        es_para_venta, activo
                 FROM fg_producto_facturacion
@@ -152,6 +152,9 @@ const analizar = async (rows, queryable, options = {}) => {
         if (producto) {
             try {
                 tarifasService._private.validarProducto(producto, tarifa?.tipo_flujo === 'CERTIFICACION');
+                tarifasService._private.validarCategoriaProducto(producto, tarifa?.categoria_id, {
+                    permitirSinCategoria: Number(tarifa?.producto_facturacion_id || 0) === Number(producto.id)
+                });
             } catch (error) {
                 errores.push(error.message);
             }
