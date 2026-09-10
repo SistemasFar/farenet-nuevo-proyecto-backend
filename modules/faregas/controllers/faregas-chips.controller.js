@@ -1,13 +1,17 @@
 const service = require('../services/faregas-chips.service');
 
 const respond = (res, error) => {
-    const status = ['CHIP_DUPLICADO','CHIP_NO_DISPONIBLE','RESERVA_NO_COINCIDE'].includes(error.message) ? 409
+    const status = ['CHIP_DUPLICADO','CHIP_NO_DISPONIBLE','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO'].includes(error.message) ? 409
         : ['PLANTA_NO_AUTORIZADA'].includes(error.message) ? 403 : 400;
     res.status(status).json({ success:false, codigo:error.message, message:error.message, detalles:error.detalles });
 };
 
 exports.listar = async(req,res)=>{try{res.json({success:true,...await service.listar({plantaKey:req.user.planta_key,...req.query},req.user)});}catch(e){respond(res,e);}};
-exports.resumen = async(req,res)=>{try{res.json({success:true,resumen:await service.resumen(req.user.planta_key,req.user)});}catch(e){respond(res,e);}};
+exports.resumen = async(req,res)=>{try{res.json({success:true,resumen:await service.resumen(req.user.planta_key,req.user,req.query.productoInventariableId)});}catch(e){respond(res,e);}};
+exports.listarProductosInventariables = async(req,res)=>{try{res.json({success:true,productos:await service.listarProductosInventariables(req.user.planta_key,req.user)});}catch(e){respond(res,e);}};
+exports.catalogosProductosInventariables = async(req,res)=>{try{res.json({success:true,...await service.catalogosProductosInventariables(req.user.planta_key,req.user)});}catch(e){respond(res,e);}};
+exports.crearProductoInventariable = async(req,res)=>{try{res.status(201).json({success:true,producto:await service.crearProductoInventariable(req.body,req.user,req.ip)});}catch(e){respond(res,e);}};
+exports.editarProductoInventariable = async(req,res)=>{try{res.json({success:true,producto:await service.editarProductoInventariable(Number(req.params.id),req.body,req.user,req.ip)});}catch(e){respond(res,e);}};
 exports.consultarDisponibilidad = async(req,res)=>{try{res.json({success:true,chip:await service.consultarDisponibilidad({plantaKey:req.user.planta_key,numeroChip:req.params.numeroChip,certificadoId:req.query.certificadoId},req.user)});}catch(e){respond(res,e);}};
 exports.ingresar = async(req,res)=>{try{res.status(201).json({success:true,chips:await service.ingresar({plantaKey:req.user.planta_key,...req.body},req.user)});}catch(e){respond(res,e);}};
 exports.transferir = async(req,res)=>{try{res.json({success:true,cantidad:await service.transferir({...req.body,origenKey:req.user.planta_key},req.user)});}catch(e){respond(res,e);}};

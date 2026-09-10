@@ -7,6 +7,35 @@ const {
 } = require('./faregas-chips.rules');
 const { redondear } = require('./faregas-pagos.rules');
 
+const normalizarCodigoProducto = (valor) => String(valor || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+
+const normalizarNombreProducto = (valor) => String(valor || '').trim();
+
+const normalizarSedesProducto = (sedes) => {
+    if (!Array.isArray(sedes)) return [];
+    const unicas = new Map();
+    for (const sede of sedes) {
+        const plantaKey = String(sede?.plantaKey || sede || '').trim();
+        if (!plantaKey) continue;
+        const precio = Number(sede?.precio);
+        unicas.set(plantaKey, {
+            plantaKey,
+            precio,
+            stockPermitido: sede?.stockPermitido !== false,
+            ventaHabilitada: sede?.ventaHabilitada === true,
+            productoFacturacionId: sede?.productoFacturacionId
+                ? Number(sede.productoFacturacionId)
+                : null
+        });
+    }
+    return [...unicas.values()];
+};
+
 const validarAcceso = async (user, plantaKey) => {
     if (!await authService.validarAccesoPlanta(user.username, user.perfil_id, plantaKey)) {
         throw new Error('PLANTA_NO_AUTORIZADA');
@@ -106,6 +135,259 @@ exports.resumen = async (plantaKey, user, productoInventariableId = null) => {
     };
 };
 
+exports.listarProductosInventariables = async (plantaKey, user) => {
+    await validarAcceso(user, plantaKey);
+    const result = await db.query(`
+        SELECT pi.id, pi.codigo, pi.nombre, pi.tipo, pi.control_stock, pi.activo,
+               COALESCE((
+                   SELECT json_agg(json_build_object(
+                       'plantaKey', p.key,
+                       'plantaNombre', p.nombre,
+                       'precio', pis.precio,
+                       'stockPermitido', pis.stock_permitido,
+                       'ventaHabilitada', pis.venta_habilitada,
+                       'productoFacturacionId', COALESCE(pis.producto_facturacion_id, pi.producto_facturacion_id),
+                       'productoFiscalCodigo', pf.codigo_sku,
+                       'productoFiscalDescripcion', pf.descripcion
+                   ) ORDER BY p.nombre)
+                   FROM fg_producto_inventariable_sede pis
+                   JOIN fg_planta p ON p.key = pis.planta_key
+                   LEFT JOIN fg_producto_facturacion pf
+                     ON pf.id = COALESCE(pis.producto_facturacion_id, pi.producto_facturacion_id)
+                   WHERE pis.producto_inventariable_id = pi.id
+                     AND pis.activo = TRUE
+                     AND p.activo = TRUE
+                     AND p.empresa_key = 'FAREGAS'
+               ), '[]'::json) AS sedes,
+               (SELECT COUNT(*)::int FROM fg_chip c
+                WHERE c.producto_inventariable_id = pi.id) AS stock_total,
+               (SELECT COUNT(*)::int FROM fg_chip c
+                WHERE c.producto_inventariable_id = pi.id
+                  AND c.planta_actual_key = $1) AS stock_sede
+        FROM fg_producto_inventariable pi
+        WHERE pi.activo = TRUE
+        ORDER BY pi.nombre, pi.codigo
+    `, [plantaKey]);
+    return result.rows.map((row) => ({
+        id: Number(row.id),
+        codigo: row.codigo,
+        nombre: row.nombre,
+        tipo: row.tipo,
+        controlStock: row.control_stock === true,
+        activo: row.activo === true,
+        sedes: row.sedes,
+        stockTotal: Number(row.stock_total),
+        stockSede: Number(row.stock_sede)
+    }));
+};
+
+exports.catalogosProductosInventariables = async (plantaKey, user) => {
+    await validarAcceso(user, plantaKey);
+    const sedes = await db.query(`
+        SELECT key, nombre
+        FROM fg_planta
+        WHERE activo = TRUE AND empresa_key = 'FAREGAS'
+        ORDER BY nombre
+    `);
+    return { sedes: sedes.rows };
+};
+
+exports.crearProductoInventariable = async (data, user, ipDireccion = null) => {
+    const codigo = normalizarCodigoProducto(data.codigo);
+    const nombre = normalizarNombreProducto(data.nombre);
+    const tipo = String(data.tipo || 'OTRO_PRODUCTO_FISICO').trim().toUpperCase();
+    const sedes = normalizarSedesProducto(data.sedes);
+
+    if (codigo.length < 2 || codigo.length > 60) throw new Error('CODIGO_PRODUCTO_INVENTARIABLE_INVALIDO');
+    if (nombre.length < 2 || nombre.length > 200) throw new Error('NOMBRE_PRODUCTO_INVENTARIABLE_INVALIDO');
+    if (tipo.length < 2 || tipo.length > 100) throw new Error('TIPO_PRODUCTO_INVENTARIABLE_INVALIDO');
+    if (!sedes.length) throw new Error('PRODUCTO_INVENTARIABLE_REQUIERE_SEDE');
+    if (sedes.some((sede) => !Number.isFinite(sede.precio) || sede.precio <= 0)) {
+        throw new Error('PRECIO_PRODUCTO_INVENTARIABLE_INVALIDO');
+    }
+    if (sedes.some((sede) => sede.ventaHabilitada && !sede.productoFacturacionId)) {
+        throw new Error('VENTA_REQUIERE_PRODUCTO_FISCAL');
+    }
+
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const plantas = await client.query(`
+            SELECT key
+            FROM fg_planta
+            WHERE key = ANY($1::varchar[])
+              AND activo = TRUE
+              AND empresa_key = 'FAREGAS'
+        `, [sedes.map((sede) => sede.plantaKey)]);
+        if (plantas.rowCount !== sedes.length) throw new Error('SEDE_FAREGAS_INVALIDA');
+
+        const productosFiscales = sedes
+            .map((sede) => sede.productoFacturacionId)
+            .filter(Boolean);
+        if (productosFiscales.length) {
+            const fiscales = await client.query(`
+                SELECT id
+                FROM fg_producto_facturacion
+                WHERE id = ANY($1::bigint[])
+                  AND activo = TRUE
+                  AND es_para_venta = TRUE
+            `, [productosFiscales]);
+            if (fiscales.rowCount !== new Set(productosFiscales).size) {
+                throw new Error('PRODUCTO_FISCAL_INVALIDO');
+            }
+        }
+
+        const producto = await client.query(`
+            INSERT INTO fg_producto_inventariable
+                (codigo, nombre, tipo, producto_facturacion_id, control_stock, activo)
+            VALUES ($1, $2, $3, NULL, TRUE, TRUE)
+            RETURNING id, codigo, nombre, tipo
+        `, [codigo, nombre, tipo]);
+        const productoId = Number(producto.rows[0].id);
+
+        for (const sede of sedes) {
+            await client.query(`
+                INSERT INTO fg_producto_inventariable_sede (
+                    producto_inventariable_id, planta_key, precio, activo,
+                    stock_permitido, venta_habilitada, producto_facturacion_id
+                ) VALUES ($1, $2, $3, TRUE, $4, $5, $6)
+            `, [
+                productoId,
+                sede.plantaKey,
+                sede.precio,
+                sede.stockPermitido,
+                sede.ventaHabilitada,
+                sede.productoFacturacionId
+            ]);
+        }
+
+        await client.query(`
+            INSERT INTO fg_auditoria_config
+                (username, entidad, accion, identificador, detalles, planta_key, ip_direccion)
+            VALUES ($1, 'PRODUCTO_INVENTARIABLE', 'CREAR_PRODUCTO_INVENTARIABLE', $2, $3, NULL, $4)
+        `, [
+            user.username,
+            codigo,
+            JSON.stringify({ producto: producto.rows[0], sedes }),
+            ipDireccion
+        ]);
+
+        await client.query('COMMIT');
+        return { ...producto.rows[0], id: productoId };
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.code === '23505') throw new Error('PRODUCTO_INVENTARIABLE_DUPLICADO');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+
+exports.editarProductoInventariable = async (id, data, user, ipDireccion = null) => {
+    const nombre = normalizarNombreProducto(data.nombre);
+    const tipo = String(data.tipo || 'OTRO_PRODUCTO_FISICO').trim().toUpperCase();
+    const sedes = normalizarSedesProducto(data.sedes);
+
+    if (nombre.length < 2 || nombre.length > 200) throw new Error('NOMBRE_PRODUCTO_INVENTARIABLE_INVALIDO');
+    if (tipo.length < 2 || tipo.length > 100) throw new Error('TIPO_PRODUCTO_INVENTARIABLE_INVALIDO');
+    if (sedes.some((sede) => !Number.isFinite(sede.precio) || sede.precio <= 0)) {
+        throw new Error('PRECIO_PRODUCTO_INVENTARIABLE_INVALIDO');
+    }
+    if (sedes.some((sede) => sede.ventaHabilitada && !sede.productoFacturacionId)) {
+        throw new Error('VENTA_REQUIERE_PRODUCTO_FISCAL');
+    }
+
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const check = await client.query('SELECT codigo FROM fg_producto_inventariable WHERE id = $1 AND activo = TRUE FOR UPDATE', [id]);
+        if (!check.rowCount) throw new Error('PRODUCTO_INVENTARIABLE_NO_ENCONTRADO');
+        const codigo = check.rows[0].codigo;
+
+        if (sedes.length > 0) {
+            const plantas = await client.query(`
+                SELECT key
+                FROM fg_planta
+                WHERE key = ANY($1::varchar[])
+                  AND activo = TRUE
+                  AND empresa_key = 'FAREGAS'
+            `, [sedes.map((sede) => sede.plantaKey)]);
+            if (plantas.rowCount !== sedes.length) throw new Error('SEDE_FAREGAS_INVALIDA');
+        }
+
+        const productosFiscales = sedes
+            .map((sede) => sede.productoFacturacionId)
+            .filter(Boolean);
+        if (productosFiscales.length) {
+            const fiscales = await client.query(`
+                SELECT id
+                FROM fg_producto_facturacion
+                WHERE id = ANY($1::bigint[])
+                  AND activo = TRUE
+                  AND es_para_venta = TRUE
+            `, [productosFiscales]);
+            if (fiscales.rowCount !== new Set(productosFiscales).size) {
+                throw new Error('PRODUCTO_FISCAL_INVALIDO');
+            }
+        }
+
+        await client.query(`
+            UPDATE fg_producto_inventariable
+            SET nombre = $1, tipo = $2, fecha_modificacion = NOW()
+            WHERE id = $3
+        `, [nombre, tipo, id]);
+
+        await client.query(`
+            UPDATE fg_producto_inventariable_sede
+            SET activo = FALSE
+            WHERE producto_inventariable_id = $1
+        `, [id]);
+
+        for (const sede of sedes) {
+            await client.query(`
+                INSERT INTO fg_producto_inventariable_sede (
+                    producto_inventariable_id, planta_key, precio, activo,
+                    stock_permitido, venta_habilitada, producto_facturacion_id
+                ) VALUES ($1, $2, $3, TRUE, $4, $5, $6)
+                ON CONFLICT (producto_inventariable_id, planta_key)
+                DO UPDATE SET
+                    precio = EXCLUDED.precio,
+                    activo = TRUE,
+                    stock_permitido = EXCLUDED.stock_permitido,
+                    venta_habilitada = EXCLUDED.venta_habilitada,
+                    producto_facturacion_id = EXCLUDED.producto_facturacion_id
+            `, [
+                id,
+                sede.plantaKey,
+                sede.precio,
+                sede.stockPermitido,
+                sede.ventaHabilitada,
+                sede.productoFacturacionId || null
+            ]);
+        }
+
+        await client.query(`
+            INSERT INTO fg_auditoria_config
+                (username, entidad, accion, identificador, detalles, planta_key, ip_direccion)
+            VALUES ($1, 'PRODUCTO_INVENTARIABLE', 'EDITAR_PRODUCTO_INVENTARIABLE', $2, $3, NULL, $4)
+        `, [
+            user.username,
+            codigo,
+            JSON.stringify({ nombre, tipo, sedes }),
+            ipDireccion
+        ]);
+
+        await client.query('COMMIT');
+        return { id, codigo, nombre, tipo };
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
 exports.consultarDisponibilidad = async ({ plantaKey, numeroChip, certificadoId }, user) => {
     await validarAcceso(user, plantaKey);
     const numero = normalizarNumeroChip(numeroChip);
@@ -168,7 +450,7 @@ exports.consultarDisponibilidad = async ({ plantaKey, numeroChip, certificadoId 
     };
 };
 
-exports.ingresar = async ({ plantaKey, numeros, referencia }, user) => {
+exports.ingresar = async ({ plantaKey, productoInventariableId, numeros, referencia }, user) => {
     await validarAcceso(user, plantaKey);
     const lote = normalizarLoteScanner(Array.isArray(numeros) ? numeros.join('\n') : numeros);
     if (!lote.validos.length || lote.duplicados.length || lote.errores.length) {
@@ -177,7 +459,12 @@ exports.ingresar = async ({ plantaKey, numeros, referencia }, user) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        const producto = await productoChip(client, plantaKey, true);
+        const producto = await productoInventariableEnSede(
+            client,
+            plantaKey,
+            productoInventariableId || null,
+            true
+        );
         exigirStockPermitido(producto);
         const existentes = await client.query('SELECT numero_chip FROM fg_chip WHERE numero_chip = ANY($1::varchar[])', [lote.validos]);
         if (existentes.rowCount) {
@@ -197,7 +484,7 @@ exports.ingresar = async ({ plantaKey, numeros, referencia }, user) => {
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 };
 
-exports.transferir = async ({ origenKey, destinoKey, numeros, referencia }, user) => {
+exports.transferir = async ({ origenKey, destinoKey, productoInventariableId, numeros, referencia }, user) => {
     if (origenKey === destinoKey) throw new Error('SEDES_IGUALES');
     await validarAcceso(user, origenKey); await validarAcceso(user, destinoKey);
     const lote = normalizarLoteScanner(Array.isArray(numeros) ? numeros.join('\n') : numeros);
@@ -205,10 +492,17 @@ exports.transferir = async ({ origenKey, destinoKey, numeros, referencia }, user
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        const configuracionDestino = await productoChip(client, destinoKey, true);
+        const configuracionDestino = await productoInventariableEnSede(
+            client,
+            destinoKey,
+            productoInventariableId || null,
+            true
+        );
         exigirStockPermitido(configuracionDestino);
         const chips = await client.query(`SELECT id,numero_chip,estado,planta_actual_key FROM fg_chip
-            WHERE numero_chip=ANY($1::varchar[]) ORDER BY id FOR UPDATE`, [lote.validos]);
+            WHERE numero_chip=ANY($1::varchar[])
+              AND producto_inventariable_id=$2
+            ORDER BY id FOR UPDATE`, [lote.validos, configuracionDestino.id]);
         if (chips.rowCount !== lote.validos.length) throw new Error('CHIP_NO_ENCONTRADO');
         for (const chip of chips.rows) {
             if (chip.planta_actual_key !== origenKey) throw new Error('CHIP_OTRA_SEDE');
