@@ -12,8 +12,10 @@ const permiso = (...claves) => async(req,res,next)=>{
 };
 
 router.use(authFaregasMiddleware);
-router.get('/',permiso('CHIPS_VER'),controller.listar);
-router.get('/resumen',permiso('CHIPS_VER'),controller.resumen);
+// MENU_CHIPS habilita la consulta básica desde el módulo. CHIPS_VER se conserva
+// como compatibilidad para integraciones/perfiles técnicos existentes.
+router.get('/',permiso('MENU_CHIPS','CHIPS_VER'),controller.listar);
+router.get('/resumen',permiso('MENU_CHIPS','CHIPS_VER'),controller.resumen);
 router.get('/disponibilidad/:numeroChip',controller.consultarDisponibilidad);
 router.post('/ingresos',permiso('CHIPS_INGRESAR'),controller.ingresar);
 router.post('/transferencias',permiso('CHIPS_TRANSFERIR'),controller.transferir);
@@ -21,5 +23,5 @@ router.post('/reservas',permiso('CHIPS_VER'),controller.reservar);
 router.post('/liberaciones',permiso('CHIPS_VER'),controller.liberar);
 router.post('/ventas',permiso('CHIPS_VER'),controller.vender);
 router.post('/bajas',permiso('CHIPS_BAJA'),controller.baja);
-router.get('/:id/movimientos',permiso('CHIPS_VER'),controller.historial);
+router.get('/:id/movimientos',permiso('MENU_CHIPS','CHIPS_VER'),controller.historial);
 module.exports=router;
