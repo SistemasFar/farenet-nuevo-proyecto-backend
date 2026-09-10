@@ -13,9 +13,10 @@ const validarAcceso = async (user, plantaKey) => {
     }
 };
 
-const productoChip = async (queryable, plantaKey, bloquear = false) => {
+const productoInventariableEnSede = async (queryable, plantaKey, productoInventariableId = null, bloquear = false) => {
     const result = await queryable.query(`
-        SELECT pi.id, pi.codigo, pi.nombre, pi.producto_facturacion_id,
+        SELECT pi.id, pi.codigo, pi.nombre,
+               COALESCE(pis.producto_facturacion_id, pi.producto_facturacion_id) AS producto_facturacion_id,
                pis.precio, pis.activo, pis.stock_permitido, pis.venta_habilitada,
                CASE
                    WHEN pf.id IS NOT NULL
@@ -32,13 +33,18 @@ const productoChip = async (queryable, plantaKey, bloquear = false) => {
         FROM fg_producto_inventariable pi
         JOIN fg_producto_inventariable_sede pis ON pis.producto_inventariable_id = pi.id
         JOIN fg_planta p ON p.key = pis.planta_key AND p.activo = TRUE
-        LEFT JOIN fg_producto_facturacion pf ON pf.id = pi.producto_facturacion_id
-        WHERE pi.codigo = 'CHIP' AND pi.activo = TRUE AND pis.planta_key = $1
+        LEFT JOIN fg_producto_facturacion pf
+          ON pf.id = COALESCE(pis.producto_facturacion_id, pi.producto_facturacion_id)
+        WHERE pi.activo = TRUE AND pis.planta_key = $1
+          AND (($2::bigint IS NULL AND pi.codigo = 'CHIP') OR pi.id = $2::bigint)
           AND pis.activo = TRUE${bloquear ? ' FOR UPDATE OF pis' : ''}
-    `, [plantaKey]);
-    if (!result.rowCount) throw new Error('CHIP_NO_CONFIGURADO_SEDE');
+    `, [plantaKey, productoInventariableId]);
+    if (!result.rowCount) throw new Error('PRODUCTO_INVENTARIABLE_NO_CONFIGURADO_SEDE');
     return result.rows[0];
 };
+
+const productoChip = (queryable, plantaKey, bloquear = false) =>
+    productoInventariableEnSede(queryable, plantaKey, null, bloquear);
 
 const exigirStockPermitido = (config) => {
     if (config.stock_permitido !== true) throw new Error('STOCK_CHIP_NO_PERMITIDO');
@@ -49,10 +55,14 @@ const exigirVentaHabilitada = (config) => {
     if (config.producto_fiscal_valido !== true) throw new Error('PRODUCTO_FISCAL_CHIP_INVALIDO');
 };
 
-exports.listar = async ({ plantaKey, estado, buscar, page = 1, pageSize = 50 }, user) => {
+exports.listar = async ({ plantaKey, productoInventariableId, estado, buscar, page = 1, pageSize = 50 }, user) => {
     await validarAcceso(user, plantaKey);
     const params = [plantaKey];
     const filtros = ['c.planta_actual_key = $1'];
+    if (productoInventariableId) {
+        params.push(Number(productoInventariableId));
+        filtros.push(`c.producto_inventariable_id = $${params.length}`);
+    }
     if (estado) { params.push(estado); filtros.push(`c.estado = $${params.length}`); }
     if (buscar) { params.push(`%${buscar}%`); filtros.push(`c.numero_chip ILIKE $${params.length}`); }
     const limit = Math.min(Math.max(Number(pageSize) || 50, 1), 200);
@@ -60,29 +70,35 @@ exports.listar = async ({ plantaKey, estado, buscar, page = 1, pageSize = 50 }, 
     params.push(limit, offset);
     const result = await db.query(`
         SELECT c.id, c.numero_chip, c.estado, c.planta_actual_key, p.nombre planta_nombre,
+               c.producto_inventariable_id, pi.codigo producto_codigo, pi.nombre producto_nombre,
                c.creado_en, c.actualizado_en,
                (SELECT MAX(m.fecha) FROM fg_chip_movimiento m WHERE m.chip_id=c.id) ultimo_movimiento,
                COUNT(*) OVER()::int total
-        FROM fg_chip c JOIN fg_planta p ON p.key=c.planta_actual_key
+        FROM fg_chip c
+        JOIN fg_planta p ON p.key=c.planta_actual_key
+        JOIN fg_producto_inventariable pi ON pi.id=c.producto_inventariable_id
         WHERE ${filtros.join(' AND ')} ORDER BY c.id DESC
         LIMIT $${params.length - 1} OFFSET $${params.length}
     `, params);
     return { items: result.rows, total: result.rows[0]?.total || 0 };
 };
 
-exports.resumen = async (plantaKey, user) => {
+exports.resumen = async (plantaKey, user, productoInventariableId = null) => {
     await validarAcceso(user, plantaKey);
+    const config = await productoInventariableEnSede(db, plantaKey, productoInventariableId);
     const result = await db.query(`
         SELECT COUNT(*)::int total,
                COUNT(*) FILTER (WHERE estado='DISPONIBLE')::int disponibles,
                COUNT(*) FILTER (WHERE estado='RESERVADO')::int reservados,
                COUNT(*) FILTER (WHERE estado='VENDIDO')::int vendidos,
                COUNT(*) FILTER (WHERE estado='BAJA')::int baja
-        FROM fg_chip WHERE planta_actual_key=$1
-    `, [plantaKey]);
-    const config = await productoChip(db, plantaKey);
+        FROM fg_chip WHERE planta_actual_key=$1 AND producto_inventariable_id=$2
+    `, [plantaKey, config.id]);
     return {
         ...result.rows[0],
+        productoInventariableId: Number(config.id),
+        productoCodigo: config.codigo,
+        productoNombre: config.nombre,
         precio: Number(config.precio),
         stockPermitido: config.stock_permitido === true,
         ventaHabilitada: config.venta_habilitada === true,
