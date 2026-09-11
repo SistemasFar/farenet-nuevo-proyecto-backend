@@ -617,3 +617,17 @@ exports.obtenerPrevisualizacion = async (req, res) => {
     }
 };
 
+
+exports.obtenerOperacionesDisponibles = async (req, res) => {
+    try {
+        const { plantaKey } = req.query;
+        if (!plantaKey) {
+            return res.status(400).json({ ok: false, message: 'Falta plantaKey' });
+        }
+        const data = await service.obtenerOperacionesDisponibles(plantaKey);
+        res.json({ ok: true, data });
+    } catch (e) {
+        console.error('[obtenerOperacionesDisponibles]', e);
+        res.status(500).json({ ok: false, message: 'Error interno del servidor' });
+    }
+};

@@ -1829,3 +1829,29 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
     }
 };
 
+
+exports.obtenerOperacionesDisponibles = async (plantaKey) => {
+    if (!plantaKey) throw new Error('plantaKey es requerido');
+    
+    const query = `
+        SELECT 
+            s.id,
+            s.codigo,
+            s.nombre,
+            s.tipo_flujo,
+            s.tipo_certificado_clave,
+            s.modalidad AS formato,
+            s.requiere_certificado AS genera_certificado,
+            c.codigo AS categoria,
+            t.precio
+        FROM fg_servicio s
+        JOIN fg_categoria_servicio c ON c.id = s.categoria_id
+        JOIN fg_tarifa t ON t.servicio_id = s.id
+        WHERE s.activo = TRUE 
+          AND t.planta_key = $1
+          AND t.activo = TRUE
+        ORDER BY s.orden, s.nombre
+    `;
+    const res = await db.query(query, [plantaKey]);
+    return res.rows;
+};

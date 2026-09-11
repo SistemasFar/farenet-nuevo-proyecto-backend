@@ -62,6 +62,7 @@ const facturacionAdminMiddleware = async (req, res, next) => {
 };
 
 // Catálogo
+router.get('/operaciones-disponibles', controller.obtenerOperacionesDisponibles);
 router.get('/catalogos/verificaciones', controller.obtenerCatalogoVerificaciones);
 
 router.get('/tipos', controller.obtenerTipos);
