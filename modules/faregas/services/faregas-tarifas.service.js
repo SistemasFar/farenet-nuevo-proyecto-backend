@@ -70,7 +70,7 @@ exports.obtenerCatalogoPorPlanta = async (plantaKey, queryable = db) => {
           AND c.activo = TRUE
           AND s.activo = TRUE
           AND t.activo = TRUE
-          AND s.tipo_flujo = 'CERTIFICACION'
+          AND s.tipo_flujo IN ('CERTIFICACION', 'TALLER_INSPECCION')
         ORDER BY c.orden, s.orden, s.nombre
     `, [plantaKey]);
 

@@ -1,3 +1,4 @@
+const formatosService = require('./faregas-formatos.service');
 const db = require('../../../config/database');
 const integrationsConfig = require('../../../config/integrations.config');
 const { paraPlantilla } = require('../mappers/faregas-vehiculo.mapper');
@@ -1691,6 +1692,18 @@ exports.reservarNumeroPrevisualizacion = async (id, userContext) => {
         const cert = rCert.rows[0];
         await validarAccesoCertificado(userContext.username, userContext.perfil_id, cert.planta_key);
 
+        
+        if (!cert.formato_version_id && cert.tipo_clave && cert.tipo_clave.startsWith('TALLER_')) {
+            const resFmt = await client.query('SELECT formato_id FROM fg_servicio WHERE id = $1', [cert.servicio_id]);
+            if (resFmt.rowCount > 0 && resFmt.rows[0].formato_id) {
+                const resV = await client.query('SELECT id FROM fg_certificado_formato_version WHERE formato_id = $1 AND estado = $2 ORDER BY version DESC LIMIT 1', [resFmt.rows[0].formato_id, 'ACTIVO']);
+                if (resV.rowCount > 0) {
+                    await client.query('UPDATE fg_certificado SET formato_version_id = $1 WHERE id = $2', [resV.rows[0].id, id]);
+                    cert.formato_version_id = resV.rows[0].id;
+                }
+            }
+        }
+        
         if (cert.numero_certificado) {
             await client.query('COMMIT');
             return cert.numero_certificado;
@@ -1854,4 +1867,72 @@ exports.obtenerOperacionesDisponibles = async (plantaKey) => {
     `;
     const res = await db.query(query, [plantaKey]);
     return res.rows;
+};
+
+exports.guardarTaller = async (id, payload, user) => {
+    const queryVerificar = `
+        SELECT c.id, c.planta_key, c.estado
+        FROM fg_certificado c
+        JOIN fg_planta p ON c.planta_key = p.codigo
+        WHERE c.id = $1
+    `;
+    const resVerificar = await db.query(queryVerificar, [id]);
+    
+    if (resVerificar.rows.length === 0) throw new Error('CERTIFICADO_NOT_FOUND');
+    const cert = resVerificar.rows[0];
+    
+    const tieneAcceso = await module.exports.verificarAccesoPlanta(user, cert.planta_key);
+    if (!tieneAcceso) throw new Error('PLANTA_NO_AUTORIZADA');
+    
+    if (cert.estado !== 'BORRADOR') throw new Error('CERTIFICADO_NO_EDITABLE');
+
+    const updateQuery = `
+        UPDATE fg_certificado 
+        SET 
+            formato_datos_snapshot = $1,
+            fecha_modificacion = NOW(),
+            usuario_modificacion = $2
+        WHERE id = $3
+    `;
+    
+    // Si ya existe formato_datos_snapshot, hacemos merge.
+    let snapshot = {};
+    const resSnap = await db.query('SELECT formato_datos_snapshot FROM fg_certificado WHERE id = $1', [id]);
+    if (resSnap.rows[0].formato_datos_snapshot) {
+        snapshot = resSnap.rows[0].formato_datos_snapshot;
+    }
+    snapshot.taller = {
+        nombre: payload.nombre || null,
+        direccion: payload.direccion || null,
+        telefono: payload.telefono || null,
+        ciudad: payload.ciudad || null,
+        representante_legal: payload.representanteLegal || null,
+        numero_autorizacion: payload.numeroAutorizacion || null
+    };
+    snapshot.inspeccion = {
+        observaciones: payload.observaciones || null,
+        fecha_proxima_inspeccion: payload.fechaProximaInspeccion || null
+    };
+
+    await db.query(updateQuery, [
+        snapshot,
+        user.username,
+        id
+    ]);
+};
+
+exports.obtenerTaller = async (id, user) => {
+    const query = `
+        SELECT c.id, c.planta_key, c.formato_datos_snapshot
+        FROM fg_certificado c
+        WHERE c.id = $1
+    `;
+    const result = await db.query(query, [id]);
+    if (result.rows.length === 0) throw new Error('CERTIFICADO_NOT_FOUND');
+    
+    const cert = result.rows[0];
+    const tieneAcceso = await module.exports.verificarAccesoPlanta(user, cert.planta_key);
+    if (!tieneAcceso) throw new Error('PLANTA_NO_AUTORIZADA');
+    
+    return cert.formato_datos_snapshot;
 };

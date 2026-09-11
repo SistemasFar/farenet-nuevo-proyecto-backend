@@ -127,6 +127,9 @@ router.get('/borradores/:id/previsualizacion', controller.obtenerPrevisualizacio
 router.get('/borradores/:id/validar-emision', controller.validarEmision);
 router.post('/borradores/:id/emitir', controller.emitir);
 
+// TALLER INSPECCION
+router.put('/borradores/:id/snapshot', controller.guardarTaller);
+
 // TALLERES
 router.get('/talleres', controller.obtenerTalleresActivos);
 

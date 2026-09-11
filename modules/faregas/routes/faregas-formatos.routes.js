@@ -1,9 +1,9 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const { faregasFormatosService } = require('../services/faregas-formatos.service');
 const { VARIABLES_CATALOG } = require('../services/faregas-formatos.variables');
-const verificarToken = require('../../../middlewares/auth.middleware');
+const { authFaregasMiddleware: verificarToken } = require('../middlewares/faregas-auth.middleware');
 
 // Setup multer memory storage
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB limit
@@ -49,10 +49,10 @@ router.get('/:id/versiones', verificarToken, async (req, res) => {
 router.post('/:id/versiones', verificarToken, upload.single('archivo'), async (req, res) => {
   try {
     const formatoId = req.params.id;
-    if (!req.file) return res.status(400).json({ mensaje: 'No se subió archivo' });
+    if (!req.file) return res.status(400).json({ mensaje: 'No se subi� archivo' });
     
     if (!req.file.originalname.endsWith('.docx')) {
-      return res.status(400).json({ mensaje: 'El archivo debe ser un .docx válido' });
+      return res.status(400).json({ mensaje: 'El archivo debe ser un .docx v�lido' });
     }
 
     const resultado = await faregasFormatosService.guardarBorradorVersion(
@@ -62,7 +62,7 @@ router.post('/:id/versiones', verificarToken, upload.single('archivo'), async (r
     );
 
     res.json({
-      mensaje: 'Versión guardada como borrador',
+      mensaje: 'Versi�n guardada como borrador',
       version: resultado
     });
 
@@ -106,11 +106,11 @@ router.get('/:id/versiones/:versionId/preview', verificarToken, async (req, res)
   }
 });
 
-// Activar versión
+// Activar versi�n
 router.post('/:id/versiones/:versionId/activar', verificarToken, async (req, res) => {
   try {
     await faregasFormatosService.activarVersion(req.params.id, req.params.versionId);
-    res.json({ mensaje: 'Versión activada exitosamente' });
+    res.json({ mensaje: 'Versi�n activada exitosamente' });
   } catch (error) {
     res.status(400).json({ mensaje: error.message });
   }
