@@ -118,10 +118,12 @@ const faregasFormatosService = {
   
   listarFormatos: async () => {
     const query = `
-      SELECT f.id, f.codigo, f.nombre, f.motor, f.es_protegido, f.activo,
+      SELECT f.id, f.codigo, f.nombre, f.motor, f.es_protegido, f.activo, f.formato_padre_id,
+             p.nombre as formato_padre_nombre, p.codigo as formato_padre_codigo,
              (SELECT COUNT(*) FROM fg_certificado_formato_version v WHERE v.formato_id = f.id AND v.estado = 'VIGENTE') > 0 as tiene_version_vigente
       FROM fg_certificado_formato f
-      ORDER BY f.id ASC
+      LEFT JOIN fg_certificado_formato p ON f.formato_padre_id = p.id
+      ORDER BY COALESCE(f.formato_padre_id, f.id) ASC, f.id ASC
     `;
     const res = await db.query(query);
     return res.rows;
@@ -138,14 +140,44 @@ const faregasFormatosService = {
     return res.rows;
   },
 
-  crearFormato: async (nombre, codigo, motor) => {
+  crearFormato: async (nombre, codigo, motor, formato_padre_id = null) => {
+    if (formato_padre_id) {
+        const pRes = await db.query('SELECT es_protegido, motor FROM fg_certificado_formato WHERE id = $1', [formato_padre_id]);
+        if (pRes.rowCount === 0) throw new Error('El formato base especificado no existe');
+        const padre = pRes.rows[0];
+        if (!padre.es_protegido || padre.motor !== 'SISTEMA') {
+            throw new Error('El formato base debe ser un formato protegido del sistema');
+        }
+        motor = 'HTML_DINAMICO'; // Forzar para variantes
+    }
     const query = `
-      INSERT INTO fg_certificado_formato (nombre, codigo, motor, es_protegido, activo)
-      VALUES ($1, $2, $3, false, true)
+      INSERT INTO fg_certificado_formato (nombre, codigo, motor, es_protegido, activo, formato_padre_id)
+      VALUES ($1, $2, $3, false, true, $4)
       RETURNING *
     `;
-    const res = await db.query(query, [nombre, codigo, motor]);
+    const res = await db.query(query, [nombre, codigo, motor, formato_padre_id]);
     return res.rows[0];
+  },
+  
+  cambiarEstado: async (id) => {
+      const fRes = await db.query('SELECT es_protegido, activo FROM fg_certificado_formato WHERE id = $1', [id]);
+      if (fRes.rowCount === 0) throw new Error('Formato no encontrado');
+      const formato = fRes.rows[0];
+      
+      if (formato.es_protegido) throw new Error('No se pueden desactivar formatos protegidos por el sistema');
+      
+      if (formato.activo) {
+          // Intentando desactivar, verificar si hay operaciones (servicios) activas que lo referencien
+          const sRes = await db.query("SELECT codigo, nombre FROM fg_servicio WHERE formato_id = $1 AND activo = true", [id]);
+          if (sRes.rowCount > 0) {
+              const ops = sRes.rows.map(r => '- ' + r.codigo + ' — ' + r.nombre).join('\n');
+              throw new Error(`No se puede desactivar el formato porque está siendo utilizado por las siguientes operaciones activas:\n\n${ops}\n\nDesactiva o cambia primero esas operaciones.`);
+          }
+      }
+      
+      const query = `UPDATE fg_certificado_formato SET activo = NOT activo WHERE id = $1 RETURNING *`;
+      const res = await db.query(query, [id]);
+      return res.rows[0];
   },
 
   guardarBorradorVersion: async (formatoId, fileData, originalName) => {
@@ -268,7 +300,21 @@ const faregasFormatosService = {
     return allParagraphs;
   },
 
-  guardarMappings: async (formatoId, versionId, mappings) => {
+  guardarConfiguracion: async (formatoId, versionId, configuracion) => {
+    const verRes = await db.query('SELECT archivo_ruta, estado FROM fg_certificado_formato_version WHERE id = $1 AND formato_id = $2', [versionId, formatoId]);
+    if (verRes.rowCount === 0) throw new Error('Versión no encontrada');
+    if (verRes.rows[0].estado !== 'BORRADOR') throw new Error('Solo se pueden editar una versión en BORRADOR');
+    
+    // Security sanitization (extra layer)
+    if (configuracion.html) {
+        configuracion.html = configuracion.html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
+    }
+    
+    await db.query('UPDATE fg_certificado_formato_version SET configuracion = $1 WHERE id = $2', [JSON.stringify(configuracion), versionId]);
+    return { success: true };
+},
+
+guardarMappings: async (formatoId, versionId, mappings) => {
     const verRes = await db.query('SELECT archivo_ruta, estado FROM fg_certificado_formato_version WHERE id = $1 AND formato_id = $2', [versionId, formatoId]);
     if (verRes.rowCount === 0) throw new Error('Versión no encontrada');
     if (verRes.rows[0].estado !== 'BORRADOR') throw new Error('Solo se pueden editar mappings de una versión en BORRADOR');
@@ -289,16 +335,9 @@ const faregasFormatosService = {
   },
 
   generarPreview: async (formatoId, versionId) => {
-    const verRes = await db.query('SELECT archivo_ruta FROM fg_certificado_formato_version WHERE id = $1 AND formato_id = $2', [versionId, formatoId]);
+    const verRes = await db.query('SELECT archivo_ruta, configuracion, motor FROM fg_certificado_formato_version WHERE id = $1 AND formato_id = $2', [versionId, formatoId]);
     if (verRes.rowCount === 0) throw new Error('Versión no encontrada');
-    
-    const storageKey = verRes.rows[0].archivo_ruta;
-    const templatePath = path.join(STORAGE_PATH, storageKey, 'template.docx');
-    
-    const content = fs.readFileSync(templatePath, 'binary');
-    const zip = new PizZip(content);
-    
-    const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+    const motorVersion = verRes.rows[0].motor || 'DOCX_DINAMICO';
     
     // Build dummy data
     const dummyData = {};
@@ -311,10 +350,36 @@ const faregasFormatosService = {
             dummyData[v.key] = v.demo;
         }
     }
+
+    if (motorVersion === 'HTML_DINAMICO') {
+        let config = verRes.rows[0].configuracion;
+        if (typeof config === 'string') config = JSON.parse(config);
+        
+        let html = config?.html || '';
+        
+        // Simple replacer for {{var.name}}
+        html = html.replace(/\{\{([^{}]+)\}\}/g, (match, key) => {
+            const parts = key.trim().split('.');
+            if (parts.length === 2) {
+                return dummyData[parts[0]]?.[parts[1]] || match;
+            }
+            return dummyData[key.trim()] || match;
+        });
+        
+        return { tipo: 'HTML_DINAMICO', data: html };
+    }
+
+    // Default to DOCX_DINAMICO
+    const storageKey = verRes.rows[0].archivo_ruta;
+    const templatePath = path.join(STORAGE_PATH, storageKey, 'template.docx');
+    
+    if (!fs.existsSync(templatePath)) throw new Error('No se encontró archivo docx de la versión');
+    const content = fs.readFileSync(templatePath, 'binary');
+    const zip = new PizZip(content);
+    const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
     
     doc.render(dummyData);
-    
-    return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+    return { tipo: 'DOCX_DINAMICO', data: doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' }) };
   },
 
   activarVersion: async (formatoId, versionId) => {

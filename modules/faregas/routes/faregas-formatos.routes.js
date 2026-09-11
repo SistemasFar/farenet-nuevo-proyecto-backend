@@ -89,6 +89,14 @@ router.post('/:id/versiones/:versionId/mappings', verificarToken, async (req, re
     
     await faregasFormatosService.guardarMappings(req.params.id, req.params.versionId, mappings);
     res.json({ mensaje: 'Mappings guardados y template actualizado' });
+  } catch (error) { res.status(400).json({ mensaje: error.message }); } });
+
+// Guardar configuracion generica (usado por HTML_DINAMICO)
+router.put('/:id/versiones/:versionId', verificarToken, async (req, res) => {
+  try {
+    const { configuracion } = req.body;
+    await faregasFormatosService.guardarConfiguracion(req.params.id, req.params.versionId, configuracion);
+    res.json({ mensaje: 'Configuracion guardada' });
   } catch (error) {
     res.status(400).json({ mensaje: error.message });
   }
