@@ -126,3 +126,13 @@ router.post('/:id/versiones/:versionId/activar', verificarToken, async (req, res
 
 module.exports = router;
 
+
+// Eliminar version
+router.delete('/:id/versiones/:versionId', verificarToken, async (req, res) => {
+  try {
+    await faregasFormatosService.eliminarVersion(req.params.id, req.params.versionId);
+    res.json({ mensaje: 'Version eliminada' });
+  } catch (error) {
+    res.status(400).json({ mensaje: error.message });
+  }
+});

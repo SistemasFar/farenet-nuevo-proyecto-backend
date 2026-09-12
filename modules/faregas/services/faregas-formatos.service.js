@@ -131,7 +131,7 @@ const faregasFormatosService = {
 
   obtenerVersionesFormato: async (formatoId) => {
     const query = `
-      SELECT id, version, configuracion, estado, vigente_desde, creado_en
+      SELECT id, version, configuracion, estado, vigente_desde, creado_en, motor
       FROM fg_certificado_formato_version
       WHERE formato_id = $1
       ORDER BY version DESC
@@ -300,7 +300,14 @@ const faregasFormatosService = {
     return allParagraphs;
   },
 
-  guardarConfiguracion: async (formatoId, versionId, configuracion) => {
+  eliminarVersion: async (formatoId, versionId) => {
+    const verRes = await db.query('SELECT estado FROM fg_certificado_formato_version WHERE id = $1 AND formato_id = $2', [versionId, formatoId]);
+    if (verRes.rowCount === 0) throw new Error('Versión no encontrada');
+    if (verRes.rows[0].estado === 'VIGENTE') throw new Error('No se puede eliminar una versión VIGENTE. Desactiva o activa otra versión primero.');
+    await db.query('DELETE FROM fg_certificado_formato_version WHERE id = $1', [versionId]);
+    return { success: true };
+},
+guardarConfiguracion: async (formatoId, versionId, configuracion) => {
     const verRes = await db.query('SELECT archivo_ruta, estado FROM fg_certificado_formato_version WHERE id = $1 AND formato_id = $2', [versionId, formatoId]);
     if (verRes.rowCount === 0) throw new Error('Versión no encontrada');
     if (verRes.rows[0].estado !== 'BORRADOR') throw new Error('Solo se pueden editar una versión en BORRADOR');
