@@ -3,7 +3,16 @@ const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
 const fs = require('fs');
 const path = require('path');
-const { VARIABLES_CATALOG } = require('./faregas-formatos.variables');
+const {
+  VARIABLES_CATALOG,
+  obtenerVariablesPersonalizadas,
+  obtenerCatalogoVariables
+} = require('./faregas-formatos.variables');
+const {
+    normalizarHtmlEditor,
+    renderizarHtml,
+    variablesDesconocidas
+} = require('./faregas-formatos-html');
 const { DOMParser, XMLSerializer } = require('@xmldom/xmldom');
 
 const STORAGE_PATH = process.env.FAREGAS_FORMATOS_STORAGE_PATH || path.join(__dirname, '../../../../uploads/formatos');
@@ -140,6 +149,17 @@ const faregasFormatosService = {
     return res.rows;
   },
 
+  obtenerOperacionesPorFormato: async (formatoId) => {
+    const query = `
+      SELECT id, codigo, nombre, activo
+      FROM fg_servicio
+      WHERE formato_id = $1
+      ORDER BY codigo ASC
+    `;
+    const res = await db.query(query, [formatoId]);
+    return res.rows;
+  },
+
   crearFormato: async (nombre, codigo, motor, formato_padre_id = null) => {
     if (formato_padre_id) {
         const pRes = await db.query('SELECT es_protegido, motor FROM fg_certificado_formato WHERE id = $1', [formato_padre_id]);
@@ -249,8 +269,8 @@ const faregasFormatosService = {
 
         const insertQuery = `
           INSERT INTO fg_certificado_formato_version 
-          (formato_id, version, archivo_ruta, configuracion, estado)
-          VALUES ($1, $2, $3, $4, 'BORRADOR')
+          (formato_id, version, archivo_ruta, configuracion, estado, motor)
+          VALUES ($1, $2, $3, $4, 'BORRADOR', 'DOCX_DINAMICO')
           RETURNING id, version, estado
         `;
         const res = await client.query(insertQuery, [
@@ -267,6 +287,50 @@ const faregasFormatosService = {
         throw error;
     } finally {
         client.release();
+    }
+  },
+
+  crearBorradorHtml: async (formatoId) => {
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const formatoRes = await client.query(
+        'SELECT id, motor, es_protegido FROM fg_certificado_formato WHERE id = $1 FOR UPDATE',
+        [formatoId]
+      );
+      if (formatoRes.rowCount === 0) throw new Error('Formato no encontrado');
+      if (formatoRes.rows[0].es_protegido) throw new Error('No se pueden crear versiones en formatos protegidos por el sistema');
+      if (formatoRes.rows[0].motor !== 'HTML_DINAMICO') throw new Error('El formato no utiliza el motor HTML_DINAMICO');
+
+      const versionRes = await client.query(
+        'SELECT COALESCE(MAX(version), 0) + 1 AS siguiente FROM fg_certificado_formato_version WHERE formato_id = $1',
+        [formatoId]
+      );
+      const anteriorRes = await client.query(
+        `SELECT configuracion
+         FROM fg_certificado_formato_version
+         WHERE formato_id = $1 AND motor = 'HTML_DINAMICO'
+         ORDER BY version DESC
+         LIMIT 1`,
+        [formatoId]
+      );
+      const configuracion = anteriorRes.rows[0]?.configuracion || {
+        html: '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body><main data-faregas-editable-slot></main></body></html>'
+      };
+      const insert = await client.query(
+        `INSERT INTO fg_certificado_formato_version
+           (formato_id, version, archivo_ruta, configuracion, estado, motor)
+         VALUES ($1, $2, 'HTML', $3, 'BORRADOR', 'HTML_DINAMICO')
+         RETURNING id, version, estado, motor, configuracion`,
+        [formatoId, versionRes.rows[0].siguiente, configuracion]
+      );
+      await client.query('COMMIT');
+      return insert.rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
   },
 
@@ -308,14 +372,16 @@ const faregasFormatosService = {
     return { success: true };
 },
 guardarConfiguracion: async (formatoId, versionId, configuracion) => {
-    const verRes = await db.query('SELECT archivo_ruta, estado FROM fg_certificado_formato_version WHERE id = $1 AND formato_id = $2', [versionId, formatoId]);
+    const verRes = await db.query('SELECT archivo_ruta, estado, motor FROM fg_certificado_formato_version WHERE id = $1 AND formato_id = $2', [versionId, formatoId]);
     if (verRes.rowCount === 0) throw new Error('Versión no encontrada');
     if (verRes.rows[0].estado !== 'BORRADOR') throw new Error('Solo se pueden editar una versión en BORRADOR');
     
     // Security sanitization (extra layer)
     if (configuracion.html) {
         configuracion.html = configuracion.html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
+        configuracion.html = normalizarHtmlEditor(configuracion.html);
     }
+    configuracion.variables_personalizadas = obtenerVariablesPersonalizadas(configuracion);
     
     await db.query('UPDATE fg_certificado_formato_version SET configuracion = $1 WHERE id = $2', [JSON.stringify(configuracion), versionId]);
     return { success: true };
@@ -345,10 +411,12 @@ guardarMappings: async (formatoId, versionId, mappings) => {
     const verRes = await db.query('SELECT archivo_ruta, configuracion, motor FROM fg_certificado_formato_version WHERE id = $1 AND formato_id = $2', [versionId, formatoId]);
     if (verRes.rowCount === 0) throw new Error('Versión no encontrada');
     const motorVersion = verRes.rows[0].motor || 'DOCX_DINAMICO';
+    let config = verRes.rows[0].configuracion || {};
+    if (typeof config === 'string') config = JSON.parse(config);
     
     // Build dummy data
     const dummyData = {};
-    for (const v of VARIABLES_CATALOG) {
+    for (const v of obtenerCatalogoVariables(config)) {
         const parts = v.key.split('.');
         if (parts.length === 2) {
             if (!dummyData[parts[0]]) dummyData[parts[0]] = {};
@@ -359,19 +427,7 @@ guardarMappings: async (formatoId, versionId, mappings) => {
     }
 
     if (motorVersion === 'HTML_DINAMICO') {
-        let config = verRes.rows[0].configuracion;
-        if (typeof config === 'string') config = JSON.parse(config);
-        
-        let html = config?.html || '';
-        
-        // Simple replacer for {{var.name}}
-        html = html.replace(/\{\{([^{}]+)\}\}/g, (match, key) => {
-            const parts = key.trim().split('.');
-            if (parts.length === 2) {
-                return dummyData[parts[0]]?.[parts[1]] || match;
-            }
-            return dummyData[key.trim()] || match;
-        });
+        const html = renderizarHtml(config?.html || '', dummyData);
         
         return { tipo: 'HTML_DINAMICO', data: html };
     }
@@ -394,9 +450,31 @@ guardarMappings: async (formatoId, versionId, mappings) => {
     try {
         await client.query('BEGIN');
         
-        const verRes = await client.query('SELECT estado FROM fg_certificado_formato_version WHERE id = $1 AND formato_id = $2 FOR UPDATE', [versionId, formatoId]);
+        const formatoRes = await client.query(
+            'SELECT activo FROM fg_certificado_formato WHERE id = $1 FOR UPDATE',
+            [formatoId]
+        );
+        if (formatoRes.rowCount === 0) throw new Error('Formato no encontrado');
+        if (!formatoRes.rows[0].activo) throw new Error('No se puede activar una versión de un formato INACTIVO');
+
+        const verRes = await client.query(
+            'SELECT estado, motor, configuracion FROM fg_certificado_formato_version WHERE id = $1 AND formato_id = $2 FOR UPDATE',
+            [versionId, formatoId]
+        );
         if (verRes.rowCount === 0) throw new Error('Versión no encontrada');
         if (verRes.rows[0].estado !== 'BORRADOR') throw new Error('La versión no está en estado BORRADOR');
+
+        let configuracion = verRes.rows[0].configuracion || {};
+        if (typeof configuracion === 'string') configuracion = JSON.parse(configuracion);
+        const permitidas = obtenerCatalogoVariables(configuracion).map((variable) => variable.key);
+        const desconocidas = verRes.rows[0].motor === 'HTML_DINAMICO'
+            ? variablesDesconocidas(configuracion.html || '', permitidas)
+            : (configuracion.mappings || [])
+                .map((mapping) => String(mapping.variable || '').trim())
+                .filter((key) => key && !permitidas.includes(key));
+        if (desconocidas.length > 0) {
+            throw new Error(`La versión contiene variables desconocidas: ${[...new Set(desconocidas)].join(', ')}`);
+        }
         
         // Retire current VIGENTE
         await client.query(`
@@ -423,9 +501,22 @@ guardarMappings: async (formatoId, versionId, mappings) => {
   },
 
   renderVersion: async (formatoVersionId, data) => {
-    const verRes = await db.query('SELECT archivo_ruta, estado FROM fg_certificado_formato_version WHERE id = $1', [formatoVersionId]);
+    const verRes = await db.query(
+      'SELECT archivo_ruta, configuracion, estado, motor FROM fg_certificado_formato_version WHERE id = $1',
+      [formatoVersionId]
+    );
     if (verRes.rowCount === 0) throw new Error('Versión no encontrada');
     if (verRes.rows[0].estado !== 'VIGENTE') throw new Error('Solo se pueden emitir certificados con versiones VIGENTES');
+
+    const motorVersion = verRes.rows[0].motor || 'DOCX_DINAMICO';
+    if (motorVersion === 'HTML_DINAMICO') {
+      let configuracion = verRes.rows[0].configuracion || {};
+      if (typeof configuracion === 'string') configuracion = JSON.parse(configuracion);
+      return {
+        tipo: 'HTML_DINAMICO',
+        data: renderizarHtml(configuracion.html || '', data)
+      };
+    }
     
     const storageKey = verRes.rows[0].archivo_ruta;
     const templatePath = path.join(STORAGE_PATH, storageKey, 'template.docx');
@@ -438,7 +529,10 @@ guardarMappings: async (formatoId, versionId, mappings) => {
     const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
     doc.render(data);
     
-    return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+    return {
+      tipo: 'DOCX_DINAMICO',
+      data: doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' })
+    };
   }
 
 };

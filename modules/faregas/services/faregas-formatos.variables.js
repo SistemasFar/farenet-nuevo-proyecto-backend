@@ -21,6 +21,13 @@
     demo: 'Inicial'
   },
   {
+    key: 'certificado.titulo',
+    label: 'Título del Certificado',
+    grupo: 'Certificado',
+    tipo: 'text',
+    demo: 'CERTIFICADO DE INSPECCIÓN DE TALLER'
+  },
+  {
     key: 'taller.nombre',
     label: 'Nombre del Taller',
     grupo: 'Taller',
@@ -84,6 +91,20 @@
     demo: 'RES-050-2026-MTC'
   },
   {
+    key: 'empresa.direccion',
+    label: 'Dirección de la Empresa',
+    grupo: 'Empresa',
+    tipo: 'text',
+    demo: 'AV. INDUSTRIAL 123, LIMA'
+  },
+  {
+    key: 'empresa.telefono',
+    label: 'Teléfono de la Empresa',
+    grupo: 'Empresa',
+    tipo: 'text',
+    demo: '01 555-0101'
+  },
+  {
     key: 'inspeccion.observaciones',
     label: 'Observaciones',
     grupo: 'Inspección',
@@ -99,6 +120,36 @@
   }
 ];
 
+const CLAVE_PERSONALIZADA = /^personalizado\.[a-z0-9_]{1,60}$/;
+
+const obtenerVariablesPersonalizadas = (configuracion = {}) => {
+  const candidatas = Array.isArray(configuracion?.variables_personalizadas)
+    ? configuracion.variables_personalizadas
+    : [];
+  const unicas = new Map();
+
+  for (const variable of candidatas) {
+    const key = String(variable?.key || '').trim();
+    const label = String(variable?.label || '').trim().slice(0, 100);
+    if (!CLAVE_PERSONALIZADA.test(key) || !label || unicas.has(key)) continue;
+    unicas.set(key, {
+      key,
+      label,
+      grupo: 'Personalizadas',
+      tipo: 'text',
+      demo: String(variable?.demo || `{{${key}}}`).slice(0, 150)
+    });
+  }
+  return [...unicas.values()];
+};
+
+const obtenerCatalogoVariables = (configuracion = {}) => [
+  ...VARIABLES_CATALOG,
+  ...obtenerVariablesPersonalizadas(configuracion)
+];
+
 module.exports = {
-  VARIABLES_CATALOG
+  VARIABLES_CATALOG,
+  obtenerVariablesPersonalizadas,
+  obtenerCatalogoVariables
 };

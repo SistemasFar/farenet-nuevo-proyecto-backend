@@ -177,7 +177,7 @@ exports.getServicios = async (req, res) => {
 
 exports.crearServicio = async (req, res) => {
     try {
-        const { codigo, nombre, categoria_id, tipo_flujo, requiere_certificado, tipo_certificado_clave, modalidad, requiere_vehiculo, orden } = req.body;
+        const { codigo, nombre, categoria_id, tipo_flujo, requiere_certificado, tipo_certificado_clave, modalidad, formato_id, requiere_vehiculo, orden } = req.body;
         
         if (!codigo || !nombre || !Number.isInteger(Number(categoria_id)) || Number(categoria_id) <= 0) {
             return res.status(400).json({ success: false, message: 'Código, nombre y categoría son obligatorios.' });
@@ -191,12 +191,13 @@ exports.crearServicio = async (req, res) => {
             requiere_certificado: !!requiere_certificado,
             tipo_certificado_clave: requiere_certificado ? tipo_certificado_clave : null,
             modalidad: requiere_certificado ? modalidad : null,
+            formato_id: requiere_certificado && formato_id ? Number(formato_id) : null,
             requiere_vehiculo: !!requiere_vehiculo,
             orden: orden || 0
         };
 
-        const newId = await configService.crearServicio(data, req.user.username, req.ip);
-        res.json({ success: true, message: 'Servicio creado exitosamente.', servicio_id: newId });
+        const nuevo = await configService.crearServicio(data, req.user.username, req.ip);
+        res.json({ success: true, message: 'Servicio creado exitosamente.', servicio_id: nuevo.id, formato_id: nuevo.formato_id });
     } catch (error) {
         const status = erroresConfiguracionServicio.has(error.message) ? 400 : 500;
         res.status(status).json({ success: false, message: error.message || 'Error al crear servicio.' });
@@ -206,7 +207,7 @@ exports.crearServicio = async (req, res) => {
 exports.editarServicio = async (req, res) => {
     try {
         const { id } = req.params;
-        const { nombre, categoria_id, tipo_flujo, requiere_certificado, tipo_certificado_clave, modalidad, requiere_vehiculo, orden } = req.body;
+        const { nombre, categoria_id, tipo_flujo, requiere_certificado, tipo_certificado_clave, modalidad, formato_id, requiere_vehiculo, orden } = req.body;
         
         if (!nombre || !Number.isInteger(Number(categoria_id)) || Number(categoria_id) <= 0) {
             return res.status(400).json({ success: false, message: 'El nombre y la categoría son obligatorios.' });
@@ -219,12 +220,13 @@ exports.editarServicio = async (req, res) => {
             requiere_certificado: !!requiere_certificado,
             tipo_certificado_clave: requiere_certificado ? tipo_certificado_clave : null,
             modalidad: requiere_certificado ? modalidad : null,
+            formato_id: requiere_certificado && formato_id ? Number(formato_id) : null,
             requiere_vehiculo: !!requiere_vehiculo,
             orden: orden || 0
         };
 
-        await configService.editarServicio(id, data, req.user.username, req.ip);
-        res.json({ success: true, message: 'Servicio actualizado exitosamente.' });
+        const actualizado = await configService.editarServicio(id, data, req.user.username, req.ip);
+        res.json({ success: true, message: 'Servicio actualizado exitosamente.', formato_id: actualizado.formato_id });
     } catch (error) {
         const status = erroresConfiguracionServicio.has(error.message) ? 400 : 500;
         res.status(status).json({ success: false, message: error.message || 'Error al editar servicio.' });
@@ -307,6 +309,28 @@ exports.cambiarEstadoServicio = async (req, res) => {
         res.json({ success: true, message: `Servicio ${activo ? 'activado' : 'desactivado'} exitosamente.` });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message || 'Error al cambiar estado de servicio.' });
+    }
+};
+
+exports.asignarFormato = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { formato_id } = req.body;
+        await configService.asignarFormatoAServicio(id, formato_id, req.user.username, req.ip);
+        res.json({ success: true, message: 'Formato asignado exitosamente.' });
+    } catch (error) {
+        res.status(400).json({ success: false, message: error.message || 'Error al asignar formato.' });
+    }
+};
+
+exports.crearVarianteParaServicio = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const formatoPadreId = req.body.formato_padre_id ? Number(req.body.formato_padre_id) : null;
+        const result = await configService.crearVarianteParaServicio(id, formatoPadreId, req.user.username, req.ip);
+        res.json({ success: true, message: 'Variante creada y asignada exitosamente.', formato: result });
+    } catch (error) {
+        res.status(400).json({ success: false, message: error.message || 'Error al crear variante.' });
     }
 };
 

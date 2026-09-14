@@ -184,6 +184,8 @@ router.get('/servicios/sedes', requireConfigServiciosPerm, configController.obte
 router.post('/servicios', requireConfigServiciosPerm, configController.crearServicio);
 router.put('/servicios/:id', requireConfigServiciosPerm, configController.editarServicio);
 router.put('/servicios/:id/estado', requireConfigServiciosPerm, configController.cambiarEstadoServicio);
+router.put('/servicios/:id/formato', requireConfigServiciosPerm, configController.asignarFormato);
+router.post('/servicios/:id/formato/variante', requireConfigServiciosPerm, configController.crearVarianteParaServicio);
 
 router.get('/categorias', requireLecturaCategoriasPerm, configController.getCategorias);
 router.post('/categorias', requireConfigCategoriasPerm, configController.crearCategoria);

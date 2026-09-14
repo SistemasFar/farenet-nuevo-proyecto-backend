@@ -1,138 +1,163 @@
 const express = require('express');
-const router = express.Router();
 const multer = require('multer');
+const db = require('../../../config/database');
 const { faregasFormatosService } = require('../services/faregas-formatos.service');
 const { VARIABLES_CATALOG } = require('../services/faregas-formatos.variables');
 const { authFaregasMiddleware: verificarToken } = require('../middlewares/faregas-auth.middleware');
 
-// Setup multer memory storage
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB limit
+const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-// Get dictionary of allowed variables
-router.get('/variables', verificarToken, (req, res) => {
+const requireAdministrarFormatos = async (req, res, next) => {
+  try {
+    const permiso = await db.query(
+      `SELECT 1
+       FROM fg_perfil_permiso
+       WHERE perfil_clave = $1
+         AND permiso_clave IN ('MENU_CONFIGURACION', 'CONFIGURACION_SERVICIOS')
+       GROUP BY perfil_clave
+       HAVING COUNT(DISTINCT permiso_clave) = 2`,
+      [req.user.perfil_id]
+    );
+    if (permiso.rowCount === 0) {
+      return res.status(403).json({ message: 'No tiene permisos para administrar formatos.' });
+    }
+    next();
+  } catch (_error) {
+    res.status(500).json({ message: 'Error al verificar permisos de formatos.' });
+  }
+};
+
+router.get('/variables', verificarToken, (_req, res) => {
   res.json({ variables: VARIABLES_CATALOG });
 });
 
-// List all formats
-router.get('/', verificarToken, async (req, res) => {
+router.get('/', verificarToken, async (_req, res) => {
   try {
-    const formatos = await faregasFormatosService.listarFormatos();
-    res.json(formatos);
+    res.json(await faregasFormatosService.listarFormatos());
   } catch (error) {
-    res.status(500).json({ mensaje: 'Error al obtener formatos', error: error.message });
+    res.status(500).json({ message: error.message || 'Error al obtener formatos.' });
   }
 });
 
-// Create new Format
-router.post('/', verificarToken, async (req, res) => {
+router.post('/', verificarToken, requireAdministrarFormatos, async (req, res) => {
   try {
-    const { nombre, codigo, motor } = req.body;
-    if (!nombre || !codigo || !motor) return res.status(400).json({ mensaje: 'Faltan datos obligatorios' });
-    const nuevo = await faregasFormatosService.crearFormato(nombre, codigo, motor);
-    res.json(nuevo);
+    const { nombre, codigo, motor, formato_padre_id = null } = req.body;
+    if (!nombre || !codigo || !motor) return res.status(400).json({ message: 'Faltan datos obligatorios.' });
+    res.json(await faregasFormatosService.crearFormato(nombre, codigo, motor, formato_padre_id));
   } catch (error) {
-    res.status(400).json({ mensaje: 'Error al crear formato', error: error.message });
+    res.status(400).json({ message: error.message || 'Error al crear formato.' });
+  }
+});
+router.get('/:id/operaciones', verificarToken, async (req, res) => {
+  try {
+    res.json(await faregasFormatosService.obtenerOperacionesPorFormato(req.params.id));
+  } catch (error) {
+    res.status(500).json({ message: error.message || 'Error al obtener operaciones vinculadas.' });
   }
 });
 
-// Get versions of a specific format
 router.get('/:id/versiones', verificarToken, async (req, res) => {
   try {
-    const versiones = await faregasFormatosService.obtenerVersionesFormato(req.params.id);
-    res.json(versiones);
+    res.json(await faregasFormatosService.obtenerVersionesFormato(req.params.id));
   } catch (error) {
-    res.status(500).json({ mensaje: 'Error al obtener versiones', error: error.message });
+    res.status(500).json({ message: error.message || 'Error al obtener versiones.' });
   }
 });
 
-// Upload a new docx version (saved as BORRADOR)
-router.post('/:id/versiones', verificarToken, upload.single('archivo'), async (req, res) => {
+router.post('/:id/versiones', verificarToken, requireAdministrarFormatos, upload.single('archivo'), async (req, res) => {
   try {
-    const formatoId = req.params.id;
-    if (!req.file) return res.status(400).json({ mensaje: 'No se subi� archivo' });
-    
-    if (!req.file.originalname.endsWith('.docx')) {
-      return res.status(400).json({ mensaje: 'El archivo debe ser un .docx v�lido' });
+    if (!req.file) return res.status(400).json({ message: 'No se subió archivo.' });
+    if (!req.file.originalname.toLowerCase().endsWith('.docx')) {
+      return res.status(400).json({ message: 'El archivo debe ser un .docx válido.' });
     }
-
-    const resultado = await faregasFormatosService.guardarBorradorVersion(
-      formatoId, 
+    const version = await faregasFormatosService.guardarBorradorVersion(
+      req.params.id,
       req.file.buffer,
       req.file.originalname
     );
-
-    res.json({
-      mensaje: 'Versi�n guardada como borrador',
-      version: resultado
-    });
-
+    res.json({ message: 'Versión guardada como borrador.', version });
   } catch (error) {
-    res.status(400).json({ mensaje: error.message });
+    res.status(400).json({ message: error.message });
   }
 });
 
-// Obtener estructura legible del documento (paragraphs)
+router.post('/:id/versiones/html', verificarToken, requireAdministrarFormatos, async (req, res) => {
+  try {
+    const version = await faregasFormatosService.crearBorradorHtml(req.params.id);
+    res.json({ message: 'Versión HTML guardada como borrador.', version });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 router.get('/:id/versiones/:versionId/estructura', verificarToken, async (req, res) => {
   try {
     const paragraphs = await faregasFormatosService.obtenerEstructura(req.params.id, req.params.versionId);
     res.json({ paragraphs });
   } catch (error) {
-    res.status(400).json({ mensaje: error.message });
+    res.status(400).json({ message: error.message });
   }
 });
 
-// Guardar mappings y reconstruir template
-router.post('/:id/versiones/:versionId/mappings', verificarToken, async (req, res) => {
+router.post('/:id/versiones/:versionId/mappings', verificarToken, requireAdministrarFormatos, async (req, res) => {
   try {
     const { mappings } = req.body;
-    if (!Array.isArray(mappings)) return res.status(400).json({ mensaje: 'mappings debe ser un array' });
-    
+    if (!Array.isArray(mappings)) return res.status(400).json({ message: 'mappings debe ser un array.' });
     await faregasFormatosService.guardarMappings(req.params.id, req.params.versionId, mappings);
-    res.json({ mensaje: 'Mappings guardados y template actualizado' });
-  } catch (error) { res.status(400).json({ mensaje: error.message }); } });
-
-// Guardar configuracion generica (usado por HTML_DINAMICO)
-router.put('/:id/versiones/:versionId', verificarToken, async (req, res) => {
-  try {
-    const { configuracion } = req.body;
-    await faregasFormatosService.guardarConfiguracion(req.params.id, req.params.versionId, configuracion);
-    res.json({ mensaje: 'Configuracion guardada' });
+    res.json({ message: 'Mappings guardados y plantilla actualizada.' });
   } catch (error) {
-    res.status(400).json({ mensaje: error.message });
+    res.status(400).json({ message: error.message });
   }
 });
 
-// Descargar preview
+router.put('/:id/versiones/:versionId', verificarToken, requireAdministrarFormatos, async (req, res) => {
+  try {
+    await faregasFormatosService.guardarConfiguracion(req.params.id, req.params.versionId, req.body.configuracion);
+    res.json({ message: 'Configuración guardada.' });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 router.get('/:id/versiones/:versionId/preview', verificarToken, async (req, res) => {
   try {
-    const buffer = await faregasFormatosService.generarPreview(req.params.id, req.params.versionId);
+    const preview = await faregasFormatosService.generarPreview(req.params.id, req.params.versionId);
+    if (preview.tipo === 'HTML_DINAMICO') {
+      return res.json({ tipo: preview.tipo, html: preview.data });
+    }
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    res.setHeader('Content-Disposition', 'attachment; filename=preview_' + req.params.versionId + '.docx');
-    res.send(buffer);
+    res.setHeader('Content-Disposition', `attachment; filename=preview_${req.params.versionId}.docx`);
+    res.send(preview.data);
   } catch (error) {
-    res.status(400).json({ mensaje: error.message });
+    res.status(400).json({ message: error.message });
   }
 });
 
-// Activar versi�n
-router.post('/:id/versiones/:versionId/activar', verificarToken, async (req, res) => {
+router.put('/:id/versiones/:versionId/activar', verificarToken, requireAdministrarFormatos, async (req, res) => {
   try {
     await faregasFormatosService.activarVersion(req.params.id, req.params.versionId);
-    res.json({ mensaje: 'Versi�n activada exitosamente' });
+    res.json({ message: 'Versión activada exitosamente.' });
   } catch (error) {
-    res.status(400).json({ mensaje: error.message });
+    res.status(400).json({ message: error.message });
+  }
+});
+
+router.put('/:id/estado', verificarToken, requireAdministrarFormatos, async (req, res) => {
+  try {
+    res.json(await faregasFormatosService.cambiarEstado(req.params.id));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+router.delete('/:id/versiones/:versionId', verificarToken, requireAdministrarFormatos, async (req, res) => {
+  try {
+    await faregasFormatosService.eliminarVersion(req.params.id, req.params.versionId);
+    res.json({ message: 'Versión eliminada.' });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
   }
 });
 
 module.exports = router;
-
-
-// Eliminar version
-router.delete('/:id/versiones/:versionId', verificarToken, async (req, res) => {
-  try {
-    await faregasFormatosService.eliminarVersion(req.params.id, req.params.versionId);
-    res.json({ mensaje: 'Version eliminada' });
-  } catch (error) {
-    res.status(400).json({ mensaje: error.message });
-  }
-});

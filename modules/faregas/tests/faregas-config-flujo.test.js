@@ -46,3 +46,19 @@ test('acepta servicio complementario sin certificado y rechaza valores libres', 
         /TIPO_FLUJO_INVALIDO/
     );
 });
+
+test('acepta taller inspeccion y conserva sus certificados base', async () => {
+    const client = { query: async () => ({ rowCount: 1, rows: [{ activo: true }] }) };
+    await service.validarConfiguracionServicio(client, certificado({
+        tipo_flujo: 'TALLER_INSPECCION',
+        requiere_certificado: true,
+        tipo_certificado_clave: 'GLP_ANUAL',
+        modalidad: 'ANUAL'
+    }));
+    await service.validarConfiguracionServicio(client, certificado({
+        tipo_flujo: 'TALLER_INSPECCION',
+        requiere_certificado: true,
+        tipo_certificado_clave: 'GNV_ANUAL',
+        modalidad: 'INICIAL'
+    }));
+});

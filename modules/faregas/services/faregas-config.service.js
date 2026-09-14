@@ -1,17 +1,20 @@
 const db = require('../../../config/database');
 
-const TIPOS_FLUJO = new Set(['CERTIFICACION', 'SERVICIO_COMPLEMENTARIO']);
+const TIPOS_FLUJO = new Set(['CERTIFICACION', 'SERVICIO_COMPLEMENTARIO', 'TALLER_INSPECCION']);
 
 const validarConfiguracionServicio = async (client, servicio) => {
     if (!TIPOS_FLUJO.has(servicio.tipo_flujo)) throw new Error('TIPO_FLUJO_INVALIDO');
 
-    if (servicio.tipo_flujo === 'CERTIFICACION') {
+    if (servicio.tipo_flujo === 'CERTIFICACION' || servicio.tipo_flujo === 'TALLER_INSPECCION') {
         if (!servicio.requiere_certificado) throw new Error('CERTIFICACION_REQUIERE_CERTIFICADO');
 
         const combinacionValida =
             ((servicio.tipo_certificado_clave === 'GNV_ANUAL' || servicio.tipo_certificado_clave === 'GLP_ANUAL')
                 && ['INICIAL', 'ANUAL'].includes(servicio.modalidad))
-            || (servicio.tipo_certificado_clave === 'CONFORMIDAD' && servicio.modalidad === null);
+            || (servicio.tipo_certificado_clave === 'CONFORMIDAD' && servicio.modalidad === null)
+            || (servicio.tipo_flujo === 'TALLER_INSPECCION'
+                && servicio.tipo_certificado_clave === 'TALLER_INSPECCION'
+                && servicio.modalidad === null);
         if (!combinacionValida) throw new Error('CERTIFICADO_BASE_INCOMPATIBLE');
 
         const tipo = await client.query(
@@ -23,6 +26,15 @@ const validarConfiguracionServicio = async (client, servicio) => {
 
     if (servicio.tipo_flujo === 'SERVICIO_COMPLEMENTARIO' && servicio.requiere_certificado) {
         throw new Error('SERVICIO_COMPLEMENTARIO_NO_GENERA_CERTIFICADO');
+    }
+
+    if (servicio.formato_id != null) {
+        if (!servicio.requiere_certificado) throw new Error('FORMATO_REQUIERE_CERTIFICADO');
+        const formato = await client.query(
+            'SELECT id FROM fg_certificado_formato WHERE id = $1 AND activo = TRUE',
+            [servicio.formato_id]
+        );
+        if (formato.rowCount === 0) throw new Error('FORMATO_NO_DISPONIBLE');
     }
 };
 
@@ -52,7 +64,7 @@ exports.crearSede = async (sede, username, ip_direccion) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        
+
         const check = await client.query('SELECT key FROM fg_planta WHERE key = $1', [sede.key]);
         if (check.rows.length > 0) throw new Error('Ya existe una sede con ese código (key).');
 
@@ -199,7 +211,7 @@ exports.editarSede = async (key, sede, username, ip_direccion) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        
+
         const check = await client.query('SELECT * FROM fg_planta WHERE key = $1', [key]);
         if (check.rows.length === 0) throw new Error('Sede no encontrada.');
         const anterior = check.rows[0];
@@ -226,7 +238,6 @@ exports.editarSede = async (key, sede, username, ip_direccion) => {
         client.release();
     }
 };
-
 exports.cambiarEstadoSede = async (key, activo, username, ip_direccion) => {
     const client = await db.connect();
     try {
@@ -266,9 +277,12 @@ exports.getServicios = async () => {
             s.id, s.codigo, s.nombre, s.familia, s.categoria_id,
             c.codigo AS categoria_codigo, c.nombre AS categoria_nombre,
             s.tipo_flujo, s.tipo_certificado_clave, s.modalidad, s.requiere_certificado,
+            s.formato_id, f.codigo AS formato_codigo, f.nombre AS formato_nombre,
+            f.motor AS formato_motor,
             s.requiere_vehiculo, s.activo, s.orden
         FROM fg_servicio s
         JOIN fg_categoria_servicio c ON c.id = s.categoria_id
+        LEFT JOIN fg_certificado_formato f ON f.id = s.formato_id
         ORDER BY s.orden ASC, c.orden ASC, s.nombre ASC
     `);
     return result.rows;
@@ -293,16 +307,22 @@ exports.crearServicio = async (servicio, username, ip_direccion) => {
         const categoria = await obtenerCategoriaActiva(client, servicio.categoria_id);
         await validarConfiguracionServicio(client, servicio);
 
+        let familia = categoria.codigo;
+        if (servicio.tipo_certificado_clave === 'GNV_ANUAL') familia = 'GNV';
+        else if (servicio.tipo_certificado_clave === 'GLP_ANUAL') familia = 'GLP';
+        else if (servicio.tipo_certificado_clave === 'CONFORMIDAD') familia = 'CONFORMIDAD';
+
         const res = await client.query(`
             INSERT INTO fg_servicio (
                 codigo, nombre, familia, categoria_id, tipo_flujo, tipo_certificado_clave,
-                modalidad, requiere_certificado, requiere_vehiculo, activo, orden
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            RETURNING id
+                modalidad, requiere_certificado, formato_id, requiere_vehiculo, activo, orden
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            RETURNING id, formato_id
         `, [
-            servicio.codigo, servicio.nombre, categoria.codigo, categoria.id,
+            servicio.codigo, servicio.nombre, familia, categoria.id,
             servicio.tipo_flujo, servicio.tipo_certificado_clave, servicio.modalidad,
-            servicio.requiere_certificado, servicio.requiere_vehiculo, true, servicio.orden
+            servicio.requiere_certificado, servicio.formato_id ?? null,
+            servicio.requiere_vehiculo, true, servicio.orden
         ]);
 
         await this.registrarAuditoria(client, {
@@ -310,13 +330,13 @@ exports.crearServicio = async (servicio, username, ip_direccion) => {
             entidad: 'SERVICIO', 
             accion: 'CREAR_SERVICIO', 
             identificador: servicio.codigo,
-            detalles: { despues: { ...servicio, familia: categoria.codigo, activo: true } },
+            detalles: { despues: { ...servicio, familia, activo: true } },
             planta_key: null, 
             ip_direccion
         });
 
         await client.query('COMMIT');
-        return res.rows[0].id;
+        return res.rows[0];
     } catch (e) {
         await client.query('ROLLBACK');
         throw e;
@@ -336,6 +356,11 @@ exports.editarServicio = async (id, servicio, username, ip_direccion) => {
         const categoria = await obtenerCategoriaActiva(client, servicio.categoria_id);
         await validarConfiguracionServicio(client, servicio);
 
+        let familia = categoria.codigo;
+        if (servicio.tipo_certificado_clave === 'GNV_ANUAL') familia = 'GNV';
+        else if (servicio.tipo_certificado_clave === 'GLP_ANUAL') familia = 'GLP';
+        else if (servicio.tipo_certificado_clave === 'CONFORMIDAD') familia = 'CONFORMIDAD';
+
         await client.query(`
             UPDATE fg_servicio SET 
                 nombre = $1, 
@@ -345,12 +370,14 @@ exports.editarServicio = async (id, servicio, username, ip_direccion) => {
                 tipo_certificado_clave = $5,
                 modalidad = $6,
                 requiere_certificado = $7,
-                requiere_vehiculo = $8,
-                orden = $9
-            WHERE id = $10
+                formato_id = $8,
+                requiere_vehiculo = $9,
+                orden = $10
+            WHERE id = $11
+            RETURNING id, formato_id
         `, [
-            servicio.nombre, categoria.codigo, categoria.id, servicio.tipo_flujo, servicio.tipo_certificado_clave,
-            servicio.modalidad, servicio.requiere_certificado,
+            servicio.nombre, familia, categoria.id, servicio.tipo_flujo, servicio.tipo_certificado_clave,
+            servicio.modalidad, servicio.requiere_certificado, servicio.formato_id ?? null,
             servicio.requiere_vehiculo, servicio.orden, id
         ]);
 
@@ -359,23 +386,20 @@ exports.editarServicio = async (id, servicio, username, ip_direccion) => {
             entidad: 'SERVICIO', 
             accion: 'EDITAR_SERVICIO', 
             identificador: anterior.codigo,
-            detalles: { 
-                antes: { 
+            detalles: {
+                antes: {
                     nombre: anterior.nombre, familia: anterior.familia, categoria_id: anterior.categoria_id, tipo_flujo: anterior.tipo_flujo, tipo_certificado_clave: anterior.tipo_certificado_clave,
-                    modalidad: anterior.modalidad, requiere_certificado: anterior.requiere_certificado, 
+                    modalidad: anterior.modalidad, requiere_certificado: anterior.requiere_certificado, formato_id: anterior.formato_id,
                     requiere_vehiculo: anterior.requiere_vehiculo, orden: anterior.orden
                 },
-                despues: { 
-                    nombre: servicio.nombre, familia: categoria.codigo, categoria_id: categoria.id, tipo_flujo: servicio.tipo_flujo, tipo_certificado_clave: servicio.tipo_certificado_clave,
-                    modalidad: servicio.modalidad, requiere_certificado: servicio.requiere_certificado, 
-                    requiere_vehiculo: servicio.requiere_vehiculo, orden: servicio.orden
-                }
+                despues: { ...servicio, familia }
             },
             planta_key: null, 
             ip_direccion
         });
 
         await client.query('COMMIT');
+        return { id, formato_id: servicio.formato_id ?? null };
     } catch (e) {
         await client.query('ROLLBACK');
         throw e;
@@ -383,6 +407,8 @@ exports.editarServicio = async (id, servicio, username, ip_direccion) => {
         client.release();
     }
 };
+
+
 
 // CATEGORÍAS
 
@@ -525,6 +551,102 @@ exports.cambiarEstadoServicio = async (id, activo, username, ip_direccion) => {
     }
 };
 
+exports.asignarFormatoAServicio = async (servicioId, formatoId, username, ip_direccion) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+
+        const check = await client.query('SELECT * FROM fg_servicio WHERE id = $1 FOR UPDATE', [servicioId]);
+        if (check.rows.length === 0) throw new Error('Servicio no encontrado.');
+        const servicio = check.rows[0];
+        if (!servicio.requiere_certificado) throw new Error('La operación no genera certificado.');
+
+        const fCheck = await client.query(
+            'SELECT id FROM fg_certificado_formato WHERE id = $1 AND activo = TRUE',
+            [formatoId]
+        );
+        if (fCheck.rows.length === 0) throw new Error('Formato activo no encontrado.');
+
+        await client.query('UPDATE fg_servicio SET formato_id = $1 WHERE id = $2', [formatoId, servicioId]);
+
+        await this.registrarAuditoria(client, {
+            username,
+            entidad: 'SERVICIO',
+            accion: 'ASIGNAR_FORMATO',
+            identificador: servicio.codigo,
+            detalles: { formato_id: formatoId },
+            planta_key: null,
+            ip_direccion
+        });
+
+        await client.query('COMMIT');
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
+};
+
+exports.crearVarianteParaServicio = async (servicioId, formatoPadreId, username, ip_direccion) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+
+        const check = await client.query('SELECT * FROM fg_servicio WHERE id = $1 FOR UPDATE', [servicioId]);
+        if (check.rows.length === 0) throw new Error('Servicio no encontrado.');
+        const servicio = check.rows[0];
+        if (!servicio.requiere_certificado) throw new Error('La operación no genera certificado.');
+
+        const formatoBaseId = formatoPadreId || servicio.formato_id;
+        if (!formatoBaseId) throw new Error('La operación no tiene un formato base para crear la variante.');
+
+        const fCheck = await client.query(
+            'SELECT * FROM fg_certificado_formato WHERE id = $1 AND activo = TRUE',
+            [formatoBaseId]
+        );
+        if (fCheck.rows.length === 0) throw new Error('Formato base no encontrado.');
+        const formatoBase = fCheck.rows[0];
+        if (formatoPadreId && (!formatoBase.es_protegido || formatoBase.motor !== 'SISTEMA')) {
+            throw new Error('La variante seleccionada debe partir de un formato protegido del sistema.');
+        }
+
+        const nuevoCodigo = `${formatoBase.codigo}_${servicio.codigo}`;
+        const nuevoNombre = `${formatoBase.nombre} (${servicio.codigo})`;
+
+        const query = `
+          INSERT INTO fg_certificado_formato (nombre, codigo, motor, es_protegido, activo, formato_padre_id)
+          VALUES ($1, $2, $3, false, true, $4)
+          RETURNING *
+        `;
+        const res = await client.query(query, [nuevoNombre, nuevoCodigo, 'HTML_DINAMICO', formatoBase.id]);
+        const nuevoFormato = res.rows[0];
+
+        await client.query('UPDATE fg_servicio SET formato_id = $1 WHERE id = $2', [nuevoFormato.id, servicioId]);
+
+        await this.registrarAuditoria(client, {
+            username,
+            entidad: 'SERVICIO',
+            accion: 'CREAR_VARIANTE_FORMATO',
+            identificador: servicio.codigo,
+            detalles: {
+                formato_base_id: formatoBase.id,
+                formato_anterior_id: servicio.formato_id,
+                nuevo_formato_id: nuevoFormato.id
+            },
+            planta_key: null,
+            ip_direccion
+        });
+
+        await client.query('COMMIT');
+        return nuevoFormato;
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
+};
 exports.obtenerSedesPorServicio = async () => {
     const query = `
         SELECT t.servicio_id, json_agg(json_build_object(

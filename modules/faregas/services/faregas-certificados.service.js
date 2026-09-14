@@ -1696,7 +1696,7 @@ exports.reservarNumeroPrevisualizacion = async (id, userContext) => {
         if (!cert.formato_version_id && cert.tipo_clave && cert.tipo_clave.startsWith('TALLER_')) {
             const resFmt = await client.query('SELECT formato_id FROM fg_servicio WHERE id = $1', [cert.servicio_id]);
             if (resFmt.rowCount > 0 && resFmt.rows[0].formato_id) {
-                const resV = await client.query('SELECT id FROM fg_certificado_formato_version WHERE formato_id = $1 AND estado = $2 ORDER BY version DESC LIMIT 1', [resFmt.rows[0].formato_id, 'ACTIVO']);
+                const resV = await client.query('SELECT id FROM fg_certificado_formato_version WHERE formato_id = $1 AND estado = $2 ORDER BY version DESC LIMIT 1', [resFmt.rows[0].formato_id, 'VIGENTE']);
                 if (resV.rowCount > 0) {
                     await client.query('UPDATE fg_certificado SET formato_version_id = $1 WHERE id = $2', [resV.rows[0].id, id]);
                     cert.formato_version_id = resV.rows[0].id;
