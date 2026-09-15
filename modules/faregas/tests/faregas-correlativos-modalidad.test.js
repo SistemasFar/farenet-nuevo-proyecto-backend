@@ -34,7 +34,7 @@ test('el filtro GLP Inicial usa tipo base y modalidad sin confundirlo con GLP An
 
     try {
         await service.obtenerCorrelativos({ plantaKey: '190', tipo: 'GLP_INICIAL' });
-        assert.match(consulta.sql, /"modalidad" = \$3/i);
+        assert.match(consulta.sql, /o\.modalidad = \$3/i);
         assert.deepEqual(consulta.params, ['190', 'GLP_ANUAL', 'INICIAL']);
     } finally {
         db.query = queryOriginal;

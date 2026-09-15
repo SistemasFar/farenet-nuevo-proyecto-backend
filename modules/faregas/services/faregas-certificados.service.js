@@ -89,118 +89,108 @@ exports.obtenerTiposActivos = async () => {
 
 exports.obtenerCorrelativos = async (filters) => {
     let q = `
-        WITH active_services AS (
+        WITH operations AS (
             SELECT 
+                s.id AS servicio_id,
+                s.codigo AS servicio_codigo,
+                s.nombre AS servicio_nombre,
                 ta.planta_key,
+                p.nombre AS planta_nombre,
                 t.clave AS tipo_base,
                 CASE WHEN t.clave = 'CONFORMIDAD' THEN 'UNICA' ELSE s.modalidad END AS modalidad,
-                json_agg(json_build_object(
-                    'servicioId', s.id,
-                    'codigo', s.codigo,
-                    'nombre', s.nombre,
-                    'formatoId', s.formato_id
-                ) ORDER BY s.codigo) AS operaciones
+                t.codigo AS tipo_codigo,
+                CASE WHEN t.clave = 'CONFORMIDAD' THEN 'Conformidad' ELSE split_part(t.clave, '_', 1) || ' ' || initcap(lower(s.modalidad)) END AS tipo_nombre
             FROM fg_servicio s
             JOIN fg_tarifa ta ON ta.servicio_id = s.id
             JOIN fg_tipo_certificado t ON t.clave = s.tipo_certificado_clave
+            JOIN fg_planta p ON p.key = ta.planta_key
             WHERE s.activo = TRUE 
               AND s.requiere_certificado = TRUE 
-              AND ta.activo = TRUE 
-            GROUP BY ta.planta_key, t.clave, CASE WHEN t.clave = 'CONFORMIDAD' THEN 'UNICA' ELSE s.modalidad END
+              AND ta.activo = TRUE
+              AND p.activo = TRUE
         ),
-        required_combinations AS (
-            SELECT
-                a.planta_key,
-                p.nombre AS planta_nombre,
-                a.tipo_base,
-                t.codigo AS tipo_codigo,
-                a.modalidad,
-                CASE WHEN a.tipo_base = 'CONFORMIDAD' THEN 'CONFORMIDAD' ELSE split_part(a.tipo_base, '_', 1) || '_' || a.modalidad END AS tipo_clave,
-                CASE WHEN a.tipo_base = 'CONFORMIDAD' THEN 'Conformidad' ELSE split_part(a.tipo_base, '_', 1) || ' ' || initcap(lower(a.modalidad)) END AS tipo_nombre,
-                a.operaciones
-            FROM active_services a
-            JOIN fg_planta p ON p.key = a.planta_key
-            JOIN fg_tipo_certificado t ON t.clave = a.tipo_base
-            WHERE p.activo = TRUE
+        active_ranges AS (
+            SELECT DISTINCT ON (planta_key, tipo_certificado_clave, modalidad)
+                id, planta_key, tipo_certificado_clave, modalidad,
+                nro_inicio, nro_actual, nro_maximo, activo,
+                (nro_maximo - nro_actual) AS disponibles,
+                fecha_asignacion, fecha_cierre
+            FROM fg_correlativo_certificado
+            ORDER BY planta_key, tipo_certificado_clave, modalidad, id DESC
         ),
-        existing_ranges AS (
-            SELECT c.id, c.planta_key,
-                   CASE WHEN c.tipo_certificado_clave = 'CONFORMIDAD' THEN 'CONFORMIDAD' ELSE split_part(c.tipo_certificado_clave, '_', 1) || '_' || c.modalidad END AS tipo_clave,
-                   c.tipo_certificado_clave, c.modalidad,
-                   c.nro_inicio, c.nro_actual, c.nro_maximo,
-                   c.activo, (c.nro_maximo - c.nro_actual) AS disponibles,
-                   (c.nro_actual >= c.nro_maximo) AS agotado,
-                   c.fecha_asignacion, c.fecha_cierre
-            FROM fg_correlativo_certificado c
+        op_counts AS (
+            SELECT planta_key, tipo_base, modalidad, COUNT(*) as op_count
+            FROM operations
+            GROUP BY planta_key, tipo_base, modalidad
         ),
-        final_results AS (
+        all_ranges AS (
             SELECT 
-                er.id,
-                req.planta_key AS "plantaKey",
-                req.planta_nombre AS "plantaNombre",
-                req.tipo_clave AS "tipoClave",
-                req.tipo_base AS "tipoBase",
-                req.modalidad,
-                req.tipo_codigo AS "tipoCodigo",
-                req.tipo_nombre AS "tipoNombre",
-                er.nro_inicio AS "nroInicio",
-                er.nro_actual AS "nroActual",
-                er.nro_maximo AS "nroMaximo",
-                COALESCE(er.activo, FALSE) AS activo,
-                COALESCE(er.disponibles, 0) AS disponibles,
-                COALESCE(er.agotado, FALSE) AS agotado,
-                er.fecha_asignacion AS "fechaAsignacion",
-                er.fecha_cierre AS "fechaCierre",
-                CASE WHEN er.id IS NULL THEN true ELSE false END AS "sinRango",
-                req.operaciones AS "operacionesAsociadas"
-            FROM required_combinations req
-            LEFT JOIN existing_ranges er 
-                ON er.planta_key = req.planta_key 
-                AND er.tipo_certificado_clave = req.tipo_base 
-                AND er.modalidad = req.modalidad
-                AND er.activo = TRUE
-            
-            UNION ALL
-            
-            SELECT 
-                c.id, c.planta_key AS "plantaKey", p.nombre AS "plantaNombre",
-                CASE WHEN c.tipo_certificado_clave = 'CONFORMIDAD' THEN 'CONFORMIDAD' ELSE split_part(c.tipo_certificado_clave, '_', 1) || '_' || c.modalidad END AS "tipoClave",
-                c.tipo_certificado_clave AS "tipoBase", c.modalidad,
-                t.codigo AS "tipoCodigo",
-                CASE WHEN c.tipo_certificado_clave = 'CONFORMIDAD' THEN 'Conformidad' ELSE split_part(c.tipo_certificado_clave, '_', 1) || ' ' || initcap(lower(c.modalidad)) END AS "tipoNombre",
-                c.nro_inicio AS "nroInicio", c.nro_actual AS "nroActual", c.nro_maximo AS "nroMaximo",
-                c.activo, (c.nro_maximo - c.nro_actual) AS disponibles,
-                (c.nro_actual >= c.nro_maximo) AS agotado,
-                c.fecha_asignacion AS "fechaAsignacion", c.fecha_cierre AS "fechaCierre",
-                false AS "sinRango",
-                COALESCE(a.operaciones, '[]'::json) AS "operacionesAsociadas"
-            FROM fg_correlativo_certificado c
-            JOIN fg_planta p ON p.key = c.planta_key
-            JOIN fg_tipo_certificado t ON t.clave = c.tipo_certificado_clave
-            LEFT JOIN active_services a 
-                ON a.planta_key = c.planta_key 
-                AND a.tipo_base = c.tipo_certificado_clave 
-                AND a.modalidad = c.modalidad
-            WHERE c.activo = FALSE
+                planta_key, tipo_certificado_clave, modalidad,
+                json_agg(
+                    json_build_object(
+                        'id', id,
+                        'nroInicio', nro_inicio,
+                        'nroActual', nro_actual,
+                        'nroMaximo', nro_maximo,
+                        'activo', activo,
+                        'disponibles', (nro_maximo - nro_actual),
+                        'fechaAsignacion', fecha_asignacion,
+                        'fechaCierre', fecha_cierre
+                    ) ORDER BY id DESC
+                ) as historial
+            FROM fg_correlativo_certificado
+            GROUP BY planta_key, tipo_certificado_clave, modalidad
         )
-        SELECT * FROM final_results
+        SELECT 
+            o.servicio_id AS "servicioId",
+            o.servicio_codigo AS "servicioCodigo",
+            o.servicio_nombre AS "servicioNombre",
+            o.planta_key AS "plantaKey",
+            o.planta_nombre AS "plantaNombre",
+            CASE WHEN o.tipo_base = 'CONFORMIDAD' THEN 'CONFORMIDAD' ELSE split_part(o.tipo_base, '_', 1) || '_' || o.modalidad END AS "tipoCertificadoClave",
+            o.tipo_base AS "tipoBaseOriginal",
+            o.modalidad,
+            o.tipo_nombre AS "tipoNumeracionNombre",
+            'DG-' || o.tipo_codigo AS "prefijo",
+            r.id AS "rangoId",
+            r.nro_inicio AS "nroInicio",
+            r.nro_actual AS "nroActual",
+            r.nro_maximo AS "nroMaximo",
+            r.disponibles,
+            (c.op_count > 1) AS "compartido",
+            COALESCE(ar.historial, '[]'::json) AS "historial",
+            CASE 
+                WHEN r.id IS NULL THEN 'SIN_RANGO'
+                WHEN r.activo = FALSE AND r.disponibles > 0 THEN 'HISTORICO'
+                WHEN r.disponibles <= 0 THEN 'AGOTADO'
+                WHEN r.disponibles > 0 AND r.disponibles <= 50 THEN 'PROXIMO_A_AGOTARSE'
+                ELSE 'ACTIVO'
+            END AS estado
+        FROM operations o
+        JOIN op_counts c ON c.planta_key = o.planta_key AND c.tipo_base = o.tipo_base AND c.modalidad = o.modalidad
+        LEFT JOIN active_ranges r ON r.planta_key = o.planta_key 
+                                 AND r.tipo_certificado_clave = o.tipo_base 
+                                 AND r.modalidad = o.modalidad
+        LEFT JOIN all_ranges ar ON ar.planta_key = o.planta_key 
+                               AND ar.tipo_certificado_clave = o.tipo_base 
+                               AND ar.modalidad = o.modalidad
         WHERE 1=1
     `;
     const params = [];
     if (filters.plantaKey) {
         params.push(filters.plantaKey);
-        q += ` AND "plantaKey" = $${params.length}`;
+        q += ` AND o.planta_key = $${params.length}`;
     }
     if (filters.tipo) {
         const tipo = resolverTipoCorrelativo(filters.tipo);
         if (!tipo) return [];
         params.push(tipo.tipoBase);
-        q += ` AND "tipoBase" = $${params.length}`;
+        q += ` AND o.tipo_base = $${params.length}`;
         params.push(tipo.modalidad);
-        q += ` AND "modalidad" = $${params.length}`;
+        q += ` AND o.modalidad = $${params.length}`;
     }
     
-    q += ` ORDER BY "plantaKey", "tipoBase", modalidad, "fechaAsignacion" DESC NULLS FIRST`;
+    q += ` ORDER BY o.servicio_codigo`;
     
     const res = await db.query(q, params);
     return res.rows;
@@ -248,7 +238,7 @@ exports.crearRango = async (data) => {
             FROM fg_servicio
             WHERE tipo_certificado_clave = $1
               AND COALESCE(modalidad, 'UNICA') = $2
-              AND tipo_flujo = 'CERTIFICACION'
+              AND requiere_certificado = TRUE
               AND activo = TRUE
             LIMIT 1
         `, [tipoCorrelativo.tipoBase, tipoCorrelativo.modalidad]);
@@ -274,7 +264,10 @@ exports.crearRango = async (data) => {
     } catch (e) {
         await client.query('ROLLBACK');
         if (e.code === '23P01' || e.constraint === 'excl_fg_correlativo_rango') {
-            throw new Error('RANGO_SOLAPADO');
+            const maxRes = await client.query('SELECT MAX(nro_maximo) as m FROM fg_correlativo_certificado WHERE tipo_certificado_clave = $1', [tipoCorrelativo.tipoBase]);
+            const err = new Error('RANGO_SOLAPADO');
+            err.maxSugerido = maxRes.rows[0].m ? Number(maxRes.rows[0].m) : 0;
+            throw err;
         }
         if (e.constraint === 'fg_correlativo_certificado_hist_key') {
             throw new Error('RANGO_DUPLICADO');
@@ -1997,7 +1990,7 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
     // correlativos. La clave base no debe imponerle el formulario vehicular.
     if (borrador.servicio?.tipoFlujo === 'TALLER_INSPECCION' && borrador.formatoVersionId) {
         const dataFormato = buildFormatoData(borrador);
-        const { data: html } = await formatosService.renderVersion(borrador.formatoVersionId, dataFormato);
+        const { data: html } = await formatosService.renderVersion(borrador.formatoVersionId, dataFormato, true);
         return { html, tipo: tipoClave };
     }
 
@@ -2062,7 +2055,7 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
             throw new Error('FORMATO_NUMERO_NO_CONFIGURADO');
         }
         const dataFormato = buildFormatoData(borrador);
-        const { data: html } = await formatosService.renderVersion(borrador.formatoVersionId, dataFormato);
+        const { data: html } = await formatosService.renderVersion(borrador.formatoVersionId, dataFormato, true);
         return { html, tipo: tipoClave };
     }
 };

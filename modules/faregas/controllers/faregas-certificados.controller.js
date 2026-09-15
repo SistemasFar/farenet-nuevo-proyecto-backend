@@ -83,7 +83,10 @@ exports.crearRango = async (req, res) => {
         if (e.message === 'TIPO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El tipo de certificado indicado no existe' });
         if (e.message === 'TIPO_INACTIVO') return res.status(400).json({ ok: false, message: 'El tipo de certificado está inactivo' });
         if (e.message === 'RANGO_ACTIVO_EXISTENTE') return res.status(409).json({ ok: false, message: 'Ya existe un rango activo para esta sede y modalidad exacta de certificado.' });
-        if (e.message === 'RANGO_SOLAPADO') return res.status(409).json({ ok: false, message: 'El rango se cruza con otro rango del mismo prefijo, incluso si pertenece a otra sede o modalidad.' });
+        if (e.message === 'RANGO_SOLAPADO') {
+            const sugerencia = e.maxSugerido ? ` El último número registrado a nivel nacional es ${e.maxSugerido}. Sugerencia: iniciar desde ${e.maxSugerido + 1}.` : '';
+            return res.status(409).json({ ok: false, message: 'El rango se cruza con otro rango del mismo prefijo.' + sugerencia });
+        }
         if (e.message === 'RANGO_DUPLICADO') return res.status(409).json({ ok: false, message: 'Ya existe exactamente el mismo rango histórico (mismo inicio y máximo).' });
         
         console.error(e);

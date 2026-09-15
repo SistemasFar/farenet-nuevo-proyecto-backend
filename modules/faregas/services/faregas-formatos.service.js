@@ -579,13 +579,15 @@ guardarMappings: async (formatoId, versionId, mappings) => {
     }
   },
 
-  renderVersion: async (formatoVersionId, data) => {
+  renderVersion: async (formatoVersionId, data, allowBorrador = false) => {
     const verRes = await db.query(
       'SELECT archivo_ruta, configuracion, estado, motor FROM fg_certificado_formato_version WHERE id = $1',
       [formatoVersionId]
     );
     if (verRes.rowCount === 0) throw new Error('Versión no encontrada');
-    if (verRes.rows[0].estado !== 'VIGENTE') throw new Error('Solo se pueden emitir certificados con versiones VIGENTES');
+    if (verRes.rows[0].estado !== 'VIGENTE' && !(allowBorrador && verRes.rows[0].estado === 'BORRADOR')) {
+        throw new Error('Solo se pueden emitir certificados con versiones VIGENTES');
+    }
 
     const motorVersion = verRes.rows[0].motor || 'DOCX_DINAMICO';
     if (motorVersion === 'HTML_DINAMICO') {
