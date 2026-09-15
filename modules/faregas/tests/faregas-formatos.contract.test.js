@@ -12,6 +12,9 @@ const {
     variablesDesconocidas
 } = require('../services/faregas-formatos-html');
 const { VARIABLES_CATALOG, obtenerCatalogoVariables } = require('../services/faregas-formatos.variables');
+const { PLANTILLA_FAREGAS_HTML } = require('../services/faregas-formatos.templates');
+const { convertirDocxAHtml } = require('../services/faregas-formatos-word');
+const { Document, Packer, Paragraph, Table, TableCell, TableRow } = require('docx');
 
 const originalQuery = db.query;
 const originalConnect = db.connect;
@@ -33,6 +36,29 @@ test('editor HTML normaliza, cambia y conserva fallback incluso en slot vacío',
     const cambiado = normalizado.replace('data-faregas-var="taller.nombre"', 'data-faregas-var="empresa.razon_social"');
     const restaurado = cambiado.replace(/ data-faregas-var="empresa\.razon_social"/, '').replace(/ data-faregas-fallback="CHARING S\.A\.C\."/, '');
     assert.match(restaurado, />CHARING S\.A\.C\.<\/span>/);
+});
+
+test('plantilla HTML inicial conserva hoja A4, tabla y variables FAREGAS', () => {
+    assert.match(PLANTILLA_FAREGAS_HTML, /width:\s*210mm/);
+    assert.match(PLANTILLA_FAREGAS_HTML, /data-faregas-var="certificado\.titulo"/);
+    assert.match(PLANTILLA_FAREGAS_HTML, /data-faregas-var="taller\.nombre"/);
+    assert.match(PLANTILLA_FAREGAS_HTML, /class="tabla-info"/);
+});
+
+test('importación Word convierte texto y tablas a un documento HTML editable', async () => {
+    const documento = new Document({
+        sections: [{
+            children: [
+                new Paragraph('CERTIFICADO IMPORTADO'),
+                new Table({ rows: [new TableRow({ children: [new TableCell({ children: [new Paragraph('Dato Word')] })] })] })
+            ]
+        }]
+    });
+    const resultado = await convertirDocxAHtml(await Packer.toBuffer(documento), 'modelo.docx');
+    assert.match(resultado.html, /CERTIFICADO IMPORTADO/);
+    assert.match(resultado.html, /Dato Word/);
+    assert.match(resultado.html, /documento-certificado/);
+    assert.match(resultado.html, /<table/);
 });
 
 test('catálogo admite variables personalizadas declaradas sin aceptar claves arbitrarias', () => {
@@ -111,6 +137,24 @@ test('activar versión retira la vigente anterior y deja una sola VIGENTE', asyn
     assert.equal(consultas.filter((sql) => sql.includes('COMMIT')).length, 1);
 });
 
+test('desactivar versión cambia únicamente una VIGENTE a RETIRADA', async () => {
+    const consultas = [];
+    const client = {
+        query: async (sql) => {
+            consultas.push(String(sql));
+            if (String(sql).includes('SELECT v.estado, f.es_protegido')) {
+                return { rowCount: 1, rows: [{ estado: 'VIGENTE', es_protegido: false }] };
+            }
+            return { rowCount: 1, rows: [] };
+        },
+        release: () => {}
+    };
+    db.connect = async () => client;
+    await faregasFormatosService.desactivarVersion(6, 14);
+    assert(consultas.some((sql) => sql.includes("SET estado = 'RETIRADA'") && sql.includes('WHERE id = $1')));
+    assert.equal(consultas.filter((sql) => sql.includes('COMMIT')).length, 1);
+});
+
 test('la siguiente versión HTML se crea solo mediante acción explícita y como BORRADOR', async () => {
     const consultas = [];
     const client = {
@@ -135,6 +179,30 @@ test('la siguiente versión HTML se crea solo mediante acción explícita y como
     const insert = consultas.find((consulta) => consulta.sql.includes('INSERT INTO fg_certificado_formato_version'));
     assert.match(insert.sql, /'BORRADOR'/);
     assert.match(insert.sql, /'HTML_DINAMICO'/);
+});
+
+test('crear versión desde plantilla ignora el contenido anterior y usa el modelo FAREGAS', async () => {
+    let configuracionInsertada;
+    const client = {
+        query: async (sql, params = []) => {
+            if (String(sql).includes('SELECT id, motor, es_protegido')) {
+                return { rowCount: 1, rows: [{ id: 6, motor: 'HTML_DINAMICO', es_protegido: false }] };
+            }
+            if (String(sql).includes('COALESCE(MAX(version)')) return { rowCount: 1, rows: [{ siguiente: 5 }] };
+            if (String(sql).includes('SELECT configuracion')) return { rowCount: 1, rows: [{ configuracion: { html: '<p>Diseño anterior</p>' } }] };
+            if (String(sql).includes('INSERT INTO fg_certificado_formato_version')) {
+                configuracionInsertada = params[2];
+                return { rowCount: 1, rows: [{ id: 16, version: 5, estado: 'BORRADOR', motor: 'HTML_DINAMICO', configuracion: params[2] }] };
+            }
+            return { rowCount: 1, rows: [] };
+        },
+        release: () => {}
+    };
+    db.connect = async () => client;
+    await faregasFormatosService.crearBorradorHtml(6, 'PLANTILLA_FAREGAS');
+    assert.match(configuracionInsertada.html, /class="documento-certificado"/);
+    assert.match(configuracionInsertada.html, /data-faregas-var="taller\.nombre"/);
+    assert.doesNotMatch(configuracionInsertada.html, /Diseño anterior/);
 });
 
 test('variable inválida bloquea activación y revierte la transacción', async () => {
@@ -188,7 +256,9 @@ test('rutas mutables usan PUT y exigen el permiso administrativo existente', () 
     const fuente = fs.readFileSync(path.join(__dirname, '../routes/faregas-formatos.routes.js'), 'utf8');
     assert.match(fuente, /router\.put\('\/:id\/estado'/);
     assert.match(fuente, /router\.put\('\/:id\/versiones\/:versionId\/activar'/);
+    assert.match(fuente, /router\.put\('\/:id\/versiones\/:versionId\/desactivar'/);
     assert.match(fuente, /router\.post\('\/:id\/versiones\/html'/);
+    assert.match(fuente, /router\.post\('\/:id\/versiones\/html\/importar-docx'/);
     assert.doesNotMatch(fuente, /router\.post\('\/:id\/versiones\/:versionId\/activar'/);
     assert.match(fuente, /CONFIGURACION_SERVICIOS/);
     assert.match(fuente, /requireAdministrarFormatos/);

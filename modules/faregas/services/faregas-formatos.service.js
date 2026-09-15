@@ -8,6 +8,8 @@ const {
   obtenerVariablesPersonalizadas,
   obtenerCatalogoVariables
 } = require('./faregas-formatos.variables');
+const { PLANTILLA_FAREGAS_HTML } = require('./faregas-formatos.templates');
+const { convertirDocxAHtml } = require('./faregas-formatos-word');
 const {
     normalizarHtmlEditor,
     renderizarHtml,
@@ -290,7 +292,7 @@ const faregasFormatosService = {
     }
   },
 
-  crearBorradorHtml: async (formatoId) => {
+  crearBorradorHtml: async (formatoId, origen = 'ULTIMA_VERSION') => {
     const client = await db.connect();
     try {
       await client.query('BEGIN');
@@ -314,9 +316,10 @@ const faregasFormatosService = {
          LIMIT 1`,
         [formatoId]
       );
-      const configuracion = anteriorRes.rows[0]?.configuracion || {
-        html: '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body><main data-faregas-editable-slot></main></body></html>'
-      };
+      const usarPlantillaBase = String(origen).toUpperCase() === 'PLANTILLA_FAREGAS';
+      const configuracion = usarPlantillaBase
+        ? { html: PLANTILLA_FAREGAS_HTML, variables_personalizadas: [], variables_usadas: [] }
+        : anteriorRes.rows[0]?.configuracion || { html: PLANTILLA_FAREGAS_HTML, variables_personalizadas: [], variables_usadas: [] };
       const insert = await client.query(
         `INSERT INTO fg_certificado_formato_version
            (formato_id, version, archivo_ruta, configuracion, estado, motor)
@@ -326,6 +329,50 @@ const faregasFormatosService = {
       );
       await client.query('COMMIT');
       return insert.rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  crearBorradorHtmlDesdeWord: async (formatoId, archivoBuffer, nombreArchivo) => {
+    const convertido = await convertirDocxAHtml(archivoBuffer, nombreArchivo);
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const formatoRes = await client.query(
+        'SELECT id, motor, es_protegido FROM fg_certificado_formato WHERE id = $1 FOR UPDATE',
+        [formatoId]
+      );
+      if (formatoRes.rowCount === 0) throw new Error('Formato no encontrado');
+      if (formatoRes.rows[0].es_protegido) throw new Error('No se pueden crear versiones en formatos protegidos por el sistema');
+      if (formatoRes.rows[0].motor !== 'HTML_DINAMICO') throw new Error('El formato no utiliza el motor HTML_DINAMICO');
+
+      const versionRes = await client.query(
+        'SELECT COALESCE(MAX(version), 0) + 1 AS siguiente FROM fg_certificado_formato_version WHERE formato_id = $1',
+        [formatoId]
+      );
+      const configuracion = {
+        html: convertido.html,
+        variables_personalizadas: [],
+        variables_usadas: [],
+        importacion_word: {
+          nombre_original: String(nombreArchivo || 'documento.docx').slice(0, 255),
+          advertencias: convertido.advertencias,
+          convertido_en: new Date().toISOString()
+        }
+      };
+      const insert = await client.query(
+        `INSERT INTO fg_certificado_formato_version
+           (formato_id, version, archivo_ruta, configuracion, estado, motor)
+         VALUES ($1, $2, 'HTML_IMPORTADO_WORD', $3, 'BORRADOR', 'HTML_DINAMICO')
+         RETURNING id, version, estado, motor, configuracion`,
+        [formatoId, versionRes.rows[0].siguiente, configuracion]
+      );
+      await client.query('COMMIT');
+      return { version: insert.rows[0], advertencias: convertido.advertencias };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -497,6 +544,38 @@ guardarMappings: async (formatoId, versionId, mappings) => {
         throw error;
     } finally {
         client.release();
+    }
+  },
+
+  desactivarVersion: async (formatoId, versionId) => {
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const versionRes = await client.query(
+        `SELECT v.estado, f.es_protegido
+         FROM fg_certificado_formato_version v
+         JOIN fg_certificado_formato f ON f.id = v.formato_id
+         WHERE v.id = $1 AND v.formato_id = $2
+         FOR UPDATE OF v`,
+        [versionId, formatoId]
+      );
+      if (versionRes.rowCount === 0) throw new Error('Versión no encontrada');
+      if (versionRes.rows[0].es_protegido) throw new Error('No se pueden desactivar versiones de formatos protegidos por el sistema');
+      if (versionRes.rows[0].estado !== 'VIGENTE') throw new Error('Solo se puede desactivar una versión VIGENTE');
+
+      await client.query(
+        `UPDATE fg_certificado_formato_version
+         SET estado = 'RETIRADA'
+         WHERE id = $1 AND formato_id = $2`,
+        [versionId, formatoId]
+      );
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
   },
 

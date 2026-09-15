@@ -15,7 +15,12 @@ test('crear borrador conserva el contrato tarifaCodigo y deriva el tipo desde el
     tarifasService.obtenerTarifaOperativaPorCodigo = async (plantaKey, codigo) => {
         assert.equal(plantaKey, '201');
         assert.equal(codigo, 'GLP_ANUAL');
-        return { tipo_flujo: 'CERTIFICACION', tipo_certificado_clave: 'GLP_ANUAL', precio: 60 };
+        return {
+            tipo_flujo: 'CERTIFICACION',
+            requiere_certificado: true,
+            tipo_certificado_clave: 'GLP_ANUAL',
+            precio: 60
+        };
     };
     const queryMock = async (sql, params) => {
         consultas.push({ sql, params });
@@ -58,6 +63,7 @@ test('crear borrador rechaza directamente un servicio complementario', async () 
 
     tarifasService.obtenerTarifaOperativaPorCodigo = async () => ({
         tipo_flujo: 'SERVICIO_COMPLEMENTARIO',
+        requiere_certificado: false,
         tipo_certificado_clave: null,
         precio: 25
     });

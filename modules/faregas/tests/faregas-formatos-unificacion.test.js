@@ -128,7 +128,7 @@ test('formato protegido conserva bloqueadas las acciones mutables', () => {
 
 test('detalle conserva estados y administración de versiones', () => {
     const fuente = leer('FormatoDetalleModal.tsx');
-    for (const evidencia of ['listarVersiones', 'BORRADOR', 'VIGENTE', 'RETIRADA', 'Preview', 'Nueva versión HTML', 'Subir versión DOCX', 'Activar versión', 'Eliminar']) {
+    for (const evidencia of ['listarVersiones', 'BORRADOR', 'VIGENTE', 'RETIRADA', 'Preview', 'Nueva versión', 'Usar plantilla FAREGAS', 'Importar Word', 'Subir versión DOCX', 'Activar versión', 'Eliminar']) {
         assert.match(fuente, new RegExp(evidencia));
     }
 });

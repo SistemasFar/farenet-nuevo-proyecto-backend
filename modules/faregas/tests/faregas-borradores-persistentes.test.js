@@ -157,3 +157,164 @@ test('permite guardar el vehículo después del pago y solo lo bloquea al inicia
         auth.validarAccesoPlanta = accesoOriginal;
     }
 });
+
+test('guarda los datos técnicos de taller usando la key de sede y conserva el resto del snapshot', async () => {
+    const queryOriginal = db.query;
+    const accesoOriginal = auth.validarAccesoPlanta;
+    const consultas = [];
+    let accesoValidado = null;
+
+    db.query = async (sql, params) => {
+        consultas.push({ sql: String(sql), params });
+        if (/SELECT c\.id, c\.planta_key, c\.estado, c\.formato_datos_snapshot/i.test(sql)) {
+            return {
+                rowCount: 1,
+                rows: [{
+                    id: 244,
+                    planta_key: '201',
+                    estado: 'BORRADOR',
+                    formato_datos_snapshot: { certificado: { titulo: 'LUHANEXO' } }
+                }]
+            };
+        }
+        if (/UPDATE fg_certificado/i.test(sql)) return { rowCount: 1, rows: [] };
+        throw new Error(`Consulta inesperada: ${sql}`);
+    };
+    auth.validarAccesoPlanta = async (username, perfilId, plantaKey) => {
+        accesoValidado = { username, perfilId, plantaKey };
+        return { key: plantaKey };
+    };
+
+    try {
+        await service.guardarTaller(244, {
+            nombre: 'HOLA',
+            direccion: 'DD',
+            telefono: '999999999',
+            ciudad: 'AAA',
+            representanteLegal: 'AAAAA',
+            numeroAutorizacion: 'AAAA',
+            observaciones: 'AAAA',
+            fechaProximaInspeccion: '2026-09-16'
+        }, {
+            username: 'operador',
+            perfil_id: 'OPERADOR'
+        });
+
+        assert.deepEqual(accesoValidado, {
+            username: 'operador',
+            perfilId: 'OPERADOR',
+            plantaKey: '201'
+        });
+        assert.equal(consultas.length, 2);
+        assert.doesNotMatch(consultas[0].sql, /p\.codigo/i);
+        const snapshot = consultas[1].params[0];
+        assert.equal(snapshot.certificado.titulo, 'LUHANEXO');
+        assert.equal(snapshot.taller.nombre, 'HOLA');
+        assert.equal(snapshot.taller.numero_autorizacion, 'AAAA');
+        assert.equal(snapshot.inspeccion.fecha_proxima_inspeccion, '2026-09-16');
+    } finally {
+        db.query = queryOriginal;
+        auth.validarAccesoPlanta = accesoOriginal;
+    }
+});
+
+test('construye el formulario técnico con las variables de la versión HTML de la operación', async () => {
+    const queryOriginal = db.query;
+    const accesoOriginal = auth.validarAccesoPlanta;
+    db.query = async (sql) => {
+        if (/FROM fg_certificado c/i.test(sql) && /formato_version_resuelta_id/i.test(sql)) {
+            return {
+                rowCount: 1,
+                rows: [{
+                    id: 247,
+                    estado: 'BORRADOR',
+                    paso_actual: 'VEHICULO',
+                    planta_key: '201',
+                    tipo_certificado_clave: 'GNV_ANUAL',
+                    tipo_nombre: 'GNV anual',
+                    servicio_codigo: '12222',
+                    servicio_nombre: 'CERTIFICADO X',
+                    servicio_modalidad: 'INICIAL',
+                    servicio_tipo_flujo: 'TALLER_INSPECCION',
+                    servicio_formato_id: 37,
+                    formato_nombre: 'Certificado Conformidad (12222)',
+                    formato_version_resuelta_id: 32,
+                    formato_version: 1,
+                    formato_version_estado: 'BORRADOR',
+                    formato_version_motor: 'HTML_DINAMICO',
+                    formato_version_configuracion: {
+                        html: '<p><span data-faregas-var="taller.nombre">{{taller.nombre}}</span></p><p>{{personalizado.codigo_interno}}</p>',
+                        variables_usadas: ['certificado.numero', 'taller.nombre'],
+                        variables_personalizadas: [{ key: 'personalizado.codigo_interno', label: 'Código interno' }]
+                    },
+                    formato_datos_snapshot: {
+                        taller: { nombre: 'TALLER GUARDADO' },
+                        personalizado: { codigo_interno: 'ABC-9' }
+                    }
+                }]
+            };
+        }
+        if (/FROM fg_certificado_vehiculo/i.test(sql)) return { rowCount: 0, rows: [] };
+        if (/FROM fg_certificado_titular/i.test(sql)) return { rowCount: 0, rows: [] };
+        throw new Error(`Consulta inesperada: ${sql}`);
+    };
+    auth.validarAccesoPlanta = async () => true;
+
+    try {
+        const result = await service.obtenerBorradorCompleto(247, {
+            username: 'operador', perfil_id: 'OPERADOR'
+        });
+        assert.equal(result.servicio.tipoFlujo, 'TALLER_INSPECCION');
+        assert.equal(result.formatoFormulario.versionEstado, 'BORRADOR');
+        assert.deepEqual(result.formatoFormulario.campos.map((campo) => campo.key), [
+            'taller.nombre',
+            'personalizado.codigo_interno'
+        ]);
+        assert.equal(result.formatoFormulario.valores['taller.nombre'], 'TALLER GUARDADO');
+        assert.equal(result.formatoFormulario.valores['personalizado.codigo_interno'], 'ABC-9');
+    } finally {
+        db.query = queryOriginal;
+        auth.validarAccesoPlanta = accesoOriginal;
+    }
+});
+
+test('guarda valores dinámicos por su clave sin borrar otros grupos del formato', async () => {
+    const queryOriginal = db.query;
+    const accesoOriginal = auth.validarAccesoPlanta;
+    let snapshotGuardado;
+    db.query = async (sql, params) => {
+        if (/SELECT c\.id, c\.planta_key, c\.estado, c\.formato_datos_snapshot/i.test(sql)) {
+            return {
+                rowCount: 1,
+                rows: [{
+                    id: 248,
+                    planta_key: '201',
+                    estado: 'BORRADOR',
+                    formato_datos_snapshot: { certificado: { referencia: 'NO-BORRAR' } }
+                }]
+            };
+        }
+        if (/UPDATE fg_certificado/i.test(sql)) {
+            snapshotGuardado = params[0];
+            return { rowCount: 1, rows: [] };
+        }
+        throw new Error(`Consulta inesperada: ${sql}`);
+    };
+    auth.validarAccesoPlanta = async () => true;
+
+    try {
+        await service.guardarTaller(248, {
+            valores: {
+                'taller.nombre': 'TALLER DINÁMICO',
+                'personalizado.codigo_interno': 'XYZ-1'
+            }
+        }, { username: 'operador', perfil_id: 'OPERADOR' });
+
+        assert.equal(snapshotGuardado.certificado.referencia, 'NO-BORRAR');
+        assert.equal(snapshotGuardado.taller.nombre, 'TALLER DINÁMICO');
+        assert.equal(snapshotGuardado.personalizado.codigo_interno, 'XYZ-1');
+    } finally {
+        db.query = queryOriginal;
+        auth.validarAccesoPlanta = accesoOriginal;
+    }
+});

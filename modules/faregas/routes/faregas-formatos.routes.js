@@ -84,10 +84,27 @@ router.post('/:id/versiones', verificarToken, requireAdministrarFormatos, upload
 
 router.post('/:id/versiones/html', verificarToken, requireAdministrarFormatos, async (req, res) => {
   try {
-    const version = await faregasFormatosService.crearBorradorHtml(req.params.id);
+    const version = await faregasFormatosService.crearBorradorHtml(req.params.id, req.body?.origen);
     res.json({ message: 'Versión HTML guardada como borrador.', version });
   } catch (error) {
     res.status(400).json({ message: error.message });
+  }
+});
+
+router.post('/:id/versiones/html/importar-docx', verificarToken, requireAdministrarFormatos, upload.single('archivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'No se subió archivo.' });
+    if (!req.file.originalname.toLowerCase().endsWith('.docx')) {
+      return res.status(400).json({ message: 'El archivo debe ser un Word .docx válido.' });
+    }
+    const resultado = await faregasFormatosService.crearBorradorHtmlDesdeWord(
+      req.params.id,
+      req.file.buffer,
+      req.file.originalname
+    );
+    res.json({ message: 'Word convertido a borrador HTML.', ...resultado });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'No se pudo convertir el documento Word.' });
   }
 });
 
@@ -138,6 +155,15 @@ router.put('/:id/versiones/:versionId/activar', verificarToken, requireAdministr
   try {
     await faregasFormatosService.activarVersion(req.params.id, req.params.versionId);
     res.json({ message: 'Versión activada exitosamente.' });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+router.put('/:id/versiones/:versionId/desactivar', verificarToken, requireAdministrarFormatos, async (req, res) => {
+  try {
+    await faregasFormatosService.desactivarVersion(req.params.id, req.params.versionId);
+    res.json({ message: 'Versión desactivada exitosamente.' });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }

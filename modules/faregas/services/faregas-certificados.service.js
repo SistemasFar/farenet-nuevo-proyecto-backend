@@ -1,10 +1,56 @@
-const formatosService = require('./faregas-formatos.service');
+const { faregasFormatosService: formatosService } = require('./faregas-formatos.service');
 const db = require('../../../config/database');
 const integrationsConfig = require('../../../config/integrations.config');
 const { paraPlantilla } = require('../mappers/faregas-vehiculo.mapper');
 const tarifasService = require('./faregas-tarifas.service');
 const chipCertificadoService = require('./faregas-chip-certificado.service');
 const { normalizarNumeroChip, esNumeroChipCertificadoValido } = require('./faregas-chips.rules');
+const { extraerVariablesHtml } = require('./faregas-formatos-html');
+const { obtenerCatalogoVariables } = require('./faregas-formatos.variables');
+
+const VARIABLES_FORMATO_AUTOMATICAS = new Set([
+    'certificado.numero',
+    'certificado.fecha_emision',
+    'certificado.modalidad',
+    'certificado.titulo'
+]);
+
+const CLAVE_VARIABLE_FORMATO = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
+
+const configuracionFormato = (value) => {
+    if (!value) return {};
+    if (typeof value === 'string') {
+        try { return JSON.parse(value); } catch (_error) { return {}; }
+    }
+    return typeof value === 'object' && !Array.isArray(value) ? value : {};
+};
+
+const valorAnidado = (objeto, clave) => String(clave || '').split('.')
+    .reduce((actual, parte) => (actual == null ? undefined : actual[parte]), objeto);
+
+const asignarValorAnidado = (objeto, clave, valor) => {
+    const partes = String(clave || '').split('.');
+    let actual = objeto;
+    partes.forEach((parte, index) => {
+        if (index === partes.length - 1) actual[parte] = valor;
+        else {
+            if (!actual[parte] || typeof actual[parte] !== 'object' || Array.isArray(actual[parte])) actual[parte] = {};
+            actual = actual[parte];
+        }
+    });
+};
+
+const combinarObjetos = (base, adicional) => {
+    const resultado = { ...(base || {}) };
+    Object.entries(adicional || {}).forEach(([clave, valor]) => {
+        if (valor && typeof valor === 'object' && !Array.isArray(valor)) {
+            resultado[clave] = combinarObjetos(resultado[clave], valor);
+        } else {
+            resultado[clave] = valor;
+        }
+    });
+    return resultado;
+};
 
 const TIPOS_CORRELATIVO = Object.freeze({
     GNV_INICIAL: { tipoBase: 'GNV_ANUAL', modalidad: 'INICIAL' },
@@ -533,6 +579,11 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
                p.nombre AS planta_nombre,
                cl.tipo_documento AS cliente_tipo_doc, cl.nro_documento AS cliente_nro_doc, cl.nombre_razon_social AS cliente_nombre,
                s.codigo AS servicio_codigo, s.nombre AS servicio_nombre, s.modalidad AS servicio_modalidad,
+               s.tipo_flujo AS servicio_tipo_flujo, s.formato_id AS servicio_formato_id,
+               f.nombre AS formato_nombre,
+               fv.id AS formato_version_resuelta_id, fv.version AS formato_version,
+               fv.estado AS formato_version_estado, fv.motor AS formato_version_motor,
+               fv.configuracion AS formato_version_configuracion,
                ta.precio AS tarifa_precio
         FROM fg_certificado c
         LEFT JOIN fg_tipo_certificado t ON c.tipo_certificado_clave = t.clave
@@ -540,6 +591,21 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
         LEFT JOIN fg_cliente cl ON c.cliente_id = cl.id
         LEFT JOIN fg_tarifa ta ON ta.codigo = c.tarifa_codigo AND ta.planta_key = c.planta_key
         LEFT JOIN fg_servicio s ON s.id = ta.servicio_id
+        LEFT JOIN fg_certificado_formato f ON f.id = s.formato_id
+        LEFT JOIN LATERAL (
+            SELECT version.id, version.version, version.estado, version.motor, version.configuracion
+            FROM fg_certificado_formato_version version
+            WHERE version.formato_id = f.id
+              AND (version.id = c.formato_version_id OR version.estado IN ('VIGENTE', 'BORRADOR'))
+            ORDER BY
+                CASE
+                    WHEN version.id = c.formato_version_id THEN 0
+                    WHEN version.estado = 'VIGENTE' THEN 1
+                    ELSE 2
+                END,
+                version.version DESC
+            LIMIT 1
+        ) fv ON TRUE
         WHERE c.id = $1
     `;
     const resCab = await db.query(qCab, [id]);
@@ -558,6 +624,58 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
     const qTit = `SELECT * FROM fg_certificado_titular WHERE certificado_id = $1 ORDER BY orden ASC`;
     const resTit = await db.query(qTit, [id]);
 
+    const versionConfig = configuracionFormato(cert.formato_version_configuracion);
+    const variablesConfiguradas = Array.isArray(versionConfig.variables_usadas)
+        ? versionConfig.variables_usadas
+        : [];
+    const variablesHtml = cert.formato_version_motor === 'HTML_DINAMICO'
+        ? extraerVariablesHtml(versionConfig.html || '')
+        : [];
+    const variablesUsadas = [...new Set([...variablesConfiguradas, ...variablesHtml]
+        .map((key) => String(key || '').trim())
+        .filter((key) => CLAVE_VARIABLE_FORMATO.test(key)))];
+    const catalogoPorClave = new Map(obtenerCatalogoVariables(versionConfig).map((variable) => [variable.key, variable]));
+    const valoresBase = combinarObjetos({
+        certificado: {
+            numero: cert.numero_certificado || '',
+            fecha_emision: cert.fecha_emision || '',
+            modalidad: cert.servicio_modalidad || '',
+            titulo: cert.tipo_nombre || cert.servicio_nombre || ''
+        },
+        taller: {
+            nombre: cert.entidad_certificadora_nombre || '',
+            direccion: cert.lugar_emision || '',
+            telefono: cert.telefono_certificadora || '',
+            ciudad: '',
+            representante_legal: '',
+            numero_autorizacion: cert.resolucion_directoral || ''
+        },
+        empresa: {
+            razon_social: cert.cliente_nombre || '',
+            ruc: cert.cliente_nro_doc || '',
+            resolucion: cert.resolucion_directoral || '',
+            direccion: cert.domicilio_fiscal || '',
+            telefono: cert.telefono_certificadora || ''
+        },
+        inspeccion: {
+            observaciones: cert.observaciones || '',
+            fecha_proxima_inspeccion: ''
+        }
+    }, cert.formato_datos_snapshot || {});
+    const camposFormato = variablesUsadas
+        .filter((key) => !VARIABLES_FORMATO_AUTOMATICAS.has(key))
+        .map((key) => {
+            const variable = catalogoPorClave.get(key) || {};
+            return {
+                key,
+                label: variable.label || key.split('.').pop().replaceAll('_', ' '),
+                grupo: variable.grupo || 'Datos del certificado',
+                tipo: variable.tipo === 'date' ? 'date' : 'text',
+                requerido: key !== 'inspeccion.observaciones',
+                valor: valorAnidado(valoresBase, key) ?? ''
+            };
+        });
+
     return {
         id: cert.id,
         estado: cert.estado,
@@ -567,6 +685,7 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
             codigo: cert.servicio_codigo,
             nombre: cert.servicio_nombre,
             modalidad: cert.servicio_modalidad,
+            tipoFlujo: cert.servicio_tipo_flujo,
             precio: cert.tarifa_precio === null ? null : Number(cert.tarifa_precio)
         } : null,
         fechaCreacion: cert.fecha_creacion,
@@ -594,6 +713,18 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
         domicilioFiscal: cert.domicilio_fiscal,
         telefonoCertificadora: cert.telefono_certificadora,
         lugarEmision: cert.lugar_emision,
+        formatoDatosSnapshot: cert.formato_datos_snapshot || {},
+        formatoVersionId: cert.formato_version_resuelta_id || cert.formato_version_id || null,
+        formatoFormulario: cert.servicio_formato_id && cert.formato_version_resuelta_id ? {
+            formatoId: cert.servicio_formato_id,
+            formatoNombre: cert.formato_nombre,
+            versionId: cert.formato_version_resuelta_id,
+            version: cert.formato_version,
+            versionEstado: cert.formato_version_estado,
+            motor: cert.formato_version_motor,
+            campos: camposFormato,
+            valores: Object.fromEntries(camposFormato.map((campo) => [campo.key, campo.valor]))
+        } : null,
         vehiculo: resVeh.rowCount > 0 ? resVeh.rows[0] : null,
         titulares: resTit.rows
     };
@@ -1758,6 +1889,7 @@ exports.reservarNumeroPrevisualizacion = async (id, userContext) => {
         await client.query('BEGIN');
         const rCert = await client.query(`
             SELECT c.*, t.clave AS tipo_clave, t.codigo AS tipo_codigo, t.ancho_correlativo,
+                   s.id AS servicio_id, s.tipo_flujo AS servicio_tipo_flujo,
                    CASE WHEN t.clave = 'CONFORMIDAD' THEN 'UNICA' ELSE s.modalidad END AS modalidad_correlativo
             FROM fg_certificado c
             JOIN fg_tipo_certificado t ON t.clave = c.tipo_certificado_clave
@@ -1772,7 +1904,7 @@ exports.reservarNumeroPrevisualizacion = async (id, userContext) => {
         await validarAccesoCertificado(userContext.username, userContext.perfil_id, cert.planta_key);
 
         
-        if (!cert.formato_version_id && cert.tipo_clave && cert.tipo_clave.startsWith('TALLER_')) {
+        if (!cert.formato_version_id && cert.servicio_id) {
             const resFmt = await client.query('SELECT formato_id FROM fg_servicio WHERE id = $1', [cert.servicio_id]);
             if (resFmt.rowCount > 0 && resFmt.rows[0].formato_id) {
                 const resV = await client.query('SELECT id FROM fg_certificado_formato_version WHERE formato_id = $1 AND estado = $2 ORDER BY version DESC LIMIT 1', [resFmt.rows[0].formato_id, 'VIGENTE']);
@@ -1860,6 +1992,15 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
         lugar_emision: borrador.lugarEmision
     };
 
+    // Una operación con formato HTML propio se renderiza desde su versión y su
+    // snapshot dinámico, aunque reutilice una clave técnica base GNV/GLP para
+    // correlativos. La clave base no debe imponerle el formulario vehicular.
+    if (borrador.servicio?.tipoFlujo === 'TALLER_INSPECCION' && borrador.formatoVersionId) {
+        const dataFormato = buildFormatoData(borrador);
+        const { data: html } = await formatosService.renderVersion(borrador.formatoVersionId, dataFormato);
+        return { html, tipo: tipoClave };
+    }
+
     if (tipoClave === 'GNV_ANUAL') {
         const dataGnv = await exports.obtenerGNV(id, userContext);
         const gnv = dataGnv.gnv || {};
@@ -1917,36 +2058,52 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
         }, { modo: modoPlantilla });
         return { html, tipo: 'CONFORMIDAD' };
     } else {
-        if (!borrador.formato_version_id) {
+        if (!borrador.formatoVersionId) {
             throw new Error('FORMATO_NUMERO_NO_CONFIGURADO');
         }
         const dataFormato = buildFormatoData(borrador);
-        const { data: html } = await formatosService.renderVersion(borrador.formato_version_id, dataFormato);
+        const { data: html } = await formatosService.renderVersion(borrador.formatoVersionId, dataFormato);
         return { html, tipo: tipoClave };
     }
 };
 
 const buildFormatoData = (borrador) => {
-    const v = borrador.vehiculo || {};
     const cli = borrador.cliente || {};
-    const c = {
-        'certificado.numero': borrador.numeroCertificado || '',
-        'certificado.fecha_emision': borrador.fechaEmision || new Date().toISOString().slice(0, 10),
-        'certificado.modalidad': borrador.servicio ? borrador.servicio.modalidad : '',
-        'certificado.titulo': borrador.tipo ? borrador.tipo.nombre : '',
-        'taller.nombre': borrador.entidadCertificadoraNombre || '',
-        'taller.direccion': borrador.lugarEmision || '',
-        'taller.telefono': borrador.telefonoCertificadora || '',
-        'taller.representante_legal': '',
-        'taller.numero_autorizacion': borrador.resolucionDirectoral || '',
-        'empresa.razon_social': cli.nombreRazonSocial || '',
-        'empresa.ruc': cli.nroDocumento || '',
-        'empresa.resolucion': borrador.resolucionDirectoral || '',
-        'empresa.direccion': borrador.domicilioFiscal || '',
-        'empresa.telefono': borrador.telefonoCertificadora || '',
-        'inspeccion.observaciones': borrador.observaciones || ''
-    };
-    return c;
+    const datos = combinarObjetos({
+        certificado: {
+            numero: borrador.numeroCertificado || '',
+            fecha_emision: borrador.fechaEmision || new Date().toISOString().slice(0, 10),
+            modalidad: borrador.servicio ? borrador.servicio.modalidad : '',
+            titulo: borrador.tipo ? borrador.tipo.nombre : ''
+        },
+        taller: {
+            nombre: borrador.entidadCertificadoraNombre || '',
+            direccion: borrador.lugarEmision || '',
+            telefono: borrador.telefonoCertificadora || '',
+            representante_legal: '',
+            numero_autorizacion: borrador.resolucionDirectoral || ''
+        },
+        empresa: {
+            razon_social: cli.nombreRazonSocial || '',
+            ruc: cli.nroDocumento || '',
+            resolucion: borrador.resolucionDirectoral || '',
+            direccion: borrador.domicilioFiscal || '',
+            telefono: borrador.telefonoCertificadora || ''
+        },
+        inspeccion: {
+            observaciones: borrador.observaciones || ''
+        }
+    }, borrador.formatoDatosSnapshot || {});
+
+    // HTML usa objetos anidados. DOCX heredado puede usar la clave completa;
+    // mantenemos ambos accesos sin duplicar información persistida.
+    const aplanar = (objeto, prefijo = '') => Object.entries(objeto || {}).forEach(([clave, valor]) => {
+        const ruta = prefijo ? `${prefijo}.${clave}` : clave;
+        if (valor && typeof valor === 'object' && !Array.isArray(valor)) aplanar(valor, ruta);
+        else datos[ruta] = valor;
+    });
+    aplanar(datos);
+    return datos;
 };
 
 
@@ -1978,9 +2135,8 @@ exports.obtenerOperacionesDisponibles = async (plantaKey) => {
 
 exports.guardarTaller = async (id, payload, user) => {
     const queryVerificar = `
-        SELECT c.id, c.planta_key, c.estado
+        SELECT c.id, c.planta_key, c.estado, c.formato_datos_snapshot
         FROM fg_certificado c
-        JOIN fg_planta p ON c.planta_key = p.codigo
         WHERE c.id = $1
     `;
     const resVerificar = await db.query(queryVerificar, [id]);
@@ -1988,8 +2144,7 @@ exports.guardarTaller = async (id, payload, user) => {
     if (resVerificar.rows.length === 0) throw new Error('CERTIFICADO_NOT_FOUND');
     const cert = resVerificar.rows[0];
     
-    const tieneAcceso = await module.exports.verificarAccesoPlanta(user, cert.planta_key);
-    if (!tieneAcceso) throw new Error('PLANTA_NO_AUTORIZADA');
+    await validarAccesoCertificado(user.username, user.perfil_id, cert.planta_key);
     
     if (cert.estado !== 'BORRADOR') throw new Error('CERTIFICADO_NO_EDITABLE');
 
@@ -2002,24 +2157,28 @@ exports.guardarTaller = async (id, payload, user) => {
         WHERE id = $3
     `;
     
-    // Si ya existe formato_datos_snapshot, hacemos merge.
-    let snapshot = {};
-    const resSnap = await db.query('SELECT formato_datos_snapshot FROM fg_certificado WHERE id = $1', [id]);
-    if (resSnap.rows[0].formato_datos_snapshot) {
-        snapshot = resSnap.rows[0].formato_datos_snapshot;
+    // Conserva los demás grupos de variables del formato y reemplaza únicamente
+    // los datos editados en este paso.
+    const snapshot = { ...(cert.formato_datos_snapshot || {}) };
+    if (payload.valores && typeof payload.valores === 'object' && !Array.isArray(payload.valores)) {
+        Object.entries(payload.valores).forEach(([clave, valor]) => {
+            if (!CLAVE_VARIABLE_FORMATO.test(clave) || ['__proto__', 'prototype', 'constructor'].some((parte) => clave.split('.').includes(parte))) return;
+            asignarValorAnidado(snapshot, clave, valor === '' || valor === undefined ? null : valor);
+        });
+    } else {
+        snapshot.taller = {
+            nombre: payload.nombre || null,
+            direccion: payload.direccion || null,
+            telefono: payload.telefono || null,
+            ciudad: payload.ciudad || null,
+            representante_legal: payload.representanteLegal || null,
+            numero_autorizacion: payload.numeroAutorizacion || null
+        };
+        snapshot.inspeccion = {
+            observaciones: payload.observaciones || null,
+            fecha_proxima_inspeccion: payload.fechaProximaInspeccion || null
+        };
     }
-    snapshot.taller = {
-        nombre: payload.nombre || null,
-        direccion: payload.direccion || null,
-        telefono: payload.telefono || null,
-        ciudad: payload.ciudad || null,
-        representante_legal: payload.representanteLegal || null,
-        numero_autorizacion: payload.numeroAutorizacion || null
-    };
-    snapshot.inspeccion = {
-        observaciones: payload.observaciones || null,
-        fecha_proxima_inspeccion: payload.fechaProximaInspeccion || null
-    };
 
     await db.query(updateQuery, [
         snapshot,

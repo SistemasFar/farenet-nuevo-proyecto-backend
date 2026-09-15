@@ -11,6 +11,7 @@ test.after(() => db.end());
 const contexto = { username: 'OPERADOR_TEST', perfil_id: 'OPERADOR', planta_key: '201' };
 const tarifaComplementaria = {
     tipo_flujo: 'SERVICIO_COMPLEMENTARIO',
+    requiere_certificado: false,
     tipo_certificado_clave: null,
     precio: 25
 };

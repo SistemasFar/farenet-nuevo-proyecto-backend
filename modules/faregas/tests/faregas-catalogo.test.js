@@ -70,7 +70,7 @@ test('el catálogo filtra sede, categoría, servicio y tarifa activos', async ()
     assert.match(consultas[1].sql, /c\.activo = TRUE/i);
     assert.match(consultas[1].sql, /s\.activo = TRUE/i);
     assert.match(consultas[1].sql, /t\.activo = TRUE/i);
-    assert.match(consultas[1].sql, /s\.tipo_flujo = 'CERTIFICACION'/i);
+    assert.match(consultas[1].sql, /s\.tipo_flujo IN \('CERTIFICACION', 'TALLER_INSPECCION'\)/i);
 });
 
 test('una sede activa sin tarifas devuelve catálogo vacío y no un error técnico', async () => {
@@ -142,11 +142,42 @@ test('la tarifa oficial se resuelve con todas las entidades activas', async () =
 
 test('rechaza una tarifa de servicio complementario para operaciones de certificado', () => {
     assert.throws(
-        () => service.validarTarifaCertificacion({ tipo_flujo: 'SERVICIO_COMPLEMENTARIO' }),
+        () => service.validarTarifaCertificacion({
+            tipo_flujo: 'SERVICIO_COMPLEMENTARIO',
+            requiere_certificado: false,
+            tipo_certificado_clave: null
+        }),
         /SERVICIO_NO_CERTIFICACION/
     );
     assert.equal(
-        service.validarTarifaCertificacion({ tipo_flujo: 'CERTIFICACION', precio: 80 }).precio,
+        service.validarTarifaCertificacion({
+            tipo_flujo: 'CERTIFICACION',
+            requiere_certificado: true,
+            tipo_certificado_clave: 'GLP_ANUAL',
+            precio: 80
+        }).precio,
         80
+    );
+});
+
+test('acepta una tarifa de inspección de taller que genera certificado', () => {
+    const tarifa = service.validarTarifaCertificacion({
+        tipo_flujo: 'TALLER_INSPECCION',
+        requiere_certificado: true,
+        tipo_certificado_clave: 'GLP_ANUAL',
+        precio: 122
+    });
+
+    assert.equal(tarifa.precio, 122);
+});
+
+test('rechaza un flujo certificable si la operación no genera certificado', () => {
+    assert.throws(
+        () => service.validarTarifaCertificacion({
+            tipo_flujo: 'TALLER_INSPECCION',
+            requiere_certificado: false,
+            tipo_certificado_clave: 'GLP_ANUAL'
+        }),
+        /SERVICIO_NO_CERTIFICACION/
     );
 });

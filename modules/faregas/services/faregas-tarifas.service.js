@@ -1,5 +1,7 @@
 const db = require('../../../config/database');
 
+const FLUJOS_DE_CERTIFICADO = new Set(['CERTIFICACION', 'TALLER_INSPECCION']);
+
 const construirCatalogo = (sede, rows) => {
     const categorias = new Map();
 
@@ -119,7 +121,9 @@ exports.obtenerTarifaOperativaPorCodigo = async (plantaKey, tarifaCodigo, querya
 
 exports.validarTarifaCertificacion = (tarifa) => {
     if (!tarifa) throw new Error('TARIFA_NO_CONFIGURADA');
-    if (tarifa.tipo_flujo !== 'CERTIFICACION') {
+    if (!FLUJOS_DE_CERTIFICADO.has(tarifa.tipo_flujo)
+        || tarifa.requiere_certificado !== true
+        || !tarifa.tipo_certificado_clave) {
         throw new Error('SERVICIO_NO_CERTIFICACION');
     }
     return tarifa;
