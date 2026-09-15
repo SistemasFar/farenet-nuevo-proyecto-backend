@@ -34,7 +34,7 @@ test('el filtro GLP Inicial usa tipo base y modalidad sin confundirlo con GLP An
 
     try {
         await service.obtenerCorrelativos({ plantaKey: '190', tipo: 'GLP_INICIAL' });
-        assert.match(consulta.sql, /c\.modalidad = \$3/i);
+        assert.match(consulta.sql, /"modalidad" = \$3/i);
         assert.deepEqual(consulta.params, ['190', 'GLP_ANUAL', 'INICIAL']);
     } finally {
         db.query = queryOriginal;
@@ -65,6 +65,7 @@ test('la primera previsualizacion reserva el correlativo real de forma atomica',
                         planta_key: '201',
                         tipo_clave: 'GLP_ANUAL',
                         tipo_codigo: '41',
+                        ancho_correlativo: 6,
                         modalidad_correlativo: 'ANUAL',
                         numero_certificado: null
                     }]
@@ -112,6 +113,7 @@ test('una previsualizacion repetida reutiliza el numero reservado', async () => 
                         planta_key: '201',
                         tipo_clave: 'GLP_ANUAL',
                         tipo_codigo: '41',
+                        ancho_correlativo: 6,
                         modalidad_correlativo: 'ANUAL',
                         numero_certificado: 'DG-41-000201'
                     }]
@@ -154,6 +156,7 @@ test('emitir reutiliza el correlativo reservado sin avanzar nuevamente el rango'
                         planta_key: '201',
                         tipo_clave: 'GLP_ANUAL',
                         tipo_codigo: '41',
+                        ancho_correlativo: 6,
                         modalidad_correlativo: 'ANUAL',
                         numero_certificado: 'DG-41-000201'
                     }]
