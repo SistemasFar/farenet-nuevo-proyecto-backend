@@ -25,6 +25,20 @@ const normalizarPagos = (pagos = []) => {
     return normalizados;
 };
 
+const esProductoFiscalChipValido = (producto) => {
+    if (!producto || producto.activo !== true || producto.es_para_venta !== true) return false;
+    const unidad = String(producto.unidad || '').trim().toUpperCase();
+    const afectacionIgv = String(producto.tipo_afectacion_igv || '').trim();
+    const codigoSku = String(producto.codigo_sku || '').trim();
+    const descripcion = String(producto.descripcion || '').trim();
+    const codigoSunat = String(producto.codigo_clasificacion_sunat || '').trim();
+    return Boolean(codigoSku)
+        && Boolean(descripcion)
+        && ['NIU', 'ZZ'].includes(unidad)
+        && afectacionIgv === '10'
+        && (!codigoSunat || /^\d{8}$/.test(codigoSunat));
+};
+
 const construirSnapshotProducto = (tarifa, certificado) => ({
     productoFacturacionId: tarifa.producto_facturacion_id || null,
     codigoSku: tarifa.producto_sku || tarifa.servicio_codigo,
@@ -40,5 +54,6 @@ module.exports = {
     redondear,
     obtenerTarifaConfigurada,
     normalizarPagos,
-    construirSnapshotProducto
+    construirSnapshotProducto,
+    esProductoFiscalChipValido
 };

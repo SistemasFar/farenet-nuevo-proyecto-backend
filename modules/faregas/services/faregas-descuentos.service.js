@@ -335,8 +335,10 @@ exports.obtenerDescuentoBorrador = async (certificadoId, userContext) => {
 // ----------------------------------------------------------------------
 
 exports.obtenerResumenDescuentoCertificado = async (queryable, certificado) => {
-    let tarifaOriginal = 0;
-    if (certificado.tarifa_codigo) {
+    let tarifaOriginal = certificado.precio_certificado === null || certificado.precio_certificado === undefined
+        ? 0
+        : Number(certificado.precio_certificado);
+    if (!tarifaOriginal && certificado.tarifa_codigo) {
         const tarifaOp = await tarifasService.obtenerTarifaOperativaPorCodigo(
             certificado.planta_key,
             certificado.tarifa_codigo,

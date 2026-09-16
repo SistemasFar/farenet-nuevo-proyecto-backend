@@ -187,6 +187,12 @@ exports.crearBorrador = async (req, res) => {
         if (e.message === 'TIPO_INACTIVO') return res.status(400).json({ ok: false, message: 'El tipo de certificado está inactivo' });
         if (e.message === 'CLIENTE_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El cliente indicado no existe' });
         if (e.message === 'CLIENTE_INACTIVO') return res.status(400).json({ ok: false, message: 'El cliente está inactivo' });
+        if (e.message === 'CONFIGURACION_CHIP_INCOMPLETA') return res.status(409).json({
+            ok: false,
+            codigo: 'CONFIGURACION_CHIP_INCOMPLETA',
+            message: 'El serial del chip se escaneará después. Antes de continuar, configure el producto fiscal que se usará para facturar este tipo de chip en la sede actual.',
+            detalles: e.detalles || null
+        });
         
         console.error(e);
         res.status(500).json({ ok: false, message: 'Error interno del servidor' });
@@ -204,6 +210,40 @@ exports.obtenerBorradorCompleto = async (req, res) => {
         
         console.error(e);
         res.status(500).json({ ok: false, message: 'Error interno del servidor' });
+    }
+};
+
+const responderErrorChip = (res, error) => {
+    const mensajes = {
+        CERTIFICADO_NO_REQUIERE_CHIP: 'El producto fiscal de este certificado no requiere chip.',
+        CERTIFICADO_NO_EDITABLE: 'El certificado ya no se puede editar.',
+        NUMERO_CHIP_INVALIDO: 'El código del chip no tiene un formato válido.',
+        CHIP_NO_ENCONTRADO: 'El chip no existe en el inventario.',
+        CHIP_TIPO_INVALIDO: 'El chip no corresponde al tipo configurado para este certificado.',
+        CHIP_OTRA_SEDE: 'El chip pertenece a otra sede.',
+        CHIP_NO_DISPONIBLE: 'El chip no se encuentra disponible.',
+        CHIP_ASIGNADO_OTRO_CERTIFICADO: 'El chip ya fue seleccionado por otro certificado.',
+        CHIP_YA_CONSUMIDO: 'El chip asociado ya fue consumido y no puede reemplazarse.'
+    };
+    if (error.message === 'CERTIFICADO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'Certificado no encontrado.' });
+    if (error.message === 'PLANTA_NO_AUTORIZADA') return res.status(403).json({ ok: false, message: 'No tiene acceso a esta sede.' });
+    const status = ['CHIP_NO_DISPONIBLE', 'CHIP_ASIGNADO_OTRO_CERTIFICADO', 'CHIP_YA_CONSUMIDO', 'CERTIFICADO_NO_EDITABLE'].includes(error.message) ? 409 : 400;
+    return res.status(status).json({ ok: false, codigo: error.message, message: mensajes[error.message] || error.message });
+};
+
+exports.obtenerChipBorrador = async (req, res) => {
+    try {
+        res.json({ ok: true, data: await service.obtenerChipBorrador(req.params.id, req.user) });
+    } catch (error) {
+        responderErrorChip(res, error);
+    }
+};
+
+exports.seleccionarChipBorrador = async (req, res) => {
+    try {
+        res.json({ ok: true, data: await service.seleccionarChipBorrador(req.params.id, req.body.numeroChip, req.user) });
+    } catch (error) {
+        responderErrorChip(res, error);
     }
 };
 

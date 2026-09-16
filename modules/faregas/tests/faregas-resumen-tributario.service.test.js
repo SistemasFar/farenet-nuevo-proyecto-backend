@@ -80,6 +80,52 @@ test('mantiene precio original y descuento separados para Nubefact', () => {
     assert.equal(item.importe_total, 70);
 });
 
+test('desglosa certificado y chip y aplica el descuento solamente al certificado', () => {
+    const resumen = resumenService._private.construirResumen({
+        contexto: { ...contextoBase, base_imponible: 110.17, igv: 19.83, importe_total: 130 },
+        detalles: [
+            {
+                ...detalleBase,
+                tipo_item: 'SERVICIO',
+                detalle_base_imponible: 84.75,
+                detalle_igv: 15.25,
+                detalle_importe_total: 100,
+                precio_unitario: 100
+            },
+            {
+                producto_facturacion_id: 26,
+                producto_activo: true,
+                producto_sku: 'CHIP',
+                producto_descripcion: 'CHIP Y PORTA CHIP',
+                producto_unidad: 'NIU',
+                producto_codigo_sunat: null,
+                producto_afectacion_igv: '10',
+                tipo_item: 'PRODUCTO',
+                tarifa_precio: 30,
+                cantidad: 1,
+                orden: 2,
+                detalle_base_imponible: 25.42,
+                detalle_igv: 4.58,
+                detalle_importe_total: 30,
+                precio_unitario: 30
+            }
+        ],
+        descuento: { importe_original: 122, importe_descuento: 22, importe_final: 100 },
+        pagos: [],
+        serie: { serieboleta: 'BE03', seriefactura: 'FE03' }
+    });
+    const items = resumenService.construirDetallesNubefact(resumen);
+
+    assert.equal(resumen.estado, 'LISTO');
+    assert.equal(resumen.items.length, 2);
+    assert.equal(resumen.totales.precioAntesDescuento, 152);
+    assert.equal(resumen.totales.descuento, 22);
+    assert.equal(resumen.totales.total, 130);
+    assert.equal(items[0].importe_total, 100);
+    assert.equal(items[1].descuento, 0);
+    assert.equal(items[1].importe_total, 30);
+});
+
 test('bloquea el resumen cuando la tarifa no tiene producto fiscal vinculado', () => {
     const resumen = resumenService._private.construirResumen({
         contexto: contextoBase,

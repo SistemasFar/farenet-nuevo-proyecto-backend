@@ -28,7 +28,19 @@ const construirCatalogo = (sede, rows) => {
             tarifa: {
                 id: Number(row.tarifa_id),
                 codigo: row.tarifa_codigo,
-                precio: Number(row.precio)
+                precio: Number(row.precio),
+                productoFacturacionId: row.producto_facturacion_id ? Number(row.producto_facturacion_id) : null,
+                requiereChip: row.requiere_chip === true,
+                chip: row.requiere_chip === true ? {
+                    productoInventariableId: row.producto_chip_id ? Number(row.producto_chip_id) : null,
+                    codigo: row.chip_codigo || null,
+                    nombre: row.chip_nombre || null,
+                    productoFacturacionId: row.chip_producto_facturacion_id ? Number(row.chip_producto_facturacion_id) : null,
+                    codigoSku: row.chip_producto_sku || null,
+                    descripcion: row.chip_producto_descripcion || null,
+                    precio: row.chip_precio === null ? null : Number(row.chip_precio)
+                } : null,
+                importeTotal: Number(row.precio) + (row.requiere_chip === true && row.chip_precio !== null ? Number(row.chip_precio) : 0)
             }
         });
     }
@@ -62,11 +74,39 @@ exports.obtenerCatalogoPorPlanta = async (plantaKey, queryable = db) => {
             s.modalidad,
             t.id AS tarifa_id,
             t.codigo AS tarifa_codigo,
-            t.precio
+            t.precio,
+            t.producto_facturacion_id,
+            pf.requiere_chip,
+            pf.producto_chip_id,
+            pi.codigo AS chip_codigo,
+            pi.nombre AS chip_nombre,
+            COALESCE(pfc.id, pf.id) AS chip_producto_facturacion_id,
+            COALESCE(pfc.codigo_sku, pf.codigo_sku) AS chip_producto_sku,
+            COALESCE(pfc.descripcion, pf.descripcion) AS chip_producto_descripcion,
+            COALESCE(pf.precio_chip, pfc.precio_unitario) AS chip_precio
         FROM fg_tarifa t
         JOIN fg_servicio s ON s.id = t.servicio_id
         JOIN fg_categoria_servicio c ON c.id = s.categoria_id
         JOIN fg_planta p ON p.key = t.planta_key
+        LEFT JOIN fg_producto_facturacion pf ON pf.id = t.producto_facturacion_id
+        LEFT JOIN fg_producto_inventariable pi
+          ON pi.id = pf.producto_chip_id
+         AND pi.activo = TRUE
+         AND pi.control_stock = TRUE
+         AND pi.tipo = 'CHIP_SERIALIZADO'
+        LEFT JOIN fg_producto_inventariable_sede pis
+          ON pis.producto_inventariable_id = pi.id
+         AND pis.planta_key = t.planta_key
+         AND pis.activo = TRUE
+        LEFT JOIN fg_producto_facturacion pfc
+          ON pfc.id = COALESCE(pis.producto_facturacion_id, pi.producto_facturacion_id)
+         AND pfc.activo = TRUE
+         AND pfc.es_para_venta = TRUE
+         AND COALESCE(BTRIM(pfc.codigo_sku), '') <> ''
+         AND COALESCE(BTRIM(pfc.descripcion), '') <> ''
+         AND UPPER(BTRIM(pfc.unidad)) IN ('NIU', 'ZZ')
+         AND BTRIM(pfc.tipo_afectacion_igv) = '10'
+         AND (COALESCE(BTRIM(pfc.codigo_clasificacion_sunat), '') = '' OR BTRIM(pfc.codigo_clasificacion_sunat) ~ '^\\d{8}$')
         WHERE t.planta_key = $1
           AND p.activo = TRUE
           AND c.activo = TRUE
@@ -101,11 +141,40 @@ exports.obtenerTarifaOperativaPorCodigo = async (plantaKey, tarifaCodigo, querya
             pf.unidad AS producto_unidad,
             pf.tipo_afectacion_igv AS producto_afectacion_igv,
             pf.codigo_clasificacion_sunat AS producto_codigo_sunat
+            ,pf.requiere_chip
+            ,pf.producto_chip_id
+            ,pi.codigo AS chip_codigo
+            ,pi.nombre AS chip_nombre
+            ,COALESCE(pfc.id, pf.id) AS chip_producto_facturacion_id
+            ,COALESCE(pfc.codigo_sku, pf.codigo_sku) AS chip_producto_sku
+            ,COALESCE(pfc.descripcion, pf.descripcion) AS chip_producto_descripcion
+            ,COALESCE(pfc.unidad, pf.unidad) AS chip_producto_unidad
+            ,COALESCE(pfc.tipo_afectacion_igv, pf.tipo_afectacion_igv) AS chip_producto_afectacion_igv
+            ,COALESCE(pfc.codigo_clasificacion_sunat, pf.codigo_clasificacion_sunat) AS chip_producto_codigo_sunat
+            ,COALESCE(pf.precio_chip, pfc.precio_unitario) AS chip_precio
         FROM fg_tarifa t
         JOIN fg_servicio s ON s.id = t.servicio_id
         JOIN fg_planta p ON p.key = t.planta_key
         JOIN fg_categoria_servicio c ON c.id = s.categoria_id
         LEFT JOIN fg_producto_facturacion pf ON pf.id = t.producto_facturacion_id
+        LEFT JOIN fg_producto_inventariable pi
+          ON pi.id = pf.producto_chip_id
+         AND pi.activo = TRUE
+         AND pi.control_stock = TRUE
+         AND pi.tipo = 'CHIP_SERIALIZADO'
+        LEFT JOIN fg_producto_inventariable_sede pis
+          ON pis.producto_inventariable_id = pi.id
+         AND pis.planta_key = t.planta_key
+         AND pis.activo = TRUE
+        LEFT JOIN fg_producto_facturacion pfc
+          ON pfc.id = COALESCE(pis.producto_facturacion_id, pi.producto_facturacion_id)
+         AND pfc.activo = TRUE
+         AND pfc.es_para_venta = TRUE
+         AND COALESCE(BTRIM(pfc.codigo_sku), '') <> ''
+         AND COALESCE(BTRIM(pfc.descripcion), '') <> ''
+         AND UPPER(BTRIM(pfc.unidad)) IN ('NIU', 'ZZ')
+         AND BTRIM(pfc.tipo_afectacion_igv) = '10'
+         AND (COALESCE(BTRIM(pfc.codigo_clasificacion_sunat), '') = '' OR BTRIM(pfc.codigo_clasificacion_sunat) ~ '^\\d{8}$')
         WHERE t.planta_key = $1
           AND t.codigo = $2
           AND p.activo = TRUE

@@ -44,3 +44,27 @@ test('el detalle comercial conserva el SKU y la unidad fiscal del producto', () 
         codigoSunat: null
     });
 });
+
+test('rechaza un producto fiscal de chip sin afectación IGV', () => {
+    assert.equal(reglas.esProductoFiscalChipValido({
+        activo: true,
+        es_para_venta: true,
+        codigo_sku: 'TEST_CHIP',
+        descripcion: 'CHIP DE PRUEBA',
+        unidad: 'NIU',
+        tipo_afectacion_igv: null,
+        codigo_clasificacion_sunat: null
+    }), false);
+});
+
+test('acepta un producto fiscal completo para facturar el chip', () => {
+    assert.equal(reglas.esProductoFiscalChipValido({
+        activo: true,
+        es_para_venta: true,
+        codigo_sku: 'CHIP-001',
+        descripcion: 'CHIP Y PORTA CHIP',
+        unidad: 'NIU',
+        tipo_afectacion_igv: '10',
+        codigo_clasificacion_sunat: null
+    }), true);
+});

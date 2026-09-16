@@ -1,9 +1,13 @@
 const service = require('../services/faregas-chips.service');
 
 const respond = (res, error) => {
-    const status = ['CHIP_DUPLICADO','CHIP_NO_DISPONIBLE','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO'].includes(error.message) ? 409
+    const mensajes = {
+        PRODUCTO_FISCAL_INVALIDO: 'El producto fiscal seleccionado está incompleto. Debe estar activo, habilitado para venta, usar unidad NIU o ZZ y afectación IGV 10.',
+        VENTA_REQUIERE_PRODUCTO_FISCAL: 'Para habilitar la venta debe seleccionar un producto fiscal válido para el chip.'
+    };
+    const status = ['CHIP_DUPLICADO','CHIP_NO_DISPONIBLE','CHIP_ASIGNADO_CERTIFICADO','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO'].includes(error.message) ? 409
         : ['PLANTA_NO_AUTORIZADA'].includes(error.message) ? 403 : 400;
-    res.status(status).json({ success:false, codigo:error.message, message:error.message, detalles:error.detalles });
+    res.status(status).json({ success:false, codigo:error.message, message:mensajes[error.message] || error.message, detalles:error.detalles });
 };
 
 exports.listar = async(req,res)=>{try{res.json({success:true,...await service.listar({plantaKey:req.user.planta_key,...req.query},req.user)});}catch(e){respond(res,e);}};
@@ -21,3 +25,12 @@ exports.vender = async(req,res)=>{try{await service.vender({plantaKey:req.user.p
 exports.iniciarVentaSoloChip = async(req,res)=>{try{res.json({success:true,venta:await service.iniciarVentaSoloChip({plantaKey:req.user.planta_key,...req.body},req.user)});}catch(e){respond(res,e);}};
 exports.baja = async(req,res)=>{try{await service.baja({plantaKey:req.user.planta_key,...req.body},req.user);res.json({success:true});}catch(e){respond(res,e);}};
 exports.historial = async(req,res)=>{try{res.json({success:true,movimientos:await service.historial(Number(req.params.id),req.user)});}catch(e){respond(res,e);}};
+
+exports.listarCatalogoChipsFiscales = async (req, res) => {
+    try {
+        const chips = await service.listarCatalogoChipsFiscales();
+        res.json({ success: true, chips });
+    } catch (e) {
+        respond(res, e);
+    }
+};

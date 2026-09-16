@@ -75,6 +75,18 @@ const productoInventariableEnSede = async (queryable, plantaKey, productoInventa
 const productoChip = (queryable, plantaKey, bloquear = false) =>
     productoInventariableEnSede(queryable, plantaKey, null, bloquear);
 
+const productoInventariable = async (queryable, productoInventariableId = null, bloquear = false) => {
+    const result = await queryable.query(`
+        SELECT id, codigo, nombre, tipo
+        FROM fg_producto_inventariable
+        WHERE activo = TRUE
+          AND (($1::bigint IS NULL AND codigo = 'CHIP') OR id = $1::bigint)
+        ${bloquear ? 'FOR UPDATE' : ''}
+    `, [productoInventariableId]);
+    if (!result.rowCount) throw new Error('PRODUCTO_INVENTARIABLE_NO_ENCONTRADO');
+    return result.rows[0];
+};
+
 const exigirStockPermitido = (config) => {
     if (config.stock_permitido !== true) throw new Error('STOCK_CHIP_NO_PERMITIDO');
 };
@@ -114,24 +126,36 @@ exports.listar = async ({ plantaKey, productoInventariableId, estado, buscar, pa
 
 exports.resumen = async (plantaKey, user, productoInventariableId = null) => {
     await validarAcceso(user, plantaKey);
-    const config = await productoInventariableEnSede(db, plantaKey, productoInventariableId);
-    const result = await db.query(`
+    const producto = await productoInventariable(db, productoInventariableId);
+    const [result, configuracion] = await Promise.all([
+        db.query(`
         SELECT COUNT(*)::int total,
                COUNT(*) FILTER (WHERE estado='DISPONIBLE')::int disponibles,
                COUNT(*) FILTER (WHERE estado='RESERVADO')::int reservados,
                COUNT(*) FILTER (WHERE estado='VENDIDO')::int vendidos,
                COUNT(*) FILTER (WHERE estado='BAJA')::int baja
         FROM fg_chip WHERE planta_actual_key=$1 AND producto_inventariable_id=$2
-    `, [plantaKey, config.id]);
+        `, [plantaKey, producto.id]),
+        db.query(`
+            SELECT precio, venta_habilitada
+            FROM fg_producto_inventariable_sede
+            WHERE producto_inventariable_id = $1
+              AND planta_key = $2
+              AND activo = TRUE
+        `, [producto.id, plantaKey])
+    ]);
+    const configuracionSede = configuracion.rows[0];
     return {
         ...result.rows[0],
-        productoInventariableId: Number(config.id),
-        productoCodigo: config.codigo,
-        productoNombre: config.nombre,
-        precio: Number(config.precio),
-        stockPermitido: config.stock_permitido === true,
-        ventaHabilitada: config.venta_habilitada === true,
-        mappingFiscalCompleto: config.producto_fiscal_valido === true
+        productoInventariableId: Number(producto.id),
+        productoCodigo: producto.codigo,
+        productoNombre: producto.nombre,
+        // Se conserva como metadato de compatibilidad para consumidores antiguos.
+        // El inventario físico ya no depende de esta configuración comercial.
+        precio: Number(configuracionSede?.precio || 0),
+        stockPermitido: true,
+        ventaHabilitada: configuracionSede?.venta_habilitada === true,
+        mappingFiscalCompleto: false
     };
 };
 
@@ -139,6 +163,7 @@ exports.listarProductosInventariables = async (plantaKey, user) => {
     await validarAcceso(user, plantaKey);
     const result = await db.query(`
         SELECT pi.id, pi.codigo, pi.nombre, pi.tipo, pi.control_stock, pi.activo,
+               pi.producto_facturacion_id,
                COALESCE((
                    SELECT json_agg(json_build_object(
                        'plantaKey', p.key,
@@ -163,7 +188,19 @@ exports.listarProductosInventariables = async (plantaKey, user) => {
                 WHERE c.producto_inventariable_id = pi.id) AS stock_total,
                (SELECT COUNT(*)::int FROM fg_chip c
                 WHERE c.producto_inventariable_id = pi.id
-                  AND c.planta_actual_key = $1) AS stock_sede
+                  AND c.planta_actual_key = $1) AS stock_sede,
+               (SELECT COUNT(*)::int FROM fg_chip c
+                WHERE c.producto_inventariable_id = pi.id
+                  AND c.planta_actual_key = $1 AND c.estado = 'DISPONIBLE') AS disponibles_sede,
+               (SELECT COUNT(*)::int FROM fg_chip c
+                WHERE c.producto_inventariable_id = pi.id
+                  AND c.planta_actual_key = $1 AND c.estado = 'RESERVADO') AS reservados_sede,
+               (SELECT COUNT(*)::int FROM fg_chip c
+                WHERE c.producto_inventariable_id = pi.id
+                  AND c.planta_actual_key = $1 AND c.estado = 'VENDIDO') AS vendidos_sede,
+               (SELECT COUNT(*)::int FROM fg_chip c
+                WHERE c.producto_inventariable_id = pi.id
+                  AND c.planta_actual_key = $1 AND c.estado = 'BAJA') AS bajas_sede
         FROM fg_producto_inventariable pi
         WHERE pi.activo = TRUE
         ORDER BY pi.nombre, pi.codigo
@@ -175,9 +212,14 @@ exports.listarProductosInventariables = async (plantaKey, user) => {
         tipo: row.tipo,
         controlStock: row.control_stock === true,
         activo: row.activo === true,
+        productoFacturacionId: row.producto_facturacion_id ? Number(row.producto_facturacion_id) : null,
         sedes: row.sedes,
         stockTotal: Number(row.stock_total),
-        stockSede: Number(row.stock_sede)
+        stockSede: Number(row.stock_sede),
+        disponiblesSede: Number(row.disponibles_sede),
+        reservadosSede: Number(row.reservados_sede),
+        vendidosSede: Number(row.vendidos_sede),
+        bajasSede: Number(row.bajas_sede)
     }));
 };
 
@@ -195,17 +237,17 @@ exports.catalogosProductosInventariables = async (plantaKey, user) => {
 exports.crearProductoInventariable = async (data, user, ipDireccion = null) => {
     const codigo = normalizarCodigoProducto(data.codigo);
     const nombre = normalizarNombreProducto(data.nombre);
-    const tipo = String(data.tipo || 'OTRO_PRODUCTO_FISICO').trim().toUpperCase();
+    const tipo = String(data.tipo || 'CHIP_SERIALIZADO').trim().toUpperCase();
     const sedes = normalizarSedesProducto(data.sedes);
+    const productoFacturacionId = data.productoFacturacionId ? Number(data.productoFacturacionId) : null;
 
     if (codigo.length < 2 || codigo.length > 60) throw new Error('CODIGO_PRODUCTO_INVENTARIABLE_INVALIDO');
     if (nombre.length < 2 || nombre.length > 200) throw new Error('NOMBRE_PRODUCTO_INVENTARIABLE_INVALIDO');
     if (tipo.length < 2 || tipo.length > 100) throw new Error('TIPO_PRODUCTO_INVENTARIABLE_INVALIDO');
-    if (!sedes.length) throw new Error('PRODUCTO_INVENTARIABLE_REQUIERE_SEDE');
     if (sedes.some((sede) => !Number.isFinite(sede.precio) || sede.precio <= 0)) {
         throw new Error('PRECIO_PRODUCTO_INVENTARIABLE_INVALIDO');
     }
-    if (sedes.some((sede) => sede.ventaHabilitada && !sede.productoFacturacionId)) {
+    if (sedes.some((sede) => sede.ventaHabilitada && !sede.productoFacturacionId && !productoFacturacionId)) {
         throw new Error('VENTA_REQUIERE_PRODUCTO_FISCAL');
     }
 
@@ -222,7 +264,7 @@ exports.crearProductoInventariable = async (data, user, ipDireccion = null) => {
         if (plantas.rowCount !== sedes.length) throw new Error('SEDE_FAREGAS_INVALIDA');
 
         const productosFiscales = sedes
-            .map((sede) => sede.productoFacturacionId)
+            .map((sede) => sede.productoFacturacionId || productoFacturacionId)
             .filter(Boolean);
         if (productosFiscales.length) {
             const fiscales = await client.query(`
@@ -231,18 +273,36 @@ exports.crearProductoInventariable = async (data, user, ipDireccion = null) => {
                 WHERE id = ANY($1::bigint[])
                   AND activo = TRUE
                   AND es_para_venta = TRUE
+                  AND COALESCE(BTRIM(codigo_sku), '') <> ''
+                  AND COALESCE(BTRIM(descripcion), '') <> ''
+                  AND UPPER(BTRIM(unidad)) IN ('NIU', 'ZZ')
+                  AND BTRIM(tipo_afectacion_igv) = '10'
+                  AND (COALESCE(BTRIM(codigo_clasificacion_sunat), '') = '' OR BTRIM(codigo_clasificacion_sunat) ~ '^\\d{8}$')
             `, [productosFiscales]);
             if (fiscales.rowCount !== new Set(productosFiscales).size) {
                 throw new Error('PRODUCTO_FISCAL_INVALIDO');
             }
         }
 
+        if (productoFacturacionId) {
+            const fiscal = await client.query(`
+                SELECT id FROM fg_producto_facturacion
+                WHERE id = $1 AND activo = TRUE AND es_para_venta = TRUE
+                  AND COALESCE(BTRIM(codigo_sku), '') <> ''
+                  AND COALESCE(BTRIM(descripcion), '') <> ''
+                  AND UPPER(BTRIM(unidad)) IN ('NIU', 'ZZ')
+                  AND BTRIM(tipo_afectacion_igv) = '10'
+                  AND (COALESCE(BTRIM(codigo_clasificacion_sunat), '') = '' OR BTRIM(codigo_clasificacion_sunat) ~ '^\\d{8}$')
+            `, [productoFacturacionId]);
+            if (!fiscal.rowCount) throw new Error('PRODUCTO_FISCAL_INVALIDO');
+        }
+
         const producto = await client.query(`
             INSERT INTO fg_producto_inventariable
                 (codigo, nombre, tipo, producto_facturacion_id, control_stock, activo)
-            VALUES ($1, $2, $3, NULL, TRUE, TRUE)
+            VALUES ($1, $2, $3, $4, TRUE, TRUE)
             RETURNING id, codigo, nombre, tipo
-        `, [codigo, nombre, tipo]);
+        `, [codigo, nombre, tipo, productoFacturacionId]);
         const productoId = Number(producto.rows[0].id);
 
         for (const sede of sedes) {
@@ -288,13 +348,14 @@ exports.editarProductoInventariable = async (id, data, user, ipDireccion = null)
     const nombre = normalizarNombreProducto(data.nombre);
     const tipo = String(data.tipo || 'OTRO_PRODUCTO_FISICO').trim().toUpperCase();
     const sedes = normalizarSedesProducto(data.sedes);
+    const productoFacturacionId = data.productoFacturacionId ? Number(data.productoFacturacionId) : null;
 
     if (nombre.length < 2 || nombre.length > 200) throw new Error('NOMBRE_PRODUCTO_INVENTARIABLE_INVALIDO');
     if (tipo.length < 2 || tipo.length > 100) throw new Error('TIPO_PRODUCTO_INVENTARIABLE_INVALIDO');
     if (sedes.some((sede) => !Number.isFinite(sede.precio) || sede.precio <= 0)) {
         throw new Error('PRECIO_PRODUCTO_INVENTARIABLE_INVALIDO');
     }
-    if (sedes.some((sede) => sede.ventaHabilitada && !sede.productoFacturacionId)) {
+    if (sedes.some((sede) => sede.ventaHabilitada && !sede.productoFacturacionId && !productoFacturacionId)) {
         throw new Error('VENTA_REQUIERE_PRODUCTO_FISCAL');
     }
 
@@ -317,7 +378,7 @@ exports.editarProductoInventariable = async (id, data, user, ipDireccion = null)
         }
 
         const productosFiscales = sedes
-            .map((sede) => sede.productoFacturacionId)
+            .map((sede) => sede.productoFacturacionId || productoFacturacionId)
             .filter(Boolean);
         if (productosFiscales.length) {
             const fiscales = await client.query(`
@@ -326,17 +387,35 @@ exports.editarProductoInventariable = async (id, data, user, ipDireccion = null)
                 WHERE id = ANY($1::bigint[])
                   AND activo = TRUE
                   AND es_para_venta = TRUE
+                  AND COALESCE(BTRIM(codigo_sku), '') <> ''
+                  AND COALESCE(BTRIM(descripcion), '') <> ''
+                  AND UPPER(BTRIM(unidad)) IN ('NIU', 'ZZ')
+                  AND BTRIM(tipo_afectacion_igv) = '10'
+                  AND (COALESCE(BTRIM(codigo_clasificacion_sunat), '') = '' OR BTRIM(codigo_clasificacion_sunat) ~ '^\\d{8}$')
             `, [productosFiscales]);
             if (fiscales.rowCount !== new Set(productosFiscales).size) {
                 throw new Error('PRODUCTO_FISCAL_INVALIDO');
             }
         }
 
+        if (productoFacturacionId) {
+            const fiscal = await client.query(`
+                SELECT id FROM fg_producto_facturacion
+                WHERE id = $1 AND activo = TRUE AND es_para_venta = TRUE
+                  AND COALESCE(BTRIM(codigo_sku), '') <> ''
+                  AND COALESCE(BTRIM(descripcion), '') <> ''
+                  AND UPPER(BTRIM(unidad)) IN ('NIU', 'ZZ')
+                  AND BTRIM(tipo_afectacion_igv) = '10'
+                  AND (COALESCE(BTRIM(codigo_clasificacion_sunat), '') = '' OR BTRIM(codigo_clasificacion_sunat) ~ '^\\d{8}$')
+            `, [productoFacturacionId]);
+            if (!fiscal.rowCount) throw new Error('PRODUCTO_FISCAL_INVALIDO');
+        }
+
         await client.query(`
             UPDATE fg_producto_inventariable
-            SET nombre = $1, tipo = $2, fecha_modificacion = NOW()
-            WHERE id = $3
-        `, [nombre, tipo, id]);
+            SET nombre = $1, tipo = $2, producto_facturacion_id = $3, fecha_modificacion = NOW()
+            WHERE id = $4
+        `, [nombre, tipo, productoFacturacionId, id]);
 
         await client.query(`
             UPDATE fg_producto_inventariable_sede
@@ -435,8 +514,8 @@ exports.consultarDisponibilidad = async ({ plantaKey, numeroChip, certificadoId 
         && Number(chip.certificado_id) === idCertificado;
     let codigo = 'CHIP_NO_DISPONIBLE';
     if (chip.planta_actual_key !== plantaKey) codigo = 'CHIP_OTRA_SEDE';
-    else if (asignadoAlCertificado && chip.estado === 'RESERVADO') codigo = 'ASIGNADO_CERTIFICADO';
-    else if (chip.estado === 'DISPONIBLE') codigo = 'DISPONIBLE';
+    else if (asignadoAlCertificado && ['DISPONIBLE', 'VENDIDO'].includes(chip.estado)) codigo = 'ASIGNADO_CERTIFICADO';
+    else if (!chip.certificado_id && chip.estado === 'DISPONIBLE') codigo = 'DISPONIBLE';
 
     return {
         id: Number(chip.id),
@@ -459,13 +538,7 @@ exports.ingresar = async ({ plantaKey, productoInventariableId, numeros, referen
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        const producto = await productoInventariableEnSede(
-            client,
-            plantaKey,
-            productoInventariableId || null,
-            true
-        );
-        exigirStockPermitido(producto);
+        const producto = await productoInventariable(client, productoInventariableId || null, true);
         const existentes = await client.query('SELECT numero_chip FROM fg_chip WHERE numero_chip = ANY($1::varchar[])', [lote.validos]);
         if (existentes.rowCount) {
             const error = new Error('CHIP_DUPLICADO'); error.detalles = existentes.rows.map(r => r.numero_chip); throw error;
@@ -492,21 +565,17 @@ exports.transferir = async ({ origenKey, destinoKey, productoInventariableId, nu
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        const configuracionDestino = await productoInventariableEnSede(
-            client,
-            destinoKey,
-            productoInventariableId || null,
-            true
-        );
-        exigirStockPermitido(configuracionDestino);
+        const producto = await productoInventariable(client, productoInventariableId || null, true);
         const chips = await client.query(`SELECT id,numero_chip,estado,planta_actual_key FROM fg_chip
             WHERE numero_chip=ANY($1::varchar[])
               AND producto_inventariable_id=$2
-            ORDER BY id FOR UPDATE`, [lote.validos, configuracionDestino.id]);
+            ORDER BY id FOR UPDATE`, [lote.validos, producto.id]);
         if (chips.rowCount !== lote.validos.length) throw new Error('CHIP_NO_ENCONTRADO');
         for (const chip of chips.rows) {
             if (chip.planta_actual_key !== origenKey) throw new Error('CHIP_OTRA_SEDE');
             if (chip.estado !== 'DISPONIBLE') throw new Error('CHIP_NO_DISPONIBLE');
+            const seleccionado = await client.query('SELECT 1 FROM fg_certificado_chip WHERE chip_id = $1', [chip.id]);
+            if (seleccionado.rowCount) throw new Error('CHIP_ASIGNADO_CERTIFICADO');
             await client.query(`UPDATE fg_chip SET planta_actual_key=$2,actualizado_por=$3,actualizado_en=NOW() WHERE id=$1`, [chip.id,destinoKey,user.username]);
             await client.query(`INSERT INTO fg_chip_movimiento
                 (chip_id,tipo_movimiento,planta_origen_key,planta_destino_key,usuario,referencia)
@@ -661,4 +730,14 @@ exports.historial = async (id, user) => {
     const r=await db.query(`SELECT m.*,po.nombre planta_origen,pd.nombre planta_destino FROM fg_chip_movimiento m
         LEFT JOIN fg_planta po ON po.key=m.planta_origen_key LEFT JOIN fg_planta pd ON pd.key=m.planta_destino_key
         WHERE m.chip_id=$1 ORDER BY m.fecha DESC,m.id DESC`,[id]); return r.rows;
+};
+
+exports.listarCatalogoChipsFiscales = async () => {
+    const result = await db.query(`
+        SELECT id, codigo, nombre
+        FROM fg_producto_inventariable
+        WHERE activo = TRUE AND control_stock = TRUE AND tipo = 'CHIP_SERIALIZADO'
+        ORDER BY nombre ASC
+    `);
+    return result.rows;
 };

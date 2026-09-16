@@ -160,6 +160,29 @@ test('rechaza una tarifa de servicio complementario para operaciones de certific
     );
 });
 
+test('suma el monto del chip como cargo adicional al certificado', () => {
+    const catalogo = service.construirCatalogo(
+        { key: '201', nombre: 'INDEPENDENCIA' },
+        [fila({
+            precio: '122.00',
+            producto_facturacion_id: 80,
+            requiere_chip: true,
+            producto_chip_id: 9,
+            chip_codigo: 'CHIP',
+            chip_nombre: 'Chip y porta chip',
+            chip_producto_facturacion_id: 81,
+            chip_producto_sku: 'CHIP-001',
+            chip_producto_descripcion: 'Chip y porta chip',
+            chip_precio: '35.00'
+        })]
+    );
+
+    const tarifa = catalogo.categorias[0].servicios[0].tarifa;
+    assert.equal(tarifa.precio, 122);
+    assert.equal(tarifa.chip.precio, 35);
+    assert.equal(tarifa.importeTotal, 157);
+});
+
 test('acepta una tarifa de inspección de taller que genera certificado', () => {
     const tarifa = service.validarTarifaCertificacion({
         tipo_flujo: 'TALLER_INSPECCION',

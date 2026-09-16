@@ -28,6 +28,7 @@ exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId } = {})
                p.valor_referencial_unitario, p.codigo_clasificacion_sunat,
                p.tipo_afectacion_igv, p.porcentaje_isc, p.disponible_pos,
                p.es_para_venta, p.es_para_compra, p.tiene_icbper, p.activo,
+               p.requiere_chip, p.producto_chip_id, p.precio_chip,
                p.fecha_creacion, p.fecha_modificacion
         FROM fg_producto_facturacion p
         LEFT JOIN fg_categoria_servicio c ON c.id = p.categoria_id
@@ -39,7 +40,8 @@ exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId } = {})
         precio_unitario: producto.precio_unitario === null ? null : Number(producto.precio_unitario),
         precio_referencia: producto.precio_referencia === null ? null : Number(producto.precio_referencia),
         valor_referencial_unitario: producto.valor_referencial_unitario === null ? null : Number(producto.valor_referencial_unitario),
-        porcentaje_isc: producto.porcentaje_isc === null ? null : Number(producto.porcentaje_isc)
+        porcentaje_isc: producto.porcentaje_isc === null ? null : Number(producto.porcentaje_isc),
+        precio_chip: producto.precio_chip === null ? null : Number(producto.precio_chip)
     }));
 };
 
@@ -52,21 +54,47 @@ const validarCategoriaActiva = async (client, categoriaId) => {
     return categoria.rows[0];
 };
 
+
+const validarProductoChip = async (client, requiereChip, productoChipId) => {
+    if (!requiereChip) return null;
+    if (!productoChipId) throw new Error('CHIP_REQUERIDO');
+    const chipRes = await client.query(
+        'SELECT id, tipo, activo, control_stock FROM fg_producto_inventariable WHERE id = $1',
+        [productoChipId]
+    );
+    if (chipRes.rowCount === 0) throw new Error('CHIP_NOT_FOUND');
+    if (!chipRes.rows[0].activo) throw new Error('CHIP_INACTIVO');
+    if (!chipRes.rows[0].control_stock) throw new Error('CHIP_SIN_CONTROL_STOCK');
+    if (chipRes.rows[0].tipo !== 'CHIP_SERIALIZADO') throw new Error('CHIP_TIPO_INVALIDO');
+    return productoChipId;
+};
+
+const validarPrecioChip = (requiereChip, precioChip) => {
+    if (!requiereChip) return null;
+    const precio = Number(precioChip);
+    if (!Number.isFinite(precio) || precio <= 0) throw new Error('CHIP_PRECIO_INVALIDO');
+    return precio;
+};
+
 exports.crear = async (producto, username, ip_direccion) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
         await validarCategoriaActiva(client, producto.categoria_id);
+        const productoChipIdValidado = await validarProductoChip(client, producto.requiere_chip, producto.producto_chip_id);
+        const precioChipValidado = validarPrecioChip(producto.requiere_chip, producto.precio_chip);
         const result = await client.query(`
             INSERT INTO fg_producto_facturacion (
                 codigo_sku, descripcion, tipo_producto, categoria_dms, categoria_id,
                 cuenta_por_cobrar, unidad, precio_unitario, precio_referencia,
                 valor_referencial_unitario, codigo_clasificacion_sunat,
                 tipo_afectacion_igv, porcentaje_isc, disponible_pos,
-                es_para_venta, es_para_compra, tiene_icbper, activo
+                es_para_venta, es_para_compra, tiene_icbper, activo,
+                requiere_chip, producto_chip_id, precio_chip
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9,
-                $10, $11, $12, $13, $14, $15, $16, $17, $18
+                $10, $11, $12, $13, $14, $15, $16, $17, $18,
+                $19, $20, $21
             ) RETURNING id
         `, [
             producto.codigo_sku, producto.descripcion, producto.tipo_producto,
@@ -76,7 +104,8 @@ exports.crear = async (producto, username, ip_direccion) => {
             producto.valor_referencial_unitario, producto.codigo_clasificacion_sunat,
             producto.tipo_afectacion_igv, producto.porcentaje_isc,
             producto.disponible_pos, producto.es_para_venta,
-            producto.es_para_compra, producto.tiene_icbper, producto.activo
+            producto.es_para_compra, producto.tiene_icbper, producto.activo,
+            Boolean(producto.requiere_chip), productoChipIdValidado, precioChipValidado
         ]);
         await configService.registrarAuditoria(client, {
             username, entidad: 'PRODUCTO_FACTURACION', accion: 'CREAR_PRODUCTO',
@@ -101,6 +130,8 @@ exports.editar = async (id, producto, username, ip_direccion) => {
         const actual = await client.query('SELECT * FROM fg_producto_facturacion WHERE id = $1 FOR UPDATE', [id]);
         if (actual.rowCount === 0) throw new Error('PRODUCTO_NO_ENCONTRADO');
         await validarCategoriaActiva(client, producto.categoria_id);
+        const productoChipIdValidado = await validarProductoChip(client, producto.requiere_chip, producto.producto_chip_id);
+        const precioChipValidado = validarPrecioChip(producto.requiere_chip, producto.precio_chip);
         await client.query(`
             UPDATE fg_producto_facturacion SET
                 descripcion = $1, tipo_producto = $2, categoria_dms = $3,
@@ -110,8 +141,9 @@ exports.editar = async (id, producto, username, ip_direccion) => {
                 codigo_clasificacion_sunat = $10, tipo_afectacion_igv = $11,
                 porcentaje_isc = $12, disponible_pos = $13,
                 es_para_venta = $14, es_para_compra = $15, tiene_icbper = $16,
+                requiere_chip = $17, producto_chip_id = $18, precio_chip = $19,
                 fecha_modificacion = CURRENT_TIMESTAMP
-            WHERE id = $17
+            WHERE id = $20
         `, [
             producto.descripcion, producto.tipo_producto, producto.categoria_dms,
             producto.categoria_id, producto.cuenta_por_cobrar,
@@ -120,7 +152,8 @@ exports.editar = async (id, producto, username, ip_direccion) => {
             producto.codigo_clasificacion_sunat, producto.tipo_afectacion_igv,
             producto.porcentaje_isc, producto.disponible_pos,
             producto.es_para_venta, producto.es_para_compra,
-            producto.tiene_icbper, id
+            producto.tiene_icbper, Boolean(producto.requiere_chip), productoChipIdValidado,
+            precioChipValidado, id
         ]);
         await configService.registrarAuditoria(client, {
             username, entidad: 'PRODUCTO_FACTURACION', accion: 'EDITAR_PRODUCTO',
@@ -163,3 +196,5 @@ exports.cambiarEstado = async (id, activo, username, ip_direccion) => {
         client.release();
     }
 };
+
+exports._private = { validarProductoChip, validarPrecioChip, validarCategoriaActiva };

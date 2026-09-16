@@ -65,6 +65,25 @@ const normalizar = (body, { crear = false } = {}) => {
         error.status = 400;
         throw error;
     }
+
+    const requiereChip = booleano(body.requiere_chip, 'Requiere chip', false);
+    let productoChipId = null;
+    let precioChip = null;
+    if (requiereChip) {
+        if (body.producto_chip_id === null || body.producto_chip_id === undefined) {
+            const error = new Error('El chip es obligatorio si requiere chip está marcado.');
+            error.status = 400;
+            throw error;
+        }
+        productoChipId = idProducto(body.producto_chip_id);
+        precioChip = numeroNullable(body.precio_chip, 'Monto del chip');
+        if (precioChip === null || precioChip <= 0) {
+            const error = new Error('El monto del chip debe ser mayor que cero.');
+            error.status = 400;
+            throw error;
+        }
+    }
+
     return {
         ...(crear ? { codigo_sku: codigoSku } : {}),
         descripcion,
@@ -83,6 +102,9 @@ const normalizar = (body, { crear = false } = {}) => {
         es_para_venta: booleano(body.es_para_venta, 'Es para venta', true),
         es_para_compra: booleano(body.es_para_compra, 'Es para compra', false),
         tiene_icbper: booleano(body.tiene_icbper, 'Tiene ICBPER', false),
+        requiere_chip: requiereChip,
+        producto_chip_id: productoChipId,
+        precio_chip: precioChip,
         ...(crear ? { activo: booleano(body.activo, 'Activo', true) } : {})
     };
 };
@@ -91,10 +113,17 @@ const responderError = (res, error, fallback) => {
     const mensajes = {
         SKU_DUPLICADO: 'Ya existe un producto con ese código SKU.',
         PRODUCTO_NO_ENCONTRADO: 'Producto no encontrado.',
-        CATEGORIA_NO_DISPONIBLE: 'La categoría seleccionada no existe o está inactiva.'
+        CATEGORIA_NO_DISPONIBLE: 'La categoría seleccionada no existe o está inactiva.',
+        CHIP_REQUERIDO: 'El chip es obligatorio si requiere_chip es verdadero.',
+        CHIP_NOT_FOUND: 'El producto de chip seleccionado no existe.',
+        CHIP_INACTIVO: 'El producto de chip seleccionado está inactivo.',
+        CHIP_SIN_CONTROL_STOCK: 'El producto seleccionado no tiene control de stock.',
+        CHIP_TIPO_INVALIDO: 'El producto seleccionado no tiene clasificación CHIP_SERIALIZADO.',
+        CHIP_PRECIO_INVALIDO: 'El monto del chip debe ser mayor que cero.'
     };
     const conflicto = ['SKU_DUPLICADO', 'CATEGORIA_NO_DISPONIBLE'].includes(error.message);
-    res.status(error.status || (conflicto ? 409 : 500)).json({
+    const badRequest = ['CHIP_REQUERIDO', 'CHIP_NOT_FOUND', 'CHIP_INACTIVO', 'CHIP_SIN_CONTROL_STOCK', 'CHIP_TIPO_INVALIDO', 'CHIP_PRECIO_INVALIDO'].includes(error.message);
+    res.status(error.status || (conflicto ? 409 : (badRequest ? 400 : 500))).json({
         success: false,
         message: mensajes[error.message] || error.message || fallback
     });

@@ -23,10 +23,11 @@ const responderError = (res, error) => {
         CUENTA_BANCARIA_INVALIDA: [400, 'La cuenta no pertenece a la entidad financiera seleccionada.'],
         FECHA_DEPOSITO_INVALIDA: [400, 'La fecha de depósito no es válida.'],
         FECHA_DEPOSITO_FUTURA: [400, 'La fecha de depósito no puede ser posterior a hoy.'],
+        PRODUCTO_FISCAL_CHIP_INVALIDO: [409, 'El producto fiscal configurado para el chip está incompleto. Seleccione un producto activo con unidad NIU o ZZ y afectación IGV 10.'],
     };
     const [status, message] = errores[error.message] || [500, ('Error interno al procesar los pagos: ' + (error.message || error.toString()))];
     if (status === 500) console.error('Error FAREGAS pagos:', error);
-    return res.status(status).json({ ok: false, message, code: error.message });
+    return res.status(status).json({ ok: false, message, code: error.message, codigo: error.message, detalles: error.detalles || null });
 };
 
 exports.obtenerPorOperacion = async (req, res) => {

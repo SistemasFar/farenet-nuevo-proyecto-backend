@@ -99,9 +99,9 @@ test('fase 2 identifica cada puerta pendiente sin habilitar operaciones', () => 
 
 test('verifica de forma independiente las dos migraciones exigidas por fase 2', async () => {
     const queryable = {
-        query: async (sql) => sql.includes('information_schema.columns')
+        query: async (sql) => sql.includes('COUNT(*)::int AS columnas')
             ? { rows: [{ columnas: 6 }] }
-            : { rows: [{ pendiente_sunat_aplicado: true }] }
+            : { rows: [{ pendiente_sunat_aplicado: true, chips_aplicado: false }] }
     };
     const result = await service._private.obtenerEstadoEsquema(queryable);
     assert.deepEqual(result, {

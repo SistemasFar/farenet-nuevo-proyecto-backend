@@ -6,12 +6,16 @@ const {
     redondear,
     obtenerTarifaConfigurada,
     normalizarPagos,
-    construirSnapshotProducto
+    construirSnapshotProducto,
+    esProductoFiscalChipValido
 } = require('./faregas-pagos.rules');
 
 const obtenerCertificado = async (queryable, certificadoId, userContext, bloquear = false) => {
     const result = await queryable.query(
-        `SELECT id, estado, planta_key, tipo_certificado_clave, tarifa_codigo, cliente_id FROM fg_certificado WHERE id = $1${bloquear ? ' FOR UPDATE' : ''}`,
+        `SELECT id, estado, planta_key, tipo_certificado_clave, tarifa_codigo, cliente_id,
+                producto_facturacion_certificado_id, precio_certificado,
+                producto_chip_id, producto_facturacion_chip_id, precio_chip, importe_total
+         FROM fg_certificado WHERE id = $1${bloquear ? ' FOR UPDATE' : ''}`,
         [certificadoId]
     );
     if (result.rowCount === 0) throw new Error('CERTIFICADO_NOT_FOUND');
@@ -44,22 +48,48 @@ const asegurarOperacionComercial = async (client, certificado, orden, username) 
     const snapshot = construirSnapshotProducto(tarifa, certificado);
     const vehiculo = await client.query('SELECT placa FROM fg_certificado_vehiculo WHERE certificado_id = $1', [certificado.id]);
     
-    // Check if there's a chip reserved for this certificate
-    const chipRes = await client.query(`
-        SELECT c.*, pis.precio, pf.id as producto_facturacion_id, pf.codigo_sku, pf.descripcion, pf.unidad, pf.tipo_afectacion_igv, pf.codigo_clasificacion_sunat
-        FROM fg_chip c
-        JOIN fg_certificado_chip cc ON cc.chip_id = c.id
-        JOIN fg_producto_inventariable_sede pis ON pis.planta_key = c.planta_actual_key AND pis.producto_inventariable_id = c.producto_inventariable_id
-        JOIN fg_producto_facturacion pf ON pf.id = (SELECT producto_facturacion_id FROM fg_producto_inventariable WHERE id = c.producto_inventariable_id)
-        WHERE cc.certificado_id = $1 AND c.estado = 'RESERVADO'
-    `, [certificado.id]);
-    
-    const hasChip = chipRes.rowCount > 0;
-    const chipData = hasChip ? chipRes.rows[0] : null;
+    const requiereChip = Boolean(certificado.producto_chip_id);
+    let chipFiscal = requiereChip ? await client.query(`
+        SELECT id, codigo_sku, descripcion, unidad, tipo_afectacion_igv,
+               codigo_clasificacion_sunat, activo, es_para_venta
+        FROM fg_producto_facturacion
+        WHERE id = $1
+    `, [certificado.producto_facturacion_chip_id]) : { rows: [] };
+    let chipData = chipFiscal.rows[0] || null;
 
-    let totalCalculado = Number(orden.importe_total);
-    // Note: The total in orden.importe_total might already include the chip if the frontend sent the combined total.
-    // However, the base_imponible and igv in orden are calculated based on importe_total. We should insert the details based on that.
+    // Un borrador todavía sin operación puede recuperar un vínculo fiscal que
+    // fue corregido en la configuración después de crearlo. El precio del chip
+    // permanece congelado; solo se repara el producto fiscal inválido.
+    if (
+        requiereChip
+        && !esProductoFiscalChipValido(chipData)
+        && Number(tarifa.producto_chip_id) === Number(certificado.producto_chip_id)
+        && tarifa.chip_producto_facturacion_id
+        && Number(tarifa.chip_producto_facturacion_id) !== Number(certificado.producto_facturacion_chip_id)
+    ) {
+        chipFiscal = await client.query(`
+            SELECT id, codigo_sku, descripcion, unidad, tipo_afectacion_igv,
+                   codigo_clasificacion_sunat, activo, es_para_venta
+            FROM fg_producto_facturacion
+            WHERE id = $1
+        `, [tarifa.chip_producto_facturacion_id]);
+        chipData = chipFiscal.rows[0] || null;
+        if (esProductoFiscalChipValido(chipData)) {
+            await client.query(`
+                UPDATE fg_certificado
+                SET producto_facturacion_chip_id = $2,
+                    usuario_modificacion = $3,
+                    fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE id = $1 AND estado = 'BORRADOR'
+            `, [certificado.id, chipData.id, username]);
+            certificado.producto_facturacion_chip_id = chipData.id;
+        }
+    }
+    if (requiereChip && !esProductoFiscalChipValido(chipData)) {
+        const error = new Error('PRODUCTO_FISCAL_CHIP_INVALIDO');
+        error.detalles = { productoChipId: Number(certificado.producto_chip_id) };
+        throw error;
+    }
     
     const operacion = await client.query(`
         INSERT INTO fg_operacion_comercial (
@@ -74,7 +104,8 @@ const asegurarOperacionComercial = async (client, certificado, orden, username) 
     const operacionId = Number(operacion.rows[0].id);
 
     // Detalle certificado
-    const certImporteTotal = hasChip ? redondear(totalCalculado - Number(chipData.precio)) : totalCalculado;
+    const chipImporteTotal = requiereChip ? redondear(certificado.precio_chip) : 0;
+    const certImporteTotal = redondear(Number(orden.importe_total) - chipImporteTotal);
     const certBase = redondear(certImporteTotal / 1.18);
     const certIgv = redondear(certImporteTotal - certBase);
 
@@ -89,13 +120,14 @@ const asegurarOperacionComercial = async (client, certificado, orden, username) 
     `, [
         operacionId, tarifa.servicio_id, tarifa.id, certificado.id,
         snapshot.codigoSku, snapshot.descripcion, snapshot.unidad,
-        snapshot.afectacionIgv, snapshot.codigoSunat, snapshot.productoFacturacionId,
+        snapshot.afectacionIgv, snapshot.codigoSunat,
+        certificado.producto_facturacion_certificado_id || snapshot.productoFacturacionId,
         certBase, certImporteTotal, certIgv
     ]);
 
     // Detalle chip
-    if (hasChip) {
-        const chipPrecio = Number(chipData.precio);
+    if (requiereChip) {
+        const chipPrecio = chipImporteTotal;
         const chipBase = redondear(chipPrecio / 1.18);
         const chipIgv = redondear(chipPrecio - chipBase);
 
@@ -108,12 +140,9 @@ const asegurarOperacionComercial = async (client, certificado, orden, username) 
             ) VALUES ($1,'PRODUCTO',1,$2,$3,$4,$5,$6,$7,$8,$9,$8,$10,$9,FALSE,2)
         `, [
             operacionId, chipData.codigo_sku, chipData.descripcion, chipData.unidad,
-            chipData.tipo_afectacion_igv, chipData.codigo_clasificacion_sunat, chipData.producto_facturacion_id,
+            chipData.tipo_afectacion_igv, chipData.codigo_clasificacion_sunat, chipData.id,
             chipBase, chipPrecio, chipIgv
         ]);
-
-        await client.query(`UPDATE fg_chip SET operacion_reserva_id=$2 WHERE id=$1`, [chipData.id, operacionId]);
-        await client.query(`UPDATE fg_chip_movimiento SET operacion_comercial_id=$2 WHERE chip_id=$1 AND tipo_movimiento='RESERVA' AND operacion_comercial_id IS NULL`, [chipData.id, operacionId]);
     }
 
     await client.query('UPDATE fg_orden_pago SET operacion_id = $2 WHERE id = $1', [orden.id, operacionId]);
@@ -255,6 +284,25 @@ exports.guardarPagosOperacion = async (operacionId, data, userContext) => {
     }
 };
 
+const obtenerResumenComercial = async (queryable, certificado) => {
+    const descuento = await descuentosService.obtenerResumenDescuentoCertificado(queryable, certificado);
+    const precioCertificado = certificado.precio_certificado === null || certificado.precio_certificado === undefined
+        ? Number(descuento.tarifaOriginal || 0)
+        : Number(certificado.precio_certificado);
+    const descuentoCertificado = redondear(Math.max(0, precioCertificado - Number(descuento.totalFinal || 0)));
+    const certificadoNeto = redondear(precioCertificado - descuentoCertificado);
+    const precioChip = certificado.producto_chip_id ? redondear(certificado.precio_chip || 0) : 0;
+    return {
+        precioCertificado: redondear(precioCertificado),
+        descuentoCertificado,
+        certificadoNeto,
+        requiereChip: Boolean(certificado.producto_chip_id),
+        productoChipId: certificado.producto_chip_id ? Number(certificado.producto_chip_id) : null,
+        precioChip,
+        importeTotal: redondear(certificadoNeto + precioChip)
+    };
+};
+
 exports.guardarPagos = async (certificadoId, data, userContext) => {
     const client = await db.connect();
     try {
@@ -274,13 +322,13 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         let orden;
         if (ordenResult.rowCount === 0) {
             // INTEGRACION DESCUENTOS: Obtenemos el resumen del descuento, que nos da el importeFinal
-            const resumenDescuento = await descuentosService.obtenerResumenDescuentoCertificado(client, certificado);
+            const resumenComercial = await obtenerResumenComercial(client, certificado);
             
-            if (!resumenDescuento.tarifaOriginal && !certificado.tarifa_codigo) {
+            if (!resumenComercial.precioCertificado && !certificado.tarifa_codigo) {
                 throw new Error('TARIFA_REQUERIDA');
             }
 
-            const tarifaConfigurada = resumenDescuento.totalFinal; // Es igual a tarifaOriginal si no hay descuento
+            const tarifaConfigurada = resumenComercial.importeTotal;
 
             if (Math.abs(tarifaConfigurada - importeSolicitado) > 0.009) throw new Error('TARIFA_NO_COINCIDE');
             const base = redondear(importeSolicitado / 1.18);
@@ -364,7 +412,11 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
 
         const pagosGuardados = await exports.listarPagosPorOrden(orden.id, client);
         await client.query('COMMIT');
-        return { orden: ordenActualizada.rows[0], pagos: pagosGuardados };
+        return {
+            orden: ordenActualizada.rows[0],
+            pagos: pagosGuardados,
+            resumenComercial: await obtenerResumenComercial(client, certificado)
+        };
     } catch (error) {
         await client.query('ROLLBACK');
         throw error;
@@ -404,16 +456,26 @@ exports.obtenerPagos = async (certificadoId, userContext) => {
     const certificado = await obtenerCertificado(db, certificadoId, userContext);
     const ordenResult = await db.query('SELECT * FROM fg_orden_pago WHERE certificado_id = $1', [certificadoId]);
     if (ordenResult.rowCount === 0) {
-        let importeTotal = null;
-        
-        // INTEGRACION DESCUENTOS
-        const resumenDescuento = await descuentosService.obtenerResumenDescuentoCertificado(db, certificado);
-        if (resumenDescuento.tarifaOriginal || certificado.tarifa_codigo) {
-            importeTotal = resumenDescuento.totalFinal;
-        }
-
-        return { orden: null, pagos: [], importeTotal };
+        const resumenComercial = await obtenerResumenComercial(db, certificado);
+        return {
+            orden: null,
+            pagos: [],
+            importeTotal: resumenComercial.precioCertificado || certificado.tarifa_codigo
+                ? resumenComercial.importeTotal
+                : null,
+            resumenComercial
+        };
     }
     const orden = ordenResult.rows[0];
-    return { orden, pagos: await exports.listarPagosPorOrden(orden.id), importeTotal: Number(orden.importe_total) };
+    return {
+        orden,
+        pagos: await exports.listarPagosPorOrden(orden.id),
+        importeTotal: Number(orden.importe_total),
+        resumenComercial: await obtenerResumenComercial(db, certificado)
+    };
+};
+
+exports._private = {
+    obtenerResumenComercial,
+    asegurarOperacionComercial
 };

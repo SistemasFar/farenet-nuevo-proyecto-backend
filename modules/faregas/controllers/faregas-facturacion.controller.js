@@ -2,7 +2,12 @@ const facturacionService = require('../services/faregas-facturacion.service');
 const auditoriaService = require('../services/faregas-auditoria.service');
 
 const responderError = (res, error) => {
-    const status = error.statusCode || 500;
+    const erroresChip = new Set([
+        'CHIP_REQUERIDO_NO_SELECCIONADO', 'CHIP_TIPO_INVALIDO', 'CHIP_OTRA_SEDE',
+        'CHIP_NO_DISPONIBLE', 'CHIP_ASIGNADO_OTRO_CERTIFICADO',
+        'CHIP_VENDIDO_SIN_TRAZABILIDAD'
+    ]);
+    const status = error.statusCode || (erroresChip.has(error.code || error.message) ? 409 : 500);
     const messages = {
         CERTIFICADO_NOT_FOUND: 'El certificado no existe.',
         PLANTA_NO_AUTORIZADA: 'No tiene acceso a la planta del certificado.',
@@ -13,6 +18,12 @@ const responderError = (res, error) => {
         FACTURACION_FALTANTE: 'Primero debe guardar los datos de facturacion.',
         ORDEN_PAGO_FALTANTE: 'No existe una orden de pago para el certificado.',
         PAGO_INCOMPLETO: 'El pago debe estar completo antes de facturar.',
+        CHIP_REQUERIDO_NO_SELECCIONADO: 'Seleccione y valide el chip requerido antes de facturar.',
+        CHIP_TIPO_INVALIDO: 'El chip seleccionado no corresponde al producto configurado.',
+        CHIP_OTRA_SEDE: 'El chip seleccionado ya no pertenece a esta sede.',
+        CHIP_NO_DISPONIBLE: 'El chip seleccionado ya no está disponible.',
+        CHIP_ASIGNADO_OTRO_CERTIFICADO: 'El chip fue asociado a otro certificado.',
+        CHIP_VENDIDO_SIN_TRAZABILIDAD: 'El chip figura vendido sin el movimiento de inventario esperado.',
         VENTA_CREDITO_SIN_SALDO: 'La venta a crédito debe conservar un saldo pendiente.',
         CUOTAS_NO_COINCIDEN_CON_SALDO: 'La suma de las cuotas debe coincidir con el saldo pendiente.',
         NUBEFACT_DESHABILITADO: 'La integracion con Nubefact esta deshabilitada.',

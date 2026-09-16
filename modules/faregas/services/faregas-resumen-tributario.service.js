@@ -17,7 +17,7 @@ const agregarSi = (lista, condicion, mensaje) => {
     if (condicion && !lista.includes(mensaje)) lista.push(mensaje);
 };
 
-const construirResumen = ({ contexto, detalle, descuento, pagos, serie }) => {
+const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }) => {
     const errores = [];
     const advertencias = [];
     const facturacionGuardada = Boolean(contexto.facturacion_id);
@@ -146,6 +146,58 @@ const construirResumen = ({ contexto, detalle, descuento, pagos, serie }) => {
     };
 };
 
+const construirResumen = (args) => {
+    if (!Array.isArray(args.detalles)) return construirResumenUnitario(args);
+    if (args.detalles.length === 0) {
+        return construirResumenUnitario({ ...args, detalle: null });
+    }
+
+    const parciales = args.detalles.map((detalle, index) => {
+        const esCertificado = String(detalle.tipo_item || 'SERVICIO').toUpperCase() !== 'PRODUCTO' && index === 0;
+        const contextoItem = {
+            ...args.contexto,
+            base_imponible: detalle.detalle_base_imponible,
+            igv: detalle.detalle_igv,
+            importe_total: detalle.detalle_importe_total
+        };
+        return construirResumenUnitario({
+            contexto: contextoItem,
+            detalle,
+            descuento: esCertificado ? args.descuento : null,
+            pagos: args.pagos,
+            serie: args.serie
+        });
+    });
+
+    const principal = parciales[0];
+    const items = parciales.flatMap((parcial) => parcial.items);
+    const errores = [...new Set(parciales.flatMap((parcial) => parcial.errores))];
+    const advertencias = [...new Set(parciales.flatMap((parcial) => parcial.advertencias))];
+    const precioAntesDescuento = redondear(parciales.reduce((total, parcial) => total + parcial.totales.precioAntesDescuento, 0));
+    const descuentoTotal = redondear(parciales.reduce((total, parcial) => total + parcial.totales.descuento, 0));
+    const totalItems = redondear(items.reduce((total, item) => total + item.total, 0));
+    const total = redondear(args.contexto.importe_total ?? totalItems);
+    const baseImponible = redondear(args.contexto.base_imponible ?? items.reduce((suma, item) => suma + item.baseImponible, 0));
+    const igv = redondear(args.contexto.igv ?? items.reduce((suma, item) => suma + item.igv, 0));
+    agregarSi(errores, Math.abs(totalItems - total) > 0.01, 'La suma de los conceptos no coincide con el total facturado.');
+
+    return {
+        ...principal,
+        estado: errores.length === 0 ? 'LISTO' : 'INCOMPLETO',
+        errores,
+        advertencias,
+        items,
+        totales: {
+            ...principal.totales,
+            precioAntesDescuento,
+            descuento: descuentoTotal,
+            baseImponible,
+            igv,
+            total
+        }
+    };
+};
+
 const obtenerContexto = async (certificadoId, queryable) => {
     const result = await queryable.query(`
         SELECT c.id AS certificado_id, c.planta_key, c.tarifa_codigo,
@@ -158,7 +210,7 @@ const obtenerContexto = async (certificadoId, queryable) => {
                f.email, f.moneda_key, f.base_imponible, f.igv, f.importe_total,
                f.condicion_pago, f.fecha_vencimiento, f.medio_pago,
                f.serie AS serie_asignada, f.numero AS numero_asignado,
-               op.id AS orden_pago_id, op.formapago_key
+               op.id AS orden_pago_id, op.formapago_key, op.operacion_id
         FROM fg_certificado c
         JOIN fg_planta p ON p.key = c.planta_key
         JOIN fg_empresa e ON e.key = p.empresa_key
@@ -208,6 +260,33 @@ const obtenerDetalle = async (contexto, queryable) => {
         LIMIT 1
     `, [contexto.planta_key, contexto.tarifa_codigo, contexto.certificado_id]);
     return result.rows[0] || null;
+};
+
+const obtenerDetalles = async (contexto, queryable) => {
+    if (!contexto.operacion_id) {
+        const detalle = await obtenerDetalle(contexto, queryable);
+        return detalle ? [detalle] : [];
+    }
+    const result = await queryable.query(`
+        SELECT od.id AS detalle_id, od.tipo_item, od.cantidad, od.orden,
+               od.codigo_sku_snapshot, od.descripcion_snapshot, od.unidad_snapshot,
+               od.afectacion_igv_snapshot, od.codigo_sunat_snapshot,
+               od.valor_unitario, od.precio_unitario,
+               od.base_imponible AS detalle_base_imponible,
+               od.igv AS detalle_igv,
+               od.importe_total AS detalle_importe_total,
+               od.precio_unitario AS tarifa_precio,
+               pf.id AS producto_facturacion_id, pf.codigo_sku AS producto_sku,
+               pf.descripcion AS producto_descripcion, pf.unidad AS producto_unidad,
+               pf.codigo_clasificacion_sunat AS producto_codigo_sunat,
+               pf.tipo_afectacion_igv AS producto_afectacion_igv,
+               pf.activo AS producto_activo
+        FROM fg_operacion_detalle od
+        LEFT JOIN fg_producto_facturacion pf ON pf.id = od.producto_facturacion_id
+        WHERE od.operacion_id = $1
+        ORDER BY od.orden, od.id
+    `, [contexto.operacion_id]);
+    return result.rows;
 };
 
 const obtenerDescuento = async (certificadoId, queryable) => {
@@ -300,13 +379,13 @@ exports.obtenerResumenTributarioPorOperacion = async (operacionId, queryable = d
 
 exports.obtenerResumenTributario = async (certificadoId, queryable = db) => {
     const contexto = await obtenerContexto(certificadoId, queryable);
-    const [detalle, descuento, pagos, serie] = await Promise.all([
-        obtenerDetalle(contexto, queryable),
+    const [detalles, descuento, pagos, serie] = await Promise.all([
+        obtenerDetalles(contexto, queryable),
         obtenerDescuento(certificadoId, queryable),
         obtenerPagos(contexto.orden_pago_id, queryable),
         obtenerSerie(contexto.planta_key, contexto.tipo_comprobante, queryable)
     ]);
-    return construirResumen({ contexto, detalle, descuento, pagos, serie });
+    return construirResumen({ contexto, detalles, descuento, pagos, serie });
 };
 
 exports.construirDetallesNubefact = (resumen) => (resumen?.items || []).map(item => ({

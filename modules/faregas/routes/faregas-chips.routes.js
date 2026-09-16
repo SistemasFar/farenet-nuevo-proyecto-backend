@@ -27,5 +27,6 @@ router.post('/reservas',permiso('CHIPS_VER'),controller.reservar);
 router.post('/liberaciones',permiso('CHIPS_VER'),controller.liberar);
 router.post('/ventas',permiso('CHIPS_VER'),controller.vender);
 router.post('/bajas',permiso('CHIPS_BAJA'),controller.baja);
+router.get('/catalogo-fiscales', permiso('MENU_CHIPS','CHIPS_VER','MENU_CONFIGURACION','CONFIGURACION_PRODUCTOS'), controller.listarCatalogoChipsFiscales);
 router.get('/:id/movimientos',permiso('MENU_CHIPS','CHIPS_VER'),controller.historial);
 module.exports=router;

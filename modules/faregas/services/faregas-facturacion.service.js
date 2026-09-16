@@ -5,6 +5,7 @@ const resumenTributarioService = require('./faregas-resumen-tributario.service')
 const correlativosNubefactService = require('./faregas-correlativos-nubefact.service');
 const readinessService = require('./faregas-nubefact-readiness.service');
 const integrationsConfig = require('../../../config/integrations.config');
+const chipCertificadoService = require('./faregas-chip-certificado.service');
 const { validarAccesoPlanta } = require('./faregas-auth.service');
 const {
     normalizarFacturacion,
@@ -275,6 +276,7 @@ const reservarEmision = async (certificadoId, userContext) => {
         if (factResult.rowCount === 0) throw errorNegocio('FACTURACION_FALTANTE', 409);
         let facturacion = factResult.rows[0];
         const orden = await obtenerOrdenFacturable(client, certificadoId, facturacion.condicion_pago || 'CONTADO');
+        await chipCertificadoService.validarParaFacturacion(client, certificadoId);
         const cuotasResult = await client.query(
             'SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota',
             [facturacion.id]
@@ -352,7 +354,9 @@ const reservarEmision = async (certificadoId, userContext) => {
              WHERE facturacion_id = $1 AND estado = 'APLICADO'`,
             [facturacion.id]
         );
-        if (reservaResult.rowCount > 0 && Math.abs(Number(reservaResult.rows[0].importe_final) - Number(facturacion.importe_total)) > 0.009) {
+        const totalEsperadoConChip = Number(reservaResult.rows[0]?.importe_final || 0)
+            + Number(certificado.precio_chip || 0);
+        if (reservaResult.rowCount > 0 && Math.abs(totalEsperadoConChip - Number(facturacion.importe_total)) > 0.009) {
             throw errorNegocio('DESCUENTO_FACTURACION_INCONSISTENTE', 409);
         }
 
@@ -458,7 +462,24 @@ const consultarEmisionIncierta = async (proveedor, reserva, resultadoEmision) =>
 
 exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}) => {
     const reserva = await reservarEmision(certificadoId, userContext);
-    if (reserva.yaAceptada) return respuestaPublica(reserva.facturacion);
+    if (reserva.yaAceptada) {
+        const client = await db.connect();
+        try {
+            await client.query('BEGIN');
+            await chipCertificadoService.consumirEnFacturacion(client, {
+                certificadoId,
+                operacionId: reserva.facturacion.operacion_id,
+                username: userContext.username
+            });
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+        return respuestaPublica(reserva.facturacion);
+    }
 
     const proveedor = dependencies.nubefactService || nubefactService;
     const resultadoEmision = await proveedor.emitirComprobante(
@@ -529,6 +550,13 @@ exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}
                 reserva.intentoId
             ]
         );
+        if (aceptada === true) {
+            await chipCertificadoService.consumirEnFacturacion(client, {
+                certificadoId,
+                operacionId: reserva.facturacion.operacion_id,
+                username: userContext.username
+            });
+        }
         if (aceptada === true && reserva.facturacion.operacion_id) {
             await client.query(`
                 UPDATE fg_operacion_comercial

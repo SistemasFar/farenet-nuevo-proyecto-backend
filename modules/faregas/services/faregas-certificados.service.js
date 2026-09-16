@@ -12,7 +12,10 @@ const VARIABLES_FORMATO_AUTOMATICAS = new Set([
     'certificado.numero',
     'certificado.fecha_emision',
     'certificado.modalidad',
-    'certificado.titulo'
+    'certificado.titulo',
+    'chip.numero',
+    'chip.tipo',
+    'chip.nombre'
 ]);
 
 const CLAVE_VARIABLE_FORMATO = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
@@ -535,6 +538,36 @@ exports.crearBorrador = async (data, userContext) => {
         if (!cli.rows[0].estado) throw new Error('CLIENTE_INACTIVO');
     }
 
+    const productoFacturacionCertificadoId = tarifa.producto_facturacion_id || null;
+    const precioCertificado = Number(tarifa.precio);
+    const requiereChip = tarifa.requiere_chip === true;
+    const productoChipId = requiereChip ? (tarifa.producto_chip_id || null) : null;
+    const productoFacturacionChipId = requiereChip ? (tarifa.chip_producto_facturacion_id || null) : null;
+    const precioChip = requiereChip && tarifa.chip_precio !== null
+        ? Number(tarifa.chip_precio)
+        : null;
+    const unidadChipFiscal = String(tarifa.chip_producto_unidad || '').trim().toUpperCase();
+    const afectacionChipFiscal = String(tarifa.chip_producto_afectacion_igv || '').trim();
+    const codigoSunatChipFiscal = String(tarifa.chip_producto_codigo_sunat || '').trim();
+    const productoFiscalChipValido = Boolean(productoFacturacionChipId)
+        && Boolean(String(tarifa.chip_producto_sku || '').trim())
+        && Boolean(String(tarifa.chip_producto_descripcion || '').trim())
+        && ['NIU', 'ZZ'].includes(unidadChipFiscal)
+        && afectacionChipFiscal === '10'
+        && (!codigoSunatChipFiscal || /^\d{8}$/.test(codigoSunatChipFiscal));
+    if (requiereChip && (!productoChipId || !productoFiscalChipValido || !Number.isFinite(precioChip) || precioChip <= 0)) {
+        const error = new Error('CONFIGURACION_CHIP_INCOMPLETA');
+        error.status = 409;
+        error.detalles = {
+            productoChipId: productoChipId ? Number(productoChipId) : null,
+            faltaProductoFisico: !productoChipId,
+            faltaProductoFiscalVenta: !productoFiscalChipValido,
+            faltaPrecioChip: !Number.isFinite(precioChip) || precioChip <= 0
+        };
+        throw error;
+    }
+    const importeTotal = Number((precioCertificado + (precioChip || 0)).toFixed(2));
+
     const client = await db.connect();
     try {
         await client.query('BEGIN');
@@ -542,11 +575,19 @@ exports.crearBorrador = async (data, userContext) => {
             INSERT INTO fg_certificado (
                 tipo_certificado_clave, tarifa_codigo, cliente_id, planta_key,
                 numero_certificado, fecha_emision, estado, paso_actual,
-                observaciones, usuario_creacion, usuario_modificacion
+                observaciones, usuario_creacion, usuario_modificacion,
+                producto_facturacion_certificado_id, precio_certificado,
+                producto_chip_id, producto_facturacion_chip_id, precio_chip, importe_total
             ) VALUES (
-                $1, $2, $3, $4, NULL, NULL, 'BORRADOR', 'DATOS_INICIALES', $5, $6, $6
+                $1, $2, $3, $4, NULL, NULL, 'BORRADOR', 'DATOS_INICIALES', $5, $6, $6,
+                $7, $8, $9, $10, $11, $12
             ) RETURNING id, estado, paso_actual AS "pasoActual"
-        `, [tipoCertificadoClave, tarifaCodigo, clienteId || null, planta_key, observaciones || null, username]);
+        `, [
+            tipoCertificadoClave, tarifaCodigo, clienteId || null, planta_key,
+            observaciones || null, username,
+            productoFacturacionCertificadoId, precioCertificado,
+            productoChipId, productoFacturacionChipId, precioChip, importeTotal
+        ]);
         const borrador = res.rows[0];
         await client.query(`
             INSERT INTO fg_certificado_vehiculo (certificado_id, placa, categoria)
@@ -616,6 +657,14 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
     // Titulares
     const qTit = `SELECT * FROM fg_certificado_titular WHERE certificado_id = $1 ORDER BY orden ASC`;
     const resTit = await db.query(qTit, [id]);
+    const chipSeleccion = cert.producto_chip_id
+        ? await chipCertificadoService.obtener(db, id)
+        : {
+            requiereChip: false,
+            productoChipId: null,
+            seleccionado: false,
+            chip: null
+        };
 
     const versionConfig = configuracionFormato(cert.formato_version_configuracion);
     const variablesConfiguradas = Array.isArray(versionConfig.variables_usadas)
@@ -708,6 +757,15 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
         lugarEmision: cert.lugar_emision,
         formatoDatosSnapshot: cert.formato_datos_snapshot || {},
         formatoVersionId: cert.formato_version_resuelta_id || cert.formato_version_id || null,
+        comercial: {
+            productoFacturacionCertificadoId: cert.producto_facturacion_certificado_id ? Number(cert.producto_facturacion_certificado_id) : null,
+            precioCertificado: cert.precio_certificado === null ? null : Number(cert.precio_certificado),
+            requiereChip: Boolean(cert.producto_chip_id),
+            productoChipId: cert.producto_chip_id ? Number(cert.producto_chip_id) : null,
+            productoFacturacionChipId: cert.producto_facturacion_chip_id ? Number(cert.producto_facturacion_chip_id) : null,
+            precioChip: cert.precio_chip === null ? null : Number(cert.precio_chip),
+            importeTotal: cert.importe_total === null ? null : Number(cert.importe_total)
+        },
         formatoFormulario: cert.servicio_formato_id && cert.formato_version_resuelta_id ? {
             formatoId: cert.servicio_formato_id,
             formatoNombre: cert.formato_nombre,
@@ -719,8 +777,37 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
             valores: Object.fromEntries(camposFormato.map((campo) => [campo.key, campo.valor]))
         } : null,
         vehiculo: resVeh.rowCount > 0 ? resVeh.rows[0] : null,
-        titulares: resTit.rows
+        titulares: resTit.rows,
+        chipSeleccion
     };
+};
+
+exports.obtenerChipBorrador = async (id, userContext) => {
+    const certificado = await db.query('SELECT planta_key FROM fg_certificado WHERE id = $1', [id]);
+    if (!certificado.rowCount) throw new Error('CERTIFICADO_NOT_FOUND');
+    await validarAccesoCertificado(userContext.username, userContext.perfil_id, certificado.rows[0].planta_key);
+    return chipCertificadoService.obtener(db, Number(id));
+};
+
+exports.seleccionarChipBorrador = async (id, numeroChip, userContext) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const certificado = await client.query('SELECT planta_key FROM fg_certificado WHERE id = $1', [id]);
+        if (!certificado.rowCount) throw new Error('CERTIFICADO_NOT_FOUND');
+        await validarAccesoCertificado(userContext.username, userContext.perfil_id, certificado.rows[0].planta_key);
+        const seleccion = await chipCertificadoService.seleccionar(client, {
+            certificadoId: Number(id),
+            numeroChip
+        });
+        await client.query('COMMIT');
+        return seleccion;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
 };
 
 exports.actualizarPasoBorrador = async (id, pasoActual, userContext) => {
@@ -1174,14 +1261,6 @@ exports.guardarGNV = async (id, data, userContext) => {
             data.pesoNetoPosterior || null
         ]);
 
-        await chipCertificadoService.sincronizarReserva(client, {
-            certificadoId: Number(id),
-            plantaKey: certificado.planta_key,
-            modalidad: modalidadGNV,
-            numeroChip,
-            username: userContext.username
-        });
-
         await client.query('COMMIT');
         return true;
     } catch (e) {
@@ -1616,6 +1695,32 @@ exports.validarEmision = async (id, userContext) => {
         }
     }
 
+    // El requerimiento del serial proviene del Producto Fiscal, no de una
+    // modalidad ni de una variable del formato. Al validar la emisión la
+    // facturación ya debe haber consumido exactamente el chip seleccionado.
+    if (cert.producto_chip_id) {
+        const rChipComercial = await db.query(`
+            SELECT c.producto_inventariable_id, c.estado, c.planta_actual_key
+            FROM fg_certificado_chip cc
+            JOIN fg_chip c ON c.id = cc.chip_id
+            WHERE cc.certificado_id = $1
+        `, [id]);
+        if (rChipComercial.rowCount !== 1) {
+            pushError('chip', 'numero', 'CHIP_REQUERIDO_NO_SELECCIONADO', 'Seleccione el chip físico requerido por este certificado');
+        } else {
+            const chip = rChipComercial.rows[0];
+            if (Number(chip.producto_inventariable_id) !== Number(cert.producto_chip_id)) {
+                pushError('chip', 'tipo', 'CHIP_TIPO_INVALIDO', 'El chip seleccionado no corresponde al tipo configurado');
+            }
+            if (chip.planta_actual_key !== cert.planta_key) {
+                pushError('chip', 'sede', 'CHIP_OTRA_SEDE', 'El chip seleccionado pertenece a otra sede');
+            }
+            if (chip.estado !== 'VENDIDO') {
+                pushError('chip', 'estado', 'CHIP_NO_CONSUMIDO', 'La facturación todavía no consumió el chip seleccionado');
+            }
+        }
+    }
+
     // En producción, la facturación electrónica debe estar aceptada antes de
     // consumir el correlativo definitivo. El modo de simulación es explícito,
     // solo funciona fuera de producción y nunca altera el estado SUNAT.
@@ -1642,36 +1747,6 @@ exports.validarEmision = async (id, userContext) => {
             // Modalidad requerida
             if (!g.modalidad || !['INICIAL', 'ANUAL'].includes(g.modalidad)) {
                 pushError('gnv', 'modalidad', 'CAMPO_REQUERIDO', 'Modalidad GNV requerida (INICIAL o ANUAL)');
-            }
-            // Chip requerido solo para INICIAL
-            if (g.modalidad === 'INICIAL') {
-                pushError('gnv', 'formato', 'FORMATO_INICIAL_PENDIENTE', 'La captura GNV INICIAL está habilitada, pero su formato de emisión todavía no está configurado');
-                if (!g.numero_chip) {
-                    pushError('gnv', 'numero_chip', 'CAMPO_REQUERIDO', 'N° Chip requerido para GNV INICIAL');
-                } else if (!esNumeroChipCertificadoValido(g.numero_chip)) {
-                    pushError('gnv', 'numero_chip', 'FORMATO_INVALIDO', 'N° Chip inválido: solo alfanumérico, máx 15 caracteres');
-                } else {
-                    const rChip = await db.query(`
-                        SELECT c.numero_chip, c.estado, c.planta_actual_key
-                        FROM fg_certificado_chip cc
-                        JOIN fg_chip c ON c.id = cc.chip_id
-                        WHERE cc.certificado_id = $1
-                    `, [id]);
-                    const chip = rChip.rows[0];
-                    if (
-                        rChip.rowCount !== 1
-                        || chip.numero_chip !== normalizarNumeroChip(g.numero_chip)
-                        || chip.planta_actual_key !== cert.planta_key
-                        || !['RESERVADO', 'VENDIDO'].includes(chip.estado)
-                    ) {
-                        pushError(
-                            'gnv',
-                            'numero_chip',
-                            'CHIP_NO_RESERVADO',
-                            'El N° Chip debe estar reservado en el inventario de esta sede antes de emitir'
-                        );
-                    }
-                }
             }
         }
 
@@ -1996,7 +2071,10 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
 
     if (tipoClave === 'GNV_ANUAL') {
         const dataGnv = await exports.obtenerGNV(id, userContext);
-        const gnv = dataGnv.gnv || {};
+        const gnv = {
+            ...(dataGnv.gnv || {}),
+            numero_chip: borrador.chipSeleccion?.chip?.numeroChip || dataGnv.gnv?.numero_chip || null
+        };
         if (gnv.modalidad === 'INICIAL') {
             const html = generateGnvInicialHtml({
                 cabecera: cabeceraComun,
@@ -2085,6 +2163,11 @@ const buildFormatoData = (borrador) => {
         },
         inspeccion: {
             observaciones: borrador.observaciones || ''
+        },
+        chip: {
+            numero: borrador.chipSeleccion?.chip?.numeroChip || '',
+            tipo: borrador.chipSeleccion?.chip?.productoCodigo || '',
+            nombre: borrador.chipSeleccion?.chip?.productoNombre || ''
         }
     }, borrador.formatoDatosSnapshot || {});
 
