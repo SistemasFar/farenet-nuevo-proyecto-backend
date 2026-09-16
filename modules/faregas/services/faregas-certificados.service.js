@@ -836,6 +836,11 @@ exports.actualizarPasoBorrador = async (id, pasoActual, userContext) => {
             SET paso_actual = $2, usuario_modificacion = $3, fecha_modificacion = CURRENT_TIMESTAMP
             WHERE id = $1
         `, [id, pasoPersistido, userContext.username]);
+
+        if (pasoDestino === 'FACTURACION') {
+            await chipCertificadoService.reservarFisicamente(client, { certificadoId: id, username: userContext.username });
+        }
+
         await client.query('COMMIT');
         return { pasoActual: pasoPersistido };
     } catch (error) {
