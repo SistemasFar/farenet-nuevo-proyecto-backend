@@ -1,4 +1,5 @@
 const service = require('../services/faregas-chips.service');
+const ventasService = require('../services/faregas-ventas.service');
 
 const respond = (res, error) => {
     const mensajes = {
@@ -30,6 +31,24 @@ exports.listarCatalogoChipsFiscales = async (req, res) => {
     try {
         const chips = await service.listarCatalogoChipsFiscales();
         res.json({ success: true, chips });
+    } catch (e) {
+        respond(res, e);
+    }
+};
+
+exports.listarVentas = async (req, res) => {
+    try {
+        const ventas = await ventasService.listarVentas(req.user.planta_key);
+        res.json({ success: true, ventas });
+    } catch (e) {
+        respond(res, e);
+    }
+};
+
+exports.crearVentaDirecta = async (req, res) => {
+    try {
+        const result = await ventasService.crearVenta({ plantaKey: req.user.planta_key, ...req.body }, req.user);
+        res.json({ success: true, ...result });
     } catch (e) {
         respond(res, e);
     }
