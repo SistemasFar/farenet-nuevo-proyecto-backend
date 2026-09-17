@@ -9,3 +9,5 @@ scripts/
 # Scripts locales de diagnostico que pueden contener credenciales o ejecutar emisiones.
 query.js
 test-nubefact.js
+
+.env.demo

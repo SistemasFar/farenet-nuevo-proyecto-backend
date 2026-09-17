@@ -31,6 +31,31 @@ const configuracionFormato = (value) => {
 const valorAnidado = (objeto, clave) => String(clave || '').split('.')
     .reduce((actual, parte) => (actual == null ? undefined : actual[parte]), objeto);
 
+const validarVariablesFormatoDinamico = (cert, pushError) => {
+    if (!cert.formato_version_resuelta_id) {
+        pushError('formato', 'version', 'FORMATO_VERSION_FALTANTE', 'La operación no tiene una versión de formato configurada');
+        return;
+    }
+    if (cert.formato_version_estado !== 'VIGENTE') {
+        pushError('formato', 'version', 'FORMATO_VERSION_NO_VIGENTE', 'La versión del formato debe estar activa antes de emitir');
+    }
+    const configFormato = configuracionFormato(cert.formato_version_configuracion);
+    const variablesConfiguradas = Array.isArray(configFormato.variables_usadas) ? configFormato.variables_usadas : [];
+    const variablesHtml = cert.formato_version_motor === 'HTML_DINAMICO'
+        ? extraerVariablesHtml(configFormato.html || '')
+        : [];
+    const variablesRequeridas = [...new Set([...variablesConfiguradas, ...variablesHtml]
+        .map((key) => String(key || '').trim())
+        .filter((key) => CLAVE_VARIABLE_FORMATO.test(key)))]
+        .filter((key) => !VARIABLES_FORMATO_AUTOMATICAS.has(key) && key !== 'inspeccion.observaciones');
+    variablesRequeridas.forEach((key) => {
+        const valor = valorAnidado(cert.formato_datos_snapshot || {}, key);
+        if (valor === null || valor === undefined || String(valor).trim() === '') {
+            pushError('formato', key, 'CAMPO_REQUERIDO', `Complete ${key}`);
+        }
+    });
+};
+
 const asignarValorAnidado = (objeto, clave, valor) => {
     const partes = String(clave || '').split('.');
     let actual = objeto;
@@ -1600,9 +1625,33 @@ exports.obtenerTalleresActivos = async () => {
 
 exports.validarEmision = async (id, userContext) => {
     const rCert = await db.query(`
-        SELECT c.*, t.clave as tipo_clave 
+        SELECT c.*, t.clave AS tipo_clave,
+               s.tipo_flujo AS servicio_tipo_flujo,
+               fv.id AS formato_version_resuelta_id,
+               fv.estado AS formato_version_estado,
+               fv.motor AS formato_version_motor,
+               fv.configuracion AS formato_version_configuracion
         FROM fg_certificado c
         JOIN fg_tipo_certificado t ON c.tipo_certificado_clave = t.clave
+        LEFT JOIN fg_tarifa ta
+          ON ta.codigo = c.tarifa_codigo
+         AND ta.planta_key = c.planta_key
+        LEFT JOIN fg_servicio s ON s.id = ta.servicio_id
+        LEFT JOIN fg_certificado_formato f ON f.id = s.formato_id
+        LEFT JOIN LATERAL (
+            SELECT version.id, version.estado, version.motor, version.configuracion
+            FROM fg_certificado_formato_version version
+            WHERE version.formato_id = f.id
+              AND (version.id = c.formato_version_id OR version.estado IN ('VIGENTE', 'BORRADOR'))
+            ORDER BY
+                CASE
+                    WHEN version.id = c.formato_version_id THEN 0
+                    WHEN version.estado = 'VIGENTE' THEN 1
+                    ELSE 2
+                END,
+                version.version DESC
+            LIMIT 1
+        ) fv ON TRUE
         WHERE c.id = $1
     `, [id]);
     
@@ -1617,6 +1666,14 @@ exports.validarEmision = async (id, userContext) => {
 
     const errores = [];
     const pushError = (seccion, campo, codigo, mensaje) => errores.push({ seccion, campo, codigo, mensaje });
+    const esFormularioDinamico = cert.servicio_tipo_flujo === 'TALLER_INSPECCION';
+
+    // Las operaciones TALLER_INSPECCION se definen por las variables de su
+    // formato. No deben heredar los campos vehiculares GNV/GLP de la clave
+    // técnica que se reutiliza únicamente para numeración y correlativos.
+    if (esFormularioDinamico) {
+        validarVariablesFormatoDinamico(cert, pushError);
+    }
 
     if (cert.tipo_clave.startsWith('GNV') && cert.observaciones && cert.observaciones.length > 250) {
         pushError('cabecera', 'observaciones', 'LONGITUD_EXCEDIDA', 'Las observaciones no pueden superar los 250 caracteres.');
@@ -1638,25 +1695,25 @@ exports.validarEmision = async (id, userContext) => {
             });
         };
 
-        if (!veh.vin && !veh.serie_chasis) {
+        if (!esFormularioDinamico && !veh.vin && !veh.serie_chasis) {
             pushError('vehiculo', 'vin', 'CAMPO_REQUERIDO', 'Se requiere VIN o Serie de Chasis');
         }
 
-        if (cert.tipo_clave === 'GNV_ANUAL') {
+        if (!esFormularioDinamico && cert.tipo_clave === 'GNV_ANUAL') {
             checkCampos([
                 'categoria', 'marca', 'modelo', 'version', 'anio_fabricacion', 'numero_motor',
                 'numero_cilindros', 'cilindrada', 'combustible', 'numero_ejes', 'numero_ruedas',
                 'numero_asientos', 'numero_pasajeros', 'longitud', 'ancho', 'alto', 'color',
                 'peso_neto', 'peso_bruto'
             ]);
-        } else if (cert.tipo_clave === 'GLP_ANUAL') {
+        } else if (!esFormularioDinamico && cert.tipo_clave === 'GLP_ANUAL') {
             checkCampos([
                 'categoria', 'marca', 'modelo', 'version', 'anio_fabricacion', 'numero_motor',
                 'numero_cilindros', 'cilindrada', 'combustible', 'numero_ejes', 'numero_ruedas',
                 'numero_asientos', 'numero_pasajeros', 'longitud', 'ancho', 'alto', 
                 'peso_neto', 'peso_bruto', 'carga_util'
             ]);
-        } else if (cert.tipo_clave === 'CONFORMIDAD') {
+        } else if (!esFormularioDinamico && cert.tipo_clave === 'CONFORMIDAD') {
             checkCampos([
                 'clase', 'categoria', 'modelo', 'marca', 'numero_motor', 'color', 'carroceria',
                 'combustible', 'longitud', 'ancho', 'alto', 'peso_bruto', 'peso_neto', 'carga_util',
@@ -1670,7 +1727,7 @@ exports.validarEmision = async (id, userContext) => {
     const rTit = await db.query('SELECT * FROM fg_certificado_titular WHERE certificado_id = $1 ORDER BY orden', [id]);
     const titulares = rTit.rows;
     
-    if (cert.tipo_clave === 'GLP_ANUAL' || cert.tipo_clave === 'CONFORMIDAD') {
+    if (!esFormularioDinamico && (cert.tipo_clave === 'GLP_ANUAL' || cert.tipo_clave === 'CONFORMIDAD')) {
         if (titulares.length === 0) {
             pushError('titular', 'general', 'TITULAR_REQUERIDO', 'Se requiere al menos 1 titular');
         } else {
@@ -1741,7 +1798,7 @@ exports.validarEmision = async (id, userContext) => {
     }
 
     // GNV Especifico
-    if (cert.tipo_clave === 'GNV_ANUAL') {
+    if (!esFormularioDinamico && cert.tipo_clave === 'GNV_ANUAL') {
         const rGnv = await db.query('SELECT * FROM fg_certificado_gnv WHERE certificado_id = $1', [id]);
         if (rGnv.rowCount === 0) {
             pushError('gnv', 'general', 'SECCION_FALTANTE', 'Faltan datos de GNV');
@@ -1777,7 +1834,7 @@ exports.validarEmision = async (id, userContext) => {
     }
 
     // GLP Especifico
-    if (cert.tipo_clave === 'GLP_ANUAL') {
+    if (!esFormularioDinamico && cert.tipo_clave === 'GLP_ANUAL') {
         const rGlp = await db.query('SELECT * FROM fg_certificado_glp WHERE certificado_id = $1', [id]);
         if (rGlp.rowCount === 0) {
             pushError('glp', 'general', 'SECCION_FALTANTE', 'Faltan datos de GLP');
@@ -1832,7 +1889,7 @@ exports.validarEmision = async (id, userContext) => {
     }
 
     // Conformidad Especifico
-    if (cert.tipo_clave === 'CONFORMIDAD') {
+    if (!esFormularioDinamico && cert.tipo_clave === 'CONFORMIDAD') {
         const rConf = await db.query('SELECT * FROM fg_certificado_conformidad WHERE certificado_id = $1', [id]);
         if (rConf.rowCount === 0) {
             pushError('conformidad', 'general', 'SECCION_FALTANTE', 'Faltan datos de Conformidad');
@@ -2283,3 +2340,5 @@ exports.obtenerTaller = async (id, user) => {
     
     return cert.formato_datos_snapshot;
 };
+
+exports._private = Object.freeze({ validarVariablesFormatoDinamico });

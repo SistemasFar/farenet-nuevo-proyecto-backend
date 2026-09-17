@@ -5,6 +5,10 @@ const { spawnSync } = require('node:child_process');
 const testsDir = join(__dirname, '..', 'modules', 'faregas', 'tests');
 const scope = process.argv.find(argument => argument.startsWith('--scope='))?.split('=')[1] || 'nubefact';
 const nubefactFiles = new Set([
+    'faregas-env-loader.test.js',
+    'faregas-environment-validator.test.js',
+    'faregas-facturacion-refactor.test.js',
+    'faregas-swagger.test.js',
     'faregas-catalogo-fiscal-import.test.js',
     'faregas-correlativos-nubefact.test.js',
     'faregas-documentos-electronicos.test.js',
@@ -12,6 +16,8 @@ const nubefactFiles = new Set([
     'faregas-facturacion.test.js',
     'faregas-fase-4-1.test.js',
     'faregas-nubefact-production-guard.test.js',
+    'faregas-nubefact-demo-alias.test.js',
+    'faregas-certificados-formato-dinamico.test.js',
     'faregas-nubefact-cron.service.test.js',
     'faregas-nubefact-readiness.test.js',
     'faregas-nubefact-simulation.test.js',

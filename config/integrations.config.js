@@ -28,6 +28,12 @@ const normalizarEntornoNubefact = (value = 'DEMO') => {
   return entorno || 'DEMO';
 };
 
+// El alias sólo identifica una cuenta DEMO explícitamente autorizada.  No es
+// un fallback de credenciales y jamás se consulta para PRODUCCION.
+const obtenerAliasDemoFacturador = () => normalizarClaveCredencial(
+  process.env.NUBEFACT_FAREGAS_DEMO_CREDENTIAL_ALIAS
+);
+
 const obtenerCredencialesNubefact = (credencialClave, environment = 'DEMO') => {
   const clave = normalizarClaveCredencial(credencialClave);
   const entorno = normalizarEntornoNubefact(environment);
@@ -95,6 +101,7 @@ const config = Object.freeze({
     cronReconciliationEnabled: getBooleanEnv('NUBEFACT_RECONCILIATION_ENABLED', false),
     notasCronReconciliationEnabled: getBooleanEnv('NUBEFACT_NOTAS_RECONCILIATION_ENABLED', false),
     reconciliationRetryMs: getIntegerEnv('NUBEFACT_RECONCILIATION_RETRY_MS', 900000),
+    obtenerAliasDemoFacturador,
     obtenerCredenciales: obtenerCredencialesNubefact
   })
 });

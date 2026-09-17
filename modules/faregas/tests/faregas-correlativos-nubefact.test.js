@@ -74,3 +74,17 @@ test('valida el prefijo tributario de notas según su comprobante de referencia'
     assert.equal(service._private.validarSerieTributaria('BC02', 'NOTA_CREDITO_BOLETA'), true);
     assert.equal(service._private.validarSerieTributaria('BC02', 'NOTA_DEBITO_FACTURA'), false);
 });
+
+test('en DEMO de la sede 201 selecciona BBB1 y FFF1, nunca las series productivas', async () => {
+    const filas = {
+        BOLETA: { ...serie, tipo_comprobante: 'BOLETA', serie: 'BBB1', entorno_emision: 'DEMO', confirmada_produccion: false },
+        FACTURA: { ...serie, tipo_comprobante: 'FACTURA', serie: 'FFF1', entorno_emision: 'DEMO', confirmada_produccion: false }
+    };
+    const executor = { query: async (_sql, params) => ({ rowCount: 1, rows: [filas[params[1]]] }) };
+    const boleta = await service.obtenerSeriePrevista({ plantaKey: '201', tipoComprobante: 'BOLETA', environment: 'DEMO' }, executor);
+    const factura = await service.obtenerSeriePrevista({ plantaKey: '201', tipoComprobante: 'FACTURA', environment: 'DEMO' }, executor);
+    assert.equal(boleta.serie, 'BBB1');
+    assert.equal(factura.serie, 'FFF1');
+    assert.notEqual(boleta.serie, 'BE15');
+    assert.notEqual(factura.serie, 'FE15');
+});

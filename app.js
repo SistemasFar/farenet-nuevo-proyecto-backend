@@ -1,7 +1,9 @@
+require('./config/env-loader');
+const { validateEnvironment } = require('./config/environment-validator');
+validateEnvironment();
+
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config();
-
 // Validación Fail-Fast para AUTH_DISABLED
 const isAuthDisabled = process.env.AUTH_DISABLED === 'true';
 const isProduction = process.env.NODE_ENV === 'production';
@@ -51,22 +53,12 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
+const { getSwaggerOptions } = require('./config/swagger-config');
+
 // Swagger
-const swaggerOptions = {
-    definition: {
-        openapi: '3.0.0',
-        info: {
-            title: 'Farenet API Desacoplada',
-            version: '1.0.0',
-            description: 'Backend modular Farenet'
-        },
-        servers: [
-            {
-                url: 'http://127.0.0.1:3000/api',
-                description: 'Servidor Local'
-            }
-        ],
-        paths: {
+const swaggerOptions = getSwaggerOptions(PORT);
+
+swaggerOptions.definition.paths = {
             '/auth/login': {
                 post: {
                     summary: 'Iniciar sesión del operador',
@@ -359,9 +351,6 @@ const swaggerOptions = {
                     }
                 }
             }
-        }
-    },
-    apis: []
 };
 
 const swaggerDocs = swaggerJsDoc(swaggerOptions);
@@ -466,6 +455,8 @@ startCronJobs();
 server.listen(PORT, '127.0.0.1', () => {
     console.log('================================================================');
     console.log(`🚀 SERVIDOR CORRIENDO EN: http://127.0.0.1:${PORT}`);
+    console.log(`🗄️ BD AMBIENTE: ${process.env.APP_DATABASE_ENVIRONMENT || 'NO DEFINIDO'}`);
+    console.log(`🧾 NUBEFACT AMBIENTE: ${process.env.NUBEFACT_ENVIRONMENT || 'NO DEFINIDO'}`);
     console.log('🔒 CORS CONFIGURADO PARA VITE 5173 Y 5174');
     console.log(`📑 SWAGGER: http://127.0.0.1:${PORT}/api-docs`);
     console.log('📌 HU011 ACTIVA: GET /api/inspecciones/buscar');

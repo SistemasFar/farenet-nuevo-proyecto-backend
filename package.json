@@ -5,6 +5,7 @@
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
+    "start:demo": "node -e \"process.env.APP_ENV_FILE='.env.demo'; require('./app.js')\"",
     "dev": "nodemon app.js",
     "test": "node scripts/run-faregas-tests.js --scope=nubefact",
     "test:all": "node scripts/run-faregas-tests.js --scope=all"

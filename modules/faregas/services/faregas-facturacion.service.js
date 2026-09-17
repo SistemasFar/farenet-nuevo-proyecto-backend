@@ -240,8 +240,8 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
 
         // INTEGRACION DESCUENTOS: Vincular facturacion a comprobante de descuento
         await client.query(
-            `UPDATE fg_descuentocomprobante 
-             SET facturacion_id = $1 
+            `UPDATE fg_descuentocomprobante
+             SET facturacion_id = $1
              WHERE certificado_id = $2 AND estado = 'APLICADO'`,
             [result.rows[0].id, certificadoId]
         );
@@ -394,7 +394,7 @@ const reservarEmision = async (certificadoId, userContext) => {
             ]
         );
         facturacion = updated.rows[0];
-        
+
         const payload = construirPayloadNubefact({
             facturacion,
             certificado,
@@ -404,7 +404,7 @@ const reservarEmision = async (certificadoId, userContext) => {
             resumenTributario,
             cuotas: cuotasResult.rows
         });
-        
+
         const intentoResult = await client.query(
             `INSERT INTO fg_facturacion_intento
                 (facturacion_id, numero_intento, estado, solicitud)
@@ -460,6 +460,83 @@ const consultarEmisionIncierta = async (proveedor, reserva, resultadoEmision) =>
     };
 };
 
+async function persistirRespuestaNubeFact(reserva, resultadoEmision, recuperacion, userContext, hooks = {}) {
+    const resultado = recuperacion.resultado;
+    const respuesta = limpiarRespuestaProveedor(resultado.data);
+    const respuestaPersistida = recuperacion.consulta
+        ? {
+            emision: limpiarRespuestaProveedor(resultadoEmision.data),
+            consulta_recuperacion: limpiarRespuestaProveedor(recuperacion.consulta.data)
+        }
+        : respuesta;
+    const aceptada = mapearAceptacionSunat(resultado);
+    const pendienteSunat = resultado.status === 'PENDING_SUNAT';
+    const rechazada = resultado.status === 'REJECTED';
+    const estado = mapearEstadoProveedor(resultado, 'FACTURACION');
+    const body = respuesta || {};
+
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query(
+            `UPDATE fg_facturacion SET
+                estado = $1, aceptada_sunat = $2, sunat_description = $3, sunat_responsecode = $4,
+                sunat_soap_error = $5, enlace_pdf = $6, enlace_xml = $7, enlace_cdr = $8,
+                cadena_qr = $9, codigo_hash = $10, respuesta_proveedor = $11::jsonb,
+                fecha_aceptacion = CASE WHEN $2 THEN CURRENT_TIMESTAMP ELSE fecha_aceptacion END,
+                usuario_modificacion = $12, fecha_modificacion = CURRENT_TIMESTAMP
+             WHERE id = $13`,
+            [
+                estado, aceptada, body.sunat_description || body.errors || resultado.reason || null,
+                body.sunat_responsecode || null, body.sunat_soap_error || resultado.error || null,
+                body.enlace_del_pdf || body.enlace_pdf || body.enlace || null,
+                body.enlace_del_xml || body.enlace_xml || null, body.enlace_del_cdr || body.enlace_cdr || null,
+                body.cadena_para_codigo_qr || null, body.codigo_hash || null,
+                JSON.stringify(respuestaPersistida), userContext.username, reserva.facturacion.id
+            ]
+        );
+        await client.query(
+            `UPDATE fg_facturacion_intento SET
+                estado = $1, respuesta = $2::jsonb, http_status = $3, error = $4, fecha_finalizacion = CURRENT_TIMESTAMP
+             WHERE id = $5`,
+            [
+                estado, JSON.stringify(respuestaPersistida),
+                resultado.httpStatus || resultadoEmision.httpStatus || null,
+                resultado.error || resultado.reason || resultadoEmision.error || resultadoEmision.reason || null,
+                reserva.intentoId
+            ]
+        );
+        if (aceptada === true && hooks.onAceptada) {
+            await hooks.onAceptada(client);
+        }
+        if (aceptada === true && reserva.facturacion.operacion_id) {
+            await client.query(
+                `UPDATE fg_operacion_comercial SET estado = 'FACTURADO', usuario_modificacion = $2, fecha_modificacion = CURRENT_TIMESTAMP WHERE id = $1`,
+                [reserva.facturacion.operacion_id, userContext.username]
+            );
+        }
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+
+    const [final, cuotasFinales] = await Promise.all([
+        db.query('SELECT * FROM fg_facturacion WHERE id = $1', [reserva.facturacion.id]),
+        db.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [reserva.facturacion.id])
+    ]);
+    const facturacion = respuestaPublica(final.rows[0], cuotasFinales.rows);
+    if (!aceptada && !pendienteSunat) {
+        throw errorNegocio(rechazada ? 'NUBEFACT_RECHAZADO' : 'NUBEFACT_ERROR', rechazada ? 422 : 502, {
+            facturacion,
+            motivo: body.sunat_description || body.errors || resultado.reason
+        });
+    }
+    return facturacion;
+}
+
 exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}) => {
     const reserva = await reservarEmision(certificadoId, userContext);
     if (reserva.yaAceptada) {
@@ -487,106 +564,17 @@ exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}
         { credentials: reserva.credentials }
     );
     const recuperacion = await consultarEmisionIncierta(proveedor, reserva, resultadoEmision);
-    const resultado = recuperacion.resultado;
-    const respuesta = limpiarRespuestaProveedor(resultado.data);
-    const respuestaPersistida = recuperacion.consulta
-        ? {
-            emision: limpiarRespuestaProveedor(resultadoEmision.data),
-            consulta_recuperacion: limpiarRespuestaProveedor(recuperacion.consulta.data)
-        }
-        : respuesta;
-    const aceptada = mapearAceptacionSunat(resultado);
-    const pendienteSunat = resultado.status === 'PENDING_SUNAT';
-    const rechazada = resultado.status === 'REJECTED';
-    const estado = mapearEstadoProveedor(resultado, 'FACTURACION');
-    const body = respuesta || {};
 
-    const client = await db.connect();
-    try {
-        await client.query('BEGIN');
-        await client.query(
-            `UPDATE fg_facturacion SET
-                estado = $1,
-                aceptada_sunat = $2,
-                sunat_description = $3,
-                sunat_responsecode = $4,
-                sunat_soap_error = $5,
-                enlace_pdf = $6,
-                enlace_xml = $7,
-                enlace_cdr = $8,
-                cadena_qr = $9,
-                codigo_hash = $10,
-                respuesta_proveedor = $11::jsonb,
-                fecha_aceptacion = CASE WHEN $2 THEN CURRENT_TIMESTAMP ELSE fecha_aceptacion END,
-                usuario_modificacion = $12,
-                fecha_modificacion = CURRENT_TIMESTAMP
-             WHERE id = $13`,
-            [
-                estado,
-                aceptada,
-                body.sunat_description || body.errors || resultado.reason || null,
-                body.sunat_responsecode || null,
-                body.sunat_soap_error || resultado.error || null,
-                body.enlace_del_pdf || body.enlace_pdf || body.enlace || null,
-                body.enlace_del_xml || body.enlace_xml || null,
-                body.enlace_del_cdr || body.enlace_cdr || null,
-                body.cadena_para_codigo_qr || null,
-                body.codigo_hash || null,
-                JSON.stringify(respuestaPersistida),
-                userContext.username,
-                reserva.facturacion.id
-            ]
-        );
-        await client.query(
-            `UPDATE fg_facturacion_intento SET
-                estado = $1, respuesta = $2::jsonb, http_status = $3,
-                error = $4, fecha_finalizacion = CURRENT_TIMESTAMP
-             WHERE id = $5`,
-            [
-                estado,
-                JSON.stringify(respuestaPersistida),
-                resultado.httpStatus || resultadoEmision.httpStatus || null,
-                resultado.error || resultado.reason || resultadoEmision.error || resultadoEmision.reason || null,
-                reserva.intentoId
-            ]
-        );
-        if (aceptada === true) {
+    return await persistirRespuestaNubeFact(reserva, resultadoEmision, recuperacion, userContext, {
+        onAceptada: async (client) => {
             await chipCertificadoService.consumirEnFacturacion(client, {
                 certificadoId,
                 operacionId: reserva.facturacion.operacion_id,
                 username: userContext.username
             });
         }
-        if (aceptada === true && reserva.facturacion.operacion_id) {
-            await client.query(`
-                UPDATE fg_operacion_comercial
-                SET estado = 'FACTURADO', usuario_modificacion = $2,
-                    fecha_modificacion = CURRENT_TIMESTAMP
-                WHERE id = $1
-            `, [reserva.facturacion.operacion_id, userContext.username]);
-        }
-        await client.query('COMMIT');
-    } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-    } finally {
-        client.release();
-    }
-
-    const [final, cuotasFinales] = await Promise.all([
-        db.query('SELECT * FROM fg_facturacion WHERE id = $1', [reserva.facturacion.id]),
-        db.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [reserva.facturacion.id])
-    ]);
-    const facturacion = respuestaPublica(final.rows[0], cuotasFinales.rows);
-    if (!aceptada && !pendienteSunat) {
-        throw errorNegocio(rechazada ? 'NUBEFACT_RECHAZADO' : 'NUBEFACT_ERROR', rechazada ? 422 : 502, {
-            facturacion,
-            motivo: body.sunat_description || body.errors || resultado.reason
-        });
-    }
-    return facturacion;
+    });
 };
-
 
 exports.obtenerFacturacionOperacion = async (operacionId, userContext) => {
     const opRes = await db.query('SELECT * FROM fg_operacion_comercial WHERE id=$1', [operacionId]);
@@ -597,7 +585,7 @@ exports.obtenerFacturacionOperacion = async (operacionId, userContext) => {
     const cuotas = result.rowCount > 0
         ? await db.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [result.rows[0].id])
         : { rows: [] };
-    
+
     const resumenTributario = await resumenTributarioService.obtenerResumenTributarioPorOperacion(operacionId, db);
     return {
         facturacion: respuestaPublica(result.rows[0], cuotas.rows),
@@ -719,7 +707,7 @@ const reservarEmisionOperacion = async (operacionId, userContext) => {
 
         const configuracionEmisor = await nubefactConfigService.resolverParaPlanta(op.planta_key, client);
         const erroresContrato = validarFacturacionNubefact(facturacion);
-        
+
         // Block if SKU is missing
         const detallesOp = await client.query('SELECT codigo_sunat_snapshot FROM fg_operacion_detalle WHERE operacion_id=$1', [operacionId]);
         for (const det of detallesOp.rows) {
@@ -765,7 +753,7 @@ const reservarEmisionOperacion = async (operacionId, userContext) => {
             ]
         );
         facturacion = updated.rows[0];
-        
+
         const payload = construirPayloadNubefact({
             facturacion,
             certificado: { planta_key: op.planta_key }, // Fake cert just for plant key if needed
@@ -775,7 +763,7 @@ const reservarEmisionOperacion = async (operacionId, userContext) => {
             resumenTributario,
             cuotas: []
         });
-        
+
         const intentoResult = await client.query(
             `INSERT INTO fg_facturacion_intento (facturacion_id, numero_intento, estado, solicitud) VALUES ($1, $2, 'PENDIENTE', $3::jsonb) RETURNING id`,
             [facturacion.id, intento, JSON.stringify(payload)]
@@ -796,39 +784,15 @@ const reservarEmisionOperacion = async (operacionId, userContext) => {
 exports.emitirFacturacionOperacion = async (operacionId, userContext, dependencies = {}) => {
     const reserva = await reservarEmisionOperacion(operacionId, userContext);
     if (reserva.yaAceptada) return respuestaPublica(reserva.facturacion);
-    // Since Nubefact real is disabled by instruction "NO emitir a Nubefact", we mock a success response to advance.
-    const resultadoEmision = { status: 'ACCEPTED', data: { enlace_pdf: 'mock', sunat_description: 'Mocked for testing' } };
-    const body = resultadoEmision.data;
 
-    const client = await db.connect();
-    try {
-        await client.query('BEGIN');
-        await client.query(
-            `UPDATE fg_facturacion SET
-                estado = 'ACEPTADO', aceptada_sunat = true, sunat_description = $1, enlace_pdf = $2,
-                fecha_aceptacion = CURRENT_TIMESTAMP, usuario_modificacion = $3, fecha_modificacion = CURRENT_TIMESTAMP
-             WHERE id = $4`,
-            [body.sunat_description, body.enlace_pdf, userContext.username, reserva.facturacion.id]
-        );
-        await client.query(
-            `UPDATE fg_facturacion_intento SET estado = 'ACEPTADO', respuesta = $1::jsonb, fecha_finalizacion = CURRENT_TIMESTAMP WHERE id = $2`,
-            [JSON.stringify(body), reserva.intentoId]
-        );
-        if (reserva.facturacion.operacion_id) {
-            await client.query(
-                `UPDATE fg_operacion_comercial SET estado = 'FACTURADO', usuario_modificacion = $2, fecha_modificacion = CURRENT_TIMESTAMP WHERE id = $1`,
-                [reserva.facturacion.operacion_id, userContext.username]
-            );
-        }
-        await client.query('COMMIT');
-    } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-    } finally {
-        client.release();
-    }
-    const final = await db.query('SELECT * FROM fg_facturacion WHERE id = $1', [reserva.facturacion.id]);
-    return respuestaPublica(final.rows[0], []);
+    const proveedor = dependencies.nubefactService || nubefactService;
+    const resultadoEmision = await proveedor.emitirComprobante(
+        reserva.payload,
+        { credentials: reserva.credentials }
+    );
+    const recuperacion = await consultarEmisionIncierta(proveedor, reserva, resultadoEmision);
+
+    return await persistirRespuestaNubeFact(reserva, resultadoEmision, recuperacion, userContext);
 };
 
 exports._private = {

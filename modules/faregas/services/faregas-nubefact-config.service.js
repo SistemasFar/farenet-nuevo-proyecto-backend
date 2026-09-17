@@ -13,6 +13,13 @@ const esEntornoProduccion = (environment) => ['PRODUCCION', 'PRODUCTION'].includ
     String(environment || '').trim().toUpperCase()
 );
 
+const esEntornoDemo = (environment) => String(environment || '').trim().toUpperCase() === 'DEMO';
+
+const aliasDemoPara = (row) => {
+    if (!esEntornoDemo(row?.entorno) || row?.empresa_key !== 'FAREGAS') return null;
+    return integrationsConfig.nubefact.obtenerAliasDemoFacturador() || null;
+};
+
 const validarSeguridadProduccion = ({
     environment = integrationsConfig.nubefact.environment,
     productionConfirmed = integrationsConfig.nubefact.productionConfirmed,
@@ -87,13 +94,44 @@ const obtenerFilaConfiguracion = async (plantaKey, executor = db) => {
     return result.rows[0];
 };
 
+const obtenerFilaAliasDemo = async (credencialClave, executor = db) => {
+    const result = await executor.query(`
+        SELECT e.key AS empresa_key,
+               e.ruc AS ruc_emisor,
+               e.nombre AS razon_social_emisor,
+               e.direccion AS direccion_emisor,
+               f.entorno,
+               f.credencial_clave
+        FROM fg_empresa e
+        JOIN fg_empresa_facturador f
+          ON f.empresa_key = e.key
+         AND f.proveedor = 'NUBEFACT'
+         AND f.entorno = 'DEMO'
+         AND f.credencial_clave = $1
+         AND f.activo = TRUE
+        WHERE e.key = $1
+          AND e.activo = TRUE
+        LIMIT 1
+    `, [credencialClave]);
+    return result.rowCount === 0 ? null : result.rows[0];
+};
+
+const resolverFilaEmisora = async (filaPropietaria, executor = db) => {
+    const alias = aliasDemoPara(filaPropietaria);
+    if (!alias) return { filaEmisora: filaPropietaria, empresaPropietariaKey: filaPropietaria.empresa_key };
+    const filaAlias = await obtenerFilaAliasDemo(alias, executor);
+    if (!filaAlias) throw errorConfiguracion('NUBEFACT_ALIAS_DEMO_NO_CONFIGURADO');
+    return { filaEmisora: filaAlias, empresaPropietariaKey: filaPropietaria.empresa_key };
+};
+
 exports.obtenerEstadoParaPlanta = async (plantaKey, executor = db) => {
     try {
         const row = await obtenerFilaConfiguracion(plantaKey, executor);
-        const credentials = row.credencial_clave
-            ? integrationsConfig.nubefact.obtenerCredenciales(row.credencial_clave, row.entorno)
+        const { filaEmisora, empresaPropietariaKey } = await resolverFilaEmisora(row, executor);
+        const credentials = filaEmisora.credencial_clave
+            ? integrationsConfig.nubefact.obtenerCredenciales(filaEmisora.credencial_clave, filaEmisora.entorno)
             : null;
-        return contextoPublico(row, credentials);
+        return { ...contextoPublico(filaEmisora, credentials), empresaPropietariaKey };
     } catch (error) {
         if (error.code === '42P01') {
             return { ...contextoPublico(null, null), reason: 'MIGRATION_PENDING' };
@@ -114,19 +152,20 @@ exports.resolverParaPlanta = async (plantaKey, executor = db) => {
         if (error.code === '42P01') throw errorConfiguracion('NUBEFACT_CONFIGURACION_PENDIENTE');
         throw error;
     }
-    if (!row.credencial_clave) throw errorConfiguracion('EMPRESA_EMISORA_NO_CONFIGURADA');
-    if (!esRucValido(row.ruc_emisor)) {
+    const { filaEmisora, empresaPropietariaKey } = await resolverFilaEmisora(row, executor);
+    if (!filaEmisora.credencial_clave) throw errorConfiguracion('EMPRESA_EMISORA_NO_CONFIGURADA');
+    if (!esRucValido(filaEmisora.ruc_emisor)) {
         throw errorConfiguracion('EMPRESA_EMISORA_RUC_INVALIDO');
     }
 
-    const credentials = integrationsConfig.nubefact.obtenerCredenciales(row.credencial_clave, row.entorno);
+    const credentials = integrationsConfig.nubefact.obtenerCredenciales(filaEmisora.credencial_clave, filaEmisora.entorno);
     if (!credentials.apiUrl || !credentials.token) {
         throw errorConfiguracion('NUBEFACT_CREDENCIALES_EMPRESA_FALTANTES');
     }
     if (!esRucValido(credentials.rucEmisor)) {
         throw errorConfiguracion('NUBEFACT_CREDENCIALES_RUC_FALTANTE');
     }
-    if (credentials.rucEmisor !== String(row.ruc_emisor)) {
+    if (credentials.rucEmisor !== String(filaEmisora.ruc_emisor)) {
         throw errorConfiguracion('NUBEFACT_CREDENCIALES_RUC_NO_COINCIDE');
     }
     if (!/^https:\/\//i.test(credentials.apiUrl)) {
@@ -134,17 +173,21 @@ exports.resolverParaPlanta = async (plantaKey, executor = db) => {
     }
 
     return {
-        ...contextoPublico(row, credentials),
+        ...contextoPublico(filaEmisora, credentials),
         plantaKey: row.planta_key,
-        razonSocialEmisor: row.razon_social_emisor,
-        direccionEmisor: row.direccion_emisor,
-        credencialClave: row.credencial_clave,
+        empresaPropietariaKey,
+        razonSocialEmisor: filaEmisora.razon_social_emisor,
+        direccionEmisor: filaEmisora.direccion_emisor,
+        credencialClave: filaEmisora.credencial_clave,
         credentials
     };
 };
 
 exports._private = {
     obtenerFilaConfiguracion,
+    obtenerFilaAliasDemo,
+    resolverFilaEmisora,
+    aliasDemoPara,
     contextoPublico,
     errorConfiguracion,
     esEntornoProduccion,

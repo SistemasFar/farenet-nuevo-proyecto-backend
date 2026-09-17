@@ -1,5 +1,5 @@
+require('./env-loader');
 const { Pool } = require('pg');
-require('dotenv').config();
 
 const requiredEnvVars = [
     'DB_USER',
@@ -29,13 +29,10 @@ const pool = new Pool({
     connectionTimeoutMillis: 10000
 });
 
-// La comprobación de arranque no debe abrir conexiones laterales durante las
-// pruebas unitarias: cada worker de node:test importa este módulo por separado.
 if (process.env.NODE_ENV !== 'test') {
-    pool.query('SELECT NOW()', (err) => {
+    pool.query('SELECT NOW()', (err, res) => {
         if (err) {
-            console.log('❌ ERROR DETALLADO DE POSTGRES:');
-            console.error(err);
+            console.error('❌ Error conectando a PostgreSQL:', err.message);
         } else {
             console.log('✅ CONEXIÓN EXITOSA A POSTGRESQL');
         }

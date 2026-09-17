@@ -1,6 +1,7 @@
 const db = require('../../../config/database');
 const integrationsConfig = require('../../../config/integrations.config');
 const correlativosNubefactService = require('./faregas-correlativos-nubefact.service');
+const nubefactConfigService = require('./faregas-nubefact-config.service');
 const { esUnidadTributariaAdmitida } = require('./faregas-producto-fiscal.rules');
 
 const redondear = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -378,7 +379,19 @@ exports.obtenerResumenTributarioPorOperacion = async (operacionId, queryable = d
 };
 
 exports.obtenerResumenTributario = async (certificadoId, queryable = db) => {
-    const contexto = await obtenerContexto(certificadoId, queryable);
+    const contextoBase = await obtenerContexto(certificadoId, queryable);
+    // La sede conserva su empresa propietaria; el emisor sólo puede cambiar
+    // mediante la resolución explícita y cerrada de configuración DEMO.
+    const emisor = await nubefactConfigService.resolverParaPlanta(contextoBase.planta_key, queryable);
+    const contexto = {
+        ...contextoBase,
+        empresa_key: emisor.empresaKey,
+        ruc_emisor: emisor.rucEmisor,
+        razon_social_emisor: emisor.razonSocialEmisor,
+        direccion_emisor: emisor.direccionEmisor,
+        entorno_facturador: emisor.environment,
+        credencial_clave: emisor.credencialClave
+    };
     const [detalles, descuento, pagos, serie] = await Promise.all([
         obtenerDetalles(contexto, queryable),
         obtenerDescuento(certificadoId, queryable),
