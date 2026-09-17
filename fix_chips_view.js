@@ -1,76 +1,21 @@
 const fs = require('fs');
-const p = 'c:/Users/Sistemas2/Desktop/farenet nuevo proyecto/farenetFrontend/src/modules/faregas/views/Chips/ChipsView.tsx';
-let t = fs.readFileSync(p, 'utf8');
+const p = 'C:\\\\Users\\\\Sistemas2\\\\Desktop\\\\farenet nuevo proyecto\\\\farenetFrontend\\\\src\\\\modules\\\\faregas\\\\views\\\\Chips\\\\ChipsView.tsx';
+let c = fs.readFileSync(p, 'utf8');
 
-// State
-t = t.replace(
-  'const [newProductTipo, setNewProductTipo] = useState(\'OTRO_PRODUCTO_FISICO\');',
-  'const [newProductTipo, setNewProductTipo] = useState(\'OTRO_PRODUCTO_FISICO\');\n  const [newProductProductoFacturacionId, setNewProductProductoFacturacionId] = useState<number | \'\'>(\'\');'
-);
-t = t.replace(
-  'const [editProductTipo, setEditProductTipo] = useState(\'OTRO_PRODUCTO_FISICO\');',
-  'const [editProductTipo, setEditProductTipo] = useState(\'OTRO_PRODUCTO_FISICO\');\n  const [editProductProductoFacturacionId, setEditProductProductoFacturacionId] = useState<number | \'\'>(\'\');'
-);
-
-// Payload Crear
-t = t.replace(
-  'codigo: newProductCodigo,',
-  'productoFacturacionId: newProductProductoFacturacionId === \'\' ? undefined : Number(newProductProductoFacturacionId),\n        codigo: newProductCodigo,'
-);
-// Payload Editar
-t = t.replace(
-  'codigo: editProductCodigo, // included just to satisfy type, backend ignores it',
-  'productoFacturacionId: editProductProductoFacturacionId === \'\' ? undefined : Number(editProductProductoFacturacionId),\n        codigo: editProductCodigo, // included just to satisfy type, backend ignores it'
+c = c.replace(
+  /<div><label className="mb-1 block text-sm font-bold text-slate-700">Nombre del tipo de chip<\/label><input type="text" value={editingProductoId \? editProductName : newProductName} onChange={\(e\) => editingProductoId \? setEditProductName\(e\.target\.value\) : setNewProductName\(e\.target\.value\)} placeholder="Ej\. Superchip GNV" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" \/><\/div>/g,
+  `<div className="grid gap-4 sm:grid-cols-2">
+              <div><label className="mb-1 block text-sm font-bold text-slate-700">Nombre del tipo de chip</label><input type="text" value={editingProductoId ? editProductName : newProductName} onChange={(e) => editingProductoId ? setEditProductName(e.target.value) : setNewProductName(e.target.value)} placeholder="Ej. Superchip GNV" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" /></div>
+              <div>
+                <label className="mb-1 block text-sm font-bold text-slate-700">Producto Fiscal Vinculado</label>
+                <select value={editingProductoId ? editProductProductoFacturacionId : newProductProductoFacturacionId} onChange={(e) => { const v = e.target.value ? Number(e.target.value) : ''; if (editingProductoId) setEditProductProductoFacturacionId(v); else setNewProductProductoFacturacionId(v); }} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                  <option value="">Ninguno (No se podrá vender)</option>
+                  {productosFiscales.map(pf => <option key={pf.id} value={pf.id}>{pf.codigo_sku} - {pf.descripcion}</option>)}
+                </select>
+                <p className="mt-1 text-xs text-slate-500">Debe tener unidad NIU o ZZ e IGV 10.</p>
+              </div>
+            </div>`
 );
 
-// Open Modal Editar
-t = t.replace(
-  'setEditProductTipo(prod.tipo);',
-  'setEditProductTipo(prod.tipo);\n    setEditProductProductoFacturacionId(prod.producto_facturacion_id || \'\');'
-);
-
-// Clear Modal Crear
-t = t.replace(
-  'setNewProductTipo(\'OTRO_PRODUCTO_FISICO\');',
-  'setNewProductTipo(\'OTRO_PRODUCTO_FISICO\');\n      setNewProductProductoFacturacionId(\'\');'
-);
-
-// UI Edit
-const uiEdit = `
-            </div>
-            <div className="form-group mb-3">
-              <label className="form-label">Producto fiscal de venta</label>
-              <select className="form-select" value={editProductProductoFacturacionId} onChange={e => setEditProductProductoFacturacionId(e.target.value ? Number(e.target.value) : '')}>
-                <option value="">(Ninguno)</option>
-                {maestrosFacturacion.map(f => (
-                  <option key={f.id} value={f.id}>{f.nombre}</option>
-                ))}
-              </select>
-            </div>
-            <div className="mb-3">
-`;
-t = t.replace(
-  '            </div>\n            <div className="mb-3">\n              <label className="form-label fw-bold mb-2">Configuración por Sedes (Requerido)</label>',
-  uiEdit + '\n              <label className="form-label fw-bold mb-2">Configuración por Sedes (Requerido)</label>'
-);
-
-// UI New
-const uiNew = `
-            </div>
-            <div className="form-group mb-3">
-              <label className="form-label">Producto fiscal de venta</label>
-              <select className="form-select" value={newProductProductoFacturacionId} onChange={e => setNewProductProductoFacturacionId(e.target.value ? Number(e.target.value) : '')}>
-                <option value="">(Ninguno)</option>
-                {maestrosFacturacion.map(f => (
-                  <option key={f.id} value={f.id}>{f.nombre}</option>
-                ))}
-              </select>
-            </div>
-            <div className="mb-3">
-`;
-t = t.replace(
-  '            </div>\n            <div className="mb-3">\n              <label className="form-label fw-bold mb-2">Configuración por Sedes (Opcional si no se requiere inventario)</label>',
-  uiNew + '\n              <label className="form-label fw-bold mb-2">Configuración por Sedes (Opcional si no se requiere inventario)</label>'
-);
-
-fs.writeFileSync(p, t);
+fs.writeFileSync(p, c);
+console.log('Success');
