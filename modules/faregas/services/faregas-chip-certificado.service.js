@@ -105,7 +105,7 @@ exports.validarParaFacturacion = async (client, certificadoId) => {
     if (!chip) throw new Error('CHIP_REQUERIDO_NO_SELECCIONADO');
     if (Number(chip.producto_inventariable_id) !== Number(certificado.producto_chip_id)) throw new Error('CHIP_TIPO_INVALIDO');
     if (chip.planta_actual_key !== certificado.planta_key) throw new Error('CHIP_OTRA_SEDE');
-    if (!['DISPONIBLE', 'VENDIDO'].includes(chip.estado)) throw new Error('CHIP_NO_DISPONIBLE');
+    if (!['DISPONIBLE', 'RESERVADO', 'VENDIDO'].includes(chip.estado)) throw new Error('CHIP_NO_DISPONIBLE');
     return respuesta(certificado, chip);
 };
 
@@ -169,13 +169,13 @@ exports.consumirEnFacturacion = async (client, { certificadoId, operacionId, use
         if (!movimiento.rowCount) throw new Error('CHIP_VENDIDO_SIN_TRAZABILIDAD');
         return respuesta(certificado, chip);
     }
-    if (chip.estado !== 'DISPONIBLE') throw new Error('CHIP_NO_DISPONIBLE');
+    if (chip.estado !== 'DISPONIBLE' && chip.estado !== 'RESERVADO') throw new Error('CHIP_NO_DISPONIBLE');
 
     const actualizado = await client.query(`
         UPDATE fg_chip
         SET estado = 'VENDIDO', operacion_reserva_id = NULL, reservado_en = NULL,
             actualizado_por = $3, actualizado_en = CURRENT_TIMESTAMP
-        WHERE id = $1 AND producto_inventariable_id = $2 AND estado = 'DISPONIBLE'
+        WHERE id = $1 AND producto_inventariable_id = $2 AND estado IN ('DISPONIBLE', 'RESERVADO')
         RETURNING id
     `, [chip.id, certificado.producto_chip_id, username]);
     if (actualizado.rowCount !== 1) throw new Error('CHIP_NO_DISPONIBLE');
