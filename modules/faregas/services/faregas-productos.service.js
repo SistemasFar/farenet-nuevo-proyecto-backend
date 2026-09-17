@@ -197,4 +197,30 @@ exports.cambiarEstado = async (id, activo, username, ip_direccion) => {
     }
 };
 
+exports.eliminar = async (id, username, ip_direccion) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const actual = await client.query('SELECT * FROM fg_producto_facturacion WHERE id = $1 FOR UPDATE', [id]);
+        if (actual.rowCount === 0) throw new Error('PRODUCTO_NO_ENCONTRADO');
+        
+        await client.query('DELETE FROM fg_producto_facturacion WHERE id = $1', [id]);
+        
+        await configService.registrarAuditoria(client, {
+            username, entidad: 'PRODUCTO_FACTURACION',
+            accion: 'ELIMINAR_PRODUCTO',
+            identificador: actual.rows[0].codigo_sku,
+            detalles: { eliminado: actual.rows[0] },
+            planta_key: null, ip_direccion
+        });
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.code === '23503') throw new Error('PRODUCTO_EN_USO');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
 exports._private = { validarProductoChip, validarPrecioChip, validarCategoriaActiva };

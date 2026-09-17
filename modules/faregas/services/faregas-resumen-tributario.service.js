@@ -74,22 +74,74 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
         && credenciales.rucEmisor !== texto(contexto.ruc_emisor),
     'El RUC declarado para las credenciales Nubefact no coincide con la empresa emisora.');
 
-    const item = {
-        orden: Number(detalle?.orden || 1),
-        productoFacturacionId: detalle?.producto_facturacion_id ? Number(detalle.producto_facturacion_id) : null,
-        codigoInterno,
-        codigoSunat: codigoSunat || null,
-        descripcion,
-        unidad: unidad || null,
-        cantidad,
-        afectacionIgv: afectacionIgv || null,
-        valorUnitario: redondear((precioLista / Math.max(cantidad, 1)) / 1.18),
-        precioUnitario: redondear(precioLista / Math.max(cantidad, 1)),
-        descuentoSinIgv: redondear(importeDescuento / 1.18),
-        baseImponible,
-        igv,
-        total
-    };
+    const itemsList = [];
+    const requiereChip = Boolean(detalle?.producto_requiere_chip);
+    const precioChip = Number(detalle?.producto_precio_chip || 0);
+
+    if (requiereChip && precioChip > 0 && precioChip < precioLista) {
+        const totalChip = precioChip;
+        const baseImponibleChip = redondear(totalChip / 1.18);
+        const igvChip = redondear(totalChip - baseImponibleChip);
+
+        const precioCertificado = redondear(precioLista - precioChip);
+        const importeDescuentoCertificado = importeDescuento;
+        const totalCertificado = redondear(total - totalChip);
+        
+        // Garantizar que la suma de bases imponibles cuadre con el total general
+        const baseImponibleCert = redondear(baseImponible - baseImponibleChip);
+        const igvCert = redondear(igv - igvChip);
+
+        itemsList.push({
+            orden: Number(detalle?.orden || 1),
+            productoFacturacionId: detalle?.producto_facturacion_id ? Number(detalle.producto_facturacion_id) : null,
+            codigoInterno,
+            codigoSunat: codigoSunat || null,
+            descripcion,
+            unidad: unidad || null,
+            cantidad,
+            afectacionIgv: afectacionIgv || null,
+            valorUnitario: redondear((precioCertificado / Math.max(cantidad, 1)) / 1.18),
+            precioUnitario: redondear(precioCertificado / Math.max(cantidad, 1)),
+            descuentoSinIgv: redondear(importeDescuentoCertificado / 1.18),
+            baseImponible: baseImponibleCert,
+            igv: igvCert,
+            total: totalCertificado
+        });
+
+        itemsList.push({
+            orden: Number(detalle?.orden || 1) + 1,
+            productoFacturacionId: null,
+            codigoInterno: 'CHIP',
+            codigoSunat: null,
+            descripcion: 'Chip y porta chip',
+            unidad: 'NIU',
+            cantidad: 1,
+            afectacionIgv: '10',
+            valorUnitario: redondear(totalChip / 1.18),
+            precioUnitario: totalChip,
+            descuentoSinIgv: 0,
+            baseImponible: baseImponibleChip,
+            igv: igvChip,
+            total: totalChip
+        });
+    } else {
+        itemsList.push({
+            orden: Number(detalle?.orden || 1),
+            productoFacturacionId: detalle?.producto_facturacion_id ? Number(detalle.producto_facturacion_id) : null,
+            codigoInterno,
+            codigoSunat: codigoSunat || null,
+            descripcion,
+            unidad: unidad || null,
+            cantidad,
+            afectacionIgv: afectacionIgv || null,
+            valorUnitario: redondear((precioLista / Math.max(cantidad, 1)) / 1.18),
+            precioUnitario: redondear(precioLista / Math.max(cantidad, 1)),
+            descuentoSinIgv: redondear(importeDescuento / 1.18),
+            baseImponible,
+            igv,
+            total
+        });
+    }
 
     return {
         estado: errores.length === 0 ? 'LISTO' : 'INCOMPLETO',
@@ -130,7 +182,7 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
             direccion: texto(contexto.direccion_cliente) || null,
             email: texto(contexto.email) || null
         },
-        items: [item],
+        items: itemsList,
         totales: {
             moneda: mayusculas(contexto.moneda_key) === 'SOL' ? 'PEN' : mayusculas(contexto.moneda_key || 'PEN'),
             precioAntesDescuento: precioLista,
@@ -245,7 +297,9 @@ const obtenerDetalle = async (contexto, queryable) => {
                pf.descripcion AS producto_descripcion, pf.unidad AS producto_unidad,
                pf.codigo_clasificacion_sunat AS producto_codigo_sunat,
                pf.tipo_afectacion_igv AS producto_afectacion_igv,
-               pf.activo AS producto_activo
+               pf.activo AS producto_activo,
+               pf.requiere_chip AS producto_requiere_chip,
+               pf.precio_chip AS producto_precio_chip
         FROM fg_tarifa t
         JOIN fg_servicio s ON s.id = t.servicio_id
         LEFT JOIN fg_operacion_detalle od
@@ -281,7 +335,9 @@ const obtenerDetalles = async (contexto, queryable) => {
                pf.descripcion AS producto_descripcion, pf.unidad AS producto_unidad,
                pf.codigo_clasificacion_sunat AS producto_codigo_sunat,
                pf.tipo_afectacion_igv AS producto_afectacion_igv,
-               pf.activo AS producto_activo
+               pf.activo AS producto_activo,
+               pf.requiere_chip AS producto_requiere_chip,
+               pf.precio_chip AS producto_precio_chip
         FROM fg_operacion_detalle od
         LEFT JOIN fg_producto_facturacion pf ON pf.id = od.producto_facturacion_id
         WHERE od.operacion_id = $1

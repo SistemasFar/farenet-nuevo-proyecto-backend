@@ -178,3 +178,18 @@ exports.cambiarEstado = async (req, res) => {
         responderError(res, error, 'Error al cambiar estado del producto.');
     }
 };
+
+exports.eliminar = async (req, res) => {
+    try {
+        await productosService.eliminar(idProducto(req.params.id), req.user.username, req.ip);
+        res.json({ success: true, message: 'Producto eliminado exitosamente.' });
+    } catch (error) {
+        if (error.message === 'PRODUCTO_EN_USO') {
+            return res.status(409).json({
+                success: false,
+                message: 'No se puede eliminar el producto porque ya está vinculado a tarifas u operaciones. Se recomienda desactivarlo.'
+            });
+        }
+        responderError(res, error, 'Error al eliminar el producto.');
+    }
+};

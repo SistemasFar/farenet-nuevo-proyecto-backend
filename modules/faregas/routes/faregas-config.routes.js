@@ -196,6 +196,7 @@ router.get('/productos', requireConfigProductosPerm, productosController.listar)
 router.post('/productos', requireConfigProductosPerm, productosController.crear);
 router.put('/productos/:id', requireConfigProductosPerm, productosController.editar);
 router.put('/productos/:id/estado', requireConfigProductosPerm, productosController.cambiarEstado);
+router.delete('/productos/:id', requireConfigProductosPerm, productosController.eliminar);
 
 router.get('/tarifas/sedes', requireConfigTarifasPerm, tarifasAdminController.listarSedes);
 router.get('/tarifas/servicios-disponibles', requireConfigTarifasPerm, tarifasAdminController.listarServiciosDisponibles);
