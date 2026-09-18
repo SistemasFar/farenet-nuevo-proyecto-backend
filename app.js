@@ -4,17 +4,17 @@ validateEnvironment();
 
 const express = require('express');
 const cors = require('cors');
-// Validación Fail-Fast para AUTH_DISABLED
+// Validaci�n Fail-Fast para AUTH_DISABLED
 const isAuthDisabled = process.env.AUTH_DISABLED === 'true';
 const isProduction = process.env.NODE_ENV === 'production';
 
 if (isAuthDisabled) {
     if (isProduction) {
-        console.error("FATAL ERROR: No se puede arrancar el servidor en producción con AUTH_DISABLED=true.");
-        console.error("Esta configuración compromete la seguridad del sistema y está bloqueada.");
+        console.error("FATAL ERROR: No se puede arrancar el servidor en producci�n con AUTH_DISABLED=true.");
+        console.error("Esta configuraci�n compromete la seguridad del sistema y est� bloqueada.");
         process.exit(1);
     } else {
-        console.warn("⚠️ [ADVERTENCIA] AUTH_DISABLED está activo. La autenticación humana está apagada. SOLO PARA DESARROLLO.");
+        console.warn("?? [ADVERTENCIA] AUTH_DISABLED est� activo. La autenticaci�n humana est� apagada. SOLO PARA DESARROLLO.");
     }
 }
 
@@ -25,7 +25,7 @@ const pool = require('./config/database');
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsDoc = require('swagger-jsdoc');
 
-// Importación de Enrutadores Modulares
+// Importaci�n de Enrutadores Modulares
 const authRoutes = require('./routes/auth.routes');
 const usuarioRoutes = require('./routes/usuario.routes');
 const operacionRoutes = require('./routes/operacion.routes');
@@ -36,16 +36,13 @@ const campanaRoutes = require('./routes/campana.routes');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 🚀 CONFIGURACIÓN GLOBAL DE RED
+// ?? CONFIGURACI�N GLOBAL DE RED
 app.set('case sensitive routing', false);
 app.set('strict routing', false);
 
-// 🔒 CORS
+// ?? CORS
 const corsOptions = {
-    origin: [
-        'http://localhost:5173',
-        'http://localhost:5174'
-    ],
+    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://192.168.14.60:5173', 'http://192.168.14.60:5174'],
     credentials: true,
     optionsSuccessStatus: 200
 };
@@ -61,7 +58,7 @@ const swaggerOptions = getSwaggerOptions(PORT);
 swaggerOptions.definition.paths = {
             '/auth/login': {
                 post: {
-                    summary: 'Iniciar sesión del operador',
+                    summary: 'Iniciar sesi�n del operador',
                     description: 'Valida credenciales y retorna sedes asignadas.',
                     requestBody: {
                         required: true,
@@ -86,10 +83,10 @@ swaggerOptions.definition.paths = {
                     },
                     responses: {
                         200: {
-                            description: 'Autenticación exitosa'
+                            description: 'Autenticaci�n exitosa'
                         },
                         401: {
-                            description: 'Credenciales inválidas'
+                            description: 'Credenciales inv�lidas'
                         }
                     }
                 }
@@ -98,7 +95,7 @@ swaggerOptions.definition.paths = {
             '/auth/confirmar-planta': {
                 post: {
                     summary: 'Confirmar sede operativa',
-                    description: 'Registra la sesión y genera tokens.',
+                    description: 'Registra la sesi�n y genera tokens.',
                     requestBody: {
                         required: true,
                         content: {
@@ -133,8 +130,8 @@ swaggerOptions.definition.paths = {
 
             '/auth/logout': {
                 post: {
-                    summary: 'Cerrar sesión',
-                    description: 'Cierre lógico de sesión.',
+                    summary: 'Cerrar sesi�n',
+                    description: 'Cierre l�gico de sesi�n.',
                     requestBody: {
                         required: true,
                         content: {
@@ -162,8 +159,8 @@ swaggerOptions.definition.paths = {
 
             '/operacion/inspecciones-dia': {
                 get: {
-                    summary: 'HU010 - Panel principal de operación',
-                    description: 'Lista las inspecciones del día por sede. No muestra estados CON ni ANULADO.',
+                    summary: 'HU010 - Panel principal de operaci�n',
+                    description: 'Lista las inspecciones del d�a por sede. No muestra estados CON ni ANULADO.',
                     parameters: [
                         {
                             in: 'query',
@@ -410,16 +407,16 @@ app.get('/api/health', (req, res) => {
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: ['http://localhost:5173', 'http://localhost:5174'],
+        origin: ['http://localhost:5173', 'http://localhost:5174', 'http://192.168.14.60:5173', 'http://192.168.14.60:5174'],
         credentials: true,
         methods: ["GET", "POST"]
     }
 });
 
 io.on('connection', (socket) => {
-    console.log('🔗 Cliente conectado a Socket.io:', socket.id);
+    console.log('?? Cliente conectado a Socket.io:', socket.id);
     socket.on('disconnect', () => {
-        console.log('❌ Cliente desconectado:', socket.id);
+        console.log('? Cliente desconectado:', socket.id);
     });
 });
 
@@ -431,13 +428,13 @@ async function setupPostgresListen() {
         client.on('notification', (msg) => {
             if (msg.channel === 'inspeccion_cambio') {
                 const payload = JSON.parse(msg.payload);
-                console.log('🔔 Evento Postgres "inspeccion_cambio":', payload);
+                console.log('?? Evento Postgres "inspeccion_cambio":', payload);
                 io.emit('inspeccionActualizada', payload);
             }
         });
-        console.log('✅ Node.js escuchando eventos "inspeccion_cambio" en PostgreSQL');
+        console.log('? Node.js escuchando eventos "inspeccion_cambio" en PostgreSQL');
     } catch (error) {
-        console.error('❌ Error configurando LISTEN en Postgres:', error);
+        console.error('? Error configurando LISTEN en Postgres:', error);
     }
 }
 setupPostgresListen();
@@ -452,13 +449,13 @@ startCronJobs();
 // START SERVER
 // ==========================
 
-server.listen(PORT, '127.0.0.1', () => {
+server.listen(PORT, '0.0.0.0', () => {
     console.log('================================================================');
-    console.log(`🚀 SERVIDOR CORRIENDO EN: http://127.0.0.1:${PORT}`);
-    console.log(`🗄️ BD AMBIENTE: ${process.env.APP_DATABASE_ENVIRONMENT || 'NO DEFINIDO'}`);
-    console.log(`🧾 NUBEFACT AMBIENTE: ${process.env.NUBEFACT_ENVIRONMENT || 'NO DEFINIDO'}`);
-    console.log('🔒 CORS CONFIGURADO PARA VITE 5173 Y 5174');
-    console.log(`📑 SWAGGER: http://127.0.0.1:${PORT}/api-docs`);
-    console.log('📌 HU011 ACTIVA: GET /api/inspecciones/buscar');
+    console.log(`?? SERVIDOR CORRIENDO EN: http://127.0.0.1:${PORT}`);
+    console.log(`??? BD AMBIENTE: ${process.env.APP_DATABASE_ENVIRONMENT || 'NO DEFINIDO'}`);
+    console.log(`?? NUBEFACT AMBIENTE: ${process.env.NUBEFACT_ENVIRONMENT || 'NO DEFINIDO'}`);
+    console.log('?? CORS CONFIGURADO PARA VITE 5173 Y 5174');
+    console.log(`?? SWAGGER: http://127.0.0.1:${PORT}/api-docs`);
+    console.log('?? HU011 ACTIVA: GET /api/inspecciones/buscar');
     console.log('================================================================');
 });
