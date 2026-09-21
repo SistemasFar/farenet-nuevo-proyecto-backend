@@ -82,6 +82,7 @@ router.get('/borradores/:id/chip', controller.obtenerChipBorrador);
 router.put('/borradores/:id/chip', controller.seleccionarChipBorrador);
 
 router.put('/borradores/:id/vehiculo', controller.guardarVehiculoBorrador);
+router.put('/borradores/:id/vehiculo/confirmar', controller.confirmarVehiculoBorrador);
 
 router.post('/borradores/:id/titulares', controller.agregarTitular);
 router.patch('/borradores/:id/titulares/:titularId', controller.actualizarTitular);

@@ -4,6 +4,7 @@ const integrationsConfig = require('../../../config/integrations.config');
 const { paraPlantilla } = require('../mappers/faregas-vehiculo.mapper');
 const tarifasService = require('./faregas-tarifas.service');
 const chipCertificadoService = require('./faregas-chip-certificado.service');
+const vehiculosService = require('./faregas-vehiculos.service');
 const { normalizarNumeroChip, esNumeroChipCertificadoValido } = require('./faregas-chips.rules');
 const { extraerVariablesHtml } = require('./faregas-formatos-html');
 const { obtenerCatalogoVariables } = require('./faregas-formatos.variables');
@@ -960,7 +961,12 @@ exports.actualizarBorrador = async (id, data, userContext) => {
     }
 };
 
-exports.guardarVehiculoBorrador = async (id, data, userContext) => {
+exports.guardarVehiculoBorrador = async (
+    id,
+    data,
+    userContext,
+    { sincronizarMaestro = false } = {}
+) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
@@ -1058,8 +1064,18 @@ exports.guardarVehiculoBorrador = async (id, data, userContext) => {
             data.formulaRodante || null
         ]);
 
+        let maestro = null;
+        if (sincronizarMaestro) {
+            maestro = await vehiculosService.sincronizarMaestroDesdeSnapshot(
+                client,
+                id,
+                userContext.username,
+                'MANUAL'
+            );
+        }
+
         await client.query('COMMIT');
-        return true;
+        return { snapshotGuardado: true, maestro };
     } catch (e) {
         await client.query('ROLLBACK');
         throw e;

@@ -246,6 +246,36 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
             [result.rows[0].id, certificadoId]
         );
 
+        // Actualizar contacto del cliente si es el titular principal
+        if (data.usarTitularPrincipalFac === true) {
+            if (normalizada.email || normalizada.telefono) {
+                let setCols = [];
+                let params = [];
+                let idx = 1;
+                
+                if (normalizada.email) {
+                    setCols.push(`correo = COALESCE(${idx++}, correo)`);
+                    params.push(normalizada.email);
+                }
+                if (normalizada.telefono) {
+                    setCols.push(`telefono = COALESCE(${idx++}, telefono)`);
+                    params.push(normalizada.telefono);
+                }
+                
+                if (setCols.length > 0) {
+                    params.push(normalizada.tipoDocumentoCliente);
+                    params.push(normalizada.nroDocumento);
+                    
+                    await client.query(
+                        `UPDATE fg_cliente 
+                         SET ${setCols.join(', ')} 
+                         WHERE tipo_documento = ${idx++} AND nro_documento = ${idx++}`,
+                        params
+                    );
+                }
+            }
+        }
+
         await client.query('COMMIT');
         const cuotasGuardadas = await db.query(
             'SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota',

@@ -294,6 +294,34 @@ exports.guardarVehiculoBorrador = async (req, res) => {
     }
 };
 
+exports.confirmarVehiculoBorrador = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const resultado = await service.guardarVehiculoBorrador(id, req.body, req.user, {
+            sincronizarMaestro: true
+        });
+        await auditarCertificado(req, {
+            evento: 'VEHICULO_MAESTRO_SINCRONIZADO',
+            mensaje: 'Se confirmó el snapshot técnico y se sincronizó el maestro vehicular.',
+            paso: 'VEHICULO_Y_DATOS_TECNICOS'
+        });
+        res.status(200).json({
+            ok: true,
+            message: 'Snapshot y maestro vehicular guardados correctamente',
+            data: { maestro: resultado.maestro }
+        });
+    } catch (e) {
+        if (e.message === 'CERTIFICADO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El certificado indicado no existe' });
+        if (e.message === 'PLANTA_NO_AUTORIZADA') return res.status(403).json({ ok: false, message: 'No tiene acceso a la planta de este certificado.' });
+        if (e.message === 'CERTIFICADO_NO_EDITABLE') return res.status(409).json({ ok: false, message: 'El certificado ya no se encuentra en estado BORRADOR.' });
+        if (e.message === 'DATOS_PREVIOS_NO_EDITABLES') return res.status(409).json({ ok: false, message: 'Los datos técnicos ya no se pueden modificar porque la facturación del certificado ya fue iniciada.' });
+        if (e.message === 'VEHICULO_MAESTRO_INCOMPLETO') return res.status(400).json({ ok: false, message: 'Complete y valide los datos técnicos obligatorios antes de confirmar el maestro vehicular.' });
+
+        console.error(e);
+        res.status(500).json({ ok: false, message: 'Error interno del servidor' });
+    }
+};
+
 exports.agregarTitular = async (req, res) => {
     try {
         const { id } = req.params;

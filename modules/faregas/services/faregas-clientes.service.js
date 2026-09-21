@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const farenetReadAdapter = require('../integrations/farenet-read.adapter');
+const vehiculosService = require('./faregas-vehiculos.service');
 
 exports.buscarClientePropio = async (tipoDocumento, nroDocumento) => {
     const res = await db.query(`
@@ -15,7 +16,42 @@ exports.buscarClientePropio = async (tipoDocumento, nroDocumento) => {
         FROM fg_cliente
         WHERE tipo_documento = $1 AND nro_documento = $2
     `, [tipoDocumento, nroDocumento]);
-    return res.rows.length > 0 ? res.rows[0] : null;
+    
+    let cliente = res.rows.length > 0 ? res.rows[0] : null;
+    
+    if (cliente) {
+        if (!cliente.correo || !cliente.telefono) {
+            const fac = await db.query(`
+                SELECT email as correo, telefono 
+                FROM fg_facturacion 
+                WHERE nro_documento = $1 AND (email IS NOT NULL OR telefono IS NOT NULL)
+                ORDER BY id DESC LIMIT 1
+            `, [nroDocumento]);
+            if (fac.rows.length > 0) {
+                if (!cliente.correo) cliente.correo = fac.rows[0].correo || null;
+                if (!cliente.telefono) cliente.telefono = fac.rows[0].telefono || null;
+            }
+        }
+    } else {
+        const fac = await db.query(`
+            SELECT email as correo, telefono, nombre_razon_social as "nombreRazonSocial", direccion
+            FROM fg_facturacion 
+            WHERE nro_documento = $1
+            ORDER BY id DESC LIMIT 1
+        `, [nroDocumento]);
+        if (fac.rows.length > 0) {
+            cliente = {
+                tipoDocumento,
+                nroDocumento,
+                nombreRazonSocial: fac.rows[0].nombreRazonSocial,
+                direccion: fac.rows[0].direccion,
+                correo: fac.rows[0].correo || null,
+                telefono: fac.rows[0].telefono || null
+            };
+        }
+    }
+    
+    return cliente;
 };
 
 exports.crearCliente = async (data) => {
@@ -87,95 +123,55 @@ exports.actualizarCliente = async (id, data) => {
 // El servicio conserva sus contratos; el acceso a tablas legacy vive en una
 // frontera explicita y de solo lectura.
 exports.buscarPersonaFarenet = farenetReadAdapter.buscarPersona;
-const mapFaregasVehiculo = (row) => ({
-    placa: row.placa,
-    categoria: row.categoria,
-    clase: row.clase,
-    marca: row.marca,
-    modelo: row.modelo,
-    version: row.version,
-    anioFabricacion: row.anio_fabricacion,
-    anioModelo: row.anio_modelo,
-    vin: row.vin,
-    serieChasis: row.serie_chasis,
-    numeroMotor: row.numero_motor,
-    combustible: row.combustible,
-    color: row.color,
-    carroceria: row.carroceria,
-    numeroCilindros: row.numero_cilindros,
-    cilindrada: row.cilindrada,
-    numeroEjes: row.numero_ejes,
-    numeroRuedas: row.numero_ruedas,
-    numeroAsientos: row.numero_asientos,
-    numeroPasajeros: row.numero_pasajeros,
-    longitud: row.longitud,
-    ancho: row.ancho,
-    alto: row.alto,
-    pesoNeto: row.peso_neto,
-    pesoBruto: row.peso_bruto,
-    cargaUtil: row.carga_util,
-    potencia: row.potencia,
-    formulaRodante: row.formula_rodante
-});
+exports.buscarVehiculoPorPlaca = async (placa, opciones = {}) => {
+    const resolucion = await vehiculosService.resolverVehiculoPorPlaca(placa, opciones);
+    if (!resolucion.vehiculo) return null;
 
-exports.buscarVehiculoPorPlaca = async (placa) => {
-    const vehiculoFarenet = await farenetReadAdapter.buscarVehiculoPorPlaca(placa);
-    
-    const resFaregas = await db.query(`
-        SELECT v.* 
-        FROM fg_certificado_vehiculo v
-        JOIN fg_certificado c ON c.id = v.certificado_id
-        WHERE UPPER(v.placa) = UPPER($1)
-        ORDER BY (c.estado = 'EMITIDO') DESC, (v.version IS NOT NULL OR v.anio_modelo IS NOT NULL) DESC, c.fecha_creacion DESC
-        LIMIT 1
-    `, [placa]);
+    const result = {
+        ...resolucion.vehiculo,
+        origen: resolucion.origen,
+        completadoDesdeFarenet: resolucion.completadoDesdeFarenet
+    };
+    const certificadoId = resolucion.snapshotLegacyId;
 
-    if (resFaregas.rowCount > 0) {
-        const vehiculoFaregas = mapFaregasVehiculo(resFaregas.rows[0]);
-        const certificadoId = resFaregas.rows[0].certificado_id;
+    if (certificadoId) {
         
-        // Fetch adicionales
+        // Fetch adicionales - Titulares siempre del último certificado (sin importar tipo)
         const titulares = await db.query('SELECT * FROM fg_certificado_titular WHERE certificado_id = $1 ORDER BY orden ASC', [certificadoId]);
-        const glp = await db.query('SELECT * FROM fg_certificado_glp WHERE certificado_id = $1', [certificadoId]);
-        const gnv = await db.query('SELECT * FROM fg_certificado_gnv WHERE certificado_id = $1', [certificadoId]);
-        const conformidad = await db.query('SELECT * FROM fg_certificado_conformidad WHERE certificado_id = $1', [certificadoId]);
-
-        // Fetch subtablas GLP
-        const glpComponentes = await db.query('SELECT * FROM fg_certificado_glp_componente WHERE certificado_id = $1 ORDER BY orden ASC', [certificadoId]);
-        const glpVerificaciones = await db.query('SELECT * FROM fg_certificado_glp_verificacion WHERE certificado_id = $1', [certificadoId]);
-        
-        // Fetch subtablas GNV
-        const gnvComponentes = await db.query('SELECT * FROM fg_certificado_gnv_componente WHERE certificado_id = $1 ORDER BY orden ASC', [certificadoId]);
-        const gnvVerificaciones = await db.query('SELECT * FROM fg_certificado_gnv_verificacion WHERE certificado_id = $1', [certificadoId]);
-        
-        let result = vehiculoFaregas;
-        if (vehiculoFarenet) {
-            const merged = { ...vehiculoFarenet };
-            for (const [key, value] of Object.entries(vehiculoFaregas)) {
-                if (value !== null && value !== undefined && String(value).trim() !== '') {
-                    merged[key] = value;
-                }
-            }
-            result = merged;
-        }
-
         result.titularesFaregas = titulares.rows;
-        
-        result.glpFaregas = glp.rowCount > 0 ? {
-            ...glp.rows[0],
-            componentes: glpComponentes.rows,
-            verificaciones: glpVerificaciones.rows
-        } : null;
 
-        result.gnvFaregas = gnv.rowCount > 0 ? {
-            ...gnv.rows[0],
-            componentes: gnvComponentes.rows,
-            verificaciones: gnvVerificaciones.rows,
-                    } : null;
-        result.conformidadFaregas = conformidad.rowCount > 0 ? conformidad.rows[0] : null;
+        // Fetch de información específica de trámites (GLP, GNV, Conformidad)
+        const { tipoCertificado, excludeCertificadoId } = opciones;
+        const certificadoEspecificoId = tipoCertificado
+            ? await vehiculosService.buscarCertificadoCompatiblePorPlaca(placa, tipoCertificado, excludeCertificadoId)
+            : certificadoId;
 
-        return result;
+        if (certificadoEspecificoId) {
+            const glp = await db.query('SELECT * FROM fg_certificado_glp WHERE certificado_id = $1', [certificadoEspecificoId]);
+            const gnv = await db.query('SELECT * FROM fg_certificado_gnv WHERE certificado_id = $1', [certificadoEspecificoId]);
+            const conformidad = await db.query('SELECT * FROM fg_certificado_conformidad WHERE certificado_id = $1', [certificadoEspecificoId]);
+
+            // Fetch subtablas GLP
+            const glpComponentes = await db.query('SELECT * FROM fg_certificado_glp_componente WHERE certificado_id = $1 ORDER BY orden ASC', [certificadoEspecificoId]);
+            const glpVerificaciones = await db.query('SELECT * FROM fg_certificado_glp_verificacion WHERE certificado_id = $1', [certificadoEspecificoId]);
+            
+            // Fetch subtablas GNV
+            const gnvComponentes = await db.query('SELECT * FROM fg_certificado_gnv_componente WHERE certificado_id = $1 ORDER BY orden ASC', [certificadoEspecificoId]);
+            const gnvVerificaciones = await db.query('SELECT * FROM fg_certificado_gnv_verificacion WHERE certificado_id = $1', [certificadoEspecificoId]);
+            
+            result.glpFaregas = glp.rowCount > 0 ? {
+                ...glp.rows[0],
+                componentes: glpComponentes.rows,
+                verificaciones: glpVerificaciones.rows
+            } : null;
+
+            result.gnvFaregas = gnv.rowCount > 0 ? {
+                ...gnv.rows[0],
+                componentes: gnvComponentes.rows,
+                verificaciones: gnvVerificaciones.rows,
+            } : null;
+            result.conformidadFaregas = conformidad.rowCount > 0 ? conformidad.rows[0] : null;
+        }
     }
-
-    return vehiculoFarenet;
+    return result;
 };

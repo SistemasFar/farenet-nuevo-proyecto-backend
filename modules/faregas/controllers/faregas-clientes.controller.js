@@ -115,7 +115,22 @@ exports.consultarVehiculoPorPlaca = async (req, res) => {
             return res.status(400).json({ ok: false, message: 'Placa obligatoria.' });
         }
         
-        const vehiculo = await clientesService.buscarVehiculoPorPlaca(String(placa).trim());
+        const excludeCertificadoIdRaw = req.query.excludeCertificadoId;
+        const excludeCertificadoId = excludeCertificadoIdRaw === undefined
+            ? null
+            : Number(excludeCertificadoIdRaw);
+        if (excludeCertificadoIdRaw !== undefined
+            && (!Number.isSafeInteger(excludeCertificadoId) || excludeCertificadoId <= 0)) {
+            return res.status(400).json({ ok: false, message: 'excludeCertificadoId inválido.' });
+        }
+
+        const tipoCertificadoRaw = req.query.tipoCertificado;
+        const tipoCertificado = tipoCertificadoRaw ? String(tipoCertificadoRaw).trim() : null;
+
+        const vehiculo = await clientesService.buscarVehiculoPorPlaca(String(placa).trim(), {
+            excludeCertificadoId,
+            tipoCertificado
+        });
         if (!vehiculo) {
             return res.status(404).json({ ok: false, message: 'Vehículo no encontrado.' });
         }
