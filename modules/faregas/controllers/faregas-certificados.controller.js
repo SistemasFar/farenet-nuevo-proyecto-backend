@@ -315,6 +315,7 @@ exports.confirmarVehiculoBorrador = async (req, res) => {
         if (e.message === 'PLANTA_NO_AUTORIZADA') return res.status(403).json({ ok: false, message: 'No tiene acceso a la planta de este certificado.' });
         if (e.message === 'CERTIFICADO_NO_EDITABLE') return res.status(409).json({ ok: false, message: 'El certificado ya no se encuentra en estado BORRADOR.' });
         if (e.message === 'DATOS_PREVIOS_NO_EDITABLES') return res.status(409).json({ ok: false, message: 'Los datos técnicos ya no se pueden modificar porque la facturación del certificado ya fue iniciada.' });
+        if (e.message === 'ANIO_MODELO_MAYOR_QUE_FABRICACION') return res.status(400).json({ ok: false, message: 'El Año Modelo no puede ser mayor que el Año de Fabricación.' });
         if (e.message === 'VEHICULO_MAESTRO_INCOMPLETO') return res.status(400).json({ ok: false, message: 'Complete y valide los datos técnicos obligatorios antes de confirmar el maestro vehicular.' });
 
         console.error(e);

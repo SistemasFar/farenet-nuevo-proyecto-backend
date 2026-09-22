@@ -1038,6 +1038,14 @@ exports.guardarVehiculoBorrador = async (
         `, [id]);
         if (evidencia.rowCount > 0) throw new Error('DATOS_PREVIOS_NO_EDITABLES');
 
+        if (sincronizarMaestro) {
+            const anioFabricacion = String(data.anioFabricacion ?? '').trim();
+            const anioModelo = String(data.anioModelo ?? '').trim();
+            if (anioFabricacion && anioModelo && Number(anioModelo) > Number(anioFabricacion)) {
+                throw new Error('ANIO_MODELO_MAYOR_QUE_FABRICACION');
+            }
+        }
+
         const qUpd = `
             INSERT INTO fg_certificado_vehiculo (
                 certificado_id, placa, categoria, clase, marca, modelo, version, anio_fabricacion, 
