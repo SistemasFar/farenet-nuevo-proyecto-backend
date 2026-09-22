@@ -254,11 +254,11 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
                 let idx = 1;
                 
                 if (normalizada.email) {
-                    setCols.push(`correo = COALESCE(${idx++}, correo)`);
+                    setCols.push(`correo = COALESCE($${idx++}, correo)`);
                     params.push(normalizada.email);
                 }
                 if (normalizada.telefono) {
-                    setCols.push(`telefono = COALESCE(${idx++}, telefono)`);
+                    setCols.push(`telefono = COALESCE($${idx++}, telefono)`);
                     params.push(normalizada.telefono);
                 }
                 
@@ -269,7 +269,7 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
                     await client.query(
                         `UPDATE fg_cliente 
                          SET ${setCols.join(', ')} 
-                         WHERE tipo_documento = ${idx++} AND nro_documento = ${idx++}`,
+                         WHERE tipo_documento = $${idx++} AND nro_documento = $${idx++}`,
                         params
                     );
                 }
