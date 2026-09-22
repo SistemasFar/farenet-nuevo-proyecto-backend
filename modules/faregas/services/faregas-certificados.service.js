@@ -398,6 +398,12 @@ const PASOS_BORRADOR = Object.freeze([
     'FACTURACION',
     'VERIFICACION_EMISION'
 ]);
+const PASOS_ANULABLES = new Set([
+    'DATOS_INICIALES',
+    'PAGO',
+    'VEHICULO',
+    'PREVISUALIZACION'
+]);
 
 // Función helper para validar si el usuario puede acceder a la planta del certificado
 const validarAccesoCertificado = async (username, perfilId, plantaKey) => {
@@ -869,6 +875,48 @@ exports.actualizarPasoBorrador = async (id, pasoActual, userContext) => {
 
         await client.query('COMMIT');
         return { pasoActual: pasoPersistido };
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+exports.anularBorrador = async (id, userContext) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const result = await client.query(
+            'SELECT estado, planta_key, paso_actual, numero_certificado FROM fg_certificado WHERE id = $1 FOR UPDATE',
+            [id]
+        );
+        if (result.rowCount === 0) throw new Error('CERTIFICADO_NOT_FOUND');
+
+        const certificado = result.rows[0];
+        await validarAccesoCertificado(userContext.username, userContext.perfil_id, certificado.planta_key);
+        if (certificado.estado !== 'BORRADOR') throw new Error('CERTIFICADO_NO_EDITABLE');
+        if (!PASOS_ANULABLES.has(certificado.paso_actual || 'DATOS_INICIALES')) {
+            throw new Error('NO_ANULABLE_EN_ESTE_PASO');
+        }
+
+        const facturacion = await client.query(
+            'SELECT 1 FROM fg_facturacion WHERE certificado_id = $1 LIMIT 1',
+            [id]
+        );
+        if (facturacion.rowCount > 0) throw new Error('FACTURACION_YA_INICIADA');
+
+        await client.query(
+            "UPDATE fg_certificado SET estado = 'ANULADO', usuario_modificacion = $2, fecha_modificacion = CURRENT_TIMESTAMP WHERE id = $1",
+            [id, userContext.username]
+        );
+        await client.query('COMMIT');
+        return {
+            id: Number(id),
+            estado: 'ANULADO',
+            pasoActual: certificado.paso_actual,
+            numeroCertificado: certificado.numero_certificado || null
+        };
     } catch (error) {
         await client.query('ROLLBACK');
         throw error;

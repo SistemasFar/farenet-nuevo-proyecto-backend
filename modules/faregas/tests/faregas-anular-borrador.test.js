@@ -1,16 +1,25 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const db = require('../../../config/database');
+const auth = require('../services/faregas-auth.service');
 const service = require('../services/faregas-certificados.service');
 
 test('anularBorrador - pasos permitidos y prohibidos', async (t) => {
     // Override db.connect to mock the client
     const originalConnect = db.connect;
+    const originalValidarAcceso = auth.validarAccesoPlanta;
+    t.after(() => {
+        db.connect = originalConnect;
+        auth.validarAccesoPlanta = originalValidarAcceso;
+    });
     
     let mockEstado = 'BORRADOR';
     let mockPasoActual = 'DATOS_INICIALES';
     let mockNumero = null;
+    let facturacionExistente = false;
     let updateExecuted = false;
+
+    auth.validarAccesoPlanta = async () => true;
 
     db.connect = async () => {
         return {
@@ -20,7 +29,7 @@ test('anularBorrador - pasos permitidos y prohibidos', async (t) => {
                     return { rowCount: 1, rows: [{ estado: mockEstado, planta_key: 'TEST', paso_actual: mockPasoActual, numero_certificado: mockNumero }] };
                 }
                 if (text.includes('fg_facturacion')) {
-                    return { rowCount: 0 };
+                    return { rowCount: facturacionExistente ? 1 : 0 };
                 }
                 if (text.includes('UPDATE fg_certificado SET estado')) {
                     updateExecuted = true;
@@ -56,6 +65,16 @@ test('anularBorrador - pasos permitidos y prohibidos', async (t) => {
             await service.anularBorrador(1, { username: 'test', perfil_id: 1 });
         }, /NO_ANULABLE_EN_ESTE_PASO/, `Debe rechazar en ${paso}`);
     }
+
+    mockPasoActual = 'PAGO';
+    mockEstado = 'EMITIDO';
+    updateExecuted = false;
+    await assert.rejects(
+        service.anularBorrador(1, { username: 'test', perfil_id: 1 }),
+        /CERTIFICADO_NO_EDITABLE/
+    );
+    assert.equal(updateExecuted, false);
+    mockEstado = 'BORRADOR';
     
     // Test Previsualizacion con numero
     mockPasoActual = 'PREVISUALIZACION';
@@ -66,6 +85,11 @@ test('anularBorrador - pasos permitidos y prohibidos', async (t) => {
     }, 'Debe permitir anular en PREVISUALIZACION con numero (sin modificar correlativo)');
     assert.equal(updateExecuted, true);
 
-    // Restore
-    db.connect = originalConnect;
+    facturacionExistente = true;
+    updateExecuted = false;
+    await assert.rejects(
+        service.anularBorrador(1, { username: 'test', perfil_id: 1 }),
+        /FACTURACION_YA_INICIADA/
+    );
+    assert.equal(updateExecuted, false);
 });

@@ -499,6 +499,27 @@ exports.actualizarPasoBorrador = async (req, res) => {
     }
 };
 
+exports.anularBorrador = async (req, res) => {
+    try {
+        const data = await service.anularBorrador(req.params.id, req.user);
+        await auditarCertificado(req, {
+            evento: 'CERTIFICADO_ANULADO',
+            mensaje: 'El borrador fue anulado sin eliminar su información relacionada.',
+            paso: data.pasoActual,
+            datos: { numeroCertificado: data.numeroCertificado }
+        });
+        res.status(200).json({ ok: true, data });
+    } catch (e) {
+        if (e.message === 'CERTIFICADO_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El certificado indicado no existe.' });
+        if (e.message === 'PLANTA_NO_AUTORIZADA') return res.status(403).json({ ok: false, message: 'No tiene acceso a la planta de este certificado.' });
+        if (e.message === 'CERTIFICADO_NO_EDITABLE') return res.status(409).json({ ok: false, message: 'Solo se puede anular un certificado en estado BORRADOR.' });
+        if (e.message === 'NO_ANULABLE_EN_ESTE_PASO') return res.status(409).json({ ok: false, message: 'El certificado ya no puede anularse desde el paso actual.' });
+        if (e.message === 'FACTURACION_YA_INICIADA') return res.status(409).json({ ok: false, message: 'No se puede anular porque la facturación ya fue iniciada.' });
+        console.error('Error en anularBorrador:', e);
+        res.status(500).json({ ok: false, message: 'Error interno del servidor.' });
+    }
+};
+
 exports.guardarGNVVerificaciones = async (req, res) => {
     try {
         const userContext = { username: req.user.username, perfil_id: req.user.perfil_id };
