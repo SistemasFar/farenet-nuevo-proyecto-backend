@@ -1,4 +1,5 @@
 const clientesService = require('../services/faregas-clientes.service');
+const vehicleLookupDebug = require('../utils/vehiculo-lookup-debug');
 
 exports.obtenerClientePorDocumento = async (req, res) => {
     try {
@@ -109,6 +110,7 @@ exports.actualizarCliente = async (req, res) => {
 };
 
 exports.consultarVehiculoPorPlaca = async (req, res) => {
+    vehicleLookupDebug.log('CONTROLLER_START');
     try {
         const { placa } = req.params;
         if (!placa) {
@@ -131,13 +133,14 @@ exports.consultarVehiculoPorPlaca = async (req, res) => {
             excludeCertificadoId,
             tipoCertificado
         });
+        vehicleLookupDebug.log('SERVICE_RESULT', { found: Boolean(vehiculo) });
         if (!vehiculo) {
             return res.status(404).json({ ok: false, message: 'Vehículo no encontrado.' });
         }
         
         res.status(200).json({ ok: true, data: vehiculo });
     } catch (e) {
-        console.error('Error en consultarVehiculoPorPlaca:', e);
+        vehicleLookupDebug.logError('CONTROLLER_ERROR', e, 500);
         res.status(500).json({ ok: false, message: 'Error interno del servidor.' });
     }
 };

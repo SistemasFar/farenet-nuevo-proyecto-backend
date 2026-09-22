@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const farenetReadAdapter = require('../integrations/farenet-read.adapter');
+const vehicleLookupDebug = require('../utils/vehiculo-lookup-debug');
 
 const CAMPOS_VEHICULO = Object.freeze([
     'placa', 'categoria', 'clase', 'marca', 'modelo', 'version',
@@ -183,17 +184,34 @@ const combinarVehiculos = (vehiculoFaregas, vehiculoFarenet) => {
 };
 
 const resolverVehiculoPorPlaca = async (placa, { excludeCertificadoId = null } = {}) => {
+    vehicleLookupDebug.log('FG_VEHICULO_START');
+    vehicleLookupDebug.log('SNAPSHOT_START');
     const [maestro, snapshotLegacy] = await Promise.all([
-        buscarMaestroPorPlaca(placa),
-        buscarSnapshotLegacyPorPlaca(placa, excludeCertificadoId)
+        buscarMaestroPorPlaca(placa).then((value) => {
+            vehicleLookupDebug.log('FG_VEHICULO_RESULT', { found: Boolean(value) });
+            return value;
+        }, (error) => {
+            vehicleLookupDebug.logError('FG_VEHICULO_ERROR', error);
+            throw error;
+        }),
+        buscarSnapshotLegacyPorPlaca(placa, excludeCertificadoId).then((value) => {
+            vehicleLookupDebug.log('SNAPSHOT_RESULT', { found: Boolean(value) });
+            return value;
+        }, (error) => {
+            vehicleLookupDebug.logError('SNAPSHOT_ERROR', error);
+            throw error;
+        })
     ]);
 
     let vehiculoFarenet = null;
     let errorFarenet = null;
     try {
+        vehicleLookupDebug.log('FARENET_START');
         vehiculoFarenet = await farenetReadAdapter.buscarVehiculoPorPlaca(placa);
+        vehicleLookupDebug.log('FARENET_RESULT', { found: Boolean(vehiculoFarenet) });
     } catch (error) {
         errorFarenet = error;
+        vehicleLookupDebug.logError('FARENET_ERROR', error);
     }
 
     const filaFaregas = maestro || snapshotLegacy;
