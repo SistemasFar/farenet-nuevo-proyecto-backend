@@ -1,7 +1,10 @@
 const db = require('../../../config/database');
 const authService = require('./faregas-auth.service');
 
-const ESTADOS = new Set(['BORRADOR', 'PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'RECHAZADO', 'ERROR', 'ANULADO']);
+const ESTADOS = new Set([
+    'BORRADOR', 'PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'RECHAZADO', 'ERROR', 'ANULADO',
+    'PENDIENTE_ANULACION', 'ANULACION_RECHAZADA'
+]);
 const FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 const enteroAcotado = (value, fallback, min, max) => {
@@ -42,7 +45,15 @@ const construirFiltros = (query, plantasPermitidas) => {
     if (empresaKey) agregar('p.empresa_key = ?', empresaKey);
     if (estado) {
         if (!ESTADOS.has(estado)) throw Object.assign(new Error('ESTADO_INVALIDO'), { statusCode: 400 });
-        agregar('f.estado = ?', estado);
+        if (estado === 'PENDIENTE_ANULACION') {
+            condiciones.push("anulacion.estado IN ('BORRADOR', 'PENDIENTE')");
+        } else if (estado === 'ANULACION_RECHAZADA') {
+            condiciones.push("anulacion.estado IN ('RECHAZADO', 'ERROR')");
+        } else if (estado === 'ANULADO') {
+            condiciones.push("(f.estado = 'ANULADO' OR anulacion.estado = 'ACEPTADO')");
+        } else {
+            agregar('f.estado = ?', estado);
+        }
     }
     if (fechaDesde) {
         if (!FECHA_ISO.test(fechaDesde)) throw Object.assign(new Error('FECHA_INVALIDA'), { statusCode: 400 });
@@ -75,6 +86,14 @@ const mapDocumento = (row) => ({
     enlacePdf: row.enlace_pdf,
     enlaceXml: row.enlace_xml,
     enlaceCdr: row.enlace_cdr,
+    entornoFacturador: row.entorno_facturador,
+    anulacionId: row.anulacion_id == null ? null : Number(row.anulacion_id),
+    estadoAnulacion: row.estado_anulacion,
+    motivoAnulacion: row.motivo_anulacion,
+    descripcionAnulacion: row.descripcion_anulacion,
+    aceptadaAnulacionSunat: row.aceptada_anulacion_sunat,
+    ticketAnulacionSunat: row.ticket_anulacion_sunat,
+    fechaSolicitudAnulacion: row.fecha_solicitud_anulacion,
     intentos: Number(row.intentos || 0),
     fechaUltimoIntento: row.fecha_ultimo_intento,
     fechaCreacion: row.fecha_creacion
@@ -97,6 +116,14 @@ exports.listar = async (query, userContext, dependencies = {}) => {
         JOIN fg_planta p ON p.key = f.planta_key
         JOIN fg_empresa e ON e.key = p.empresa_key
         LEFT JOIN fg_certificado_vehiculo v ON v.certificado_id = c.id
+        LEFT JOIN LATERAL (
+            SELECT a.id, a.estado, a.motivo, a.sunat_description,
+                   a.aceptada_sunat, a.ticket_sunat, a.fecha_creacion
+            FROM fg_documento_anulacion a
+            WHERE a.facturacion_id = f.id
+            ORDER BY a.id DESC
+            LIMIT 1
+        ) anulacion ON TRUE
         WHERE ${filtros.where}`;
 
     const [listado, totalResult, catalogos] = await Promise.all([
@@ -106,6 +133,13 @@ exports.listar = async (query, userContext, dependencies = {}) => {
                    f.nro_comprobante, f.nro_documento, f.nombre_razon_social,
                    v.placa, f.importe_total, f.estado, f.aceptada_sunat,
                    f.sunat_description, f.enlace_pdf, f.enlace_xml, f.enlace_cdr,
+                   f.entorno_facturador,
+                   anulacion.id AS anulacion_id, anulacion.estado AS estado_anulacion,
+                   anulacion.motivo AS motivo_anulacion,
+                   anulacion.sunat_description AS descripcion_anulacion,
+                   anulacion.aceptada_sunat AS aceptada_anulacion_sunat,
+                   anulacion.ticket_sunat AS ticket_anulacion_sunat,
+                   anulacion.fecha_creacion AS fecha_solicitud_anulacion,
                    f.intentos, f.fecha_ultimo_intento, f.fecha_creacion
             ${from}
             ORDER BY f.fecha_creacion DESC, f.id DESC
@@ -147,12 +181,27 @@ exports.obtenerDetalle = async (facturacionId, userContext, dependencies = {}) =
                f.nro_comprobante, f.nro_documento, f.nombre_razon_social,
                v.placa, f.importe_total, f.estado, f.aceptada_sunat,
                f.sunat_description, f.enlace_pdf, f.enlace_xml, f.enlace_cdr,
+               f.entorno_facturador,
+               anulacion.id AS anulacion_id, anulacion.estado AS estado_anulacion,
+               anulacion.motivo AS motivo_anulacion,
+               anulacion.sunat_description AS descripcion_anulacion,
+               anulacion.aceptada_sunat AS aceptada_anulacion_sunat,
+               anulacion.ticket_sunat AS ticket_anulacion_sunat,
+               anulacion.fecha_creacion AS fecha_solicitud_anulacion,
                f.intentos, f.fecha_ultimo_intento, f.fecha_creacion
         FROM fg_facturacion f
         JOIN fg_certificado c ON c.id = f.certificado_id
         JOIN fg_planta p ON p.key = f.planta_key
         JOIN fg_empresa e ON e.key = p.empresa_key
         LEFT JOIN fg_certificado_vehiculo v ON v.certificado_id = c.id
+        LEFT JOIN LATERAL (
+            SELECT a.id, a.estado, a.motivo, a.sunat_description,
+                   a.aceptada_sunat, a.ticket_sunat, a.fecha_creacion
+            FROM fg_documento_anulacion a
+            WHERE a.facturacion_id = f.id
+            ORDER BY a.id DESC
+            LIMIT 1
+        ) anulacion ON TRUE
         WHERE f.id = $1 AND f.planta_key = ANY($2::varchar[])
     `, [facturacionId, plantasPermitidas]);
     if (documento.rowCount === 0) throw Object.assign(new Error('FACTURACION_NOT_FOUND'), { statusCode: 404 });

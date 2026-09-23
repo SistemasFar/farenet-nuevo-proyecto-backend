@@ -25,6 +25,12 @@ test('permite filtrar documentos pendientes de respuesta SUNAT', () => {
     assert.deepEqual(filtros.valores, [['201'], 'PENDIENTE_SUNAT']);
 });
 
+test('permite filtrar comprobantes con anulación pendiente sin confundir el estado del comprobante', () => {
+    const filtros = service._construirFiltros({ estado: 'pendiente_anulacion' }, ['201']);
+    assert.match(filtros.where, /anulacion\.estado IN \('BORRADOR', 'PENDIENTE'\)/);
+    assert.deepEqual(filtros.valores, [['201']]);
+});
+
 test('lista documentos sin exponer solicitudes ni respuestas del proveedor', async () => {
     const consultas = [];
     const fakeDb = {
@@ -48,5 +54,6 @@ test('lista documentos sin exponer solicitudes ni respuestas del proveedor', asy
     });
     assert.equal(resultado.documentos[0].nroComprobante, 'B001-1');
     assert.equal('respuesta' in resultado.documentos[0], false);
+    assert.match(consultas[0], /LEFT JOIN LATERAL/);
     assert.equal(consultas.length, 3);
 });

@@ -11,6 +11,7 @@ const {
     mapearAceptacionSunat,
     crearCodigoUnico
 } = require('../integrations/nubefact-faregas.adapter');
+const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
 
 const TIPOS = Object.freeze({
     CREDITO: { tabla: 'fg_credito', fk: 'credito_id', comprobante: 3, prefijo: 'FGNC' },
@@ -57,6 +58,34 @@ const validarAccesoFacturacion = async (executor, certificadoId, userContext, bl
     const acceso = await validarAccesoPlanta(userContext.username, userContext.perfil_id, row.planta_key);
     if (!acceso) throw errorNegocio('PLANTA_NO_AUTORIZADA', 403);
     return row;
+};
+
+const validarSinAnulacionActiva = async (executor, facturacionId) => {
+    const result = await executor.query(`
+        SELECT id, estado
+        FROM fg_documento_anulacion
+        WHERE facturacion_id = $1
+          AND estado IN ('BORRADOR', 'PENDIENTE', 'ACEPTADO')
+        ORDER BY id DESC
+        LIMIT 1
+    `, [facturacionId]);
+    if (result.rowCount > 0) {
+        throw errorNegocio('ANULACION_ACTIVA', 409, {
+            anulacionId: Number(result.rows[0].id),
+            estado: result.rows[0].estado
+        });
+    }
+};
+
+const validarPermisoNotaCredito = async (executor, userContext) => {
+    const permiso = await executor.query(`
+        SELECT 1
+        FROM fg_perfil_permiso
+        WHERE perfil_clave = $1
+          AND permiso_clave = 'FAREGAS_NOTA_CREDITO'
+        LIMIT 1
+    `, [userContext.perfil_id]);
+    if (permiso.rowCount === 0) throw errorNegocio('PERMISO_DENEGADO_NOTA_CREDITO', 403);
 };
 
 
@@ -216,15 +245,14 @@ const recuperarResultadoIncierto = async ({ resultado, consultar, payload, crede
 
 const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaId = null) => {
     const tipo = normalizarTipoNota(tipoEntrada);
-    if (tipo === 'CREDITO' && (!userContext.permisos || !userContext.permisos.includes('FAREGAS_NOTA_CREDITO'))) {
-        throw errorNegocio('PERMISO_DENEGADO_NOTA_CREDITO', 403);
-    }
     const meta = TIPOS[tipo];
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+        if (tipo === 'CREDITO') await validarPermisoNotaCredito(client, userContext);
         const facturacion = await validarAccesoFacturacion(client, certificadoId, userContext, true);
-        if (facturacion.estado !== 'ACEPTADO') throw errorNegocio('COMPROBANTE_NO_ACEPTADO', 409);
+        if (!esDocumentoBaseOperable(facturacion)) throw errorNegocio('COMPROBANTE_NO_ACEPTADO', 409);
+        await validarSinAnulacionActiva(client, facturacion.id);
         const configuracion = await nubefactConfigService.resolverParaPlanta(facturacion.planta_key, client);
         let nota;
 
@@ -476,8 +504,9 @@ exports.generarAnulacion = async (certificadoId, data, userContext, dependencies
     try {
         await client.query('BEGIN');
         const facturacion = await validarAccesoFacturacion(client, certificadoId, userContext, true);
+        await validarSinAnulacionActiva(client, facturacion.id);
         const objetivo = await obtenerObjetivoAnulacion(client, facturacion, data.tipoDocumento, data.documentoId);
-        if (objetivo.row.estado !== 'ACEPTADO') throw errorNegocio('DOCUMENTO_NO_ANULABLE', 409);
+        if (!esDocumentoBaseOperable(objetivo.row)) throw errorNegocio('DOCUMENTO_NO_ANULABLE', 409);
         const configuracion = await nubefactConfigService.resolverParaPlanta(facturacion.planta_key, client);
         const codigoUnico = crearCodigoUnico(objetivo.row.id, `FGA${objetivo.prefijo}`);
         const insert = await client.query(`
@@ -585,6 +614,7 @@ exports._private = { validarPlazoNotaCredito,
     registrarOperacion,
     finalizarOperacion,
     recuperarResultadoIncierto,
+    validarSinAnulacionActiva,
     normalizarTipoNota,
     errorNegocio
 };

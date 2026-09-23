@@ -129,9 +129,19 @@ const requireConfigSeriesPerm = async (req, res, next) => {
         const permisoDb = await db.query(
             `SELECT 1 FROM fg_perfil_permiso
              WHERE perfil_clave = $1
-               AND permiso_clave IN ('MENU_CONFIGURACION', 'CONFIGURACION_SERIES')
-             GROUP BY perfil_clave
-             HAVING COUNT(DISTINCT permiso_clave) = 2`,
+               AND (
+                   permiso_clave = 'MENU_FACTURACION'
+                   OR (
+                       permiso_clave = 'MENU_CONFIGURACION'
+                       AND EXISTS (
+                           SELECT 1
+                           FROM fg_perfil_permiso series_permiso
+                           WHERE series_permiso.perfil_clave = $1
+                             AND series_permiso.permiso_clave = 'CONFIGURACION_SERIES'
+                       )
+                   )
+               )
+             LIMIT 1`,
             [req.user.perfil_id]
         );
         if (permisoDb.rowCount === 0) {

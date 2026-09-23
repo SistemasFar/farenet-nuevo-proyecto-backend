@@ -50,7 +50,7 @@ const facturacionAdminMiddleware = async (req, res, next) => {
         const permiso = await db.query(`
             SELECT 1 FROM fg_perfil_permiso
             WHERE perfil_clave = $1
-              AND permiso_clave IN ('MENU_CONFIGURACION', 'CONFIGURACION_SERIES')
+              AND permiso_clave IN ('MENU_FACTURACION', 'MENU_CONFIGURACION', 'CONFIGURACION_SERIES')
             LIMIT 1
         `, [req.user?.perfil_id]);
         if (permiso.rowCount === 0) return res.status(403).json({ message: 'No tiene permiso para consultar comprobantes.' });

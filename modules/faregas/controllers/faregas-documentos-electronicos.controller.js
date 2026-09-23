@@ -4,7 +4,7 @@ const auditoriaService = require('../services/faregas-auditoria.service');
 const mensajes = {
     FACTURACION_FALTANTE: 'Primero debe guardar los datos de facturación.',
     PLANTA_NO_AUTORIZADA: 'No tiene acceso a la sede del certificado.',
-    COMPROBANTE_NO_ACEPTADO: 'El comprobante original todavía no fue aceptado por SUNAT.',
+    COMPROBANTE_NO_ACEPTADO: 'El comprobante original no está listo: PRODUCCIÓN requiere aceptación SUNAT y DEMO requiere generación completa en NubeFact.',
     COMPROBANTE_SIN_NUMERO: 'El comprobante no tiene una serie y número reservados.',
     TIPO_NOTA_INVALIDO: 'Seleccione nota de crédito o nota de débito.',
     MOTIVO_NOTA_INVALIDO: 'El código de motivo de la nota no es válido.',
@@ -18,7 +18,8 @@ const mensajes = {
     NUBEFACT_NOTA_NO_ACEPTADA: 'Nubefact o SUNAT no aceptaron la nota electrónica.',
     MOTIVO_ANULACION_INVALIDO: 'Ingrese un motivo de anulación de hasta 100 caracteres.',
     TIPO_DOCUMENTO_ANULACION_INVALIDO: 'El tipo de documento a anular no es válido.',
-    DOCUMENTO_NO_ANULABLE: 'Solo se puede anular un documento aceptado.',
+    DOCUMENTO_NO_ANULABLE: 'El documento no está listo para anularse en el ambiente actual.',
+    ANULACION_ACTIVA: 'Ya existe una solicitud de anulación en revisión para este comprobante.',
     ANULACION_NO_ENCONTRADA: 'La anulación solicitada no existe.',
     NUBEFACT_DESHABILITADO: 'La integración con Nubefact está deshabilitada.',
     NUBEFACT_NO_CONFIGURADO: 'Faltan la ruta o el token de Nubefact.',

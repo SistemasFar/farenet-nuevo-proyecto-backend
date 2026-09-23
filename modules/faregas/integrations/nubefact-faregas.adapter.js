@@ -272,9 +272,13 @@ const construirPayloadNota = ({ nota, facturacion, tipoNota }) => {
               unidad_snapshot: 'ZZ',
               codigo_sku_snapshot: esCredito ? 'FAREGAS-NC' : 'FAREGAS-ND',
               descripcion_snapshot: descripcionItem,
-              importe_neto: dosDecimales(nota.base_imponible),
-              igv_aplicado: dosDecimales(nota.igv),
+              cantidad: 1,
+              valor_unitario: dosDecimales(nota.base_imponible),
+              precio_unitario: dosDecimales(nota.importe_total),
+              base_imponible: dosDecimales(nota.base_imponible),
+              igv: dosDecimales(nota.igv),
               importe_total: dosDecimales(nota.importe_total),
+              afectacion_igv_snapshot: '10',
           })]
       };
 };

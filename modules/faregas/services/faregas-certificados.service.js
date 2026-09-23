@@ -1,6 +1,7 @@
 const { faregasFormatosService: formatosService } = require('./faregas-formatos.service');
 const db = require('../../../config/database');
 const integrationsConfig = require('../../../config/integrations.config');
+const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
 const { paraPlantilla } = require('../mappers/faregas-vehiculo.mapper');
 const tarifasService = require('./faregas-tarifas.service');
 const chipCertificadoService = require('./faregas-chip-certificado.service');
@@ -508,8 +509,12 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             op.estado AS "estadoPago",
             f.estado AS "estadoFacturacion",
             f.aceptada_sunat AS "aceptadaSunat",
+            f.entorno_facturador AS "entornoFacturador",
             f.enlace_pdf AS "enlacePdf",
-            f.nro_comprobante AS "nroComprobante"
+            f.nro_comprobante AS "nroComprobante",
+            anulacion.id AS "anulacionId",
+            anulacion.estado AS "estadoAnulacion",
+            anulacion.sunat_description AS "descripcionAnulacion"
         FROM fg_certificado c
         LEFT JOIN fg_certificado_vehiculo v ON c.id = v.certificado_id
         LEFT JOIN fg_certificado_titular tit ON c.id = tit.certificado_id AND tit.orden = 1
@@ -518,6 +523,13 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
         LEFT JOIN fg_servicio s ON s.id = ta.servicio_id
         LEFT JOIN fg_orden_pago op ON op.certificado_id = c.id
         LEFT JOIN fg_facturacion f ON f.certificado_id = c.id
+        LEFT JOIN LATERAL (
+            SELECT a.id, a.estado, a.sunat_description
+            FROM fg_documento_anulacion a
+            WHERE a.facturacion_id = f.id
+            ORDER BY a.id DESC
+            LIMIT 1
+        ) anulacion ON TRUE
         WHERE ${filtroWhere}
         ORDER BY COALESCE(c.fecha_modificacion, c.fecha_creacion) DESC, c.id DESC
         LIMIT $${parametrosBase.length + 1} OFFSET $${parametrosBase.length + 2}
@@ -1860,13 +1872,28 @@ exports.validarEmision = async (id, userContext) => {
     // solo funciona fuera de producción y nunca altera el estado SUNAT.
     const facturacionSimulada = integrationsConfig.nubefact.simulationEnabled;
     const rFacturacion = await db.query(
-        'SELECT estado, nro_comprobante, aceptada_sunat FROM fg_facturacion WHERE certificado_id = $1',
+        `SELECT id, estado, nro_comprobante, aceptada_sunat, entorno_facturador,
+                proveedor, serie, numero, enlace_pdf, enlace_xml
+         FROM fg_facturacion
+         WHERE certificado_id = $1`,
         [id]
     );
     if (rFacturacion.rowCount === 0) {
         pushError('facturacion', 'general', 'FACTURACION_FALTANTE', 'Faltan los datos de facturacion');
-    } else if (!facturacionSimulada && !(rFacturacion.rows[0].estado === 'ACEPTADO' && rFacturacion.rows[0].aceptada_sunat === true)) {
-        pushError('facturacion', 'estado', 'FACTURACION_NO_EMITIDA', 'El comprobante debe estar aceptado por Nubefact/SUNAT antes de emitir el certificado');
+    } else if (!facturacionSimulada && !esDocumentoBaseOperable(rFacturacion.rows[0])) {
+        pushError('facturacion', 'estado', 'FACTURACION_NO_EMITIDA', 'El comprobante debe estar aceptado por SUNAT en PRODUCCIÓN o generado completamente por NubeFact en DEMO antes de emitir el certificado');
+    } else {
+        const anulacionActiva = await db.query(`
+            SELECT estado
+            FROM fg_documento_anulacion
+            WHERE facturacion_id = $1
+              AND estado IN ('BORRADOR', 'PENDIENTE', 'ACEPTADO')
+            ORDER BY id DESC
+            LIMIT 1
+        `, [rFacturacion.rows[0].id]);
+        if (anulacionActiva.rowCount > 0) {
+            pushError('facturacion', 'anulacion', 'ANULACION_ACTIVA', 'El comprobante tiene una solicitud de anulación activa; el certificado queda bloqueado hasta conocer el resultado');
+        }
     }
 
     // GNV Especifico
