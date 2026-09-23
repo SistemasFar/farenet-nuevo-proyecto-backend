@@ -474,11 +474,11 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
         const indiceDesde = parametrosBase.length;
         parametrosBase.push(fechaHasta);
         const indiceHasta = parametrosBase.length;
-        condiciones.push(`c.fecha_creacion >= $${indiceDesde}::date`);
-        condiciones.push(`c.fecha_creacion < ($${indiceHasta}::date + INTERVAL '1 day')`);
+        condiciones.push(`COALESCE(c.fecha_emision, c.fecha_creacion::date) >= $${indiceDesde}::date`);
+        condiciones.push(`COALESCE(c.fecha_emision, c.fecha_creacion::date) < ($${indiceHasta}::date + INTERVAL '1 day')`);
     } else {
-        condiciones.push('c.fecha_creacion >= CURRENT_DATE');
-        condiciones.push("c.fecha_creacion < (CURRENT_DATE + INTERVAL '1 day')");
+        condiciones.push('COALESCE(c.fecha_emision, c.fecha_creacion::date) >= CURRENT_DATE');
+        condiciones.push("COALESCE(c.fecha_emision, c.fecha_creacion::date) < (CURRENT_DATE + INTERVAL '1 day')");
     }
     const filtroWhere = condiciones.join('\n        AND ');
     const qTotal = `
@@ -499,6 +499,8 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             c.id, 
             c.fecha_creacion AS "fechaCreacion",
             c.fecha_modificacion AS "fechaActualizacion",
+            to_char(c.fecha_emision, 'DD/MM/YYYY') AS "fechaEmision",
+            c.numero_certificado AS "numeroCertificado",
             c.estado,
             c.paso_actual AS "pasoActual",
             v.placa,
@@ -512,6 +514,9 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             f.entorno_facturador AS "entornoFacturador",
             f.enlace_pdf AS "enlacePdf",
             f.nro_comprobante AS "nroComprobante",
+            (clock_timestamp() >= emision_factura.fecha_emision
+             AND clock_timestamp() < emision_factura.fecha_emision + INTERVAL '24 hours') AS "anulacionEnPlazo",
+            (EXTRACT(EPOCH FROM (emision_factura.fecha_emision + INTERVAL '24 hours')::timestamptz) * 1000) AS "anulacionHastaMs",
             anulacion.id AS "anulacionId",
             anulacion.estado AS "estadoAnulacion",
             anulacion.sunat_description AS "descripcionAnulacion"
@@ -524,6 +529,10 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
         LEFT JOIN fg_orden_pago op ON op.certificado_id = c.id
         LEFT JOIN fg_facturacion f ON f.certificado_id = c.id
         LEFT JOIN LATERAL (
+            SELECT MIN(fi.fecha_creacion) AS fecha_emision
+            FROM fg_facturacion_intento fi WHERE fi.facturacion_id = f.id
+        ) emision_factura ON TRUE
+        LEFT JOIN LATERAL (
             SELECT a.id, a.estado, a.sunat_description
             FROM fg_documento_anulacion a
             WHERE a.facturacion_id = f.id
@@ -531,7 +540,9 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             LIMIT 1
         ) anulacion ON TRUE
         WHERE ${filtroWhere}
-        ORDER BY COALESCE(c.fecha_modificacion, c.fecha_creacion) DESC, c.id DESC
+        ORDER BY COALESCE(c.fecha_emision, c.fecha_creacion::date) DESC,
+                 substring(c.numero_certificado FROM '([0-9]+)$')::bigint DESC NULLS LAST,
+                 c.fecha_creacion DESC, c.id DESC
         LIMIT $${parametrosBase.length + 1} OFFSET $${parametrosBase.length + 2}
     `;
 

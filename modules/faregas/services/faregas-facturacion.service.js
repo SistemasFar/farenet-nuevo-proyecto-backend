@@ -108,13 +108,26 @@ const respuestaPublica = (row, cuotas = []) => {
         enlaceCdr: row.enlace_cdr,
         intentos: Number(row.intentos || 0),
         fechaUltimoIntento: row.fecha_ultimo_intento,
-        fechaAceptacion: row.fecha_aceptacion
+        fechaAceptacion: row.fecha_aceptacion,
+        anulacionEnPlazo: row.anulacion_en_plazo === true,
+        anulacionHastaMs: row.anulacion_hasta_ms == null ? null : Number(row.anulacion_hasta_ms)
     };
 };
 
 exports.obtenerFacturacion = async (certificadoId, userContext) => {
     const certificado = await obtenerCertificado(db, certificadoId, userContext);
-    const result = await db.query('SELECT * FROM fg_facturacion WHERE certificado_id = $1', [certificadoId]);
+    const result = await db.query(`
+        SELECT f.*,
+               (clock_timestamp() >= emision.fecha_emision
+                AND clock_timestamp() < emision.fecha_emision + INTERVAL '24 hours') AS anulacion_en_plazo,
+               (EXTRACT(EPOCH FROM (emision.fecha_emision + INTERVAL '24 hours')::timestamptz) * 1000) AS anulacion_hasta_ms
+        FROM fg_facturacion f
+        LEFT JOIN LATERAL (
+            SELECT MIN(fi.fecha_creacion) AS fecha_emision
+            FROM fg_facturacion_intento fi WHERE fi.facturacion_id = f.id
+        ) emision ON TRUE
+        WHERE f.certificado_id = $1
+    `, [certificadoId]);
     const cuotas = result.rowCount > 0
         ? await db.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [result.rows[0].id])
         : { rows: [] };

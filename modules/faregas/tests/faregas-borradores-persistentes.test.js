@@ -23,7 +23,10 @@ test('lista por defecto todos los certificados del día para permitir acciones s
         assert.equal(consultas[0].params[0], '201');
         assert.doesNotMatch(consultas[0].sql, /c\.estado = 'BORRADOR'/);
         assert.match(consultas[0].sql, /CURRENT_DATE/);
-        assert.match(consultas[1].sql, /COALESCE\(c\.fecha_modificacion, c\.fecha_creacion\) DESC/);
+        assert.match(consultas[0].sql, /COALESCE\(c\.fecha_emision, c\.fecha_creacion::date\) >= CURRENT_DATE/);
+        assert.match(consultas[1].sql, /ORDER BY COALESCE\(c\.fecha_emision, c\.fecha_creacion::date\) DESC/);
+        assert.match(consultas[1].sql, /substring\(c\.numero_certificado FROM '\(\[0-9\]\+\)\$'\)::bigint DESC NULLS LAST/);
+        assert.match(consultas[1].sql, /to_char\(c\.fecha_emision, 'DD\/MM\/YYYY'\) AS "fechaEmision"/);
         assert.equal(consultas[1].params[1], '%ABC123%');
     } finally {
         db.query = queryOriginal;
@@ -45,8 +48,8 @@ test('aplica un rango histórico inclusivo y rechaza rangos de fechas inválidos
         await service.obtenerBorradores(1, 10, '', {
             username: 'operador', perfil_id: 'OPERADOR', planta_key: '201'
         }, { fechaDesde: '2026-07-01', fechaHasta: '2026-08-24' });
-        assert.match(consultas[0].sql, /c\.fecha_creacion >= \$2::date/);
-        assert.match(consultas[0].sql, /c\.fecha_creacion < \(\$3::date \+ INTERVAL '1 day'\)/);
+        assert.match(consultas[0].sql, /COALESCE\(c\.fecha_emision, c\.fecha_creacion::date\) >= \$2::date/);
+        assert.match(consultas[0].sql, /COALESCE\(c\.fecha_emision, c\.fecha_creacion::date\) < \(\$3::date \+ INTERVAL '1 day'\)/);
         assert.deepEqual(consultas[0].params, ['201', '2026-07-01', '2026-08-24']);
 
         await assert.rejects(

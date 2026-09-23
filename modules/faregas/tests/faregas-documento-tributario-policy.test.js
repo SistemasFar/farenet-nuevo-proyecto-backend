@@ -57,3 +57,31 @@ test('una anulación pendiente congela nuevas operaciones tributarias', async ()
             && error.detalles.estado === 'PENDIENTE'
     );
 });
+
+test('la anulación de factura usa el primer intento de emisión y vence a las 24 horas', async () => {
+    const consultas = [];
+    const executor = {
+        query: async (sql, params) => {
+            consultas.push({ sql, params });
+            return { rows: [{ vigente: false }] };
+        }
+    };
+    await assert.rejects(
+        documentosService._private.validarPlazoAnulacion(executor, {
+            tipo: 'FACTURACION', row: { id: 12 }
+        }),
+        (error) => error.code === 'PLAZO_ANULACION_VENCIDO' && error.statusCode === 409
+    );
+    assert.match(consultas[0].sql, /MIN\(fecha_creacion\)/);
+    assert.match(consultas[0].sql, /clock_timestamp\(\) < MIN\(fecha_creacion\) \+ INTERVAL '24 hours'/);
+    assert.deepEqual(consultas[0].params, [12]);
+});
+
+test('una nota emitida dentro del plazo sí se puede anular', async () => {
+    const executor = { query: async () => ({ rows: [{ vigente: true }] }) };
+    await assert.doesNotReject(
+        documentosService._private.validarPlazoAnulacion(executor, {
+            tipo: 'CREDITO', tabla: 'fg_credito', row: { id: 31 }
+        })
+    );
+});

@@ -232,7 +232,9 @@ const respuestaNota = (row, tipo) => ({
     enlacePdf: row.enlace_pdf,
     enlaceXml: row.enlace_xml,
     enlaceCdr: row.enlace_cdr,
-    intentos: Number(row.intentos || 0)
+    intentos: Number(row.intentos || 0),
+    anulacionEnPlazo: row.anulacion_en_plazo === true,
+    anulacionHastaMs: row.anulacion_hasta_ms == null ? null : Number(row.anulacion_hasta_ms)
 });
 
 const recuperarResultadoIncierto = async ({ resultado, consultar, payload, credentials }) => {
@@ -400,8 +402,14 @@ exports.reintentarNota = async (certificadoId, tipo, notaId, userContext, depend
 exports.listarDocumentos = async (certificadoId, userContext) => {
     const facturacion = await validarAccesoFacturacion(db, certificadoId, userContext);
     const [creditos, debitos, anulaciones] = await Promise.all([
-        db.query('SELECT * FROM fg_credito WHERE facturacion_id = $1 ORDER BY id DESC', [facturacion.id]),
-        db.query('SELECT * FROM fg_debito WHERE facturacion_id = $1 ORDER BY id DESC', [facturacion.id]),
+        db.query(`SELECT *, (clock_timestamp() >= fecha_creacion
+            AND clock_timestamp() < fecha_creacion + INTERVAL '24 hours') AS anulacion_en_plazo,
+            (EXTRACT(EPOCH FROM (fecha_creacion + INTERVAL '24 hours')::timestamptz) * 1000) AS anulacion_hasta_ms
+            FROM fg_credito WHERE facturacion_id = $1 ORDER BY id DESC`, [facturacion.id]),
+        db.query(`SELECT *, (clock_timestamp() >= fecha_creacion
+            AND clock_timestamp() < fecha_creacion + INTERVAL '24 hours') AS anulacion_en_plazo,
+            (EXTRACT(EPOCH FROM (fecha_creacion + INTERVAL '24 hours')::timestamptz) * 1000) AS anulacion_hasta_ms
+            FROM fg_debito WHERE facturacion_id = $1 ORDER BY id DESC`, [facturacion.id]),
         db.query(`SELECT * FROM fg_documento_anulacion
             WHERE facturacion_id = $1
                OR credito_id IN (SELECT id FROM fg_credito WHERE facturacion_id = $1)
@@ -496,6 +504,24 @@ const obtenerObjetivoAnulacion = async (client, facturacion, tipoDocumento, docu
     return { tipo: notaTipo, tabla: meta.tabla, fk: meta.fk, row: result.rows[0], tipoComprobante: meta.comprobante, prefijo: notaTipo === 'CREDITO' ? 'C' : 'D' };
 };
 
+// La primera solicitud de emisión fija el inicio del plazo. Un reintento no lo renueva.
+const validarPlazoAnulacion = async (client, objetivo) => {
+    const result = objetivo.tipo === 'FACTURACION'
+        ? await client.query(`
+            SELECT MIN(fecha_creacion) AS fecha_emision,
+                   clock_timestamp() >= MIN(fecha_creacion)
+                   AND clock_timestamp() < MIN(fecha_creacion) + INTERVAL '24 hours' AS vigente
+            FROM fg_facturacion_intento WHERE facturacion_id = $1
+        `, [objetivo.row.id])
+        : await client.query(`
+            SELECT fecha_creacion AS fecha_emision,
+                   clock_timestamp() >= fecha_creacion
+                   AND clock_timestamp() < fecha_creacion + INTERVAL '24 hours' AS vigente
+            FROM ${objetivo.tabla} WHERE id = $1
+        `, [objetivo.row.id]);
+    if (!result.rows[0]?.vigente) throw errorNegocio('PLAZO_ANULACION_VENCIDO', 409);
+};
+
 exports.generarAnulacion = async (certificadoId, data, userContext, dependencies = {}) => {
     const motivo = String(data.motivo || '').trim();
     if (!motivo || motivo.length > 100) throw errorNegocio('MOTIVO_ANULACION_INVALIDO');
@@ -507,6 +533,7 @@ exports.generarAnulacion = async (certificadoId, data, userContext, dependencies
         await validarSinAnulacionActiva(client, facturacion.id);
         const objetivo = await obtenerObjetivoAnulacion(client, facturacion, data.tipoDocumento, data.documentoId);
         if (!esDocumentoBaseOperable(objetivo.row)) throw errorNegocio('DOCUMENTO_NO_ANULABLE', 409);
+        await validarPlazoAnulacion(client, objetivo);
         const configuracion = await nubefactConfigService.resolverParaPlanta(facturacion.planta_key, client);
         const codigoUnico = crearCodigoUnico(objetivo.row.id, `FGA${objetivo.prefijo}`);
         const insert = await client.query(`
@@ -615,6 +642,7 @@ exports._private = { validarPlazoNotaCredito,
     finalizarOperacion,
     recuperarResultadoIncierto,
     validarSinAnulacionActiva,
+    validarPlazoAnulacion,
     normalizarTipoNota,
     errorNegocio
 };

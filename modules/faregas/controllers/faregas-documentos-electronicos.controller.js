@@ -19,6 +19,7 @@ const mensajes = {
     MOTIVO_ANULACION_INVALIDO: 'Ingrese un motivo de anulación de hasta 100 caracteres.',
     TIPO_DOCUMENTO_ANULACION_INVALIDO: 'El tipo de documento a anular no es válido.',
     DOCUMENTO_NO_ANULABLE: 'El documento no está listo para anularse en el ambiente actual.',
+    PLAZO_ANULACION_VENCIDO: 'La anulación directa solo está disponible durante las 24 horas posteriores a la emisión. Para anular después, use una nota de crédito.',
     ANULACION_ACTIVA: 'Ya existe una solicitud de anulación en revisión para este comprobante.',
     ANULACION_NO_ENCONTRADA: 'La anulación solicitada no existe.',
     NUBEFACT_DESHABILITADO: 'La integración con Nubefact está deshabilitada.',
