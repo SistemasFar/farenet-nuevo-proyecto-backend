@@ -139,6 +139,128 @@ test('una previsualizacion repetida reutiliza el numero reservado', async () => 
     }
 });
 
+test('anular un certificado no libera el correlativo y el siguiente certificado recibe el siguiente numero', async () => {
+    const connectOriginal = db.connect;
+    const accesoOriginal = authService.validarAccesoPlanta;
+    const rango = { id: 76, nro_actual: 10, nro_maximo: 100 };
+    const certificados = new Map([
+        [50, {
+            id: 50,
+            estado: 'BORRADOR',
+            paso_actual: 'PREVISUALIZACION',
+            planta_key: '201',
+            tipo_clave: 'GNV_ANUAL',
+            tipo_codigo: '22',
+            ancho_correlativo: 7,
+            modalidad_correlativo: 'ANUAL',
+            numero_certificado: null,
+            formato_version_id: 1,
+            servicio_id: null
+        }],
+        [51, {
+            id: 51,
+            estado: 'BORRADOR',
+            paso_actual: 'DATOS_INICIALES',
+            planta_key: '201',
+            tipo_clave: 'GNV_ANUAL',
+            tipo_codigo: '22',
+            ancho_correlativo: 7,
+            modalidad_correlativo: 'ANUAL',
+            numero_certificado: null,
+            formato_version_id: 1,
+            servicio_id: null
+        }]
+    ]);
+    const numerosAsignados = [];
+    const consultasAnulacion = [];
+    let actualizacionesRango = 0;
+
+    const client = {
+        async query(sql, params = []) {
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rowCount: 0, rows: [] };
+            }
+            if (/SELECT c\.\*, t\.clave AS tipo_clave/i.test(sql)) {
+                const certificado = certificados.get(Number(params[0]));
+                return {
+                    rowCount: certificado ? 1 : 0,
+                    rows: certificado ? [{ ...certificado }] : []
+                };
+            }
+            if (/SELECT estado, planta_key, paso_actual, numero_certificado FROM fg_certificado/i.test(sql)) {
+                const certificado = certificados.get(Number(params[0]));
+                return {
+                    rowCount: certificado ? 1 : 0,
+                    rows: certificado ? [{
+                        estado: certificado.estado,
+                        planta_key: certificado.planta_key,
+                        paso_actual: certificado.paso_actual,
+                        numero_certificado: certificado.numero_certificado
+                    }] : []
+                };
+            }
+            if (/SELECT \* FROM fg_correlativo_certificado/i.test(sql)) {
+                return { rowCount: 1, rows: [{ ...rango }] };
+            }
+            if (/SELECT 1 FROM fg_facturacion/i.test(sql)) {
+                return { rowCount: 0, rows: [] };
+            }
+            if (/UPDATE fg_correlativo_certificado/i.test(sql)) {
+                assert.equal(Number(params[1]), rango.id);
+                rango.nro_actual = Number(params[0]);
+                actualizacionesRango += 1;
+                return { rowCount: 1, rows: [] };
+            }
+            if (/UPDATE fg_certificado\s+SET\s+numero_certificado/i.test(sql)) {
+                const certificado = certificados.get(Number(params[2]));
+                assert.ok(certificado);
+                certificado.numero_certificado = params[0];
+                numerosAsignados.push(params[0]);
+                return { rowCount: 1, rows: [] };
+            }
+            if (/UPDATE fg_certificado SET estado = 'ANULADO'/i.test(sql)) {
+                const certificado = certificados.get(Number(params[0]));
+                assert.ok(certificado);
+                consultasAnulacion.push(sql);
+                certificado.estado = 'ANULADO';
+                return { rowCount: 1, rows: [] };
+            }
+            throw new Error(`Consulta inesperada: ${sql}`);
+        },
+        release() {}
+    };
+
+    db.connect = async () => client;
+    authService.validarAccesoPlanta = async () => true;
+    const userContext = { username: 'OPERADOR', perfil_id: 'OPERADOR', planta_key: '201' };
+
+    try {
+        const numeroA = await service.reservarNumeroPrevisualizacion(50, userContext);
+        assert.equal(numeroA, 'DG-22-0000011');
+        assert.equal(rango.nro_actual, 11);
+        assert.equal(certificados.get(50).numero_certificado, numeroA);
+
+        const anulacion = await service.anularBorrador(50, userContext);
+        assert.equal(anulacion.estado, 'ANULADO');
+        assert.equal(anulacion.numeroCertificado, numeroA);
+        assert.equal(certificados.get(50).numero_certificado, numeroA);
+        assert.equal(rango.nro_actual, 11);
+        assert.equal(actualizacionesRango, 1);
+        assert.equal(consultasAnulacion.length, 1);
+        assert.doesNotMatch(consultasAnulacion[0], /numero_certificado\s*=\s*NULL/i);
+
+        const numeroB = await service.reservarNumeroPrevisualizacion(51, userContext);
+        assert.equal(numeroB, 'DG-22-0000012');
+        assert.equal(rango.nro_actual, 12);
+        assert.deepEqual(numerosAsignados, ['DG-22-0000011', 'DG-22-0000012']);
+        assert.equal(new Set(numerosAsignados).size, numerosAsignados.length);
+        assert.notEqual(numeroB, numeroA);
+    } finally {
+        db.connect = connectOriginal;
+        authService.validarAccesoPlanta = accesoOriginal;
+    }
+});
+
 test('emitir reutiliza el correlativo reservado sin avanzar nuevamente el rango', async () => {
     const connectOriginal = db.connect;
     const plantasOriginal = authService.getPlantasPorUsuario;

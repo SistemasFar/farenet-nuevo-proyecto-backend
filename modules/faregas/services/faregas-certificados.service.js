@@ -540,9 +540,17 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             LIMIT 1
         ) anulacion ON TRUE
         WHERE ${filtroWhere}
-        ORDER BY COALESCE(c.fecha_emision, c.fecha_creacion::date) DESC,
-                 substring(c.numero_certificado FROM '([0-9]+)$')::bigint DESC NULLS LAST,
-                 c.fecha_creacion DESC, c.id DESC
+        ORDER BY CASE
+            WHEN c.estado = 'EMITIDO' THEN COALESCE(
+                (SELECT MAX(a.fecha_evento)
+                 FROM fg_auditoria_acceso a
+                 WHERE a.evento = 'CERTIFICADO_EMITIDO'
+                   AND a.certificado_id = c.id),
+                c.fecha_emision::timestamp
+            )
+            ELSE COALESCE(c.fecha_modificacion, c.fecha_creacion)
+        END DESC,
+        c.id DESC
         LIMIT $${parametrosBase.length + 1} OFFSET $${parametrosBase.length + 2}
     `;
 

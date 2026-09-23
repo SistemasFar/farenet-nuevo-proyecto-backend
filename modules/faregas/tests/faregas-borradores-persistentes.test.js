@@ -24,8 +24,22 @@ test('lista por defecto todos los certificados del día para permitir acciones s
         assert.doesNotMatch(consultas[0].sql, /c\.estado = 'BORRADOR'/);
         assert.match(consultas[0].sql, /CURRENT_DATE/);
         assert.match(consultas[0].sql, /COALESCE\(c\.fecha_emision, c\.fecha_creacion::date\) >= CURRENT_DATE/);
-        assert.match(consultas[1].sql, /ORDER BY COALESCE\(c\.fecha_emision, c\.fecha_creacion::date\) DESC/);
-        assert.match(consultas[1].sql, /substring\(c\.numero_certificado FROM '\(\[0-9\]\+\)\$'\)::bigint DESC NULLS LAST/);
+        assert.match(consultas[1].sql, /WHEN c\.estado = 'EMITIDO' THEN COALESCE\(/);
+        assert.match(consultas[1].sql, /SELECT MAX\(a\.fecha_evento\)/);
+        assert.match(consultas[1].sql, /a\.evento = 'CERTIFICADO_EMITIDO'/);
+        assert.match(consultas[1].sql, /a\.certificado_id = c\.id/);
+        assert.match(consultas[1].sql, /c\.fecha_emision::timestamp/);
+        assert.match(consultas[1].sql, /ELSE COALESCE\(c\.fecha_modificacion, c\.fecha_creacion\)/);
+        assert.match(consultas[1].sql, /c\.id DESC/);
+        assert.doesNotMatch(consultas[1].sql, /substring\s*\(\s*c\.numero_certificado/i);
+
+        const indiceOrderByPrincipal = consultas[1].sql.lastIndexOf('ORDER BY CASE');
+        const indiceLimitPrincipal = consultas[1].sql.lastIndexOf('LIMIT $');
+        const indiceOffsetPrincipal = consultas[1].sql.indexOf('OFFSET $');
+        assert.ok(indiceOrderByPrincipal >= 0);
+        assert.ok(indiceOrderByPrincipal < indiceLimitPrincipal);
+        assert.ok(indiceOrderByPrincipal < indiceOffsetPrincipal);
+
         assert.match(consultas[1].sql, /to_char\(c\.fecha_emision, 'DD\/MM\/YYYY'\) AS "fechaEmision"/);
         assert.equal(consultas[1].params[1], '%ABC123%');
     } finally {
