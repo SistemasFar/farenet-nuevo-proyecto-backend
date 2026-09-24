@@ -1,4 +1,4 @@
-const { escapeHtml, formatDateLong, formatDateShort } = require('./template-utils');
+const { escapeHtml, formatDateLong, formatDateShort, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
 
 function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
     const cert = data.cabecera || {};
@@ -8,7 +8,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
     const verifs = data.verificaciones || [];
     const titulares = data.titulares || [];
 
-    const numCertificado = cert.numero_certificado || 'PENDIENTE';
+    const numCertificado = cert.numero_certificado || NUMERO_CERTIFICADO_PENDIENTE;
 
     const fechaImp = formatDateLong(cert.fecha_emision);
     const vigenciaHastaFmt = formatDateShort(glp.vigencia_hasta);
@@ -349,7 +349,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
     </ol>
 
     <div style="text-align: justify; font-size: 9.5px; margin-bottom: 8px;">
-        Conste por el presente documento que el sistema de combustión a Gas Licuado de Petróleo-GLP del vehículo antes referido, no afecta negativamente la seguridad del mismo, el tránsito terrestre, el medio ambiente o incumplen con las condiciones técnicas establecidas en la normativa vigente en la materia, según consta en el expediente técnico <strong>N° ${escapeHtml(glp.expediente_tecnico || numCertificado)}</strong> habilitándose al mismo para cargar Gas Licuado de Petróleo-GLP, hasta el <strong>${escapeHtml(vigenciaHastaFmt)}</strong>.
+        Conste por el presente documento que el sistema de combustión a Gas Licuado de Petróleo-GLP del vehículo antes referido, no afecta negativamente la seguridad del mismo, el tránsito terrestre, el medio ambiente o incumplen con las condiciones técnicas establecidas en la normativa vigente en la materia, según consta en el expediente técnico <strong>N° ${escapeHtml(glp.expediente_tecnico || (options.modo === 'PREVIEW' ? 'PENDIENTE' : numCertificado))}</strong> habilitándose al mismo para cargar Gas Licuado de Petróleo-GLP, hasta el <strong>${escapeHtml(vigenciaHastaFmt)}</strong>.
     </div>
 
     <div class="obs-sec">

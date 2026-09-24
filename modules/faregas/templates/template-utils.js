@@ -1,3 +1,5 @@
+const NUMERO_CERTIFICADO_PENDIENTE = 'PENDIENTE DE EMISIÓN';
+
 function escapeHtml(str) {
     if (str === null || str === undefined) return '';
     return String(str)
@@ -41,6 +43,7 @@ function formatDateShort(dateInput) {
 }
 
 module.exports = {
+    NUMERO_CERTIFICADO_PENDIENTE,
     escapeHtml,
     formatDateLong,
     formatDateShort

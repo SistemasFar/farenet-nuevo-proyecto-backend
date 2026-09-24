@@ -1,4 +1,4 @@
-const { escapeHtml, formatDateLong, formatDateShort } = require('./template-utils');
+const { escapeHtml, formatDateLong, formatDateShort, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
 
 function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
     const cert = data.cabecera || {};
@@ -7,7 +7,7 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
     const verifs = data.verificaciones || [];
     const titulares = data.titulares || [];
 
-    const numCertificado = cert.numero_certificado || 'PENDIENTE';
+    const numCertificado = cert.numero_certificado || NUMERO_CERTIFICADO_PENDIENTE;
 
     const fechaImp = formatDateLong(cert.fecha_emision);
     const vigenciaHastaFmt = formatDateShort(gnv.vigencia_hasta).replace(/\//g, '-');

@@ -1,4 +1,4 @@
-const { escapeHtml, formatDateLong } = require('./template-utils');
+const { escapeHtml, formatDateLong, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
 
 function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
     const cert = data.cabecera || {};
@@ -6,7 +6,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
     const conf = data.conformidad || {};
     const titulares = data.titulares || [];
 
-    const numCertificado = cert.numero_certificado || 'PENDIENTE';
+    const numCertificado = cert.numero_certificado || NUMERO_CERTIFICADO_PENDIENTE;
     const fechaImp = formatDateLong(cert.fecha_emision);
 
     const propietarioNombre = titulares.length > 0

@@ -664,6 +664,14 @@ exports.emitir = async (req, res) => {
     try {
         const id = parseInt(req.params.id);
         const result = await service.emitirCertificado(id, req.user);
+        if (result?.numeroAsignado) {
+            await auditarCertificado(req, {
+                certificado_id: id,
+                evento: 'CERTIFICADO_NUMERO_ASIGNADO',
+                mensaje: 'Se asignó el número definitivo al certificado durante la emisión.',
+                datos: { numeroCertificado: result.numero_certificado }
+            });
+        }
         await auditarCertificado(req, {
             certificado_id: id,
             evento: 'CERTIFICADO_EMITIDO',

@@ -7,6 +7,7 @@ const tarifasService = require('./faregas-tarifas.service');
 const chipCertificadoService = require('./faregas-chip-certificado.service');
 const vehiculosService = require('./faregas-vehiculos.service');
 const { normalizarNumeroChip, esNumeroChipCertificadoValido } = require('./faregas-chips.rules');
+const { NUMERO_CERTIFICADO_PENDIENTE } = require('../templates/template-utils');
 const { extraerVariablesHtml } = require('./faregas-formatos-html');
 const { obtenerCatalogoVariables } = require('./faregas-formatos.variables');
 
@@ -2067,9 +2068,11 @@ exports.emitirCertificado = async (id, userContext) => {
         const valRes = await exports.validarEmision(id, userContext);
         if (!valRes.valido) throw new Error('NO_VALIDO_PARA_EMISION');
 
-        // La previsualizacion reserva el correlativo real una sola vez. Si por
-        // compatibilidad el borrador aun no tiene numero, se reserva aqui.
+        // El correlativo definitivo se asigna únicamente al emitir. Los
+        // certificados legacy que ya tienen número se conservan sin avanzar
+        // nuevamente el rango.
         let numero_certificado = cert.numero_certificado;
+        let numeroAsignado = false;
         if (!numero_certificado) {
             const rCorrelativo = await client.query(`
                 SELECT * FROM fg_correlativo_certificado
@@ -2093,6 +2096,7 @@ exports.emitirCertificado = async (id, userContext) => {
 
             const numeroFormateado = String(siguiente).padStart(ancho, '0');
             numero_certificado = `DG-${cert.tipo_codigo}-${numeroFormateado}`;
+            numeroAsignado = true;
 
             await client.query(`
                 UPDATE fg_correlativo_certificado
@@ -2115,99 +2119,13 @@ exports.emitirCertificado = async (id, userContext) => {
         await client.query('COMMIT');
         
         return {
-            numero_certificado
+            numero_certificado,
+            numeroAsignado
         };
 
     } catch (e) {
         await client.query('ROLLBACK');
         throw e;
-    } finally {
-        client.release();
-    }
-};
-
-/**
- * Reserva de forma atomica el numero que se mostrara en la previsualizacion.
- * La reserva queda persistida en fg_certificado y las siguientes consultas,
- * incluida la emision, reutilizan exactamente el mismo numero.
- */
-exports.reservarNumeroPrevisualizacion = async (id, userContext) => {
-    const client = await db.connect();
-    try {
-        await client.query('BEGIN');
-        const rCert = await client.query(`
-            SELECT c.*, t.clave AS tipo_clave, t.codigo AS tipo_codigo, t.ancho_correlativo,
-                   s.id AS servicio_id, s.tipo_flujo AS servicio_tipo_flujo,
-                   CASE WHEN t.clave = 'CONFORMIDAD' THEN 'UNICA' ELSE s.modalidad END AS modalidad_correlativo
-            FROM fg_certificado c
-            JOIN fg_tipo_certificado t ON t.clave = c.tipo_certificado_clave
-            LEFT JOIN fg_tarifa ta ON ta.codigo = c.tarifa_codigo AND ta.planta_key = c.planta_key
-            LEFT JOIN fg_servicio s ON s.id = ta.servicio_id
-            WHERE c.id = $1
-            FOR UPDATE OF c
-        `, [id]);
-
-        if (rCert.rowCount === 0) throw new Error('CERTIFICADO_NOT_FOUND');
-        const cert = rCert.rows[0];
-        await validarAccesoCertificado(userContext.username, userContext.perfil_id, cert.planta_key);
-
-        
-        if (!cert.formato_version_id && cert.servicio_id) {
-            const resFmt = await client.query('SELECT formato_id FROM fg_servicio WHERE id = $1', [cert.servicio_id]);
-            if (resFmt.rowCount > 0 && resFmt.rows[0].formato_id) {
-                const resV = await client.query('SELECT id FROM fg_certificado_formato_version WHERE formato_id = $1 AND estado = $2 ORDER BY version DESC LIMIT 1', [resFmt.rows[0].formato_id, 'VIGENTE']);
-                if (resV.rowCount > 0) {
-                    await client.query('UPDATE fg_certificado SET formato_version_id = $1 WHERE id = $2', [resV.rows[0].id, id]);
-                    cert.formato_version_id = resV.rows[0].id;
-                }
-            }
-        }
-        
-        if (cert.numero_certificado) {
-            await client.query('COMMIT');
-            return cert.numero_certificado;
-        }
-        if (cert.estado !== 'BORRADOR') throw new Error('ESTADO_INVALIDO');
-        if (!cert.modalidad_correlativo) throw new Error('FORMATO_NUMERO_NO_CONFIGURADO');
-
-        const rCorrelativo = await client.query(`
-            SELECT * FROM fg_correlativo_certificado
-            WHERE planta_key = $1 AND tipo_certificado_clave = $2
-              AND modalidad = $3 AND activo = true
-            FOR UPDATE
-        `, [cert.planta_key, cert.tipo_clave, cert.modalidad_correlativo]);
-        if (rCorrelativo.rowCount === 0) throw new Error('NO_EXISTE_RANGO_ACTIVO');
-
-        const rango = rCorrelativo.rows[0];
-        const siguiente = Number(rango.nro_actual) + 1;
-        if (!Number.isSafeInteger(siguiente) || siguiente > Number(rango.nro_maximo)) {
-            throw new Error('RANGO_AGOTADO');
-        }
-
-        if (!cert.tipo_codigo || !cert.ancho_correlativo) {
-            throw new Error('CONFIGURACION_NUMERACION_INCOMPLETA');
-        }
-        let ancho = Number(cert.ancho_correlativo);
-
-        const numeroCertificado = `DG-${cert.tipo_codigo}-${String(siguiente).padStart(ancho, '0')}`;
-        await client.query(`
-            UPDATE fg_correlativo_certificado
-            SET nro_actual = $1, fecha_modificacion = CURRENT_TIMESTAMP
-            WHERE id = $2
-        `, [siguiente, rango.id]);
-        await client.query(`
-            UPDATE fg_certificado
-            SET numero_certificado = $1,
-                usuario_modificacion = $2,
-                fecha_modificacion = CURRENT_TIMESTAMP
-            WHERE id = $3
-        `, [numeroCertificado, userContext.username, id]);
-
-        await client.query('COMMIT');
-        return numeroCertificado;
-    } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
     } finally {
         client.release();
     }
@@ -2220,16 +2138,17 @@ const generateGlpInicialHtml = require('../templates/glp-inicial.template');
 const generateConformidadHtml = require('../templates/conformidad.template');
 
 exports.obtenerPrevisualizacion = async (id, userContext) => {
-    await exports.reservarNumeroPrevisualizacion(id, userContext);
     const borrador = await exports.obtenerBorradorCompleto(id, userContext);
     const tipoClave = borrador.tipo ? borrador.tipo.clave : null;
     const vehiculoPlantilla = paraPlantilla(borrador.vehiculo || {});
-    // La previsualizacion conserva la marca de agua, pero muestra el numero
-    // real reservado para este borrador. Emitir reutiliza el mismo correlativo.
+    // La previsualización nunca consume un correlativo. Para borradores sin
+    // número se muestra únicamente un texto informativo no vinculante.
     const modoPlantilla = borrador.estado === 'EMITIDO' ? 'FINAL' : 'PREVIEW';
+    const numeroCertificadoVisible = borrador.numeroCertificado
+        || (borrador.estado === 'EMITIDO' ? '' : NUMERO_CERTIFICADO_PENDIENTE);
     const cabeceraComun = {
         id: borrador.id,
-        numero_certificado: borrador.numeroCertificado,
+        numero_certificado: numeroCertificadoVisible,
         placa_nueva: vehiculoPlantilla.placa,
         fecha_emision: borrador.fechaEmision,
         observaciones: borrador.observaciones,
@@ -2320,9 +2239,11 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
 
 const buildFormatoData = (borrador) => {
     const cli = borrador.cliente || {};
+    const numeroCertificadoVisible = borrador.numeroCertificado
+        || (borrador.estado === 'EMITIDO' ? '' : NUMERO_CERTIFICADO_PENDIENTE);
     const datos = combinarObjetos({
         certificado: {
-            numero: borrador.numeroCertificado || '',
+            numero: numeroCertificadoVisible,
             fecha_emision: borrador.fechaEmision || new Date().toISOString().slice(0, 10),
             modalidad: borrador.servicio ? borrador.servicio.modalidad : '',
             titulo: borrador.tipo ? borrador.tipo.nombre : ''
@@ -2350,6 +2271,9 @@ const buildFormatoData = (borrador) => {
             nombre: borrador.chipSeleccion?.chip?.productoNombre || ''
         }
     }, borrador.formatoDatosSnapshot || {});
+    // El número definitivo siempre proviene del certificado, nunca de un
+    // snapshot de formato que pudiera contener un valor provisional antiguo.
+    datos.certificado.numero = numeroCertificadoVisible;
 
     // HTML usa objetos anidados. DOCX heredado puede usar la clave completa;
     // mantenemos ambos accesos sin duplicar información persistida.

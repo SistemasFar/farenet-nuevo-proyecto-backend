@@ -1,4 +1,4 @@
-const { escapeHtml, formatDateLong, formatDateShort } = require('./template-utils');
+const { escapeHtml, formatDateLong, formatDateShort, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
 
 function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
     const cert = data.cabecera || {};
@@ -6,7 +6,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
     const gnv = data.gnv || {};
     const componentes = data.componentes || [];
 
-    const numCertificado = cert.numero_certificado || 'PENDIENTE';
+    const numCertificado = cert.numero_certificado || NUMERO_CERTIFICADO_PENDIENTE;
 
     // Formatear la fecha
     let dateStr = cert.fecha_emision || new Date();
