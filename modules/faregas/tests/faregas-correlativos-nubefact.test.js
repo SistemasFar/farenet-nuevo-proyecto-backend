@@ -42,6 +42,25 @@ test('reserva el siguiente correlativo tributario dentro del executor recibido',
     assert.deepEqual(calls[1].params, [1444, 8, 1443]);
 });
 
+test('filtra la serie por empresa cuando el emisor la aporta', async () => {
+    const calls = [];
+    const executor = {
+        async query(sql, params) {
+            calls.push({ sql, params });
+            return { rowCount: 1, rows: [serie] };
+        }
+    };
+    const resultado = await service.obtenerSeriePrevista({
+        plantaKey: '201',
+        empresaKey: 'CAMBRIDGE',
+        tipoComprobante: 'BOLETA',
+        environment: 'PRODUCCION'
+    }, executor);
+    assert.equal(resultado.empresaKey, 'CAMBRIDGE');
+    assert.match(calls[0].sql, /COALESCE\(s\.empresa_key, p\.empresa_key\) = \$4/);
+    assert.deepEqual(calls[0].params, ['201', 'BOLETA', 'PRODUCCION', 'CAMBRIDGE']);
+});
+
 test('no permite usar en producción una serie no confirmada', async () => {
     const executor = { query: async () => ({ rowCount: 1, rows: [{ ...serie, confirmada_produccion: false }] }) };
     await assert.rejects(

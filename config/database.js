@@ -29,6 +29,37 @@ const pool = new Pool({
     connectionTimeoutMillis: 10000
 });
 
+const reportPostgresError = (error) => {
+    const code = error?.code ? ` (${error.code})` : '';
+    console.error(`[PostgreSQL] Error de conexión${code}: ${error?.message || 'error desconocido'}`);
+};
+
+// Un reset de la conexión puede emitirse como evento del Client después de
+// liberar el pool. Sin listener, Node termina todo el proceso aunque la
+// promesa del cron ya haya sido capturada.
+pool.on('error', reportPostgresError);
+
+const connectOriginal = pool.connect.bind(pool);
+const clientesConManejo = new WeakSet();
+const registrarCliente = (client) => {
+    if (client && !clientesConManejo.has(client)) {
+        clientesConManejo.add(client);
+        client.on('error', reportPostgresError);
+    }
+    return client;
+};
+
+pool.connect = (...args) => {
+    const callback = args.at(-1);
+    if (typeof callback === 'function') {
+        args.pop();
+        return connectOriginal(...args, (error, client, release) => {
+            callback(error, registrarCliente(client), release);
+        });
+    }
+    return connectOriginal(...args).then(registrarCliente);
+};
+
 if (process.env.NODE_ENV !== 'test') {
     pool.query('SELECT NOW()', (err, res) => {
         if (err) {

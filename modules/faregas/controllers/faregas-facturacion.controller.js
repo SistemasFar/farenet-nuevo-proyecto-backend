@@ -54,6 +54,8 @@ const responderError = (res, error) => {
         SERIE_COMPROBANTE_NO_CONFIGURADA: 'La planta no tiene una serie de comprobantes configurada.',
         SERIE_COMPROBANTE_INVALIDA: 'La serie de comprobantes de la planta es invalida.',
         NUBEFACT_RECHAZADO: 'Nubefact o SUNAT rechazaron el comprobante.',
+        REINTENTO_CORRELATIVO_INVALIDO: 'La facturación rechazada no tiene serie y número para reintentar sin reservar otro correlativo.',
+        OPERACION_NOT_FOUND: 'La operación no existe.',
         NUBEFACT_ERROR: 'No se pudo confirmar la emision del comprobante con Nubefact.'
     };
     if (status >= 500) console.error('[FAREGAS FACTURACION]', error);
@@ -142,6 +144,13 @@ exports.guardarPorOperacion = async (req, res) => {
 exports.emitirPorOperacion = async (req, res) => {
     try {
         const facturacion = await facturacionService.emitirFacturacionOperacion(req.params.operacionId, req.user);
+        res.json({ success: true, facturacion });
+    } catch (error) { res.status(error.statusCode || 400).json({ success: false, message: error.message, detalles: error.detalles }); }
+};
+
+exports.reintentarPorOperacion = async (req, res) => {
+    try {
+        const facturacion = await facturacionService.reintentarFacturacionOperacion(req.params.operacionId, req.user);
         res.json({ success: true, facturacion });
     } catch (error) { res.status(error.statusCode || 400).json({ success: false, message: error.message, detalles: error.detalles }); }
 };

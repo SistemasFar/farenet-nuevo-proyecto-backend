@@ -1,12 +1,44 @@
 const service = require('../services/faregas-chips.service');
-const ventasService = require('../services/faregas-ventas.service');
+const ventaDirectaValidacionService = require('../services/faregas-venta-directa-validacion.service');
+const ventaDirectaFase2Service = require('../services/faregas-venta-directa-fase2.service');
 
 const respond = (res, error) => {
     const mensajes = {
         PRODUCTO_FISCAL_INVALIDO: 'El producto fiscal seleccionado está incompleto. Debe estar activo, habilitado para venta, usar unidad NIU o ZZ y afectación IGV 10.',
-        VENTA_REQUIERE_PRODUCTO_FISCAL: 'Para habilitar la venta debe seleccionar un producto fiscal válido para el chip.'
+        VENTA_REQUIERE_PRODUCTO_FISCAL: 'Para habilitar la venta debe seleccionar un producto fiscal válido para el chip.',
+        CHIPS_REQUERIDOS: 'Debe enviar al menos un chip.',
+        CHIP_NUMERO_INVALIDO: 'Uno o más códigos de chip no son válidos.',
+        CHIP_DUPLICADO: 'El request contiene códigos de chip duplicados.',
+        CHIP_NO_ENCONTRADO: 'Uno o más chips no existen.',
+        CHIP_OTRA_SEDE: 'Uno o más chips pertenecen a otra sede.',
+        CHIP_NO_DISPONIBLE: 'Uno o más chips ya no están disponibles.',
+        STOCK_CHIP_NO_PERMITIDO: 'El producto de chip no tiene stock permitido en esta sede.',
+        VENTA_CHIP_NO_HABILITADA: 'El producto de chip no está habilitado para venta en esta sede.',
+        PRODUCTO_FISCAL_CHIP_INVALIDO: 'El producto fiscal configurado para el chip no es válido.',
+        PRECIO_PRODUCTO_INVALIDO: 'El precio configurado del chip no es válido.',
+        DATOS_FACTURACION_INVALIDOS: 'Los datos fiscales no permiten emitir el comprobante.',
+        DATOS_CLIENTE_REQUERIDOS: 'Complete los datos del cliente.',
+        DATOS_CLIENTE_INVALIDOS: 'Los datos del cliente no son válidos.',
+        CONDICION_PAGO_INVALIDA: 'La condición de pago no es válida.',
+        CONDICION_PAGO_NO_DISPONIBLE: 'La venta directa por crédito aún no está disponible en esta fase.',
+        PAGO_INCOMPLETO: 'El pago no cubre el total de la venta.',
+        PAGO_EXCEDE_TOTAL: 'El pago no puede superar el total de la venta.',
+        TIPO_COMPROBANTE_INVALIDO: 'El tipo de comprobante no es válido.',
+        TIPO_PAGO_INVALIDO: 'El medio de pago no es válido.',
+        IMPORTE_PAGO_INVALIDO: 'Todos los pagos deben tener un importe mayor a cero.',
+        DATOS_TARJETA_INCOMPLETOS: 'Complete la tarjeta y el número de operación.',
+        TARJETA_NOT_FOUND: 'La tarjeta seleccionada no existe.',
+        DATOS_BANCO_INCOMPLETOS: 'Complete los datos bancarios del pago.',
+        CUENTA_BANCARIA_INVALIDA: 'La cuenta bancaria no pertenece a la entidad seleccionada.',
+        PLANTA_REQUERIDA: 'No tiene una sede seleccionada.',
+        OPERACION_NOT_FOUND: 'La operación de venta no existe.',
+        OPERACION_ID_INVALIDO: 'El identificador de la operación no es válido.',
+        FECHA_INVALIDA: 'Las fechas deben tener formato AAAA-MM-DD.',
+        RANGO_FECHAS_INVALIDO: 'La fecha Desde no puede ser posterior a la fecha Hasta.',
+        PLANTA_NO_AUTORIZADA: 'No tiene acceso a la sede de la operación.'
     };
-    const status = ['CHIP_DUPLICADO','CHIP_NO_DISPONIBLE','CHIP_ASIGNADO_CERTIFICADO','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO'].includes(error.message) ? 409
+    const status = ['CHIP_DUPLICADO','CHIP_NO_DISPONIBLE','CHIP_OTRA_SEDE','CHIP_ASIGNADO_CERTIFICADO','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO','PAGO_INCOMPLETO','PAGO_EXCEDE_TOTAL','VENTA_CHIP_NO_HABILITADA','STOCK_CHIP_NO_PERMITIDO','PRODUCTO_FISCAL_CHIP_INVALIDO','CONDICION_PAGO_NO_DISPONIBLE'].includes(error.message) ? 409
+        : ['OPERACION_NOT_FOUND'].includes(error.message) ? 404
         : ['PLANTA_NO_AUTORIZADA'].includes(error.message) ? 403 : 400;
     res.status(status).json({ success:false, codigo:error.message, message:mensajes[error.message] || error.message, detalles:error.detalles });
 };
@@ -38,18 +70,42 @@ exports.listarCatalogoChipsFiscales = async (req, res) => {
 
 exports.listarVentas = async (req, res) => {
     try {
-        const ventas = await ventasService.listarVentas(req.user.planta_key);
+        const ventas = await service.listarVentas(req.user.planta_key, req.user, req.query || {});
         res.json({ success: true, ventas });
     } catch (e) {
         respond(res, e);
     }
 };
 
+exports.obtenerDetalleVenta = async (req, res) => {
+    try {
+        const venta = await service.obtenerDetalleVenta(req.params.operacionId, req.user);
+        return res.json({ success: true, venta });
+    } catch (e) {
+        return respond(res, e);
+    }
+};
+
+exports.validarVentaDirecta = async (req, res) => {
+    try {
+        const result = await ventaDirectaValidacionService.validarVentaDirecta(
+            { chips: req.body?.chips },
+            req.user
+        );
+        return res.json({ success: true, ...result });
+    } catch (e) {
+        return respond(res, e);
+    }
+};
+
 exports.crearVentaDirecta = async (req, res) => {
     try {
-        const result = await ventasService.crearVenta({ plantaKey: req.user.planta_key, ...req.body }, req.user);
-        res.json({ success: true, ...result });
+        const result = await ventaDirectaFase2Service.crearVentaDirectaYEmitir(
+            { ...req.body, plantaKey: req.user.planta_key },
+            req.user
+        );
+        return res.status(Number(result.httpStatus) || 200).json(result);
     } catch (e) {
-        respond(res, e);
+        return respond(res, e);
     }
 };

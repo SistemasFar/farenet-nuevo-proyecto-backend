@@ -44,7 +44,7 @@ const validarSerieTributaria = (serie, tipoComprobante) => {
 const mapSerie = (row) => ({
     id: Number(row.id),
     plantaKey: row.planta_key,
-    empresaKey: row.empresa_key,
+    empresaKey: row.empresa_key_resolved || row.empresa_key,
     tipoComprobante: row.tipo_comprobante,
     serie: String(row.serie || '').trim().toUpperCase(),
     ultimoNumero: Number(row.ultimo_numero),
@@ -59,13 +59,16 @@ const mapSerie = (row) => ({
     fechaCorte: row.fecha_corte || null
 });
 
-const consultarSerie = async ({ plantaKey, tipoComprobante, environment, bloquear = false }, executor = db) => {
+const consultarSerie = async ({ plantaKey, tipoComprobante, environment, empresaKey = null, bloquear = false }, executor = db) => {
     const tipo = validarTipo(tipoComprobante);
     const entorno = normalizarEntorno(environment);
+    const valores = [plantaKey, tipo, entorno];
+    const filtroEmpresa = empresaKey ? ' AND COALESCE(s.empresa_key, p.empresa_key) = $4' : '';
+    if (empresaKey) valores.push(empresaKey);
     let result;
     try {
         result = await executor.query(`
-            SELECT s.*, p.empresa_key
+            SELECT s.*, COALESCE(s.empresa_key, p.empresa_key) AS empresa_key_resolved
             FROM fg_serie_comprobante s
             JOIN fg_planta p ON p.key = s.planta_key
             WHERE s.planta_key = $1
@@ -74,9 +77,9 @@ const consultarSerie = async ({ plantaKey, tipoComprobante, environment, bloquea
               AND s.entorno_emision = $3
               AND s.activo = TRUE
               AND s.es_predeterminada = TRUE
-              AND p.activo = TRUE
+              AND p.activo = TRUE${filtroEmpresa}
             LIMIT 1${bloquear ? ' FOR UPDATE OF s' : ''}
-        `, [plantaKey, tipo, entorno]);
+        `, valores);
     } catch (error) {
         if (error.code === '42703') throw errorCorrelativo('MIGRACION_NUBEFACT_PENDIENTE');
         throw error;
@@ -103,16 +106,16 @@ const validarSerieOperativa = (serie, environment) => {
     }
 };
 
-exports.obtenerSeriePrevista = async ({ plantaKey, tipoComprobante, environment }, executor = db) => {
+exports.obtenerSeriePrevista = async ({ plantaKey, tipoComprobante, environment, empresaKey = null }, executor = db) => {
     const entorno = normalizarEntorno(environment);
-    const serie = await consultarSerie({ plantaKey, tipoComprobante, environment: entorno }, executor);
+    const serie = await consultarSerie({ plantaKey, tipoComprobante, environment: entorno, empresaKey }, executor);
     validarSerieOperativa(serie, entorno);
     return serie;
 };
 
-exports.reservarSiguiente = async ({ plantaKey, tipoComprobante, environment }, executor = db) => {
+exports.reservarSiguiente = async ({ plantaKey, tipoComprobante, environment, empresaKey = null }, executor = db) => {
     const entorno = normalizarEntorno(environment);
-    const serie = await consultarSerie({ plantaKey, tipoComprobante, environment: entorno, bloquear: true }, executor);
+    const serie = await consultarSerie({ plantaKey, tipoComprobante, environment: entorno, empresaKey, bloquear: true }, executor);
     validarSerieOperativa(serie, entorno);
     const numero = serie.ultimoNumero + 1;
     if (!Number.isSafeInteger(numero) || numero <= 0) {

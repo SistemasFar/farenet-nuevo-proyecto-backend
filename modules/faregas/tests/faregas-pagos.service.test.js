@@ -45,6 +45,15 @@ test('el detalle comercial conserva el SKU y la unidad fiscal del producto', () 
     });
 });
 
+test('acepta código SUNAT vacío o válido y rechaza un valor informado inválido', () => {
+    for (const codigo of [null, '', '12345678']) {
+        assert.equal(reglas.esCodigoClasificacionSunatValidoOpcional(codigo), true);
+    }
+    for (const codigo of ['1234567', '123456789', 'ABCDEFGH']) {
+        assert.equal(reglas.esCodigoClasificacionSunatValidoOpcional(codigo), false);
+    }
+});
+
 test('rechaza un producto fiscal de chip sin afectación IGV', () => {
     assert.equal(reglas.esProductoFiscalChipValido({
         activo: true,

@@ -124,6 +124,263 @@ exports.listar = async ({ plantaKey, productoInventariableId, estado, buscar, pa
     return { items: result.rows, total: result.rows[0]?.total || 0 };
 };
 
+const FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+const errorFiltroVentas = (codigo, mensaje) => {
+    const error = new Error(codigo);
+    error.code = codigo;
+    error.statusCode = 400;
+    error.detalles = mensaje;
+    return error;
+};
+
+const normalizarFechaFiltro = (valor, nombre) => {
+    if (valor === undefined || valor === null || String(valor).trim() === '') return null;
+    const fecha = String(valor).trim();
+    if (!FECHA_ISO.test(fecha)) {
+        throw errorFiltroVentas('FECHA_INVALIDA', `${nombre} debe tener formato AAAA-MM-DD.`);
+    }
+    const [anio, mes, dia] = fecha.split('-').map(Number);
+    const comprobacion = new Date(Date.UTC(anio, mes - 1, dia));
+    if (comprobacion.getUTCFullYear() !== anio
+        || comprobacion.getUTCMonth() !== mes - 1
+        || comprobacion.getUTCDate() !== dia) {
+        throw errorFiltroVentas('FECHA_INVALIDA', `${nombre} no es una fecha válida.`);
+    }
+    return fecha;
+};
+
+const construirFiltrosFechasVentas = (query = {}) => {
+    const fechaDesde = normalizarFechaFiltro(query.fechaDesde, 'fechaDesde');
+    const fechaHasta = normalizarFechaFiltro(query.fechaHasta, 'fechaHasta');
+    if (fechaDesde && fechaHasta && fechaDesde > fechaHasta) {
+        throw errorFiltroVentas('RANGO_FECHAS_INVALIDO', 'La fecha Desde no puede ser posterior a la fecha Hasta.');
+    }
+    return { fechaDesde, fechaHasta };
+};
+
+exports.listarVentas = async (plantaKey, user, filtros = {}) => {
+    await validarAcceso(user, plantaKey);
+    const { fechaDesde, fechaHasta } = construirFiltrosFechasVentas(filtros);
+    const params = [plantaKey];
+    const condiciones = [
+        'oc.planta_key = $1',
+        "oc.estado IN ('PAGADO', 'FACTURADO', 'ANULADO')"
+    ];
+    if (fechaDesde) {
+        params.push(fechaDesde);
+        condiciones.push(`oc.fecha_creacion >= $${params.length}::date`);
+    }
+    if (fechaHasta) {
+        params.push(fechaHasta);
+        condiciones.push(`oc.fecha_creacion < $${params.length}::date + INTERVAL '1 day'`);
+    }
+    const result = await db.query(`
+        SELECT oc.id AS operacion_id,
+               oc.fecha_creacion AS creado_en,
+               oc.tipo_documento_cliente_snapshot,
+               oc.documento_cliente_snapshot,
+               oc.nombre_cliente_snapshot,
+               oc.estado AS estado_venta,
+               oc.importe_total,
+               ARRAY_AGG(c.numero_chip ORDER BY c.numero_chip) AS chips,
+               f.id AS facturacion_id,
+               f.estado AS comprobante_estado,
+               f.nro_comprobante,
+               f.enlace_pdf
+        FROM fg_operacion_comercial oc
+        JOIN fg_operacion_detalle od
+          ON od.operacion_id = oc.id
+        JOIN fg_operacion_detalle_chip odc
+          ON odc.operacion_detalle_id = od.id
+        JOIN fg_chip c
+          ON c.id = odc.chip_id
+        LEFT JOIN fg_facturacion f
+          ON f.operacion_id = oc.id
+         AND f.certificado_id IS NULL
+        WHERE ${condiciones.join(' AND ')}
+        GROUP BY oc.id, f.id
+        ORDER BY oc.fecha_creacion DESC, oc.id DESC
+        LIMIT 100
+    `, params);
+
+    return result.rows.map((row) => ({
+        operacionId: Number(row.operacion_id),
+        creadoEn: row.creado_en,
+        tipoDocumentoCliente: row.tipo_documento_cliente_snapshot,
+        documentoCliente: row.documento_cliente_snapshot,
+        nombreCliente: row.nombre_cliente_snapshot,
+        chips: row.chips || [],
+        estadoVenta: row.estado_venta,
+        importeTotal: Number(row.importe_total),
+        facturacion: row.facturacion_id == null ? null : {
+            id: Number(row.facturacion_id),
+            estado: row.comprobante_estado,
+            nroComprobante: row.nro_comprobante,
+            enlacePdf: row.enlace_pdf
+        }
+    }));
+};
+
+const mapPagoVenta = (row) => ({
+    id: row.pago_id == null ? null : Number(row.pago_id),
+    estado: row.pago_estado,
+    tipo: row.tipocontado_key
+        ? 'EFECTIVO'
+        : row.tarjeta_key ? 'TARJETA' : row.entidadfinanciera_key ? 'BANCO' : 'OTRO',
+    medioPago: row.tipocontado_key || row.tarjeta_key || row.entidadfinanciera_key || null,
+    entidadFinanciera: row.entidadfinanciera_key || null,
+    numeroOperacion: row.nrooperacionbanco || row.nrooperaciontarjeta || null,
+    fechaDeposito: row.fechdeposito || null,
+    importe: Number(row.importe || 0)
+});
+
+const mapDetalleVenta = (row, plantaKey) => ({
+    id: Number(row.detalle_id),
+    tipoItem: row.tipo_item,
+    codigo: row.codigo_sku_snapshot,
+    descripcion: row.descripcion_snapshot,
+    unidad: row.unidad_snapshot,
+    afectacionIgv: row.afectacion_igv_snapshot,
+    codigoSunat: row.codigo_sunat_snapshot,
+    cantidad: Number(row.cantidad || 0),
+    valorUnitario: Number(row.valor_unitario || 0),
+    precioUnitario: Number(row.precio_unitario || 0),
+    baseImponible: Number(row.base_imponible || 0),
+    igv: Number(row.igv || 0),
+    importeTotal: Number(row.importe_total || 0),
+    chip: row.chip_id == null ? null : {
+        id: Number(row.chip_id),
+        numero: row.numero_chip,
+        estado: row.chip_estado,
+        sedeKey: plantaKey,
+        sedeNombre: row.planta_nombre || plantaKey
+    }
+});
+
+const mapFacturacionVenta = (row) => !row || row.facturacion_id == null ? null : {
+    id: Number(row.facturacion_id),
+    estado: row.comprobante_estado,
+    tipoComprobante: row.tipo_comprobante,
+    serie: row.serie,
+    numero: row.numero == null ? null : Number(row.numero),
+    nroComprobante: row.nro_comprobante,
+    sunatResponseCode: row.sunat_responsecode || row.respuesta_proveedor?.codigo || row.respuesta_proveedor?.sunat_responsecode || null,
+    sunatDescription: row.sunat_description,
+    mensajeRechazo: row.sunat_description || row.intento_error || null,
+    enlacePdf: row.enlace_pdf,
+    intentos: Number(row.intentos || 0),
+    fechaUltimoIntento: row.fecha_ultimo_intento,
+    ultimoIntento: row.intento_numero == null ? null : {
+        numero: Number(row.intento_numero),
+        estado: row.intento_estado,
+        httpStatus: row.intento_http_status,
+        error: row.intento_error
+    }
+};
+
+exports.obtenerDetalleVenta = async (operacionId, user) => {
+    const id = Number(operacionId);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('OPERACION_ID_INVALIDO');
+
+    const operacionResult = await db.query(
+        'SELECT * FROM fg_operacion_comercial WHERE id = $1',
+        [id]
+    );
+    if (!operacionResult.rowCount) throw new Error('OPERACION_NOT_FOUND');
+    const operacion = operacionResult.rows[0];
+    await validarAcceso(user, operacion.planta_key);
+
+    const [detallesResult, ordenResult, facturacionResult] = await Promise.all([
+        db.query(`
+            SELECT od.id AS detalle_id, od.tipo_item,
+                   od.codigo_sku_snapshot, od.descripcion_snapshot,
+                   od.unidad_snapshot, od.afectacion_igv_snapshot,
+                   od.codigo_sunat_snapshot, od.cantidad,
+                   od.valor_unitario, od.precio_unitario,
+                   od.base_imponible, od.igv, od.importe_total,
+                   c.id AS chip_id, c.numero_chip, c.estado AS chip_estado,
+                   c.planta_actual_key, p.nombre AS planta_nombre
+              FROM fg_operacion_detalle od
+              LEFT JOIN fg_operacion_detalle_chip odc
+                ON odc.operacion_detalle_id = od.id
+              LEFT JOIN fg_chip c ON c.id = odc.chip_id
+              LEFT JOIN fg_planta p ON p.key = c.planta_actual_key
+             WHERE od.operacion_id = $1
+             ORDER BY od.orden, od.id
+        `, [id]),
+        db.query(`
+            SELECT op.id AS orden_id, op.estado AS orden_estado,
+                   op.importe_total, op.importe_pagado, op.saldo_pendiente,
+                   op.moneda_key, op.formapago_key,
+                   p.id AS pago_id, p.estado AS pago_estado, p.importe,
+                   p.tipocontado_key, p.tarjeta_key, p.entidadfinanciera_key,
+                   p.nrooperacionbanco, p.nrooperaciontarjeta,
+                   p.fechdeposito
+              FROM fg_orden_pago op
+              LEFT JOIN fg_pago p ON p.orden_pago_id = op.id
+             WHERE op.operacion_id = $1
+             ORDER BY p.id
+        `, [id]),
+        db.query(`
+            SELECT f.id AS facturacion_id, f.estado AS comprobante_estado,
+                   f.tipo_comprobante, f.serie, f.numero, f.nro_comprobante,
+                   f.sunat_responsecode, f.sunat_description, f.respuesta_proveedor,
+                   f.enlace_pdf, f.intentos, f.fecha_ultimo_intento,
+                   i.numero_intento AS intento_numero,
+                   i.estado AS intento_estado,
+                   i.http_status AS intento_http_status,
+                   i.error AS intento_error
+              FROM fg_facturacion f
+              LEFT JOIN LATERAL (
+                  SELECT numero_intento, estado, http_status, error
+                    FROM fg_facturacion_intento
+                   WHERE facturacion_id = f.id
+                   ORDER BY numero_intento DESC, id DESC
+                   LIMIT 1
+              ) i ON TRUE
+             WHERE f.operacion_id = $1
+               AND f.certificado_id IS NULL
+             ORDER BY f.id DESC
+             LIMIT 1
+        `, [id])
+    ]);
+
+    const ordenRow = ordenResult.rows[0] || null;
+    const pagos = ordenResult.rows
+        .filter((row) => row.pago_id != null)
+        .map(mapPagoVenta);
+    const importePagado = ordenRow?.importe_pagado == null
+        ? pagos.reduce((total, pago) => total + pago.importe, 0)
+        : Number(ordenRow.importe_pagado);
+
+    return {
+        operacionId: Number(operacion.id),
+        plantaKey: operacion.planta_key,
+        fechaOperacion: operacion.fecha_creacion,
+        estado: operacion.estado,
+        cliente: {
+            tipoDocumento: operacion.tipo_documento_cliente_snapshot,
+            documento: operacion.documento_cliente_snapshot,
+            nombre: operacion.nombre_cliente_snapshot,
+            direccion: operacion.direccion_cliente_snapshot
+        },
+        moneda: operacion.moneda_key,
+        total: Number(operacion.importe_total || 0),
+        detalles: detallesResult.rows.map((row) => mapDetalleVenta(row, operacion.planta_key)),
+        ordenPago: ordenRow ? {
+            id: Number(ordenRow.orden_id),
+            estado: ordenRow.orden_estado,
+            condicionPago: String(ordenRow.formapago_key || 'CONTADO').toUpperCase(),
+            total: Number(ordenRow.importe_total || 0),
+            pagado: importePagado,
+            saldoPendiente: Number(ordenRow.saldo_pendiente || 0)
+        } : null,
+        pagos,
+        facturacion: mapFacturacionVenta(facturacionResult.rows[0] || null)
+    };
+};
+
 exports.resumen = async (plantaKey, user, productoInventariableId = null) => {
     await validarAcceso(user, plantaKey);
     const producto = await productoInventariable(db, productoInventariableId);
@@ -348,7 +605,10 @@ exports.editarProductoInventariable = async (id, data, user, ipDireccion = null)
     const nombre = normalizarNombreProducto(data.nombre);
     const tipo = String(data.tipo || 'OTRO_PRODUCTO_FISICO').trim().toUpperCase();
     const sedes = normalizarSedesProducto(data.sedes);
-    const productoFacturacionId = data.productoFacturacionId ? Number(data.productoFacturacionId) : null;
+    const recibeProductoFacturacion = Object.prototype.hasOwnProperty.call(data || {}, 'productoFacturacionId');
+    const productoFacturacionId = recibeProductoFacturacion && data.productoFacturacionId !== null && data.productoFacturacionId !== ''
+        ? Number(data.productoFacturacionId)
+        : null;
 
     if (nombre.length < 2 || nombre.length > 200) throw new Error('NOMBRE_PRODUCTO_INVENTARIABLE_INVALIDO');
     if (tipo.length < 2 || tipo.length > 100) throw new Error('TIPO_PRODUCTO_INVENTARIABLE_INVALIDO');
@@ -411,11 +671,19 @@ exports.editarProductoInventariable = async (id, data, user, ipDireccion = null)
             if (!fiscal.rowCount) throw new Error('PRODUCTO_FISCAL_INVALIDO');
         }
 
-        await client.query(`
-            UPDATE fg_producto_inventariable
-            SET nombre = $1, tipo = $2, producto_facturacion_id = $3, fecha_modificacion = NOW()
-            WHERE id = $4
-        `, [nombre, tipo, productoFacturacionId, id]);
+        if (recibeProductoFacturacion) {
+            await client.query(`
+                UPDATE fg_producto_inventariable
+                SET nombre = $1, tipo = $2, producto_facturacion_id = $3, fecha_modificacion = NOW()
+                WHERE id = $4
+            `, [nombre, tipo, productoFacturacionId, id]);
+        } else {
+            await client.query(`
+                UPDATE fg_producto_inventariable
+                SET nombre = $1, tipo = $2, fecha_modificacion = NOW()
+                WHERE id = $3
+            `, [nombre, tipo, id]);
+        }
 
         await client.query(`
             UPDATE fg_producto_inventariable_sede

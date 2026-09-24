@@ -13,5 +13,6 @@ router.put('/:operacionId/pagos', pagosController.guardarPorOperacion);
 router.get('/:operacionId/facturacion', facturacionController.obtenerPorOperacion);
 router.put('/:operacionId/facturacion', facturacionController.guardarPorOperacion);
 router.post('/:operacionId/facturacion/emitir', facturacionController.emitirPorOperacion);
+router.post('/:operacionId/facturacion/reintentar', facturacionController.reintentarPorOperacion);
 
 module.exports = router;

@@ -7,6 +7,7 @@ const readinessService = require('./faregas-nubefact-readiness.service');
 const integrationsConfig = require('../../../config/integrations.config');
 const chipCertificadoService = require('./faregas-chip-certificado.service');
 const { validarAccesoPlanta } = require('./faregas-auth.service');
+const { esCodigoClasificacionSunatValidoOpcional } = require('./faregas-pagos.rules');
 const {
     normalizarFacturacion,
     validarFacturacion,
@@ -30,6 +31,13 @@ const errorNegocio = (codigo, statusCode = 400, detalles) => {
     if (detalles) error.detalles = detalles;
     return error;
 };
+
+const evaluarDatosFacturacion = (data) => {
+    const datos = normalizarFacturacion(data);
+    return { datos, errores: validarFacturacion(datos) };
+};
+
+exports.evaluarDatosFacturacion = evaluarDatosFacturacion;
 
 const obtenerCertificado = async (client, id, userContext, bloquear = false) => {
     const result = await client.query(
@@ -66,7 +74,8 @@ const respuestaPublica = (row, cuotas = []) => {
     if (!row) return null;
     return {
         id: Number(row.id),
-        certificadoId: Number(row.certificado_id),
+        certificadoId: row.certificado_id == null ? null : Number(row.certificado_id),
+        operacionId: row.operacion_id == null ? null : Number(row.operacion_id),
         tipoComprobante: row.tipo_comprobante,
         tipoDocumentoCliente: row.tipo_documento_cliente,
         nroDocumento: row.nro_documento,
@@ -623,6 +632,8 @@ exports.obtenerFacturacionOperacion = async (operacionId, userContext) => {
     const opRes = await db.query('SELECT * FROM fg_operacion_comercial WHERE id=$1', [operacionId]);
     if(!opRes.rowCount) throw errorNegocio('OPERACION_NOT_FOUND', 404);
     const op = opRes.rows[0];
+    const acceso = await validarAccesoPlanta(userContext.username, userContext.perfil_id, op.planta_key);
+    if (!acceso) throw errorNegocio('PLANTA_NO_AUTORIZADA', 403);
 
     const result = await db.query('SELECT * FROM fg_facturacion WHERE operacion_id = $1 AND certificado_id IS NULL', [operacionId]);
     const cuotas = result.rowCount > 0
@@ -638,9 +649,9 @@ exports.obtenerFacturacionOperacion = async (operacionId, userContext) => {
 };
 
 exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => {
-    const normalizada = normalizarFacturacion(data);
-    const errores = validarFacturacion(normalizada);
-    if (errores.length > 0) throw errorNegocio('DATOS_FACTURACION_INVALIDOS', 400, errores);
+    const evaluacion = evaluarDatosFacturacion(data);
+    if (evaluacion.errores.length > 0) throw errorNegocio('DATOS_FACTURACION_INVALIDOS', 400, evaluacion.errores);
+    const normalizada = evaluacion.datos;
 
     const client = await db.connect();
     try {
@@ -666,7 +677,7 @@ exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => 
             'SELECT * FROM fg_facturacion WHERE operacion_id = $1 AND certificado_id IS NULL FOR UPDATE',
             [operacionId]
         );
-        if (actual.rowCount > 0 && ['PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'ERROR'].includes(actual.rows[0].estado)) {
+        if (actual.rowCount > 0 && ['PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'ERROR', 'RECHAZADO'].includes(actual.rows[0].estado)) {
             const cuotas = await client.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [actual.rows[0].id]);
             await client.query("COMMIT");
             return respuestaPublica(actual.rows[0], cuotas.rows);
@@ -679,7 +690,7 @@ exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => 
                 base_imponible, igv, importe_total, condicion_pago,
                 fecha_vencimiento, medio_pago, operacion_id, estado, usuario_creacion
              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'BORRADOR',$16)
-             ON CONFLICT (operacion_id) WHERE certificado_id IS NULL DO UPDATE SET
+             ON CONFLICT (operacion_id) WHERE operacion_id IS NOT NULL DO UPDATE SET
                 tipo_comprobante = EXCLUDED.tipo_comprobante,
                 tipo_documento_cliente = EXCLUDED.tipo_documento_cliente,
                 nro_documento = EXCLUDED.nro_documento,
@@ -729,7 +740,17 @@ exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => 
     }
 };
 
-const reservarEmisionOperacion = async (operacionId, userContext) => {
+const validarCodigosSunatOperacion = (detalles = []) => {
+    const errores = [];
+    for (const detalle of detalles) {
+        if (!esCodigoClasificacionSunatValidoOpcional(detalle.codigo_sunat_snapshot)) {
+            errores.push('El código de clasificación SUNAT del producto Chip debe contener 8 dígitos.');
+        }
+    }
+    return errores;
+};
+
+const reservarEmisionOperacion = async (operacionId, userContext, opciones = {}) => {
     if (!nubefactService.obtenerEstadoConfiguracion().enabled) throw errorNegocio('NUBEFACT_DESHABILITADO', 503);
     const client = await db.connect();
     try {
@@ -737,6 +758,10 @@ const reservarEmisionOperacion = async (operacionId, userContext) => {
         const opRes = await client.query('SELECT * FROM fg_operacion_comercial WHERE id=$1 FOR UPDATE', [operacionId]);
         if(!opRes.rowCount) throw errorNegocio('OPERACION_NOT_FOUND', 404);
         const op = opRes.rows[0];
+        if (userContext.perfil_id) {
+            const acceso = await validarAccesoPlanta(userContext.username, userContext.perfil_id, op.planta_key);
+            if (!acceso) throw errorNegocio('PLANTA_NO_AUTORIZADA', 403);
+        }
 
         const factResult = await client.query('SELECT * FROM fg_facturacion WHERE operacion_id = $1 AND certificado_id IS NULL FOR UPDATE', [operacionId]);
         if (factResult.rowCount === 0) throw errorNegocio('FACTURACION_FALTANTE', 409);
@@ -746,26 +771,48 @@ const reservarEmisionOperacion = async (operacionId, userContext) => {
             await client.query('COMMIT');
             return { yaAceptada: true, facturacion };
         }
-        if (facturacion.estado === 'RECHAZADO') throw errorNegocio('NUBEFACT_RECHAZADO', 422, { motivo: facturacion.sunat_description });
+        if (facturacion.estado === 'RECHAZADO') {
+            if (!opciones.reintentarRechazada) {
+                throw errorNegocio('NUBEFACT_RECHAZADO', 422, { motivo: facturacion.sunat_description });
+            }
+            if (!facturacion.serie || facturacion.numero === null || !facturacion.nro_comprobante) {
+                throw errorNegocio('REINTENTO_CORRELATIVO_INVALIDO', 409, {
+                    motivo: 'La facturación rechazada no tiene serie y número persistidos; no se puede reintentar sin reservar otro correlativo.'
+                });
+            }
+        }
 
         const configuracionEmisor = await nubefactConfigService.resolverParaPlanta(op.planta_key, client);
         const erroresContrato = validarFacturacionNubefact(facturacion);
 
         // Block if SKU is missing
         const detallesOp = await client.query('SELECT codigo_sunat_snapshot FROM fg_operacion_detalle WHERE operacion_id=$1', [operacionId]);
-        for (const det of detallesOp.rows) {
-            if(!det.codigo_sunat_snapshot || det.codigo_sunat_snapshot.trim() === '') {
-                erroresContrato.push('El producto Chip no tiene configuración fiscal para esta sede.');
-            }
-        }
+        erroresContrato.push(...validarCodigosSunatOperacion(detallesOp.rows));
 
         const resumenTributario = await resumenTributarioService.obtenerResumenTributarioPorOperacion(operacionId, client);
         if (resumenTributario.estado !== 'LISTO') erroresContrato.push(...resumenTributario.errores);
         if (erroresContrato.length > 0) throw errorNegocio('DATOS_NUBEFACT_INVALIDOS', 409, erroresContrato);
-
+        if (facturacion.estado === 'PENDIENTE' && facturacion.fecha_ultimo_intento) {
+            const antiguedad = Date.now() - new Date(facturacion.fecha_ultimo_intento).getTime();
+            if (antiguedad < integrationsConfig.nubefact.retryLockMs) {
+                throw errorNegocio('EMISION_EN_PROCESO', 409, {
+                    reintentoDisponibleEnMs: integrationsConfig.nubefact.retryLockMs - antiguedad
+                });
+            }
+        }
+        if (Number(facturacion.intentos || 0) >= integrationsConfig.nubefact.maxAttempts) {
+            throw errorNegocio('NUBEFACT_MAX_INTENTOS_ALCANZADO', 409, {
+                intentos: Number(facturacion.intentos || 0),
+                maximo: integrationsConfig.nubefact.maxAttempts
+            });
+        }
         if (!facturacion.serie || facturacion.numero === null) {
+            if (!integrationsConfig.nubefact.correlativosV2Enabled) {
+                throw errorNegocio('MOTOR_SERIES_V2_DESHABILITADO', 503, 'El motor de series legacy fue retirado. Habilite V2.');
+            }
             const reservaCorrelativo = await correlativosNubefactService.reservarSiguiente({
                 plantaKey: op.planta_key,
+                empresaKey: configuracionEmisor.empresaKey,
                 tipoComprobante: facturacion.tipo_comprobante,
                 environment: configuracionEmisor.environment
             }, client);
@@ -786,21 +833,23 @@ const reservarEmisionOperacion = async (operacionId, userContext) => {
                 planta_key = $5, empresa_key = $6, ruc_emisor = $7,
                 razon_social_emisor = $8, direccion_emisor = $9,
                 entorno_facturador = $10, codigo_unico = $11,
-                usuario_modificacion = $12, fecha_modificacion = CURRENT_TIMESTAMP
-             WHERE id = $13 RETURNING *`,
+                usuario_modificacion = $12, fecha_modificacion = CURRENT_TIMESTAMP,
+                serie_comprobante_id = $13, fecha_reserva_correlativo = CURRENT_TIMESTAMP
+             WHERE id = $14 RETURNING *`,
             [
                 facturacion.serie, facturacion.numero, facturacion.nro_comprobante, intento,
                 op.planta_key, configuracionEmisor.empresaKey, configuracionEmisor.rucEmisor,
                 configuracionEmisor.razonSocialEmisor, configuracionEmisor.direccionEmisor,
-                configuracionEmisor.environment, codigoUnico, userContext.username, facturacion.id
+                configuracionEmisor.environment, codigoUnico, userContext.username,
+                facturacion.serie_comprobante_id, facturacion.id
             ]
         );
         facturacion = updated.rows[0];
 
         const payload = construirPayloadNubefact({
             facturacion,
-            certificado: { planta_key: op.planta_key }, // Fake cert just for plant key if needed
-            vehiculo: { placa: '-' }, // Fallback since chips dont have placa
+            certificado: null,
+            vehiculo: { placa: '' },
             reservaDescuento: null,
             detalles: detallesNubefact,
             resumenTributario,
@@ -824,8 +873,7 @@ const reservarEmisionOperacion = async (operacionId, userContext) => {
     }
 };
 
-exports.emitirFacturacionOperacion = async (operacionId, userContext, dependencies = {}) => {
-    const reserva = await reservarEmisionOperacion(operacionId, userContext);
+const ejecutarEmisionOperacion = async (reserva, userContext, dependencies = {}) => {
     if (reserva.yaAceptada) return respuestaPublica(reserva.facturacion);
 
     const proveedor = dependencies.nubefactService || nubefactService;
@@ -838,11 +886,24 @@ exports.emitirFacturacionOperacion = async (operacionId, userContext, dependenci
     return await persistirRespuestaNubeFact(reserva, resultadoEmision, recuperacion, userContext);
 };
 
+exports.emitirFacturacionOperacion = async (operacionId, userContext, dependencies = {}) => {
+    const reserva = await reservarEmisionOperacion(operacionId, userContext);
+    return ejecutarEmisionOperacion(reserva, userContext, dependencies);
+};
+
+exports.reintentarFacturacionOperacion = async (operacionId, userContext, dependencies = {}) => {
+    const reserva = await reservarEmisionOperacion(operacionId, userContext, {
+        reintentarRechazada: true
+    });
+    return ejecutarEmisionOperacion(reserva, userContext, dependencies);
+};
+
 exports._private = {
     respuestaPublica,
     errorNegocio,
     esPosibleDuplicadoNubefact,
-    consultarEmisionIncierta
+    consultarEmisionIncierta,
+    validarCodigosSunatOperacion
 };
 
 

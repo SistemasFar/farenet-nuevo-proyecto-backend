@@ -13,7 +13,7 @@ const enteroAcotado = (value, fallback, min, max) => {
 };
 
 const construirFiltros = (query, plantasPermitidas) => {
-    const condiciones = ['f.planta_key = ANY($1::varchar[])'];
+    const condiciones = ['COALESCE(f.planta_key, oc.planta_key) = ANY($1::varchar[])'];
     const valores = [plantasPermitidas];
     const agregar = (condicion, valor) => {
         valores.push(valor);
@@ -40,7 +40,7 @@ const construirFiltros = (query, plantasPermitidas) => {
             error.statusCode = 403;
             throw error;
         }
-        agregar('f.planta_key = ?', plantaKey);
+        agregar('COALESCE(f.planta_key, oc.planta_key) = ?', plantaKey);
     }
     if (empresaKey) agregar('p.empresa_key = ?', empresaKey);
     if (estado) {
@@ -69,7 +69,11 @@ const construirFiltros = (query, plantasPermitidas) => {
 
 const mapDocumento = (row) => ({
     id: Number(row.id),
-    certificadoId: Number(row.certificado_id),
+    certificadoId: row.certificado_id == null ? null : Number(row.certificado_id),
+    operacionId: row.operacion_id == null ? null : Number(row.operacion_id),
+    origen: row.certificado_id != null
+        ? 'CERTIFICADO'
+        : row.es_venta_chip ? 'VENTA_CHIP' : 'OPERACION',
     plantaKey: row.planta_key,
     plantaNombre: row.planta_nombre,
     empresaKey: row.empresa_key,
@@ -112,8 +116,11 @@ exports.listar = async (query, userContext, dependencies = {}) => {
     const offset = (pagina - 1) * limite;
     const from = `
         FROM fg_facturacion f
-        JOIN fg_certificado c ON c.id = f.certificado_id
-        JOIN fg_planta p ON p.key = f.planta_key
+        LEFT JOIN fg_certificado c ON c.id = f.certificado_id
+        LEFT JOIN fg_operacion_comercial oc
+          ON oc.id = f.operacion_id
+         AND f.certificado_id IS NULL
+        JOIN fg_planta p ON p.key = COALESCE(f.planta_key, oc.planta_key)
         JOIN fg_empresa e ON e.key = p.empresa_key
         LEFT JOIN fg_certificado_vehiculo v ON v.certificado_id = c.id
         LEFT JOIN LATERAL (
@@ -128,8 +135,16 @@ exports.listar = async (query, userContext, dependencies = {}) => {
 
     const [listado, totalResult, catalogos] = await Promise.all([
         queryable.query(`
-            SELECT f.id, f.certificado_id, f.planta_key, p.nombre AS planta_nombre,
-                   p.empresa_key, e.nombre AS empresa_nombre, f.tipo_comprobante,
+            SELECT f.id, f.certificado_id, f.operacion_id, f.planta_key, p.nombre AS planta_nombre,
+                   p.empresa_key, e.nombre AS empresa_nombre,
+                   EXISTS (
+                       SELECT 1
+                       FROM fg_operacion_detalle od
+                       JOIN fg_operacion_detalle_chip odc
+                         ON odc.operacion_detalle_id = od.id
+                       WHERE od.operacion_id = f.operacion_id
+                   ) AS es_venta_chip,
+                   f.tipo_comprobante,
                    f.nro_comprobante, f.nro_documento, f.nombre_razon_social,
                    v.placa, f.importe_total, f.estado, f.aceptada_sunat,
                    f.sunat_description, f.enlace_pdf, f.enlace_xml, f.enlace_cdr,
@@ -176,8 +191,16 @@ exports.obtenerDetalle = async (facturacionId, userContext, dependencies = {}) =
     const plantas = await obtenerPlantas(userContext.username, userContext.perfil_id);
     const plantasPermitidas = plantas.map(planta => String(planta.key));
     const documento = await queryable.query(`
-        SELECT f.id, f.certificado_id, f.planta_key, p.nombre AS planta_nombre,
-               p.empresa_key, e.nombre AS empresa_nombre, f.tipo_comprobante,
+        SELECT f.id, f.certificado_id, f.operacion_id, f.planta_key, p.nombre AS planta_nombre,
+               p.empresa_key, e.nombre AS empresa_nombre,
+               EXISTS (
+                   SELECT 1
+                   FROM fg_operacion_detalle od
+                   JOIN fg_operacion_detalle_chip odc
+                     ON odc.operacion_detalle_id = od.id
+                   WHERE od.operacion_id = f.operacion_id
+               ) AS es_venta_chip,
+               f.tipo_comprobante,
                f.nro_comprobante, f.nro_documento, f.nombre_razon_social,
                v.placa, f.importe_total, f.estado, f.aceptada_sunat,
                f.sunat_description, f.enlace_pdf, f.enlace_xml, f.enlace_cdr,
@@ -190,8 +213,11 @@ exports.obtenerDetalle = async (facturacionId, userContext, dependencies = {}) =
                anulacion.fecha_creacion AS fecha_solicitud_anulacion,
                f.intentos, f.fecha_ultimo_intento, f.fecha_creacion
         FROM fg_facturacion f
-        JOIN fg_certificado c ON c.id = f.certificado_id
-        JOIN fg_planta p ON p.key = f.planta_key
+        LEFT JOIN fg_certificado c ON c.id = f.certificado_id
+        LEFT JOIN fg_operacion_comercial oc
+          ON oc.id = f.operacion_id
+         AND f.certificado_id IS NULL
+        JOIN fg_planta p ON p.key = COALESCE(f.planta_key, oc.planta_key)
         JOIN fg_empresa e ON e.key = p.empresa_key
         LEFT JOIN fg_certificado_vehiculo v ON v.certificado_id = c.id
         LEFT JOIN LATERAL (
@@ -202,7 +228,7 @@ exports.obtenerDetalle = async (facturacionId, userContext, dependencies = {}) =
             ORDER BY a.id DESC
             LIMIT 1
         ) anulacion ON TRUE
-        WHERE f.id = $1 AND f.planta_key = ANY($2::varchar[])
+        WHERE f.id = $1 AND COALESCE(f.planta_key, oc.planta_key) = ANY($2::varchar[])
     `, [facturacionId, plantasPermitidas]);
     if (documento.rowCount === 0) throw Object.assign(new Error('FACTURACION_NOT_FOUND'), { statusCode: 404 });
 

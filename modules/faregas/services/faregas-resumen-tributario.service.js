@@ -3,6 +3,7 @@ const integrationsConfig = require('../../../config/integrations.config');
 const correlativosNubefactService = require('./faregas-correlativos-nubefact.service');
 const nubefactConfigService = require('./faregas-nubefact-config.service');
 const { esUnidadTributariaAdmitida } = require('./faregas-producto-fiscal.rules');
+const { esCodigoClasificacionSunatValidoOpcional } = require('./faregas-pagos.rules');
 
 const redondear = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 const texto = (value) => String(value ?? '').trim();
@@ -60,7 +61,7 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
         Boolean(unidad) && !esUnidadTributariaAdmitida(unidad),
         'La unidad tributaria debe ser NIU o ZZ.'
     );
-    agregarSi(errores, Boolean(codigoSunat) && !/^\d{8}$/.test(codigoSunat), 'El código de clasificación SUNAT debe contener 8 dígitos.');
+    agregarSi(errores, !esCodigoClasificacionSunatValidoOpcional(codigoSunat), 'El código de clasificación SUNAT debe contener 8 dígitos.');
     agregarSi(errores, afectacionIgv !== '10', 'El tipo de afectación IGV del servicio debe ser 10.');
     agregarSi(errores, !seriePrevista, `No existe una serie productiva de ${esFactura ? 'factura' : 'boleta'} para la sede.`);
     agregarSi(errores, !Number.isFinite(total) || total <= 0, 'El total de la operación no es válido.');
@@ -402,17 +403,20 @@ exports.obtenerResumenTributarioPorOperacion = async (operacionId, queryable = d
     const det = await queryable.query('SELECT * FROM fg_operacion_detalle WHERE operacion_id=$1', [operacionId]);
     const items = det.rows.map((row, i) => ({
         id: i+1,
+        orden: i + 1,
+        productoFacturacionId: Number(row.producto_facturacion_id),
+        codigoInterno: row.codigo_sku_snapshot || null,
         descripcion: row.descripcion_snapshot,
         unidad: row.unidad_snapshot,
         cantidad: Number(row.cantidad),
         precioUnitario: Number(row.precio_unitario),
         valorUnitario: Number(row.valor_unitario),
+        descuentoSinIgv: 0,
         baseImponible: Number(row.base_imponible),
         igv: Number(row.igv),
-        importeTotal: Number(row.importe_total),
+        total: Number(row.importe_total),
         codigoSunat: row.codigo_sunat_snapshot || null,
-        codigoSku: row.codigo_sku_snapshot || null,
-        tipoAfectacion: row.afectacion_igv_snapshot || '10'
+        afectacionIgv: row.afectacion_igv_snapshot || '10'
     }));
 
     return {

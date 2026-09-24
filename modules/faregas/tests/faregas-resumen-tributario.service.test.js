@@ -182,6 +182,42 @@ test('conserva NIU en el resumen y en el detalle Nubefact sin transformarlo', ()
     assert.equal(item.unidad_snapshot, 'NIU');
 });
 
+test('mapea snapshots de fg_operacion_detalle al contrato de items Nubefact', async () => {
+    const queryable = {
+        async query(sql) {
+            if (sql.includes('fg_operacion_comercial')) {
+                return { rowCount: 1, rows: [{ id: 50, moneda_key: 'sol', base_imponible: '8.47', igv: '1.53', importe_total: '10.00' }] };
+            }
+            return {
+                rowCount: 1,
+                rows: [{
+                    producto_facturacion_id: 25,
+                    cantidad: '1',
+                    precio_unitario: '10.00',
+                    valor_unitario: '8.47',
+                    base_imponible: '8.47',
+                    igv: '1.53',
+                    importe_total: '10.00',
+                    codigo_sunat_snapshot: '12345678',
+                    codigo_sku_snapshot: 'SKU-REAL',
+                    descripcion_snapshot: 'PRODUCTO REAL',
+                    unidad_snapshot: 'NIU',
+                    afectacion_igv_snapshot: '10'
+                }]
+            };
+        }
+    };
+    const resumen = await resumenService.obtenerResumenTributarioPorOperacion(50, queryable);
+    const [item] = resumenService.construirDetallesNubefact(resumen);
+
+    assert.equal(item.producto_facturacion_id, 25);
+    assert.equal(item.codigo_sku_snapshot, 'SKU-REAL');
+    assert.equal(item.codigo_sunat_snapshot, '12345678');
+    assert.equal(item.unidad_snapshot, 'NIU');
+    assert.equal(item.afectacion_igv_snapshot, '10');
+    assert.equal(item.importe_total, 10);
+});
+
 test('rechaza una unidad no admitida y un código SUNAT incompleto', () => {
     const resumen = resumenService._private.construirResumen({
         contexto: contextoBase,

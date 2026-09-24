@@ -118,14 +118,18 @@ const mapearEstadoProveedor = (resultado, destino = 'FACTURACION') => {
 
 const construirPayloadNubefact = ({
     facturacion,
-    certificado,
-    vehiculo,
+    certificado = null,
+    vehiculo = null,
     reservaDescuento = null,
     detalles = [],
     cuotas = [],
     resumenTributario = null
 }) => {
-    const descripcion = `CERTIFICACION VEHICULAR ${certificado.tipo_certificado_clave} - PLACA ${vehiculo.placa}`;
+    const certificadoData = certificado || {};
+    const vehiculoData = vehiculo || {};
+    const descripcion = certificadoData.tipo_certificado_clave
+        ? `CERTIFICACION VEHICULAR ${certificadoData.tipo_certificado_clave} - PLACA ${vehiculoData.placa || ''}`
+        : `OPERACION COMERCIAL FAREGAS ${facturacion.operacion_id || facturacion.id}`;
     const tipoComprobante = facturacion.tipo_comprobante === 'FACTURA' ? 1 : 2;
     const tipoDocumento = facturacion.tipo_documento_cliente === 'RUC' ? 6 : 1;
 
@@ -147,7 +151,7 @@ const construirPayloadNubefact = ({
         ? detalles.map(construirItem)
         : [construirItem({
             unidad_snapshot: 'ZZ',
-            codigo_sku_snapshot: `FAREGAS-${certificado.tipo_certificado_clave}`,
+            codigo_sku_snapshot: `FAREGAS-${certificadoData.tipo_certificado_clave || 'OPERACION'}`,
             descripcion_snapshot: descripcion,
             cantidad: 1,
             valor_unitario: baseOriginal,
@@ -192,7 +196,9 @@ const construirPayloadNubefact = ({
         total_percepcion: 0,
         total_incluido_percepcion: 0,
         detraccion: obtenerIndicadorDetraccion(),
-        observaciones: `EXPEDIENTE FAREGAS ${certificado.id}`,
+        observaciones: certificadoData.id
+            ? `EXPEDIENTE FAREGAS ${certificadoData.id}`
+            : `OPERACION FAREGAS ${facturacion.operacion_id || facturacion.id}`,
         documento_que_se_modifica_tipo: '',
         documento_que_se_modifica_serie: '',
         documento_que_se_modifica_numero: '',
@@ -204,7 +210,7 @@ const construirPayloadNubefact = ({
         condiciones_de_pago: credito ? 'CREDITO' : 'CONTADO',
         medio_de_pago: facturacion.medio_pago || '',
         cancelado: !credito,
-        placa_vehiculo: vehiculo.placa || '',
+        placa_vehiculo: vehiculoData.placa || '',
         orden_compra_servicio: '',
         formato_de_pdf: '',
         items,

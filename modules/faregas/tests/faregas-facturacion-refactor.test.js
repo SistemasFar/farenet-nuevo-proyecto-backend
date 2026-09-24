@@ -55,7 +55,7 @@ test('Facturacion Service - NubeFact funcional', async (t) => {
             query: t.mock.fn(async (q, args) => {
                 if (q === 'BEGIN' || q === 'COMMIT' || q === 'ROLLBACK') return;
                 if (q.includes('fg_operacion_detalle')) {
-                    return { rowCount: 1, rows: [{ codigo_sunat_snapshot: '123' }] };
+                    return { rowCount: 1, rows: [{ codigo_sunat_snapshot: '12345678' }] };
                 }
                 if (q.includes('fg_operacion_comercial')) {
                     return { rowCount: 1, rows: [{ id: 1, planta_key: 'TEST' }] };
@@ -87,7 +87,7 @@ test('Facturacion Service - NubeFact funcional', async (t) => {
                 return { rowCount: 1, rows: [{ id: 1, planta_key: 'TEST' }] };
             }
             if (query.includes('fg_operacion_detalle')) {
-                return { rowCount: 1, rows: [{ codigo_sunat_snapshot: '123' }] };
+                return { rowCount: 1, rows: [{ codigo_sunat_snapshot: '12345678' }] };
             }
             if (query.includes('fg_facturacion_intento')) {
                 return { rowCount: 1, rows: [{ id: 1 }] };
@@ -155,7 +155,7 @@ test('Facturacion Service - NubeFact funcional', async (t) => {
                     assert.strictEqual(beginCount, 2, 'El update de persistencia debe estar en la segunda transaccion');
                 }
                 if (q.includes('fg_operacion_detalle')) {
-                    return { rowCount: 1, rows: [{ codigo_sunat_snapshot: '123' }] };
+                    return { rowCount: 1, rows: [{ codigo_sunat_snapshot: '12345678' }] };
                 }
                 if (q.includes('fg_operacion_comercial')) {
                     return { rowCount: 1, rows: [{ id: 1, planta_key: 'TEST' }] };
@@ -208,7 +208,7 @@ test('Facturacion Service - NubeFact funcional', async (t) => {
                 }] };
             }
             if (query.includes('fg_operacion_detalle')) {
-                return { rowCount: 1, rows: [{ codigo_sunat_snapshot: '123' }] };
+                return { rowCount: 1, rows: [{ codigo_sunat_snapshot: '12345678' }] };
             }
             if (query.includes('fg_orden_pago')) {
                 return { rowCount: 1, rows: [{ id: 1, estado: 'PAGADO', saldo_pendiente: 0 }] };
