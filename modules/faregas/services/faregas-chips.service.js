@@ -6,6 +6,7 @@ const {
     normalizarLoteScanner
 } = require('./faregas-chips.rules');
 const { redondear } = require('./faregas-pagos.rules');
+const chipsTiposImpactoService = require('./faregas-chips-tipos-impacto.service');
 
 const normalizarCodigoProducto = (valor) => String(valor || '')
     .trim()
@@ -734,6 +735,60 @@ exports.editarProductoInventariable = async (id, data, user, ipDireccion = null)
         client.release();
     }
 };
+
+exports.eliminarProductoInventariable = async (id, user, ipDireccion = null) => {
+    const tipoId = Number(id);
+    if (!Number.isSafeInteger(tipoId) || tipoId <= 0) throw new Error('TIPO_CHIP_INVALIDO');
+
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const tipo = await client.query(`
+            SELECT id, codigo, nombre, tipo, activo
+            FROM fg_producto_inventariable
+            WHERE id = $1
+            FOR UPDATE
+        `, [tipoId]);
+        if (tipo.rowCount === 0) throw new Error('TIPO_CHIP_NO_ENCONTRADO');
+
+        const impacto = await chipsTiposImpactoService.calcularImpactoEnTransaccion(
+            client, tipoId, tipo.rows[0]
+        );
+        const limpieza = await chipsTiposImpactoService.eliminarTipoConDependencias(client, impacto);
+
+        await client.query(`
+            INSERT INTO fg_auditoria_config
+                (username, entidad, accion, identificador, detalles, planta_key, ip_direccion)
+            VALUES ($1, 'PRODUCTO_INVENTARIABLE', 'ELIMINAR_TIPO_CHIP', $2, $3, NULL, $4)
+        `, [
+            user.username,
+            tipo.rows[0].codigo,
+            JSON.stringify({
+                eliminado: tipo.rows[0],
+                limpieza,
+                productos_fiscales_conservados: impacto.productosFiscalesPreservados,
+                certificados_conservados: impacto.certificadosPreservados,
+                ambiente: impacto.ambiente
+            }),
+            ipDireccion
+        ]);
+
+        await client.query('COMMIT');
+        return {
+            tipoEliminado: limpieza.tipoEliminado,
+            codigo: tipo.rows[0].codigo,
+            nombre: tipo.rows[0].nombre,
+            ...limpieza
+        };
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+exports.obtenerImpactoTipoChip = (id) => chipsTiposImpactoService.preview(Number(id));
 
 exports.consultarDisponibilidad = async ({ plantaKey, numeroChip, certificadoId }, user) => {
     await validarAcceso(user, plantaKey);

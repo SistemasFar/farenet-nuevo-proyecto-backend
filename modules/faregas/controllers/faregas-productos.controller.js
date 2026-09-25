@@ -121,11 +121,22 @@ const responderError = (res, error, fallback) => {
         CHIP_TIPO_INVALIDO: 'El producto seleccionado no tiene clasificación CHIP_SERIALIZADO.',
         CHIP_PRECIO_INVALIDO: 'El monto del chip debe ser mayor que cero.'
     };
-    const conflicto = ['SKU_DUPLICADO', 'CATEGORIA_NO_DISPONIBLE'].includes(error.message);
+    const conflicto = [
+        'SKU_DUPLICADO',
+        'CATEGORIA_NO_DISPONIBLE',
+        'HISTORICO_SIN_SNAPSHOT',
+        'CERTIFICADO_SIN_SNAPSHOT',
+        'DEPENDENCIA_NO_CLASIFICADA',
+        'MIGRACION_HISTORICO_REQUERIDA',
+        'CONFIRMAR_IMPACTO',
+        'FACTURACION_PROTEGIDA'
+    ].includes(error.message);
     const badRequest = ['CHIP_REQUERIDO', 'CHIP_NOT_FOUND', 'CHIP_INACTIVO', 'CHIP_SIN_CONTROL_STOCK', 'CHIP_TIPO_INVALIDO', 'CHIP_PRECIO_INVALIDO'].includes(error.message);
-    res.status(error.status || (conflicto ? 409 : (badRequest ? 400 : 500))).json({
+    const noEncontrado = error.message === 'PRODUCTO_NO_ENCONTRADO';
+    res.status(error.status || (noEncontrado ? 404 : (conflicto ? 409 : (badRequest ? 400 : 500)))).json({
         success: false,
-        message: mensajes[error.message] || error.message || fallback
+        message: mensajes[error.message] || error.message || fallback,
+        ...(error.detalles ? { detalles: error.detalles } : {})
     });
 };
 
@@ -179,15 +190,63 @@ exports.cambiarEstado = async (req, res) => {
     }
 };
 
+exports.obtenerImpacto = async (req, res) => {
+    try {
+        const impacto = await productosService.obtenerImpacto(idProducto(req.params.id));
+        res.json({ success: true, impacto });
+    } catch (error) {
+        responderError(res, error, 'Error al obtener el impacto de eliminación.');
+    }
+};
+
 exports.eliminar = async (req, res) => {
     try {
-        await productosService.eliminar(idProducto(req.params.id), req.user.username, req.ip);
-        res.json({ success: true, message: 'Producto eliminado exitosamente.' });
+        const confirmarConjunto = req.body?.confirmarConjunto === true;
+        const resumen = await productosService.eliminar(
+            idProducto(req.params.id), req.user.username, req.ip, { confirmarConjunto }
+        );
+        res.json({
+            success: true,
+            message: 'Producto y configuración relacionada eliminados exitosamente.',
+            ...resumen
+        });
     } catch (error) {
-        if (error.message === 'PRODUCTO_EN_USO') {
+        if (error.message === 'CONFIRMAR_IMPACTO') {
             return res.status(409).json({
                 success: false,
-                message: 'No se puede eliminar el producto porque ya está vinculado a tarifas u operaciones. Se recomienda desactivarlo.'
+                code: 'CONFIRMAR_IMPACTO',
+                message: 'La eliminación requiere confirmar el conjunto de operaciones de prueba. No se eliminó nada.',
+                impacto: error.detalles?.impacto
+            });
+        }
+        if (error.message === 'HISTORICO_SIN_SNAPSHOT' || error.message === 'CERTIFICADO_SIN_SNAPSHOT') {
+            return res.status(409).json({
+                success: false,
+                code: error.message,
+                message: 'No se puede eliminar el producto porque existe un histórico sin snapshot fiscal completo. No se eliminó nada.',
+                detalles: error.detalles
+            });
+        }
+        if (error.message === 'MIGRACION_HISTORICO_REQUERIDA') {
+            return res.status(409).json({
+                success: false,
+                code: error.message,
+                message: 'Falta aplicar la migración temporal de snapshots históricos antes de eliminar este producto. No se eliminó nada.'
+            });
+        }
+        if (error.message === 'FACTURACION_PROTEGIDA') {
+            return res.status(409).json({
+                success: false,
+                code: error.message,
+                message: 'No se puede eliminar el conjunto porque contiene facturación con estado fiscal protegido. No se eliminó nada.',
+                detalles: error.detalles
+            });
+        }
+        if (error.message === 'DEPENDENCIA_NO_CLASIFICADA') {
+            return res.status(409).json({
+                success: false,
+                code: error.message,
+                message: 'No se pudo eliminar el producto porque apareció una dependencia no clasificada. No se eliminó nada.'
             });
         }
         responderError(res, error, 'Error al eliminar el producto.');

@@ -1,4 +1,6 @@
 const service = require('../services/faregas-certificados.service');
+const rangosService = require('../services/faregas-correlativos-rangos.service');
+const db = require('../../../config/database');
 const auditoriaService = require('../services/faregas-auditoria.service');
 
 const auditarCertificado = (req, detalle) => auditoriaService.registrarEventoCertificado(
@@ -110,6 +112,87 @@ exports.cerrarRango = async (req, res) => {
         }
         console.error(e);
         res.status(500).json({ ok: false, message: 'Error interno del servidor' });
+    }
+};
+
+const MENSAJES_RANGO = {
+    RANGO_NO_CUMPLE_TAMANO: 'El rango debe tener exactamente 100 números (inicio + 99).',
+    RANGO_SE_SOLAPA: 'El rango se solapa con otro rango de la misma familia de certificado.',
+    RANGO_REUTILIZA_NUMEROS_USADOS: 'El rango contiene números de certificado ya emitidos.',
+    YA_EXISTE_RANGO_ACTIVO: 'La combinación ya tiene un rango activo.',
+    RANGO_YA_USADO_NO_EDITABLE: 'El rango ya emitió certificados: ciérrelo y asigne un rango nuevo.',
+    NRO_INICIO_INVALIDO: 'El correlativo inicial debe ser un número entero mayor que cero.',
+    NRO_MAXIMO_INVALIDO: 'El correlativo final debe ser un número entero mayor o igual al inicial.'
+};
+
+const responderErrorRango = (res, error) => {
+    const codigo = error.code || error.message;
+    const status = error.statusCode || error.status || 400;
+    res.status(status).json({
+        ok: false,
+        codigo,
+        message: MENSAJES_RANGO[codigo] || error.message,
+        detalles: error.detalles
+    });
+};
+
+exports.auditarCorrelativos = async (req, res) => {
+    try {
+        res.json({ ok: true, data: await rangosService.auditar(db) });
+    } catch (error) {
+        responderErrorRango(res, error);
+    }
+};
+
+exports.obtenerPlanCorrelativos = async (req, res) => {
+    try {
+        res.json({ ok: true, data: await rangosService.calcularPlan(db) });
+    } catch (error) {
+        responderErrorRango(res, error);
+    }
+};
+
+exports.aplicarPlanCorrelativos = async (req, res) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const plan = await rangosService.calcularPlan(client);
+        if (!plan.aplicable) {
+            return res.status(409).json({
+                ok: false,
+                codigo: 'PLAN_NO_APLICABLE',
+                message: 'El plan tiene inconsistencias: no se aplicó ningún cambio.',
+                detalles: { inconsistencias: plan.inconsistencias }
+            });
+        }
+        const resultado = await rangosService.aplicarPlan(client, plan);
+        await client.query('COMMIT');
+        await auditarConfiguracion(req, {
+            evento: 'CORRELATIVOS_NORMALIZADOS',
+            entidad_id: null,
+            mensaje: `Normalizó ${resultado.aplicados.length} combinación(es) de correlativos.`,
+            datos: { pasos: resultado.aplicados }
+        });
+        res.json({ ok: true, data: resultado });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        responderErrorRango(res, error);
+    } finally {
+        client.release();
+    }
+};
+
+exports.sugerirSiguienteRango = async (req, res) => {
+    try {
+        const data = await rangosService.sugerirSiguienteRango(db, {
+            tipo: String(req.query.tipo || '').trim().toUpperCase(),
+            planta_key: String(req.query.plantaKey || '').trim(),
+            modalidad: rangosService.normalizarModalidad(req.query.modalidad),
+            ignorarRangoId: req.query.ignorarRangoId || null
+        });
+        res.json({ ok: true, data });
+    } catch (error) {
+        responderErrorRango(res, error);
     }
 };
 

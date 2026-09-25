@@ -29,6 +29,8 @@ router.post('/', requireAdministrar, controller.crearDescuento);
 router.get('/:id', requireAdministrar, controller.obtenerDetalle);
 router.put('/:id', requireAdministrar, controller.actualizarDescuento);
 router.patch('/:id/estado', requireAdministrar, controller.cambiarEstadoDescuento);
+router.get('/:id/impacto', requireAdministrar, controller.impactoDescuento);
+router.delete('/:id', requireAdministrar, controller.eliminarDescuento);
 router.put('/:id/reglas', requireAdministrar, controller.guardarReglasDescuento);
 router.post('/:id/codigos', requireAdministrar, controller.crearCodigo);
 router.put('/codigos/:id', requireAdministrar, controller.actualizarCodigo);

@@ -4,6 +4,7 @@ const faregasAuthService = require('./faregas-auth.service');
 const tarifasService = require('./faregas-tarifas.service');
 const configService = require('./faregas-config.service');
 const auditoriaService = require('./faregas-auditoria.service');
+const descuentosImpactoService = require('./faregas-descuentos-impacto.service');
 
 const errorNegocio = (codigo, statusCode = 400, detalles) => {
     const error = new Error(codigo);
@@ -609,6 +610,53 @@ exports.cambiarEstadoDescuento = async (id, activo, userContext) => {
 
         await client.query('COMMIT');
         return { success: true };
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
+};
+
+exports.obtenerImpactoDescuento = (id) => descuentosImpactoService.preview(Number(id));
+
+exports.eliminarDescuento = async (id, userContext, ipDireccion = null) => {
+    const descuentoId = Number(id);
+    if (!Number.isSafeInteger(descuentoId) || descuentoId <= 0) {
+        throw errorNegocio('DESCUENTO_NO_ENCONTRADO', 404);
+    }
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const check = await client.query(
+            'SELECT * FROM fg_descuento WHERE id=$1 FOR UPDATE', [descuentoId]
+        );
+        if (!check.rowCount) throw errorNegocio('DESCUENTO_NO_ENCONTRADO', 404);
+
+        const impacto = await descuentosImpactoService.calcularImpactoEnTransaccion(
+            client, descuentoId, check.rows[0]
+        );
+        const limpieza = await descuentosImpactoService.eliminarDescuentoConDependencias(client, impacto);
+
+        await auditoriaService.registrarEvento({
+            username: userContext.username,
+            evento: 'ELIMINAR_DESCUENTO',
+            exitoso: true,
+            mensaje: `Se eliminó la campaña ${check.rows[0].nombre} y su configuración de prueba`,
+            ip_direccion: ipDireccion || userContext.ip_direccion,
+            categoria: 'DESCUENTO',
+            entidad: 'fg_descuento',
+            entidad_id: descuentoId,
+            datos: { limpieza, ambiente: impacto.ambiente }
+        });
+
+        await client.query('COMMIT');
+        return {
+            id: descuentoId,
+            codigo: check.rows[0].codigo,
+            nombre: check.rows[0].nombre,
+            ...limpieza
+        };
     } catch (e) {
         await client.query('ROLLBACK');
         throw e;

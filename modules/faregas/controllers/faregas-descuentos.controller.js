@@ -19,7 +19,10 @@ const MENSAJES = {
     REGLA_DESCUENTO_NO_CONFIGURADA: 'El descuento no tiene una regla válida para esta sede, servicio y forma de pago.',
     EJECUTIVO_NO_REGISTRADO: 'No se pudo registrar el ejecutivo de la alianza.',
     REFERENCIA_DESCUENTO_INVALIDA: 'La sede o uno de los servicios seleccionados no existe o no tiene una tarifa activa.',
-    REGLA_DESCUENTO_DUPLICADA: 'No se puede repetir el mismo servicio dentro de una sede.'
+    REGLA_DESCUENTO_DUPLICADA: 'No se puede repetir el mismo servicio dentro de una sede.',
+    DESCUENTO_NO_ENCONTRADO: 'La campaña o descuento no existe.',
+    DESCUENTO_BLOQUEADO: 'La campaña tiene dependencias que no se pueden eliminar.',
+    AMBIENTE_PRODUCCION: 'La limpieza de campañas sólo está disponible en ambiente DEMO o desarrollo.'
 };
 
 const responderError = (res, error) => res.status(error.statusCode || 500).json({
@@ -141,6 +144,25 @@ exports.cambiarEstadoDescuento = async (req, res) => {
             `${req.body.activo ? 'Activó' : 'Desactivó'} un descuento.`,
             'fg_descuento', req.params.id, { activo: Boolean(req.body.activo) });
         res.json(resultado);
+    }
+    catch (error) { responderError(res, error); }
+};
+
+exports.impactoDescuento = async (req, res) => {
+    try {
+        const impacto = await descuentosService.obtenerImpactoDescuento(req.params.id);
+        res.json({ success: true, impacto });
+    }
+    catch (error) { responderError(res, error); }
+};
+
+exports.eliminarDescuento = async (req, res) => {
+    try {
+        const resultado = await descuentosService.eliminarDescuento(req.params.id, req.user, req.ip);
+        await registrarAdministracion(req, 'DESCUENTO_ELIMINADO',
+            'Eliminó una campaña o descuento de prueba.',
+            'fg_descuento', req.params.id, resultado);
+        res.json({ success: true, resultado });
     }
     catch (error) { responderError(res, error); }
 };

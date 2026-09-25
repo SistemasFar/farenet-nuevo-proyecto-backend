@@ -452,6 +452,62 @@ test('correlativos de certificados: asignación al emitir', async (t) => {
       auditoriaService.registrarEventoCertificado = originales.registrarEvento;
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Regresión: nro_actual y nro_maximo son bigint y node-postgres los devuelve
+  // como string. Compararlos sin convertir hace que "11" >= "100" sea true y
+  // declare agotado un rango con 89 números libres (caso real: INDEPENDENCIA /
+  // GNV ANUAL, rango id 76). Estos casos fijan que la comparación sea numérica.
+  // -------------------------------------------------------------------------
+  const montarRangoComoTexto = (nroActual, nroMaximo) => {
+    const store = new RangeStore();
+    store.rango.tipo_certificado_clave = 'GNV_ANUAL';
+    store.rango.modalidad = 'ANUAL';
+    store.rango.nro_inicio = '1';
+    store.rango.nro_actual = String(nroActual);
+    store.rango.nro_maximo = String(nroMaximo);
+    store.agregarCertificado(50, {
+      tipo_clave: 'GNV_ANUAL',
+      tipo_codigo: '22',
+      ancho_correlativo: 7,
+      modalidad_correlativo: 'ANUAL'
+    });
+    return store;
+  };
+
+  await t.test('nro_actual con menos dígitos que nro_maximo no se declara agotado', async () => {
+    // "11" >= "100" es true como texto, pero 11 >= 100 es false: debe emitir.
+    assert.equal('11' >= '100', true, 'el caso que reproducía el bug');
+    const store = montarRangoComoTexto(11, 100);
+    await withServiceMocks(store, async () => {
+      const resultado = await service.emitirCertificado(50, usuario);
+      assert.equal(resultado.numero_certificado, 'DG-22-0000012');
+      assert.equal(resultado.numeroAsignado, true);
+      assert.equal(store.rango.nro_actual, 12);
+      assert.equal(store.certificados.get(50).estado, 'EMITIDO');
+    });
+  });
+
+  await t.test('rango realmente agotado con valores de texto sí lanza RANGO_AGOTADO', async () => {
+    const store = montarRangoComoTexto(100, 100);
+    await withServiceMocks(store, async () => {
+      await assert.rejects(service.emitirCertificado(50, usuario), /RANGO_AGOTADO/);
+      assert.equal(store.rango.nro_actual, '100');
+      assert.equal(store.certificados.get(50).numero_certificado, null);
+      assert.ok(store.queries.some(({ sql }) => sql === 'ROLLBACK'));
+    });
+  });
+
+  await t.test('nro_actual de cinco dígitos contra máximo de seis no se declara agotado', async () => {
+    // "99999" >= "100099" es true como texto, pero 99999 >= 100099 es false.
+    assert.equal('99999' >= '100099', true, 'el caso que reproducía el bug');
+    const store = montarRangoComoTexto(99999, 100099);
+    await withServiceMocks(store, async () => {
+      const resultado = await service.emitirCertificado(50, usuario);
+      assert.equal(resultado.numero_certificado, 'DG-22-0100000');
+      assert.equal(store.rango.nro_actual, 100000);
+    });
+  });
 });
 
 test.after(() => db.end());

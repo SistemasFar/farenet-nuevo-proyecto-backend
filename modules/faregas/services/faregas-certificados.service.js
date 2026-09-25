@@ -4,6 +4,7 @@ const integrationsConfig = require('../../../config/integrations.config');
 const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
 const { paraPlantilla } = require('../mappers/faregas-vehiculo.mapper');
 const tarifasService = require('./faregas-tarifas.service');
+const rangosService = require('./faregas-correlativos-rangos.service');
 const chipCertificadoService = require('./faregas-chip-certificado.service');
 const vehiculosService = require('./faregas-vehiculos.service');
 const { normalizarNumeroChip, esNumeroChipCertificadoValido } = require('./faregas-chips.rules');
@@ -141,12 +142,16 @@ exports.obtenerCorrelativos = async (filters) => {
               AND p.activo = TRUE
         ),
         active_ranges AS (
+            -- Sólo el rango ACTIVO vigente. Antes tomaba el último insertado
+            -- aunque estuviera cerrado, y por eso una combinación con rango
+            -- histórico aparecía como si no tuviera rango utilizable.
             SELECT DISTINCT ON (planta_key, tipo_certificado_clave, modalidad)
                 id, planta_key, tipo_certificado_clave, modalidad,
                 nro_inicio, nro_actual, nro_maximo, activo,
                 (nro_maximo - nro_actual) AS disponibles,
                 fecha_asignacion, fecha_cierre
             FROM fg_correlativo_certificado
+            WHERE activo = TRUE
             ORDER BY planta_key, tipo_certificado_clave, modalidad, id DESC
         ),
         op_counts AS (
@@ -273,8 +278,23 @@ exports.crearRango = async (data) => {
               AND activo = TRUE
             LIMIT 1
         `, [tipoCorrelativo.tipoBase, tipoCorrelativo.modalidad]);
-        if (!servicioRes.rowCount) throw new Error('TIPO_INACTIVO');
-        
+        if (servicioRes.rowCount === 0) throw new Error('TIPO_INACTIVO');
+
+        // Tamaño exacto de 100 números y no reutilización de números ya emitidos.
+        const errorRango = await rangosService.validarRango(client, {
+            tipo: tipoCorrelativo.tipoBase,
+            planta_key: plantaKey,
+            modalidad: tipoCorrelativo.modalidad,
+            nro_inicio: nroInicio,
+            nro_maximo: nroMaximo
+        }).catch((error) => error);
+        if (errorRango instanceof Error) {
+            const negocio = new Error(errorRango.message);
+            negocio.code = errorRango.code;
+            negocio.detalles = errorRango.detalles;
+            throw negocio;
+        }
+
         const actRes = await client.query(`SELECT id FROM fg_correlativo_certificado
             WHERE planta_key = $1 AND tipo_certificado_clave = $2 AND modalidad = $3 AND activo = true`,
         [plantaKey, tipoCorrelativo.tipoBase, tipoCorrelativo.modalidad]);
@@ -354,6 +374,28 @@ exports.actualizarRango = async (id, data) => {
         const usado = Number(rango.nro_actual) >= Number(rango.nro_inicio);
         if (usado && nroInicio !== Number(rango.nro_inicio)) {
             throw new Error('RANGO_INICIO_NO_EDITABLE');
+        }
+        // Tamaño exacto de 100 números y no reutilización de números ya emitidos.
+        const detalle = await client.query(`
+            SELECT tipo_certificado_clave AS tipo, planta_key, modalidad
+            FROM fg_correlativo_certificado WHERE id = $1
+        `, [id]);
+        if (detalle.rowCount) {
+            try {
+                await rangosService.validarRango(client, {
+                    tipo: detalle.rows[0].tipo,
+                    planta_key: detalle.rows[0].planta_key,
+                    modalidad: detalle.rows[0].modalidad,
+                    nro_inicio: nroInicio,
+                    nro_maximo: nroMaximo,
+                    ignorarRangoId: id
+                });
+            } catch (error) {
+                const negocio = new Error(error.message);
+                negocio.code = error.code;
+                negocio.detalles = error.detalles;
+                throw negocio;
+            }
         }
         if (usado && nroMaximo < Number(rango.nro_actual)) {
             throw new Error('RANGO_MAXIMO_MENOR_ACTUAL');
@@ -1962,11 +2004,11 @@ exports.validarEmision = async (id, userContext) => {
             if (!g.taller_autorizado_id) pushError('glp', 'taller_autorizado_id', 'CAMPO_REQUERIDO', 'Taller autorizado requerido');
             if (!g.vigencia_hasta) pushError('glp', 'vigencia_hasta', 'CAMPO_REQUERIDO', 'Vigencia requerida');
             if (!g.expediente_tecnico) pushError('glp', 'expediente_tecnico', 'CAMPO_REQUERIDO', 'Expediente técnico requerido');
-            // Modalidad requerida
+            // Modalidad requerida. INICIAL y ANUAL se emiten con su propia
+            // plantilla (glp-inicial / glp-anual) bajo el mismo motor SISTEMA,
+            // así que la captura INICIAL ya tiene formato de emisión resuelto.
             if (!g.modalidad || !['INICIAL', 'ANUAL'].includes(g.modalidad)) {
                 pushError('glp', 'modalidad', 'CAMPO_REQUERIDO', 'Modalidad GLP requerida (INICIAL o ANUAL)');
-            } else if (g.modalidad === 'INICIAL') {
-                pushError('glp', 'formato', 'FORMATO_INICIAL_PENDIENTE', 'La captura GLP INICIAL está habilitada, pero su formato de emisión todavía no está configurado');
             }
         }
 
@@ -2083,7 +2125,11 @@ exports.emitirCertificado = async (id, userContext) => {
 
             if (rCorrelativo.rowCount === 0) throw new Error('NO_EXISTE_RANGO_ACTIVO');
             const rango = rCorrelativo.rows[0];
-            if (rango.nro_actual >= rango.nro_maximo) throw new Error('RANGO_AGOTADO');
+            // nro_actual y nro_maximo son bigint: node-postgres los devuelve como
+            // string, y "11" >= "100" es true en comparación lexicográfica. Se
+            // convierten a número para no declarar agotado un rango con números
+            // libres cuando el actual tiene menos dígitos que el máximo.
+            if (Number(rango.nro_actual) >= Number(rango.nro_maximo)) throw new Error('RANGO_AGOTADO');
 
             const siguiente = parseInt(rango.nro_actual) + 1;
             if (siguiente > rango.nro_maximo) throw new Error('RANGO_AGOTADO');

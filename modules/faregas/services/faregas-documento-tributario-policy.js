@@ -1,3 +1,5 @@
+const integrationsConfig = require('../../../config/integrations.config');
+
 const normalizarEntorno = (value) => {
     const entorno = String(value || '').trim().toUpperCase();
     return entorno === 'PRODUCTION' ? 'PRODUCCION' : entorno;
@@ -32,9 +34,55 @@ const esDocumentoBaseOperable = (documento) => (
     esAceptadoPorSunat(documento) || esDemoGeneradoPorNubefact(documento)
 );
 
+// ---------------------------------------------------------------------------
+// Limpieza local de comprobantes (categorías de prueba)
+//
+// La autorización se decide SIEMPRE en backend a partir de la configuración
+// real de integraciones. El frontend jamás puede habilitarla por parámetro.
+// ---------------------------------------------------------------------------
+
+const entornoFacturacionEfectivo = () => normalizarEntorno(integrationsConfig.nubefact.environment);
+
+const esAmbienteFacturacionProduccion = (environment = integrationsConfig.nubefact.environment) => (
+    normalizarEntorno(environment) === 'PRODUCCION'
+);
+
+/**
+ * Sólo en ambiente no productivo se permite el borrado local de comprobantes
+ * de prueba. Una instalación confirmada como productiva queda bloqueada aunque
+ * el ambiente declarado sea DEMO.
+ */
+const permiteLimpiezaLocalDeComprobantes = (environment = integrationsConfig.nubefact.environment) => (
+    !esAmbienteFacturacionProduccion(environment)
+    && integrationsConfig.nubefact.productionConfirmed !== true
+);
+
+/**
+ * Puerta general de limpieza de datos de prueba (tipos de chip, campanas y
+ * descuentos, etc.). Misma fuente autoritativa: integrations.config.
+ */
+const permiteLimpiezaDeDatosDePrueba = (environment = integrationsConfig.nubefact.environment) => (
+    !esAmbienteFacturacionProduccion(environment)
+    && integrationsConfig.nubefact.productionConfirmed !== true
+);
+
+/**
+ * Un documento individual marcado como PRODUCCION nunca se borra, aunque la
+ * instalación completa esté en DEMO.
+ */
+const esDocumentoFacturacionDemoLocal = (documento, environment = integrationsConfig.nubefact.environment) => {
+    if (!permiteLimpiezaLocalDeComprobantes(environment)) return false;
+    return normalizarEntorno(documento?.entorno_facturador) !== 'PRODUCCION';
+};
+
 module.exports = {
     normalizarEntorno,
     esAceptadoPorSunat,
     esDemoGeneradoPorNubefact,
-    esDocumentoBaseOperable
+    esDocumentoBaseOperable,
+    entornoFacturacionEfectivo,
+    esAmbienteFacturacionProduccion,
+    permiteLimpiezaLocalDeComprobantes,
+    permiteLimpiezaDeDatosDePrueba,
+    esDocumentoFacturacionDemoLocal
 };

@@ -18,18 +18,22 @@ router.get('/productos/catalogos',permiso('MENU_CHIPS','CHIPS_VER'),controller.c
 router.get('/productos',permiso('MENU_CHIPS','CHIPS_VER'),controller.listarProductosInventariables);
 router.post('/productos',permiso('CHIPS_CONFIGURAR'),controller.crearProductoInventariable);
 router.put('/productos/:id',permiso('CHIPS_CONFIGURAR'),controller.editarProductoInventariable);
+router.get('/productos/:id/impacto',permiso('CHIPS_CONFIGURAR'),controller.impactoProductoInventariable);
+router.delete('/productos/:id',permiso('CHIPS_CONFIGURAR'),controller.eliminarProductoInventariable);
 router.get('/',permiso('MENU_CHIPS','CHIPS_VER'),controller.listar);
 router.get('/resumen',permiso('MENU_CHIPS','CHIPS_VER'),controller.resumen);
 router.get('/disponibilidad/:numeroChip',controller.consultarDisponibilidad);
 router.post('/ingresos',permiso('CHIPS_INGRESAR'),controller.ingresar);
 router.post('/transferencias',permiso('CHIPS_TRANSFERIR'),controller.transferir);
-router.post('/reservas',permiso('CHIPS_VER'),controller.reservar);
-router.post('/liberaciones',permiso('CHIPS_VER'),controller.liberar);
+// Lectura: consultar el inventario y el histórico de ventas.
 router.get('/ventas',permiso('CHIPS_VER'),controller.listarVentas);
 router.get('/ventas/:operacionId',permiso('CHIPS_VER'),controller.obtenerDetalleVenta);
-router.post('/ventas',permiso('CHIPS_VER'),controller.vender);
-router.post('/venta-directa/validar',permiso('CHIPS_VER'),controller.validarVentaDirecta);
-router.post('/venta-directa',permiso('CHIPS_VER'),controller.crearVentaDirecta);
+// Escritura: reservar/liberar, validar y registrar la venta con su comprobante.
+router.post('/reservas',permiso('CHIPS_VENDER'),controller.reservar);
+router.post('/liberaciones',permiso('CHIPS_VENDER'),controller.liberar);
+router.post('/ventas',permiso('CHIPS_VENDER'),controller.vender);
+router.post('/venta-directa/validar',permiso('CHIPS_VENDER'),controller.validarVentaDirecta);
+router.post('/venta-directa',permiso('CHIPS_VENDER'),controller.crearVentaDirecta);
 router.post('/bajas',permiso('CHIPS_BAJA'),controller.baja);
 router.get('/catalogo-fiscales', permiso('MENU_CHIPS','CHIPS_VER','MENU_CONFIGURACION','CONFIGURACION_PRODUCTOS'), controller.listarCatalogoChipsFiscales);
 router.get('/:id/movimientos',permiso('MENU_CHIPS','CHIPS_VER'),controller.historial);

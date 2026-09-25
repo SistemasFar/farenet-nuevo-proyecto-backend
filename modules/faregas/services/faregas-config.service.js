@@ -1,4 +1,5 @@
 const db = require('../../../config/database');
+const categoriasImpactoService = require('./faregas-categorias-impacto.service');
 
 const TIPOS_FLUJO = new Set(['CERTIFICACION', 'SERVICIO_COMPLEMENTARIO', 'TALLER_INSPECCION']);
 
@@ -414,11 +415,21 @@ exports.editarServicio = async (id, servicio, username, ip_direccion) => {
 
 exports.getCategorias = async ({ soloActivas = false } = {}) => {
     const result = await db.query(`
-        SELECT id, codigo, nombre, descripcion, activo, orden,
-               fecha_creacion, fecha_modificacion
-        FROM fg_categoria_servicio
-        ${soloActivas ? 'WHERE activo = TRUE' : ''}
-        ORDER BY orden ASC, nombre ASC
+        SELECT c.id, c.codigo, c.nombre, c.descripcion, c.activo, c.orden,
+               c.fecha_creacion, c.fecha_modificacion,
+               (
+                   SELECT COUNT(*)::int
+                   FROM fg_producto_facturacion p
+                   WHERE p.categoria_id = c.id
+               ) AS productos_vinculados,
+               (
+                   SELECT COUNT(*)::int
+                   FROM fg_servicio s
+                   WHERE s.categoria_id = c.id
+               ) AS servicios_vinculados
+        FROM fg_categoria_servicio c
+        ${soloActivas ? 'WHERE c.activo = TRUE' : ''}
+        ORDER BY c.orden ASC, c.nombre ASC
     `);
     return result.rows;
 };
@@ -478,6 +489,102 @@ exports.editarCategoria = async (id, categoria, username, ip_direccion) => {
         client.release();
     }
 };
+
+exports.eliminarCategoria = async (id, username, ip_direccion, opciones = {}) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const actual = await client.query(
+            'SELECT * FROM fg_categoria_servicio WHERE id = $1 FOR UPDATE',
+            [id]
+        );
+        if (actual.rowCount === 0) throw new Error('CATEGORIA_NO_ENCONTRADA');
+
+        const impacto = await categoriasImpactoService.calcularImpactoEnTransaccion(
+            client, id, actual.rows[0]
+        );
+        if (impacto.requiereConfirmacion && opciones.confirmarTodo !== true) {
+            const error = new Error('CONFIRMAR_IMPACTO_CATEGORIA');
+            error.detalles = { impacto };
+            throw error;
+        }
+
+        let limpieza = {
+            serviciosEliminados: 0,
+            tarifasEliminadas: 0,
+            reglasEliminadas: 0,
+            operacionesEliminadas: 0,
+            certificadosEliminados: 0,
+            facturacionesEliminadas: 0,
+            comprobantesLocalesEliminados: 0
+        };
+        if (impacto.servicios.length > 0) {
+            limpieza = await categoriasImpactoService.eliminarServiciosYDependencias(client, impacto);
+        }
+
+        if (impacto.productos.length > 0) {
+            await client.query(`
+                UPDATE fg_producto_facturacion
+                SET categoria_id = NULL,
+                    fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE categoria_id = $1
+            `, [id]);
+        }
+
+        const eliminado = await client.query(
+            'DELETE FROM fg_categoria_servicio WHERE id = $1',
+            [id]
+        );
+        if (eliminado.rowCount !== 1) {
+            const error = new Error('CATEGORIA_NO_ELIMINADA');
+            error.status = 409;
+            throw error;
+        }
+
+        const resumen = {
+            categoriaEliminada: {
+                id: Number(actual.rows[0].id),
+                codigo: actual.rows[0].codigo,
+                nombre: actual.rows[0].nombre
+            },
+            productosDesvinculados: impacto.productos.length,
+            serviciosEliminados: limpieza.serviciosEliminados,
+            tarifasEliminadas: limpieza.tarifasEliminadas,
+            reglasEliminadas: limpieza.reglasEliminadas,
+            operacionesEliminadas: limpieza.operacionesEliminadas,
+            certificadosEliminados: limpieza.certificadosEliminados,
+            facturacionesEliminadas: limpieza.facturacionesEliminadas,
+            comprobantesLocalesEliminados: limpieza.comprobantesLocalesEliminados,
+            ambiente: impacto.ambiente
+        };
+
+        await this.registrarAuditoria(client, {
+            username,
+            entidad: 'CATEGORIA',
+            accion: 'ELIMINAR_CATEGORIA',
+            identificador: actual.rows[0].codigo,
+            detalles: {
+                eliminada: actual.rows[0],
+                productos_desvinculados: impacto.productos,
+                servicios_eliminados: impacto.servicios,
+                limpieza
+            },
+            planta_key: null,
+            ip_direccion
+        });
+
+        await client.query('COMMIT');
+        return resumen;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.code === '23503') throw new Error('CATEGORIA_EN_USO');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+exports.obtenerImpactoCategoria = (id) => categoriasImpactoService.preview(id);
 
 exports.cambiarEstadoCategoria = async (id, activo, username, ip_direccion) => {
     const client = await db.connect();

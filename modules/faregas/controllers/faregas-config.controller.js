@@ -284,6 +284,84 @@ exports.editarCategoria = async (req, res) => {
     }
 };
 
+exports.obtenerImpactoCategoria = async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isSafeInteger(id) || id <= 0) {
+            return res.status(400).json({ success: false, message: 'Identificador de categoría inválido.' });
+        }
+        const impacto = await configService.obtenerImpactoCategoria(id);
+        res.json({ success: true, impacto });
+    } catch (error) {
+        if (error.message === 'CATEGORIA_NO_ENCONTRADA') {
+            return res.status(404).json({ success: false, code: error.message, message: 'Categoría no encontrada.' });
+        }
+        res.status(500).json({ success: false, message: error.message || 'Error al obtener impacto de la categoría.' });
+    }
+};
+
+exports.eliminarCategoria = async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isSafeInteger(id) || id <= 0) {
+            return res.status(400).json({ success: false, message: 'Identificador de categoría inválido.' });
+        }
+        const confirmarTodo = req.body?.confirmarTodo === true;
+        const resumen = await configService.eliminarCategoria(
+            id, req.user.username, req.ip, { confirmarTodo }
+        );
+        res.json({
+            success: true,
+            message: resumen.serviciosEliminados > 0
+                ? `Categoría, servicios y configuración eliminados. ${resumen.productosDesvinculados} producto(s) permanecen en el catálogo.`
+                : resumen.productosDesvinculados > 0
+                    ? `Categoría eliminada. ${resumen.productosDesvinculados} producto(s) quedaron sin categoría.`
+                    : 'Categoría eliminada exitosamente.',
+            ...resumen
+        });
+    } catch (error) {
+        if (error.message === 'CATEGORIA_NO_ENCONTRADA') {
+            return res.status(404).json({ success: false, code: error.message, message: 'Categoría no encontrada.' });
+        }
+        if (error.message === 'CONFIRMAR_IMPACTO_CATEGORIA') {
+            return res.status(409).json({
+                success: false,
+                code: error.message,
+                message: 'La categoría tiene servicios vinculados. Confirma la eliminación del conjunto para continuar.',
+                impacto: error.detalles?.impacto
+            });
+        }
+        if (error.message === 'OPERACION_MIXTA_CATEGORIA') {
+            return res.status(409).json({
+                success: false,
+                code: error.message,
+                message: 'No se puede eliminar: hay operaciones de prueba que comparten información con otros servicios o productos fiscales. No se eliminó nada.',
+                detalles: error.detalles
+            });
+        }
+        if (error.codigo === 'FACTURACION_PROTEGIDA' || error.message === 'FACTURACION_PROTEGIDA') {
+            return res.status(409).json({
+                success: false,
+                code: 'FACTURACION_PROTEGIDA',
+                message: 'No se puede eliminar: existen comprobantes fiscales emitidos o aceptados por SUNAT. No se eliminó nada.',
+                detalles: error.detalles
+            });
+        }
+        if (error.message === 'CATEGORIA_EN_USO') {
+            return res.status(409).json({
+                success: false,
+                code: error.message,
+                message: 'No se puede eliminar la categoría porque tiene dependencias operativas no clasificadas. No se eliminó nada.',
+                detalles: error.detalles
+            });
+        }
+        res.status(error.status || 500).json({
+            success: false,
+            message: error.message || 'Error al eliminar categoría.'
+        });
+    }
+};
+
 exports.cambiarEstadoCategoria = async (req, res) => {
     try {
         const { activo } = req.body;

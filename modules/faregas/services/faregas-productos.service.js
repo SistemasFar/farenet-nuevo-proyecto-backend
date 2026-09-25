@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const configService = require('./faregas-config.service');
+const productosImpactoService = require('./faregas-productos-impacto.service');
 
 exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId } = {}) => {
     const condiciones = [];
@@ -197,30 +198,366 @@ exports.cambiarEstado = async (id, activo, username, ip_direccion) => {
     }
 };
 
-exports.eliminar = async (id, username, ip_direccion) => {
+const SNAPSHOT_OPERACION_CAMPOS = [
+    'codigo_sku_snapshot',
+    'descripcion_snapshot',
+    'unidad_snapshot',
+    'afectacion_igv_snapshot',
+    'valor_unitario',
+    'precio_unitario',
+    'base_imponible',
+    'igv',
+    'importe_total'
+];
+
+const snapshotOperacionCompleto = (detalle) => SNAPSHOT_OPERACION_CAMPOS.every((campo) => {
+    const valor = detalle?.[campo];
+    return valor !== null && valor !== undefined && String(valor).trim() !== '';
+});
+
+const crearErrorEliminacion = (codigo, detalles = {}) => {
+    const error = new Error(codigo);
+    error.codigo = codigo;
+    error.detalles = detalles;
+    return error;
+};
+
+const ids = (rows) => rows.map((row) => row.id);
+
+const eliminarProductoEnTransaccion = async (client, id, username, ip_direccion, opciones = {}) => {
+    const productoResult = await client.query(
+        'SELECT * FROM fg_producto_facturacion WHERE id = $1 FOR UPDATE',
+        [id]
+    );
+    if (productoResult.rowCount === 0) throw new Error('PRODUCTO_NO_ENCONTRADO');
+    const producto = productoResult.rows[0];
+
+    const impacto = await productosImpactoService.calcularImpactoEnTransaccion(client, id, producto);
+    let limpiezaConjunto = null;
+    if (impacto.requiereConfirmacionConjunto) {
+        if (opciones.confirmarConjunto !== true) {
+            throw crearErrorEliminacion('CONFIRMAR_IMPACTO', { impacto });
+        }
+        limpiezaConjunto = await productosImpactoService.eliminarOperacionesMixtas(client, impacto);
+    }
+
+    // Las tarifas son la configuración que realmente hace visible un servicio
+    // en Nuevo Certificado. Las que tengan historial también se eliminan; sus
+    // referencias históricas se desvinculan más abajo conservando snapshots.
+    const tarifasResult = await client.query(`
+        SELECT t.id, t.servicio_id, t.activo, t.producto_facturacion_id,
+               EXISTS (
+                   SELECT 1
+                   FROM fg_operacion_detalle od
+                   WHERE od.tarifa_id = t.id
+               ) AS tiene_historial
+        FROM fg_tarifa t
+        WHERE t.producto_facturacion_id = $1
+        FOR UPDATE OF t
+    `, [id]);
+    const tarifasPorChipResult = await client.query(`
+        SELECT t.id, t.servicio_id, t.activo, t.producto_facturacion_id,
+               EXISTS (
+                   SELECT 1
+                   FROM fg_operacion_detalle od
+                   WHERE od.tarifa_id = t.id
+               ) AS tiene_historial
+        FROM fg_tarifa t
+        JOIN fg_producto_facturacion pf ON pf.id = t.producto_facturacion_id
+        JOIN fg_producto_inventariable pi
+          ON pi.id = pf.producto_chip_id
+         AND pi.activo = TRUE
+         AND pi.control_stock = TRUE
+         AND pi.tipo = 'CHIP_SERIALIZADO'
+        LEFT JOIN fg_producto_inventariable_sede pis
+          ON pis.producto_inventariable_id = pi.id
+         AND pis.planta_key = t.planta_key
+         AND pis.activo = TRUE
+        WHERE COALESCE(pis.producto_facturacion_id, pi.producto_facturacion_id) = $1
+        FOR UPDATE OF t
+    `, [id]);
+    const tarifasPorId = new Map(tarifasResult.rows.map((tarifa) => [Number(tarifa.id), tarifa]));
+    for (const tarifa of tarifasPorChipResult.rows) {
+        if (!tarifasPorId.has(Number(tarifa.id))) tarifasPorId.set(Number(tarifa.id), tarifa);
+    }
+    const tarifas = [...tarifasPorId.values()];
+    const tarifaIds = ids(tarifas);
+    const serviciosAfectados = [...new Set(tarifas.map((tarifa) => tarifa.servicio_id))];
+
+    const detallesResult = await client.query(`
+        SELECT od.id, od.operacion_id, od.tipo_item, od.tarifa_id,
+               od.producto_facturacion_id,
+               od.codigo_sku_snapshot, od.descripcion_snapshot,
+               od.unidad_snapshot, od.afectacion_igv_snapshot,
+               od.valor_unitario, od.precio_unitario,
+               od.base_imponible, od.igv, od.importe_total
+        FROM fg_operacion_detalle od
+        WHERE od.producto_facturacion_id = $1
+        FOR UPDATE
+    `, [id]);
+    let detalles = detallesResult.rows;
+    if (tarifaIds.length > 0) {
+        const detallesPorTarifaResult = await client.query(`
+            SELECT od.id, od.operacion_id, od.tipo_item, od.tarifa_id,
+                   od.producto_facturacion_id,
+                   od.codigo_sku_snapshot, od.descripcion_snapshot,
+                   od.unidad_snapshot, od.afectacion_igv_snapshot,
+                   od.valor_unitario, od.precio_unitario,
+                   od.base_imponible, od.igv, od.importe_total
+            FROM fg_operacion_detalle od
+            WHERE od.tarifa_id = ANY($1::integer[])
+            FOR UPDATE
+        `, [tarifaIds]);
+        const idsDetalle = new Set(detalles.map((detalle) => Number(detalle.id)));
+        detalles = [
+            ...detalles,
+            ...detallesPorTarifaResult.rows.filter((detalle) => !idsDetalle.has(Number(detalle.id)))
+        ];
+    }
+    const operacionIds = [...new Set(detalles.map((detalle) => detalle.operacion_id))];
+
+    // No se permite arrastrar una operación que todavía contiene otro SKU.
+    // Bloqueamos también las cabeceras para que no entre otro detalle mientras
+    // se decide la limpieza. Todo sigue ocurriendo antes de la primera escritura.
+    if (operacionIds.length > 0) {
+        await client.query(
+            'SELECT id FROM fg_operacion_comercial WHERE id = ANY($1::bigint[]) FOR UPDATE',
+            [operacionIds]
+        );
+    }
+    let operacionesMixtas = [];
+    if (operacionIds.length > 0) {
+        const mixturesResult = await client.query(`
+            SELECT od.operacion_id,
+                   array_agg(DISTINCT od.producto_facturacion_id)
+                       FILTER (WHERE od.producto_facturacion_id IS NOT NULL) AS productos
+            FROM fg_operacion_detalle od
+            WHERE od.operacion_id = ANY($1::bigint[])
+              AND od.producto_facturacion_id IS NOT NULL
+              AND od.producto_facturacion_id <> $2
+            GROUP BY od.operacion_id
+            ORDER BY od.operacion_id
+        `, [operacionIds, id]);
+        operacionesMixtas = mixturesResult.rows;
+    }
+    if (operacionesMixtas.length > 0) {
+        const impactoActual = await productosImpactoService.calcularImpactoEnTransaccion(client, id, producto);
+        throw crearErrorEliminacion('CONFIRMAR_IMPACTO', { impacto: impactoActual });
+    }
+
+    const detalleSinSnapshot = detalles.find((detalle) => !snapshotOperacionCompleto(detalle));
+    if (detalleSinSnapshot) {
+        throw crearErrorEliminacion('HISTORICO_SIN_SNAPSHOT', {
+            operacion_detalle_id: detalleSinSnapshot.id
+        });
+    }
+
+    // Los certificados emitted sólo se desvinculan cuando su detalle comercial
+    // del mismo producto conserva todos los snapshots. Los borradores y anulados son configuración
+    // activa y pueden quedar sin SKU para que el operador los reconfigure.
+    const certificadosResult = await client.query(`
+        SELECT c.id, c.estado,
+               c.producto_facturacion_certificado_id,
+               c.producto_facturacion_chip_id,
+               EXISTS (
+                   SELECT 1
+                   FROM fg_operacion_detalle od
+                   WHERE od.certificado_id = c.id
+                     AND od.producto_facturacion_id = $1
+                     AND od.codigo_sku_snapshot IS NOT NULL
+                     AND od.descripcion_snapshot IS NOT NULL
+                     AND od.unidad_snapshot IS NOT NULL
+                     AND od.afectacion_igv_snapshot IS NOT NULL
+                     AND od.valor_unitario IS NOT NULL
+                     AND od.precio_unitario IS NOT NULL
+                     AND od.base_imponible IS NOT NULL
+                     AND od.igv IS NOT NULL
+                     AND od.importe_total IS NOT NULL
+               ) AS snapshot_completo
+        FROM fg_certificado c
+        WHERE c.producto_facturacion_certificado_id = $1
+           OR c.producto_facturacion_chip_id = $1
+        FOR UPDATE OF c
+    `, [id]);
+    const certificados = certificadosResult.rows;
+    const certificadoInseguro = certificados.find((certificado) => (
+        !['BORRADOR', 'ANULADO'].includes(certificado.estado)
+        && certificado.snapshot_completo !== true
+    ));
+    if (certificadoInseguro) {
+        throw crearErrorEliminacion('CERTIFICADO_SIN_SNAPSHOT', {
+            certificado_id: certificadoInseguro.id,
+            estado: certificadoInseguro.estado
+        });
+    }
+
+    const productoSedeResult = await client.query(
+        'SELECT id FROM fg_producto_sede WHERE producto_facturacion_id = $1 FOR UPDATE',
+        [id]
+    );
+    const productoInventariableResult = await client.query(
+        'SELECT id FROM fg_producto_inventariable WHERE producto_facturacion_id = $1 FOR UPDATE',
+        [id]
+    );
+    const productoInventariableSedeResult = await client.query(
+        'SELECT id FROM fg_producto_inventariable_sede WHERE producto_facturacion_id = $1 FOR UPDATE',
+        [id]
+    );
+
+    // Las operaciones históricas no se borran: se conserva el snapshot y sólo
+    // se retiran las FK vivas de producto/tarifa. La migración temporal permite
+    // este caso cuando el snapshot está completo.
+    if (detalles.length > 0) {
+        await client.query(`
+            UPDATE fg_operacion_detalle
+            SET producto_facturacion_id = CASE
+                    WHEN producto_facturacion_id = $1 THEN NULL
+                    ELSE producto_facturacion_id
+                END,
+                tarifa_id = CASE
+                    WHEN tarifa_id = ANY($2::integer[]) THEN NULL
+                    ELSE tarifa_id
+                END
+            WHERE id = ANY($3::bigint[])
+        `, [id, tarifaIds, ids(detalles)]);
+    }
+
+    if (certificados.length > 0) {
+        await client.query(`
+            UPDATE fg_certificado
+            SET producto_facturacion_certificado_id = CASE
+                    WHEN producto_facturacion_certificado_id = $1 THEN NULL
+                    ELSE producto_facturacion_certificado_id
+                END,
+                producto_facturacion_chip_id = CASE
+                    WHEN producto_facturacion_chip_id = $1 THEN NULL
+                    ELSE producto_facturacion_chip_id
+                END,
+                fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = ANY($2::bigint[])
+        `, [id, ids(certificados)]);
+    }
+
+    // Todas las tarifas del producto se retiran físicamente. Las referencias
+    // históricas de detalle se desvinculan arriba conservando sus snapshots.
+    if (tarifas.length > 0) {
+        await client.query(
+            'DELETE FROM fg_tarifa WHERE id = ANY($1::integer[])',
+            [tarifaIds]
+        );
+    }
+
+    if (productoSedeResult.rowCount > 0) {
+        await client.query(
+            'DELETE FROM fg_producto_sede WHERE id = ANY($1::bigint[])',
+            [ids(productoSedeResult.rows)]
+        );
+    }
+    if (productoInventariableResult.rowCount > 0) {
+        await client.query(`
+            UPDATE fg_producto_inventariable
+            SET producto_facturacion_id = NULL,
+                fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = ANY($1::bigint[])
+        `, [ids(productoInventariableResult.rows)]);
+    }
+    if (productoInventariableSedeResult.rowCount > 0) {
+        await client.query(`
+            UPDATE fg_producto_inventariable_sede
+            SET producto_facturacion_id = NULL,
+                fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = ANY($1::bigint[])
+        `, [ids(productoInventariableSedeResult.rows)]);
+    }
+
+    let serviciosDesactivados = 0;
+    if (serviciosAfectados.length > 0) {
+        const serviciosResult = await client.query(`
+            UPDATE fg_servicio s
+            SET activo = FALSE
+            WHERE s.id = ANY($1::integer[])
+              AND s.activo = TRUE
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM fg_tarifa t
+                  WHERE t.servicio_id = s.id
+                    AND t.activo = TRUE
+              )
+        `, [serviciosAfectados]);
+        serviciosDesactivados = serviciosResult.rowCount;
+    }
+
+    const eliminado = await client.query(
+        'DELETE FROM fg_producto_facturacion WHERE id = $1',
+        [id]
+    );
+    if (eliminado.rowCount !== 1) {
+        throw crearErrorEliminacion('PRODUCTO_NO_ELIMINADO');
+    }
+
+    const resumen = {
+        productoEliminado: {
+            id: Number(producto.id),
+            codigo_sku: producto.codigo_sku,
+            descripcion: producto.descripcion
+        },
+        tarifasEliminadas: tarifas.length,
+        tarifasDesvinculadas: 0,
+        mappingsEliminados: productoSedeResult.rowCount,
+        mappingsDesvinculados: productoInventariableResult.rowCount
+            + productoInventariableSedeResult.rowCount,
+        serviciosDesactivados,
+        operacionesDesvinculadas: operacionIds.length,
+        certificadosDesvinculados: certificados.length,
+        historicosPreservados: {
+            operaciones: operacionIds.length,
+            certificados: certificados.length
+        },
+        conjuntoPrueba: limpiezaConjunto
+    };
+
+    await configService.registrarAuditoria(client, {
+        username,
+        entidad: 'PRODUCTO_FACTURACION',
+        accion: 'ELIMINAR_PRODUCTO',
+        identificador: producto.codigo_sku,
+        detalles: { eliminado: producto, resumen },
+        planta_key: null,
+        ip_direccion
+    });
+
+    return resumen;
+};
+
+exports.eliminar = async (id, username, ip_direccion, opciones = {}) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        const actual = await client.query('SELECT * FROM fg_producto_facturacion WHERE id = $1 FOR UPDATE', [id]);
-        if (actual.rowCount === 0) throw new Error('PRODUCTO_NO_ENCONTRADO');
-        
-        await client.query('DELETE FROM fg_producto_facturacion WHERE id = $1', [id]);
-        
-        await configService.registrarAuditoria(client, {
-            username, entidad: 'PRODUCTO_FACTURACION',
-            accion: 'ELIMINAR_PRODUCTO',
-            identificador: actual.rows[0].codigo_sku,
-            detalles: { eliminado: actual.rows[0] },
-            planta_key: null, ip_direccion
-        });
+        const resumen = await eliminarProductoEnTransaccion(client, id, username, ip_direccion, opciones);
         await client.query('COMMIT');
+        return resumen;
     } catch (error) {
-        await client.query('ROLLBACK');
-        if (error.code === '23503') throw new Error('PRODUCTO_EN_USO');
+        try {
+            await client.query('ROLLBACK');
+        } catch (_rollbackError) {
+            // Se conserva el error original si el rollback ya no es posible.
+        }
+        if (error.code === '23503') throw new Error('DEPENDENCIA_NO_CLASIFICADA');
+        if (error.code === '23514' && /ck_fg_operacion_detalle_concepto/i.test(error.message || '')) {
+            throw new Error('MIGRACION_HISTORICO_REQUERIDA');
+        }
         throw error;
     } finally {
         client.release();
     }
 };
 
-exports._private = { validarProductoChip, validarPrecioChip, validarCategoriaActiva };
+exports.obtenerImpacto = productosImpactoService.preview;
+
+exports._private = {
+    validarProductoChip,
+    validarPrecioChip,
+    validarCategoriaActiva,
+    eliminarProductoEnTransaccion,
+    snapshotOperacionCompleto
+};

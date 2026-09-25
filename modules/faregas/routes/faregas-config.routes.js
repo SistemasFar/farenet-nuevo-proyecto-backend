@@ -201,11 +201,14 @@ router.get('/categorias', requireLecturaCategoriasPerm, configController.getCate
 router.post('/categorias', requireConfigCategoriasPerm, configController.crearCategoria);
 router.put('/categorias/:id', requireConfigCategoriasPerm, configController.editarCategoria);
 router.put('/categorias/:id/estado', requireConfigCategoriasPerm, configController.cambiarEstadoCategoria);
+router.get('/categorias/:id/impacto', requireConfigCategoriasPerm, configController.obtenerImpactoCategoria);
+router.delete('/categorias/:id', requireConfigCategoriasPerm, configController.eliminarCategoria);
 
 router.get('/productos', requireConfigProductosPerm, productosController.listar);
 router.post('/productos', requireConfigProductosPerm, productosController.crear);
 router.put('/productos/:id', requireConfigProductosPerm, productosController.editar);
 router.put('/productos/:id/estado', requireConfigProductosPerm, productosController.cambiarEstado);
+router.get('/productos/:id/impacto', requireConfigProductosPerm, productosController.obtenerImpacto);
 router.delete('/productos/:id', requireConfigProductosPerm, productosController.eliminar);
 
 router.get('/tarifas/sedes', requireConfigTarifasPerm, tarifasAdminController.listarSedes);

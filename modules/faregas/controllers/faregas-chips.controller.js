@@ -35,10 +35,14 @@ const respond = (res, error) => {
         OPERACION_ID_INVALIDO: 'El identificador de la operación no es válido.',
         FECHA_INVALIDA: 'Las fechas deben tener formato AAAA-MM-DD.',
         RANGO_FECHAS_INVALIDO: 'La fecha Desde no puede ser posterior a la fecha Hasta.',
-        PLANTA_NO_AUTORIZADA: 'No tiene acceso a la sede de la operación.'
+        PLANTA_NO_AUTORIZADA: 'No tiene acceso a la sede de la operación.',
+        TIPO_CHIP_NO_ENCONTRADA: 'El tipo de chip no existe.',
+        TIPO_CHIP_BLOQUEADO: 'El tipo de chip tiene dependencias que no se pueden eliminar.',
+        AMBIENTE_PRODUCCION: 'La limpieza de tipos de chip sólo está disponible en ambiente DEMO o desarrollo.'
     };
-    const status = ['CHIP_DUPLICADO','CHIP_NO_DISPONIBLE','CHIP_OTRA_SEDE','CHIP_ASIGNADO_CERTIFICADO','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO','PAGO_INCOMPLETO','PAGO_EXCEDE_TOTAL','VENTA_CHIP_NO_HABILITADA','STOCK_CHIP_NO_PERMITIDO','PRODUCTO_FISCAL_CHIP_INVALIDO','CONDICION_PAGO_NO_DISPONIBLE'].includes(error.message) ? 409
-        : ['OPERACION_NOT_FOUND'].includes(error.message) ? 404
+    const status = error.status
+        || ['CHIP_DUPLICADO','CHIP_NO_DISPONIBLE','CHIP_OTRA_SEDE','CHIP_ASIGNADO_CERTIFICADO','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO','PAGO_INCOMPLETO','PAGO_EXCEDE_TOTAL','VENTA_CHIP_NO_HABILITADA','STOCK_CHIP_NO_PERMITIDO','PRODUCTO_FISCAL_CHIP_INVALIDO','CONDICION_PAGO_NO_DISPONIBLE','TIPO_CHIP_BLOQUEADO','AMBIENTE_PRODUCCION'].includes(error.message) ? 409
+        : ['OPERACION_NOT_FOUND','TIPO_CHIP_NO_ENCONTRADO'].includes(error.message) ? 404
         : ['PLANTA_NO_AUTORIZADA'].includes(error.message) ? 403 : 400;
     res.status(status).json({ success:false, codigo:error.message, message:mensajes[error.message] || error.message, detalles:error.detalles });
 };
@@ -49,6 +53,8 @@ exports.listarProductosInventariables = async(req,res)=>{try{res.json({success:t
 exports.catalogosProductosInventariables = async(req,res)=>{try{res.json({success:true,...await service.catalogosProductosInventariables(req.user.planta_key,req.user)});}catch(e){respond(res,e);}};
 exports.crearProductoInventariable = async(req,res)=>{try{res.status(201).json({success:true,producto:await service.crearProductoInventariable(req.body,req.user,req.ip)});}catch(e){respond(res,e);}};
 exports.editarProductoInventariable = async(req,res)=>{try{res.json({success:true,producto:await service.editarProductoInventariable(Number(req.params.id),req.body,req.user,req.ip)});}catch(e){respond(res,e);}};
+exports.impactoProductoInventariable = async(req,res)=>{try{res.json({success:true,impacto:await service.obtenerImpactoTipoChip(Number(req.params.id))});}catch(e){respond(res,e);}};
+exports.eliminarProductoInventariable = async(req,res)=>{try{res.json({success:true,resultado:await service.eliminarProductoInventariable(Number(req.params.id),req.user,req.ip)});}catch(e){respond(res,e);}};
 exports.consultarDisponibilidad = async(req,res)=>{try{res.json({success:true,chip:await service.consultarDisponibilidad({plantaKey:req.user.planta_key,numeroChip:req.params.numeroChip,certificadoId:req.query.certificadoId},req.user)});}catch(e){respond(res,e);}};
 exports.ingresar = async(req,res)=>{try{res.status(201).json({success:true,chips:await service.ingresar({plantaKey:req.user.planta_key,...req.body},req.user)});}catch(e){respond(res,e);}};
 exports.transferir = async(req,res)=>{try{res.json({success:true,cantidad:await service.transferir({...req.body,origenKey:req.user.planta_key},req.user)});}catch(e){respond(res,e);}};

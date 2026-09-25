@@ -71,6 +71,10 @@ router.get('/correlativos/:plantaKey/:tipo', controller.obtenerRangoActivo);
 router.post('/correlativos', controller.crearRango);
 router.patch('/correlativos/:id', controller.actualizarRango);
 router.patch('/correlativos/:id/cerrar', controller.cerrarRango);
+router.get('/correlativos-plan/auditoria', controller.auditarCorrelativos);
+router.get('/correlativos-plan/plan', controller.obtenerPlanCorrelativos);
+router.post('/correlativos-plan/aplicar', controller.aplicarPlanCorrelativos);
+router.get('/correlativos-plan/siguiente', controller.sugerirSiguienteRango);
 
 // FASE 3: BORRADORES DE CERTIFICADOS
 router.get('/borradores', controller.obtenerBorradores);
