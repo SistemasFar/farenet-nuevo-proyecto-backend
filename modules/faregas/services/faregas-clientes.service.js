@@ -54,6 +54,81 @@ exports.buscarClientePropio = async (tipoDocumento, nroDocumento) => {
     return cliente;
 };
 
+const texto = (value) => String(value ?? '').trim();
+
+/**
+ * Devuelve el maestro del cliente a partir de su identidad
+ * (tipo_documento + nro_documento), creándolo si todavía no existe.
+ *
+ * Es la operación que usan todos los flujos que deben quedar relacionados con
+ * fg_cliente en lugar de copiar sólo texto. Acepta un `queryable` para poder
+ * participar de la transacción del llamador; por defecto usa el pool.
+ *
+ * Regla no destructiva: si el maestro ya existe sólo se COMPLETAN los campos
+ * que están vacíos. Nunca se sobreescribe un dato válido con uno vacío, ni se
+ * borra información previa. El histórico exacto de cada transacción lo
+ * guardan los snapshots de la operación, no este maestro.
+ */
+exports.asegurarCliente = async (data, queryable = db) => {
+    const tipoDocumento = texto(data?.tipoDocumento).toUpperCase();
+    const nroDocumento = texto(data?.nroDocumento);
+    const nombreRazonSocial = texto(data?.nombreRazonSocial);
+    if (!tipoDocumento || !nroDocumento || !nombreRazonSocial) {
+        throw new Error('DATOS_CLIENTE_REQUERIDOS');
+    }
+
+    const direccion = texto(data?.direccion) || null;
+    const correo = texto(data?.correo).toLowerCase() || null;
+    const telefono = texto(data?.telefono) || null;
+
+    const SELECT_CLIENTE = `
+        SELECT id, tipo_documento, nro_documento, nombre_razon_social,
+               direccion, telefono, correo
+        FROM fg_cliente
+        WHERE tipo_documento = $1 AND nro_documento = $2
+    `;
+    const leer = async () => (await queryable.query(SELECT_CLIENTE, [tipoDocumento, nroDocumento])).rows[0] || null;
+
+    let cliente = await leer();
+
+    if (cliente) {
+        // Completado no destructivo: sólo columnas vacías del maestro.
+        const columnas = [];
+        const valores = [];
+        let idx = 1;
+        if (!texto(cliente.direccion) && direccion) { columnas.push(`direccion = $${idx++}`); valores.push(direccion); }
+        if (!texto(cliente.correo) && correo) { columnas.push(`correo = $${idx++}`); valores.push(correo); }
+        if (!texto(cliente.telefono) && telefono) { columnas.push(`telefono = $${idx++}`); valores.push(telefono); }
+        if (columnas.length > 0) {
+            columnas.push('fecha_modificacion = CURRENT_TIMESTAMP');
+            valores.push(cliente.id);
+            await queryable.query(`UPDATE fg_cliente SET ${columnas.join(', ')} WHERE id = $${idx}`, valores);
+            cliente = await leer();
+        }
+        return { ...cliente, id: Number(cliente.id), creado: false };
+    }
+
+    try {
+        const insertado = await queryable.query(`
+            INSERT INTO fg_cliente
+            (tipo_documento, nro_documento, nombre_razon_social, direccion, telefono, correo, estado)
+            VALUES ($1, $2, $3, $4, $5, $6, true)
+            RETURNING id, tipo_documento, nro_documento, nombre_razon_social, direccion, telefono, correo
+        `, [tipoDocumento, nroDocumento, nombreRazonSocial, direccion, telefono, correo]);
+        return { ...insertado.rows[0], id: Number(insertado.rows[0].id), creado: true };
+    } catch (e) {
+        // Dos ventas simultáneas con el mismo documento: la UNIQUE
+        // (tipo_documento, nro_documento) resuelve la carrera y la segunda
+        // reutiliza el registro que ganó, en vez de fallar o duplicar.
+        if (e.code === '23505') {
+            const ganador = await leer();
+            if (!ganador) throw e;
+            return { ...ganador, id: Number(ganador.id), creado: false };
+        }
+        throw e;
+    }
+};
+
 exports.crearCliente = async (data) => {
     const { tipoDocumento, nroDocumento, nombreRazonSocial, direccion, telefono, correo } = data;
     try {

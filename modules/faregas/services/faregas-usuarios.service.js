@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const bcrypt = require('bcryptjs');
+const paginacion = require('./faregas-paginacion.rules');
 
 const normalizarTexto = (valor) => {
     return String(valor || '').trim();
@@ -30,10 +31,65 @@ exports.obtenerUsuarios = async () => {
         LEFT JOIN departamento dep ON p.departamento_key = dep.key
         LEFT JOIN provincia prov ON p.provincia_key = prov.key
         LEFT JOIN distrito dis ON p.distrito_key = dis.key
-        ORDER BY u.username;
+        ORDER BY u.username
     `;
     const result = await db.query(query);
     return result.rows;
+};
+
+/**
+ * Listado paginado de usuarios. Es un catalogo maestro: NO se filtra por fecha,
+ * solo se pagina. Se mantiene el ORDER BY por usuario.
+ */
+exports.obtenerUsuariosPaginado = async (filtros = {}) => {
+    const { page, limit, offset } = paginacion.normalizarPaginacion(filtros);
+    const condiciones = [];
+    const valores = [];
+    const agregar = (sql, valor) => {
+        valores.push(valor);
+        condiciones.push(sql.replace('?', `$${valores.length}`));
+    };
+    if (filtros.buscar) {
+        valores.push(`%${filtros.buscar}%`);
+        const patron = `$${valores.length}`;
+        condiciones.push(
+            `(u.username ILIKE ${patron} OR COALESCE(p.nombrerazonsocial, '') ILIKE ${patron})`
+        );
+    }
+    if (filtros.perfil_id) agregar('u.perfil_id = ?', filtros.perfil_id);
+    if (filtros.estado === true || filtros.estado === false) agregar('u.estado = ?', filtros.estado);
+
+    const where = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
+    const joins = `
+        FROM fg_usuario u
+        LEFT JOIN persona p ON u.persona_nrodocumentoidentidad = p.nrodocumentoidentidad
+    `;
+
+    const conteo = await db.query(
+        `SELECT COUNT(*)::int AS total ${joins} ${where}`,
+        valores
+    );
+
+    const result = await db.query(`
+        SELECT u.username, u.perfil_id, u.estado, u.user_type, u.persona_nrodocumentoidentidad,
+        COALESCE(
+        (SELECT json_agg(json_build_object('key', up.plantas_key, 'nombre', pl.nombre))
+        FROM fg_usuario_planta up
+        JOIN fg_planta pl ON pl.key = up.plantas_key
+        WHERE up.usuario_username = u.username),
+        '[]'::json
+        ) as sedes
+        ${joins} ${where}
+        ORDER BY u.username
+        LIMIT $${valores.length + 1} OFFSET $${valores.length + 2}
+    `, [...valores, limit, offset]);
+
+    return paginacion.respuestaPaginada(
+        result.rows,
+        Number(conteo.rows[0]?.total || 0),
+        page,
+        limit
+    );
 };
 
 exports.crearUsuario = async (data, creadorUsername) => {

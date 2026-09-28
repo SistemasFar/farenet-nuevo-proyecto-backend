@@ -29,13 +29,18 @@ const construirDatosFacturacionInicial = (payload) => ({
     cuotas: Array.isArray(payload?.cuotas) ? payload.cuotas : []
 });
 
-const construirDatosFacturacion = (snapshot, tipoComprobante) => ({
+// La facturación de una operación es un snapshot fiscal: guarda documento,
+// nombre, dirección, correo y teléfono tal como quedaron para esta venta. Se
+// preserva la prioridad "dato de la venta > maestro": si el operador escribió
+// un contacto, ese manda; si vino vacío se usa el del maestro ya resuelto,
+// que la fase 1 devolvió, sin volver a consultar fg_cliente.
+const construirDatosFacturacion = (snapshot, tipoComprobante, contacto = {}) => ({
     tipoComprobante: texto(tipoComprobante).toUpperCase(),
     nroDocumento: snapshot.documento_cliente_snapshot,
     nombreRazonSocial: snapshot.nombre_cliente_snapshot,
     direccion: snapshot.direccion_cliente_snapshot,
-    email: null,
-    telefono: null,
+    email: texto(contacto.email) || null,
+    telefono: texto(contacto.telefono) || null,
     condicionPago: 'CONTADO',
     medioPago: null,
     cuotas: []
@@ -88,7 +93,10 @@ const crearVentaDirectaYEmitir = async (payload, userContext, dependencies = {})
 
     const venta = await ventaService.crearVentaDirecta(payload, userContext);
     const snapshot = await obtenerSnapshotOperacion(database, venta.operacionId);
-    const datosFacturacion = construirDatosFacturacion(snapshot, payload.tipoComprobante);
+    const datosFacturacion = construirDatosFacturacion(snapshot, payload.tipoComprobante, {
+        email: payload.email || venta.cliente?.correo,
+        telefono: payload.telefono || venta.cliente?.telefono
+    });
 
     let facturacionGuardada = null;
     try {

@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const authService = require('./faregas-auth.service');
+const clientesService = require('./faregas-clientes.service');
 const { normalizarLoteScanner } = require('./faregas-chips.rules');
 const {
     redondear,
@@ -216,6 +217,20 @@ const crearVentaDirecta = async (payload, userContext) => {
         if (importeTotal - totalPagado > 0.009) throw new Error('PAGO_INCOMPLETO');
         for (const pago of pagos) await validarPago(client, pago);
 
+        // La venta queda relacionada con el maestro fg_cliente: se reutiliza el
+        // cliente si ya existe por (tipo_documento, nro_documento) y se crea si
+        // no. Los snapshots de la derecha siguen guardando exactamente lo que el
+        // operador escribió en esta venta, así que el histórico no se pierde
+        // aunque el maestro se complete o se corrija después.
+        const clienteMaestro = await clientesService.asegurarCliente({
+            tipoDocumento: cliente.tipoDocumento,
+            nroDocumento: cliente.numeroDocumento,
+            nombreRazonSocial: cliente.nombre,
+            direccion: cliente.direccion,
+            correo: payload.email,
+            telefono: payload.telefono
+        }, client);
+
         // El esquema canónico no tiene columna de origen; la relación detalle-chip
         // identifica esta venta sin inventar un tipo o valor no persistido.
         const operacionResult = await client.query(`
@@ -224,10 +239,11 @@ const crearVentaDirecta = async (payload, userContext) => {
                 documento_cliente_snapshot, nombre_cliente_snapshot,
                 direccion_cliente_snapshot, moneda_key, base_imponible, igv,
                 importe_total, estado, usuario_creacion
-            ) VALUES ($1, NULL, $2, $3, $4, $5, 'sol', $6, $7, $8, 'PAGADO', $9)
+            ) VALUES ($1, $2, $3, $4, $5, $6, 'sol', $7, $8, $9, 'PAGADO', $10)
             RETURNING id
         `, [
             plantaKey,
+            clienteMaestro.id,
             cliente.tipoDocumento,
             cliente.numeroDocumento,
             cliente.nombre,
@@ -342,6 +358,9 @@ const crearVentaDirecta = async (payload, userContext) => {
         return {
             operacionId,
             ordenPagoId,
+            // Se devuelve el maestro ya resuelto para que la facturación no
+            // vuelva a consultar fg_cliente en la misma operación.
+            cliente: clienteMaestro,
             detalles: detalles.map((detalle, index) => ({ ...detalle, detalleId: detalleIds[index] })),
             total: importeTotal,
             baseImponible,

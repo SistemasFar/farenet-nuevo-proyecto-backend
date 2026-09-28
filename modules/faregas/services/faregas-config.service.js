@@ -1,4 +1,5 @@
 const db = require('../../../config/database');
+const paginacion = require('./faregas-paginacion.rules');
 const categoriasImpactoService = require('./faregas-categorias-impacto.service');
 
 const TIPOS_FLUJO = new Set(['CERTIFICACION', 'SERVICIO_COMPLEMENTARIO', 'TALLER_INSPECCION']);
@@ -49,16 +50,53 @@ exports.registrarAuditoria = async (client, { username, entidad, accion, identif
     `, [username, entidad, accion, identificador, JSON.stringify(detalles), planta_key, ip_direccion]);
 };
 
-exports.getSedes = async () => {
-    const result = await db.query(`
-        SELECT p.key, p.nombre, p.direccion, p.telefono, p.correo, p.activo,
-        p.empresa_key, e.nombre AS empresa_nombre,
-        (SELECT COUNT(*) FROM fg_tarifa t WHERE t.planta_key = p.key AND t.activo = true) as total_tarifas
+exports.getSedes = async (filtros = {}) => {
+    const { page, limit, offset } = paginacion.normalizarPaginacion(filtros);
+    const params = [];
+    const condiciones = [];
+    if (filtros.buscar) {
+        params.push(`%${filtros.buscar}%`);
+        const patron = `$${params.length}`;
+        // La condicion obligatoria es el NOMBRE de la sede. Ademas se acepta
+        // el codigo y la empresa, para que el mismo campo sirva de busqueda
+        // amplia. ILIKE => parcial y case-insensitive.
+        condiciones.push(
+            `(p.nombre ILIKE ${patron} OR p.key ILIKE ${patron} OR e.nombre ILIKE ${patron})`
+        );
+    }
+    const where = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
+
+    const FROM = `
         FROM fg_planta p
         JOIN fg_empresa e ON e.key = p.empresa_key
-        ORDER BY p.activo DESC, p.nombre ASC
-    `);
-    return result.rows;
+    `;
+
+    // COUNT con los MISMOS filtros que el listado, para que el total sea el del
+    // resultado filtrado y no la cantidad de filas de la pagina.
+    const conteo = await db.query(`SELECT COUNT(*)::int AS total ${FROM} ${where}`, params);
+
+    // El ORDER BY de negocio se conserva; la paginacion va DESPUES.
+    // `todos: true` existe para los catálogos auxiliares (selects de empresa y
+    // sede) que necesitan el conjunto completo. La pantalla de administración
+    // NUNCA lo usa: ahí sí va paginada.
+    const paginacionSql = filtros.todos
+        ? ''
+        : `LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    const result = await db.query(`
+    SELECT p.key, p.nombre, p.direccion, p.telefono, p.correo, p.activo,
+    p.empresa_key, e.nombre AS empresa_nombre,
+    (SELECT COUNT(*) FROM fg_tarifa t WHERE t.planta_key = p.key AND t.activo = true) as total_tarifas
+    ${FROM} ${where}
+    ORDER BY p.activo DESC, p.nombre ASC
+    ${paginacionSql}
+    `, filtros.todos ? params : [...params, limit, offset]);
+
+    return paginacion.respuestaPaginada(
+        result.rows,
+        Number(conteo.rows[0]?.total || 0),
+        page,
+        limit
+    );
 };
 
 exports.crearSede = async (sede, username, ip_direccion) => {
@@ -362,6 +400,16 @@ exports.editarServicio = async (id, servicio, username, ip_direccion) => {
         else if (servicio.tipo_certificado_clave === 'GLP_ANUAL') familia = 'GLP';
         else if (servicio.tipo_certificado_clave === 'CONFORMIDAD') familia = 'CONFORMIDAD';
 
+        // `formato_id` NO se toca salvo que venga explícitamente en la petición.
+        // La plantilla del certificado se configura en otro flujo (formatos), así
+        // que editar el nombre o las sedes de una operación no debe borrarle la
+        // plantilla ya asignada. Un cliente antiguo que sí lo mande sigue
+        // funcionando igual, y para quitarlo de verdad está
+        // `asignarFormatoAServicio(id, null)`.
+        const tocarFormato = Object.prototype.hasOwnProperty.call(servicio, 'formato_id')
+            && servicio.formato_id !== undefined;
+        const formatoFinal = tocarFormato ? servicio.formato_id : anterior.formato_id;
+
         await client.query(`
             UPDATE fg_servicio SET 
                 nombre = $1, 
@@ -378,7 +426,7 @@ exports.editarServicio = async (id, servicio, username, ip_direccion) => {
             RETURNING id, formato_id
         `, [
             servicio.nombre, familia, categoria.id, servicio.tipo_flujo, servicio.tipo_certificado_clave,
-            servicio.modalidad, servicio.requiere_certificado, servicio.formato_id ?? null,
+            servicio.modalidad, servicio.requiere_certificado, formatoFinal,
             servicio.requiere_vehiculo, servicio.orden, id
         ]);
 
@@ -393,14 +441,14 @@ exports.editarServicio = async (id, servicio, username, ip_direccion) => {
                     modalidad: anterior.modalidad, requiere_certificado: anterior.requiere_certificado, formato_id: anterior.formato_id,
                     requiere_vehiculo: anterior.requiere_vehiculo, orden: anterior.orden
                 },
-                despues: { ...servicio, familia }
+                despues: { ...servicio, familia, formato_id: formatoFinal }
             },
             planta_key: null, 
             ip_direccion
         });
 
         await client.query('COMMIT');
-        return { id, formato_id: servicio.formato_id ?? null };
+        return { id, formato_id: formatoFinal ?? null };
     } catch (e) {
         await client.query('ROLLBACK');
         throw e;
@@ -415,7 +463,7 @@ exports.editarServicio = async (id, servicio, username, ip_direccion) => {
 
 exports.getCategorias = async ({ soloActivas = false } = {}) => {
     const result = await db.query(`
-        SELECT c.id, c.codigo, c.nombre, c.descripcion, c.activo, c.orden,
+        SELECT c.id, c.codigo, c.nombre, c.descripcion, c.activo,
                c.fecha_creacion, c.fecha_modificacion,
                (
                    SELECT COUNT(*)::int
@@ -429,11 +477,18 @@ exports.getCategorias = async ({ soloActivas = false } = {}) => {
                ) AS servicios_vinculados
         FROM fg_categoria_servicio c
         ${soloActivas ? 'WHERE c.activo = TRUE' : ''}
-        ORDER BY c.orden ASC, c.nombre ASC
+        ORDER BY c.codigo ASC, c.nombre ASC
     `);
     return result.rows;
 };
 
+/**
+ * Crea la categoría. `orden` NO lo define el usuario: se calcula aquí como
+ * MAX(orden) + 10 para que la nueva quede al final del grupo. El valor sigue
+ * siendo necesario porque Catálogo, Tarifas y Descuentos ordenan por
+ * `c.orden` para agrupar los servicios de cada categoría; eliminar la columna
+ * cambiaría el agrupamiento de esas pantallas.
+ */
 exports.crearCategoria = async (categoria, username, ip_direccion) => {
     const client = await db.connect();
     try {
@@ -441,9 +496,10 @@ exports.crearCategoria = async (categoria, username, ip_direccion) => {
         const result = await client.query(`
             INSERT INTO fg_categoria_servicio
                 (codigo, nombre, descripcion, activo, orden)
-            VALUES ($1, $2, $3, TRUE, $4)
+            VALUES ($1, $2, $3, TRUE,
+                (SELECT COALESCE(MAX(orden), 0) + 10 FROM fg_categoria_servicio))
             RETURNING id
-        `, [categoria.codigo, categoria.nombre, categoria.descripcion, categoria.orden]);
+        `, [categoria.codigo, categoria.nombre, categoria.descripcion]);
         await this.registrarAuditoria(client, {
             username, entidad: 'CATEGORIA', accion: 'CREAR_CATEGORIA',
             identificador: categoria.codigo,
@@ -467,11 +523,14 @@ exports.editarCategoria = async (id, categoria, username, ip_direccion) => {
         await client.query('BEGIN');
         const actual = await client.query('SELECT * FROM fg_categoria_servicio WHERE id = $1 FOR UPDATE', [id]);
         if (actual.rowCount === 0) throw new Error('Categoría no encontrada.');
+        // `orden` NO se toca: es un valor interno de agrupación. Si se
+        // actualizara con el dato del formulario, editar una categoría sin
+        // mandarlo la dejaría en 0 y la reordenaría en Catálogo/Tarifas.
         await client.query(`
             UPDATE fg_categoria_servicio
-            SET nombre = $1, descripcion = $2, orden = $3, fecha_modificacion = CURRENT_TIMESTAMP
-            WHERE id = $4
-        `, [categoria.nombre, categoria.descripcion, categoria.orden, id]);
+            SET nombre = $1, descripcion = $2, fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $3
+        `, [categoria.nombre, categoria.descripcion, id]);
         await this.registrarAuditoria(client, {
             username, entidad: 'CATEGORIA', accion: 'EDITAR_CATEGORIA',
             identificador: actual.rows[0].codigo,

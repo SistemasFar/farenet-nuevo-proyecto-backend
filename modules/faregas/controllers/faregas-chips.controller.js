@@ -75,12 +75,22 @@ exports.listarCatalogoChipsFiscales = async (req, res) => {
 };
 
 exports.listarVentas = async (req, res) => {
-    try {
-        const ventas = await service.listarVentas(req.user.planta_key, req.user, req.query || {});
-        res.json({ success: true, ventas });
-    } catch (e) {
-        respond(res, e);
-    }
+  try {
+    const resultado = await service.listarVentas(req.user.planta_key, req.user, req.query || {});
+    // El sobre de paginacion va en la raiz y se conserva `ventas` como arreglo
+    // para no romper a los consumidores actuales.
+    res.json({
+      success: true,
+      items: resultado.items,
+      total: resultado.total,
+      page: resultado.page,
+      limit: resultado.limit,
+      totalPages: resultado.totalPages,
+      ventas: resultado.items
+    });
+  } catch (e) {
+    respond(res, e);
+  }
 };
 
 exports.obtenerDetalleVenta = async (req, res) => {

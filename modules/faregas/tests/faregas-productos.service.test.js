@@ -509,8 +509,10 @@ test('el listado de productos no devuelve el SKU después de eliminarlo', async 
         return { rows: store.state.producto ? [store.state.producto] : [] };
     };
     try {
-        const productos = await productosService.listar();
-        assert.deepEqual(productos, []);
+        // El listado es paginado: devuelve el sobre { items, total, ... }.
+        const resultado = await productosService.listar();
+        assert.deepEqual(resultado.items, []);
+        assert.equal(resultado.total, 0);
     } finally {
         db.query = originalQuery;
     }

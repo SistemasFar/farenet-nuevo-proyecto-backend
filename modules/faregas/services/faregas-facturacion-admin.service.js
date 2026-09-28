@@ -108,10 +108,11 @@ exports.listar = async (query, userContext, dependencies = {}) => {
     const obtenerPlantas = dependencies.getPlantasPorUsuario || authService.getPlantasPorUsuario;
     const plantas = await obtenerPlantas(userContext.username, userContext.perfil_id);
     const plantasPermitidas = plantas.map(planta => String(planta.key));
-    if (plantasPermitidas.length === 0) return { documentos: [], total: 0, pagina: 1, limite: 50, plantas: [], empresas: [] };
+    if (plantasPermitidas.length === 0) return { documentos: [], total: 0, pagina: 1, limite: 10, totalPages: 0, page: 1, limit: 10, plantas: [], empresas: [] };
 
     const pagina = enteroAcotado(query.pagina, 1, 1, 100000);
-    const limite = enteroAcotado(query.limite, 50, 1, 100);
+    // Estandar FAREGAS: maximo 10 comprobantes por pagina.
+  const limite = enteroAcotado(query.limite, 10, 1, 100);
     const filtros = construirFiltros(query, plantasPermitidas);
     const offset = (pagina - 1) * limite;
     const from = `
@@ -175,11 +176,17 @@ exports.listar = async (query, userContext, dependencies = {}) => {
         key: row.empresa_key,
         nombre: row.empresa_nombre
     }])).values()];
+    const total = Number(totalResult.rows[0]?.total || 0);
     return {
         documentos: listado.rows.map(mapDocumento),
-        total: Number(totalResult.rows[0]?.total || 0),
+        total,
         pagina,
         limite,
+        // Se agregan los alias del sobre estándar sin quitar pagina/limite,
+        // para que el componente de paginación sea el mismo en toda FAREGAS.
+        totalPages: total === 0 ? 0 : Math.ceil(total / limite),
+        page: pagina,
+        limit: limite,
         plantas: catalogos.rows.map(row => ({ key: row.planta_key, nombre: row.planta_nombre, empresaKey: row.empresa_key })),
         empresas
     };

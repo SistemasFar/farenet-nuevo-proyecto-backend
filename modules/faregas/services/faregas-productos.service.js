@@ -1,8 +1,23 @@
 const db = require('../../../config/database');
 const configService = require('./faregas-config.service');
 const productosImpactoService = require('./faregas-productos-impacto.service');
+const paginacion = require('./faregas-paginacion.rules');
 
-exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId } = {}) => {
+/** Centinela del filtro "Sin categoría" (productos con categoria_id NULL). */
+const SIN_CATEGORIA = 'SIN_CATEGORIA';
+
+/** Normaliza los decimales que Postgres devuelve como numeric. */
+const mapearProducto = (producto) => ({
+    ...producto,
+    precio_unitario: producto.precio_unitario === null ? null : Number(producto.precio_unitario),
+    precio_referencia: producto.precio_referencia === null ? null : Number(producto.precio_referencia),
+    valor_referencial_unitario: producto.valor_referencial_unitario === null ? null : Number(producto.valor_referencial_unitario),
+    porcentaje_isc: producto.porcentaje_isc === null ? null : Number(producto.porcentaje_isc),
+    precio_chip: producto.precio_chip === null ? null : Number(producto.precio_chip)
+});
+
+exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId, page, pageSize } = {}) => {
+    const { page: pagina, limit, offset } = paginacion.normalizarPaginacion({ page, pageSize });
     const condiciones = [];
     const valores = [];
     const agregar = (sql, valor) => {
@@ -20,8 +35,27 @@ exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId } = {})
     if (estado === true || estado === false) agregar('p.activo = ?', estado);
     if (paraVenta === true || paraVenta === false) agregar('p.es_para_venta = ?', paraVenta);
     if (unidad) agregar('p.unidad = ?', unidad);
-    if (categoriaId) agregar('p.categoria_id = ?', categoriaId);
+    if (categoriaId) {
+        // El filtro "Sin categoría" no se puede expresar con una igualdad: son
+        // los productos cuya categoria_id es NULL. Se reconoce por el centinela
+        // que ya usa la pantalla, para no quitarle esa opción al usuario.
+        if (categoriaId === SIN_CATEGORIA) condiciones.push('p.categoria_id IS NULL');
+        else agregar('p.categoria_id = ?', categoriaId);
+    }
 
+    const where = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
+
+    // El COUNT usa los MISMOS filtros que el listado, para que el total sea el
+    // del resultado filtrado y nunca items.length.
+    const conteo = await db.query(
+        `SELECT COUNT(*)::int AS total FROM fg_producto_facturacion p
+         LEFT JOIN fg_categoria_servicio c ON c.id = p.categoria_id
+         ${where}`,
+        valores
+    );
+
+    // Catalogo maestro: NO se filtra por fecha. Se muestran todos los
+    // productos funcionales, solo paginados.
     const result = await db.query(`
         SELECT p.id, p.codigo_sku, p.descripcion, p.tipo_producto, p.categoria_dms,
                p.categoria_id, c.codigo AS categoria_codigo, c.nombre AS categoria_nombre,
@@ -33,17 +67,80 @@ exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId } = {})
                p.fecha_creacion, p.fecha_modificacion
         FROM fg_producto_facturacion p
         LEFT JOIN fg_categoria_servicio c ON c.id = p.categoria_id
-        ${condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : ''}
+        ${where}
         ORDER BY p.codigo_sku ASC
-    `, valores);
-    return result.rows.map((producto) => ({
-        ...producto,
-        precio_unitario: producto.precio_unitario === null ? null : Number(producto.precio_unitario),
-        precio_referencia: producto.precio_referencia === null ? null : Number(producto.precio_referencia),
-        valor_referencial_unitario: producto.valor_referencial_unitario === null ? null : Number(producto.valor_referencial_unitario),
-        porcentaje_isc: producto.porcentaje_isc === null ? null : Number(producto.porcentaje_isc),
-        precio_chip: producto.precio_chip === null ? null : Number(producto.precio_chip)
-    }));
+        LIMIT $${valores.length + 1} OFFSET $${valores.length + 2}
+    `, [...valores, limit, offset]);
+
+    // Catálogo de unidades tributarias del catálogo COMPLETO, no del resultado
+    // filtrado. Si se calculara sobre la página, al buscar un texto el desplegable
+    // "Unidad" se quedaría con las unidades de los productos encontrados y
+    // dejaría de ofrecer el resto.
+    const unidades = await db.query(
+        `SELECT DISTINCT p.unidad FROM fg_producto_facturacion p
+         WHERE p.unidad IS NOT NULL AND p.unidad <> ''
+         ORDER BY p.unidad ASC`
+    );
+
+    const envelope = paginacion.respuestaPaginada(
+        result.rows.map(mapearProducto),
+        Number(conteo.rows[0]?.total || 0),
+        pagina,
+        limit
+    );
+
+    // `productos` se conserva para no romper a los consumidores actuales.
+    return {
+        ...envelope,
+        productos: envelope.items,
+        unidades: unidades.rows.map((row) => row.unidad)
+    };
+};
+
+/**
+ * Productos QUE TIENEN CATEGORÍA, agrupados por `categoria_id`.
+ *
+ * La pantalla "Operación y formatos" (Catálogo) recorre categoría por categoría
+ * y necesita saber qué producto fiscal pertenece a cada una. Antes usaba el
+ * listado paginado del catálogo, que devuelve sólo 10 filas de 271: cualquier
+ * categoría cuyo producto no caía en esa primera página aparecía con
+ * "0 producto(s)", y sin producto no se habilitaba el botón de
+ * "+ Configurar operación", con lo que la operación era imposible de crear
+ * desde esa pantalla.
+ *
+ * A diferencia del listado, aquí NO se pagina y NO se corta con un pageSize
+ * grande: el conjunto está acotado por la propia naturaleza de los datos (solo
+ * los productos con categoría asignada), igual que `obtenerSedesPorServicio`.
+ * Los productos sin categoría no pertenecen a ninguna categoría operativa y no
+ * tienen nada que mostrar en esta vista.
+ *
+ * No crea ni inventa ninguna relación: devuelve lo que ya existe.
+ */
+exports.listarPorCategoria = async () => {
+    const result = await db.query(`
+        SELECT p.id, p.codigo_sku, p.descripcion, p.tipo_producto, p.categoria_dms,
+               p.categoria_id, c.codigo AS categoria_codigo, c.nombre AS categoria_nombre,
+               p.cuenta_por_cobrar, p.unidad, p.precio_unitario, p.precio_referencia,
+               p.valor_referencial_unitario, p.codigo_clasificacion_sunat,
+               p.tipo_afectacion_igv, p.porcentaje_isc, p.disponible_pos,
+               p.es_para_venta, p.es_para_compra, p.tiene_icbper, p.activo,
+               p.requiere_chip, p.producto_chip_id, p.precio_chip,
+               p.fecha_creacion, p.fecha_modificacion
+        FROM fg_producto_facturacion p
+        JOIN fg_categoria_servicio c ON c.id = p.categoria_id
+        ORDER BY c.codigo ASC, p.codigo_sku ASC
+    `);
+
+    const porCategoria = {};
+    for (const fila of result.rows) {
+        const producto = mapearProducto(fila);
+        (porCategoria[fila.categoria_id] = porCategoria[fila.categoria_id] || []).push(producto);
+    }
+    return {
+        porCategoria,
+        productos: result.rows.map(mapearProducto),
+        total: result.rows.length
+    };
 };
 
 const validarCategoriaActiva = async (client, categoriaId) => {

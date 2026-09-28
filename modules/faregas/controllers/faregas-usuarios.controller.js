@@ -1,5 +1,21 @@
 const service = require('../services/faregas-usuarios.service');
 
+exports.obtenerUsuariosPaginado = async (req, res) => {
+    try {
+        const resultado = await usuariosService.obtenerUsuariosPaginado({
+            buscar: req.query.buscar,
+            perfil_id: req.query.perfil_id,
+            estado: req.query.estado === 'true' ? true : req.query.estado === 'false' ? false : undefined,
+            page: req.query.page,
+            pageSize: req.query.pageSize ?? req.query.limite
+        });
+        res.json({ success: true, ...resultado });
+    } catch (error) {
+        console.error('Error en obtenerUsuariosPaginado FAREGAS:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener usuarios.' });
+    }
+};
+
 exports.obtenerUsuarios = async (req, res) => {
     try {
         const data = await service.obtenerUsuarios();
@@ -19,7 +35,7 @@ exports.crearUsuario = async (req, res) => {
         res.status(201).json(result);
     } catch (e) {
         if (e.code === '23505') { // unique_violation
-            return res.status(409).json({ message: 'El usuario o número de documento ya existe' });
+            return res.status(409).json({ message: 'El usuario o nï¿½mero de documento ya existe' });
         }
         console.error(e);
         res.status(500).json({ message: 'Error interno del servidor' });
@@ -30,17 +46,17 @@ exports.actualizarUsuario = async (req, res) => {
     try {
         const usuarioObjetivo = req.params.username;
         if (req.user.username === usuarioObjetivo && req.body.estado === false) {
-            return res.status(409).json({ message: 'No puedes desactivar tu propio usuario mientras tienes una sesión activa.' });
+            return res.status(409).json({ message: 'No puedes desactivar tu propio usuario mientras tienes una sesiï¿½n activa.' });
         }
         
         const result = await service.actualizarUsuario(usuarioObjetivo, req.body, req.user.username);
         res.json(result);
     } catch (e) {
         if (e.message === 'USERNAME_EXISTS') {
-            return res.status(409).json({ message: 'El nuevo username ya está en uso' });
+            return res.status(409).json({ message: 'El nuevo username ya estï¿½ en uso' });
         }
         if (e.code === '23505') { // unique_violation for DNI etc
-            return res.status(409).json({ message: 'El número de documento ya existe en otro registro' });
+            return res.status(409).json({ message: 'El nï¿½mero de documento ya existe en otro registro' });
         }
         console.error(e);
         res.status(500).json({ message: 'Error interno del servidor' });
@@ -50,7 +66,7 @@ exports.actualizarUsuario = async (req, res) => {
 exports.cambiarPassword = async (req, res) => {
     try {
         const { password } = req.body;
-        if (!password) return res.status(400).json({ message: 'Nueva contraseña requerida' });
+        if (!password) return res.status(400).json({ message: 'Nueva contraseï¿½a requerida' });
         await service.cambiarPassword(req.params.username, password);
         res.json({ success: true });
     } catch (e) {
@@ -66,7 +82,7 @@ exports.eliminarUsuario = async (req, res) => {
     try {
         const usuarioObjetivo = req.params.username;
         if (req.user.username === usuarioObjetivo) {
-            return res.status(409).json({ message: 'No puedes eliminar tu propio usuario mientras tienes una sesión activa.' });
+            return res.status(409).json({ message: 'No puedes eliminar tu propio usuario mientras tienes una sesiï¿½n activa.' });
         }
 
         await service.eliminarUsuario(usuarioObjetivo);

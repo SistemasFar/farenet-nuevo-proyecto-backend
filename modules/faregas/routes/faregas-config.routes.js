@@ -205,6 +205,9 @@ router.get('/categorias/:id/impacto', requireConfigCategoriasPerm, configControl
 router.delete('/categorias/:id', requireConfigCategoriasPerm, configController.eliminarCategoria);
 
 router.get('/productos', requireConfigProductosPerm, productosController.listar);
+// Antes que cualquier ruta con :id. Alimenta la pantalla "Operación y formatos",
+// que necesita el producto fiscal de cada categoría operativa.
+router.get('/productos/por-categoria', requireConfigProductosPerm, productosController.listarPorCategoria);
 router.post('/productos', requireConfigProductosPerm, productosController.crear);
 router.put('/productos/:id', requireConfigProductosPerm, productosController.editar);
 router.put('/productos/:id/estado', requireConfigProductosPerm, productosController.cambiarEstado);

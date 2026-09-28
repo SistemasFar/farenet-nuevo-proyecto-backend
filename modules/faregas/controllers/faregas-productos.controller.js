@@ -143,16 +143,48 @@ const responderError = (res, error, fallback) => {
 exports.listar = async (req, res) => {
     try {
         const convertirBooleano = (value) => value === 'true' ? true : value === 'false' ? false : undefined;
-        const productos = await productosService.listar({
+        const resultado = await productosService.listar({
             buscar: textoNullable(req.query.buscar),
             estado: convertirBooleano(req.query.activo),
             paraVenta: convertirBooleano(req.query.es_para_venta),
             unidad: textoNullable(req.query.unidad),
-            categoriaId: req.query.categoria_id ? idCategoria(req.query.categoria_id) : undefined
+            categoriaId: req.query.categoria_id === 'SIN_CATEGORIA'
+                ? 'SIN_CATEGORIA'
+                : (req.query.categoria_id ? idCategoria(req.query.categoria_id) : undefined),
+            page: req.query.page,
+            pageSize: req.query.pageSize ?? req.query.limite
         });
-        res.json({ success: true, productos });
+        // Sobre de paginacion en la raiz; `productos` se conserva como arreglo.
+        res.json({
+            success: true,
+            items: resultado.items,
+            total: resultado.total,
+            page: resultado.page,
+            limit: resultado.limit,
+            totalPages: resultado.totalPages,
+            // Catálogo de unidades del catálogo completo, para el desplegable
+            // de filtro. No depende de la búsqueda ni de la página.
+            unidades: resultado.unidades || [],
+            productos: resultado.items
+        });
     } catch (error) {
         responderError(res, error, 'Error al obtener productos.');
+    }
+};
+
+exports.listarPorCategoria = async (_req, res) => {
+    try {
+        // La pantalla "Operación y formatos" necesita el producto de cada
+        // categoría operativa, no una página del catálogo completo.
+        const resultado = await productosService.listarPorCategoria();
+        res.json({
+            success: true,
+            porCategoria: resultado.porCategoria,
+            productos: resultado.productos,
+            total: resultado.total
+        });
+    } catch (error) {
+        responderError(res, error, 'Error al obtener los productos por categoría.');
     }
 };
 

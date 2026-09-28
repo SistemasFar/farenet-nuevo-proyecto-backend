@@ -56,6 +56,9 @@ const adminMiddleware = async (req, res, next) => {
 
 router.use(adminMiddleware);
 
+// Listado paginado (máx. 10 por página). Es un catálogo maestro: sin filtro de
+// fecha. La ruta anterior se conserva para los consumidores que la usan.
+router.get('/paginado', controller.obtenerUsuariosPaginado);
 router.get('/', controller.obtenerUsuarios);
 router.post('/', controller.crearUsuario);
 router.put('/:username', controller.actualizarUsuario);

@@ -1,4 +1,5 @@
 const db = require('../../../config/database');
+const paginacion = require('./faregas-paginacion.rules');
 
 const texto = (valor, maximo) => {
     if (valor === undefined || valor === null || valor === '') return null;
@@ -196,20 +197,46 @@ exports.listarAccesos = async (filtros) => {
         paramIndex++;
     }
 
-    if (fechaInicio) {
-        query += ` AND a.fecha_evento >= $${paramIndex}`;
-        params.push(`${fechaInicio} 00:00:00`);
+    // Listado transaccional: sin rango explicito se abre en HOY -> HOY, nunca en
+    // todo el historico. Se conservan los nombres historicos (fechaInicio /
+    // fechaFin) y se aceptan tambien desde/hasta.
+    const rango = paginacion.normalizarRangoFechas({
+        fechaDesde: fechaInicio ?? filtros.desde,
+        fechaHasta: fechaFin ?? filtros.hasta
+    });
+
+    if (rango.fechaDesde) {
+        query += ` AND a.fecha_evento >= $${paramIndex}::date`;
+        params.push(rango.fechaDesde);
         paramIndex++;
     }
 
-    if (fechaFin) {
-        query += ` AND a.fecha_evento <= $${paramIndex}`;
-        params.push(`${fechaFin} 23:59:59`);
+    if (rango.fechaHasta) {
+        // Forma robusta: incluye el dia completo sin depender de la hora.
+        query += ` AND a.fecha_evento < $${paramIndex}::date + INTERVAL '1 day'`;
+        params.push(rango.fechaHasta);
         paramIndex++;
     }
 
-    query += ' ORDER BY a.fecha_evento DESC LIMIT 500';
+    // El ORDER BY de negocio se conserva; la paginacion va DESPUES.
+    const { page, limit, offset } = paginacion.normalizarPaginacion(filtros);
+
+    // Solo la parte de condiciones, para reutilizarla en el COUNT. Se vuelve a
+    // prefijar WHERE 1=1 porque el fragmento empieza directamente en un AND.
+    const where = ' WHERE 1=1' + query.slice(query.indexOf('WHERE 1=1') + 'WHERE 1=1'.length);
+    const conteo = await db.query(
+        `SELECT COUNT(*)::int AS total FROM fg_auditoria_acceso a${where}`,
+        params
+    );
+
+    query += ` ORDER BY a.fecha_evento DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    params.push(limit, offset);
 
     const result = await db.query(query, params);
-    return result.rows;
+    return paginacion.respuestaPaginada(
+        result.rows,
+        Number(conteo.rows[0]?.total || 0),
+        page,
+        limit
+    );
 };

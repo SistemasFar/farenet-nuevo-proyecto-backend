@@ -6,6 +6,7 @@ const {
     normalizarLoteScanner
 } = require('./faregas-chips.rules');
 const { redondear } = require('./faregas-pagos.rules');
+const paginacion = require('./faregas-paginacion.rules');
 const chipsTiposImpactoService = require('./faregas-chips-tipos-impacto.service');
 
 const normalizarCodigoProducto = (valor) => String(valor || '')
@@ -97,7 +98,7 @@ const exigirVentaHabilitada = (config) => {
     if (config.producto_fiscal_valido !== true) throw new Error('PRODUCTO_FISCAL_CHIP_INVALIDO');
 };
 
-exports.listar = async ({ plantaKey, productoInventariableId, estado, buscar, page = 1, pageSize = 50 }, user) => {
+exports.listar = async ({ plantaKey, productoInventariableId, estado, buscar, page = 1, pageSize = 10 }, user) => {
     await validarAcceso(user, plantaKey);
     const params = [plantaKey];
     const filtros = ['c.planta_actual_key = $1'];
@@ -106,23 +107,52 @@ exports.listar = async ({ plantaKey, productoInventariableId, estado, buscar, pa
         filtros.push(`c.producto_inventariable_id = $${params.length}`);
     }
     if (estado) { params.push(estado); filtros.push(`c.estado = $${params.length}`); }
-    if (buscar) { params.push(`%${buscar}%`); filtros.push(`c.numero_chip ILIKE $${params.length}`); }
-    const limit = Math.min(Math.max(Number(pageSize) || 50, 1), 200);
-    const offset = (Math.max(Number(page) || 1, 1) - 1) * limit;
+    if (buscar) {
+        // El tipo y el nombre del chip no viven en fg_chip: se resuelven por
+        // la relacion real con fg_producto_inventariable (codigo, nombre, tipo).
+        // No se agrega ninguna columna nueva.
+        params.push(`%${buscar}%`);
+        const patron = `$${params.length}`;
+        filtros.push(
+            `(c.numero_chip ILIKE ${patron}`
+            + ` OR pi.codigo ILIKE ${patron}`
+            + ` OR pi.nombre ILIKE ${patron}`
+            + ` OR pi.tipo ILIKE ${patron})`
+        );
+    }
+    const { page: pagina, limit, offset } = paginacion.normalizarPaginacion({ page, pageSize });
+    const where = filtros.join(' AND ');
+
+    // COUNT separado con los MISMOS filtros. Se evita COUNT(*) OVER() porque
+    // devuelve 0 cuando la pagina pedida queda vacia.
+    const conteo = await db.query(
+        `SELECT COUNT(*)::int AS total
+         FROM fg_chip c
+         JOIN fg_producto_inventariable pi ON pi.id = c.producto_inventariable_id
+         WHERE ${where}`,
+        params
+    );
+
+    // El ORDER BY de negocio se conserva; la paginacion va DESPUES.
     params.push(limit, offset);
     const result = await db.query(`
         SELECT c.id, c.numero_chip, c.estado, c.planta_actual_key, p.nombre planta_nombre,
                c.producto_inventariable_id, pi.codigo producto_codigo, pi.nombre producto_nombre,
                c.creado_en, c.actualizado_en,
-               (SELECT MAX(m.fecha) FROM fg_chip_movimiento m WHERE m.chip_id=c.id) ultimo_movimiento,
-               COUNT(*) OVER()::int total
+               (SELECT MAX(m.fecha) FROM fg_chip_movimiento m WHERE m.chip_id=c.id) ultimo_movimiento
         FROM fg_chip c
         JOIN fg_planta p ON p.key=c.planta_actual_key
-        JOIN fg_producto_inventariable pi ON pi.id=c.producto_inventariable_id
-        WHERE ${filtros.join(' AND ')} ORDER BY c.id DESC
+        JOIN fg_producto_inventariable pi ON pi.id = c.producto_inventariable_id
+        WHERE ${where} ORDER BY c.id DESC
         LIMIT $${params.length - 1} OFFSET $${params.length}
     `, params);
-    return { items: result.rows, total: result.rows[0]?.total || 0 };
+
+    return paginacion.respuestaPaginada(
+        result.rows,
+        Number(conteo.rows[0]?.total || 0),
+        pagina,
+        limit
+    );
 };
 
 const FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -162,7 +192,18 @@ const construirFiltrosFechasVentas = (query = {}) => {
 
 exports.listarVentas = async (plantaKey, user, filtros = {}) => {
     await validarAcceso(user, plantaKey);
-    const { fechaDesde, fechaHasta } = construirFiltrosFechasVentas(filtros);
+
+    // Listado transaccional: sin rango explicito se abre en HOY -> HOY, nunca en
+    // 'todo el historico'. El rango invertido se rechaza con mensaje claro.
+    let rango;
+    try {
+        rango = paginacion.normalizarRangoFechas(filtros);
+    } catch (error) {
+        throw errorFiltroVentas(error.codigo || 'RANGO_FECHAS_INVALIDO', error.message);
+    }
+    const { fechaDesde, fechaHasta } = rango;
+    const { page, limit, offset } = paginacion.normalizarPaginacion(filtros);
+
     const params = [plantaKey];
     const condiciones = [
         'oc.planta_key = $1',
@@ -174,53 +215,81 @@ exports.listarVentas = async (plantaKey, user, filtros = {}) => {
     }
     if (fechaHasta) {
         params.push(fechaHasta);
+        // Forma robusta: incluye el dia completo sin depender de la hora.
         condiciones.push(`oc.fecha_creacion < $${params.length}::date + INTERVAL '1 day'`);
     }
-    const result = await db.query(`
-        SELECT oc.id AS operacion_id,
-               oc.fecha_creacion AS creado_en,
-               oc.tipo_documento_cliente_snapshot,
-               oc.documento_cliente_snapshot,
-               oc.nombre_cliente_snapshot,
-               oc.estado AS estado_venta,
-               oc.importe_total,
-               ARRAY_AGG(c.numero_chip ORDER BY c.numero_chip) AS chips,
-               f.id AS facturacion_id,
-               f.estado AS comprobante_estado,
-               f.nro_comprobante,
-               f.enlace_pdf
-        FROM fg_operacion_comercial oc
-        JOIN fg_operacion_detalle od
-          ON od.operacion_id = oc.id
-        JOIN fg_operacion_detalle_chip odc
-          ON odc.operacion_detalle_id = od.id
-        JOIN fg_chip c
-          ON c.id = odc.chip_id
-        LEFT JOIN fg_facturacion f
-          ON f.operacion_id = oc.id
-         AND f.certificado_id IS NULL
-        WHERE ${condiciones.join(' AND ')}
-        GROUP BY oc.id, f.id
-        ORDER BY oc.fecha_creacion DESC, oc.id DESC
-        LIMIT 100
-    `, params);
+    const where = condiciones.join(' AND ');
 
-    return result.rows.map((row) => ({
-        operacionId: Number(row.operacion_id),
-        creadoEn: row.creado_en,
-        tipoDocumentoCliente: row.tipo_documento_cliente_snapshot,
-        documentoCliente: row.documento_cliente_snapshot,
-        nombreCliente: row.nombre_cliente_snapshot,
-        chips: row.chips || [],
-        estadoVenta: row.estado_venta,
-        importeTotal: Number(row.importe_total),
-        facturacion: row.facturacion_id == null ? null : {
-            id: Number(row.facturacion_id),
-            estado: row.comprobante_estado,
+    // El TOTAL se cuenta sobre el mismo GROUP BY que el listado, para que sea
+    // el del resultado filtrado y nunca items.length.
+    const conteo = await db.query(
+        `SELECT COUNT(*)::int AS total FROM (
+            SELECT oc.id
+            FROM fg_operacion_comercial oc
+            JOIN fg_operacion_detalle od ON od.operacion_id = oc.id
+            JOIN fg_operacion_detalle_chip odc ON odc.operacion_detalle_id = od.id
+            JOIN fg_chip c ON c.id = odc.chip_id
+            LEFT JOIN fg_facturacion f
+              ON f.operacion_id = oc.id AND f.certificado_id IS NULL
+            WHERE ${where}
+            GROUP BY oc.id, f.id
+        ) agrupado`,
+        params
+    );
+
+    const result = await db.query(
+        `SELECT oc.id AS operacion_id,
+    oc.fecha_creacion AS creado_en,
+    oc.tipo_documento_cliente_snapshot,
+    oc.documento_cliente_snapshot,
+    oc.nombre_cliente_snapshot,
+    oc.estado AS estado_venta,
+    oc.importe_total,
+    ARRAY_AGG(c.numero_chip ORDER BY c.numero_chip) AS chips,
+    f.id AS facturacion_id,
+    f.estado AS comprobante_estado,
+    f.nro_comprobante,
+    f.enlace_pdf
+    FROM fg_operacion_comercial oc
+    JOIN fg_operacion_detalle od
+    ON od.operacion_id = oc.id
+    JOIN fg_operacion_detalle_chip odc
+    ON odc.operacion_detalle_id = od.id
+    JOIN fg_chip c
+    ON c.id = odc.chip_id
+    LEFT JOIN fg_facturacion f
+    ON f.operacion_id = oc.id
+    AND f.certificado_id IS NULL
+    WHERE ${where}
+    GROUP BY oc.id, f.id
+    ORDER BY oc.fecha_creacion DESC, oc.id DESC
+    LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, limit, offset]
+    );
+
+    const envelope = paginacion.respuestaPaginada(
+        result.rows.map((row) => ({
+            operacionId: Number(row.operacion_id),
+            creadoEn: row.creado_en,
+            tipoDocumentoCliente: row.tipo_documento_cliente_snapshot,
+            documentoCliente: row.documento_cliente_snapshot,
+            nombreCliente: row.nombre_cliente_snapshot,
+            estadoVenta: row.estado_venta,
+            importeTotal: Number(row.importe_total),
+            chips: row.chips || [],
+            facturacionId: row.facturacion_id == null ? null : Number(row.facturacion_id),
+            comprobanteEstado: row.comprobante_estado,
             nroComprobante: row.nro_comprobante,
             enlacePdf: row.enlace_pdf
-        }
-    }));
+        })),
+        Number(conteo.rows[0]?.total || 0),
+        page,
+        limit
+    );
+
+    // Se conservan 'ventas' y 'success' para no romper al consumidor actual, y
+    // se agrega el sobre de paginacion.
+    return { ...envelope, ventas: envelope.items, success: true };
 };
 
 const mapPagoVenta = (row) => ({

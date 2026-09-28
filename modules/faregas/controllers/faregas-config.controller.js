@@ -24,7 +24,11 @@ exports.getEmpresas = async (_req, res) => {
 
 exports.getSedesEmpresas = async (_req, res) => {
     try {
-        res.json({ success: true, sedes: await configService.getSedes() });
+        // Este endpoint NO es paginado: es un catálogo auxiliar para selects de
+        // empresa/sede, así que pide el conjunto completo y entrega el arreglo.
+        // `getSedes` ahora devuelve el sobre de paginación, de ahí el `.items`.
+        const resultado = await configService.getSedes({ todos: true });
+        res.json({ success: true, sedes: resultado.items });
     } catch (_error) {
         res.status(500).json({ success: false, message: 'Error al obtener las sedes de empresas.' });
     }
@@ -119,8 +123,22 @@ exports.asignarEmpresaSede = async (req, res) => {
 
 exports.getSedes = async (req, res) => {
     try {
-        const sedes = await configService.getSedes();
-        res.json({ success: true, sedes });
+        const resultado = await configService.getSedes({
+            buscar: req.query.buscar,
+            page: req.query.page,
+            pageSize: req.query.pageSize ?? req.query.limite
+        });
+        // Sobre de paginacion en la raiz; `sedes` se conserva como arreglo para
+        // no romper a los consumidores actuales.
+        res.json({
+            success: true,
+            items: resultado.items,
+            total: resultado.total,
+            page: resultado.page,
+            limit: resultado.limit,
+            totalPages: resultado.totalPages,
+            sedes: resultado.items
+        });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Error al obtener sedes.' });
     }
@@ -178,7 +196,7 @@ exports.getServicios = async (req, res) => {
 exports.crearServicio = async (req, res) => {
     try {
         const { codigo, nombre, categoria_id, tipo_flujo, requiere_certificado, tipo_certificado_clave, modalidad, formato_id, requiere_vehiculo, orden } = req.body;
-        
+
         if (!codigo || !nombre || !Number.isInteger(Number(categoria_id)) || Number(categoria_id) <= 0) {
             return res.status(400).json({ success: false, message: 'Código, nombre y categoría son obligatorios.' });
         }
@@ -191,10 +209,14 @@ exports.crearServicio = async (req, res) => {
             requiere_certificado: !!requiere_certificado,
             tipo_certificado_clave: requiere_certificado ? tipo_certificado_clave : null,
             modalidad: requiere_certificado ? modalidad : null,
-            formato_id: requiere_certificado && formato_id ? Number(formato_id) : null,
+            // `formato_id` es opcional al crear: la plantilla se asigna después.
+            // Sólo se incluye si viene, para no fijarlo a null innecesariamente.
             requiere_vehiculo: !!requiere_vehiculo,
             orden: orden || 0
         };
+        if (formato_id !== undefined && formato_id !== null && formato_id !== '') {
+            data.formato_id = Number(formato_id);
+        }
 
         const nuevo = await configService.crearServicio(data, req.user.username, req.ip);
         res.json({ success: true, message: 'Servicio creado exitosamente.', servicio_id: nuevo.id, formato_id: nuevo.formato_id });
@@ -208,7 +230,7 @@ exports.editarServicio = async (req, res) => {
     try {
         const { id } = req.params;
         const { nombre, categoria_id, tipo_flujo, requiere_certificado, tipo_certificado_clave, modalidad, formato_id, requiere_vehiculo, orden } = req.body;
-        
+
         if (!nombre || !Number.isInteger(Number(categoria_id)) || Number(categoria_id) <= 0) {
             return res.status(400).json({ success: false, message: 'El nombre y la categoría son obligatorios.' });
         }
@@ -220,10 +242,15 @@ exports.editarServicio = async (req, res) => {
             requiere_certificado: !!requiere_certificado,
             tipo_certificado_clave: requiere_certificado ? tipo_certificado_clave : null,
             modalidad: requiere_certificado ? modalidad : null,
-            formato_id: requiere_certificado && formato_id ? Number(formato_id) : null,
             requiere_vehiculo: !!requiere_vehiculo,
             orden: orden || 0
         };
+        // `formato_id` sólo se propaga si el cliente lo manda. Si viene ausente,
+        // el service conserva la plantilla ya asignada: editar el nombre o las
+        // sedes no debe borrarla. Para quitarla está `asignarFormato(id, null)`.
+        if (formato_id !== undefined) {
+            data.formato_id = formato_id === null || formato_id === '' ? null : Number(formato_id);
+        }
 
         const actualizado = await configService.editarServicio(id, data, req.user.username, req.ip);
         res.json({ success: true, message: 'Servicio actualizado exitosamente.', formato_id: actualizado.formato_id });
@@ -247,15 +274,15 @@ exports.getCategorias = async (req, res) => {
 
 exports.crearCategoria = async (req, res) => {
     try {
-        const { codigo, nombre, descripcion, orden } = req.body;
+        // `orden` no se acepta: es un valor interno que calcula el service.
+        const { codigo, nombre, descripcion } = req.body;
         if (!codigo || !nombre) {
             return res.status(400).json({ success: false, message: 'Código y nombre son obligatorios.' });
         }
         const data = {
             codigo: String(codigo).trim().toUpperCase().replace(/\s+/g, '_'),
             nombre: String(nombre).trim(),
-            descripcion: descripcion ? String(descripcion).trim() : null,
-            orden: Number.isFinite(Number(orden)) ? Number(orden) : 0
+            descripcion: descripcion ? String(descripcion).trim() : null
         };
         if (!/^[A-Z0-9_]+$/.test(data.codigo)) {
             return res.status(400).json({ success: false, message: 'El código solo admite letras, números y guion bajo.' });
@@ -269,14 +296,14 @@ exports.crearCategoria = async (req, res) => {
 
 exports.editarCategoria = async (req, res) => {
     try {
-        const { nombre, descripcion, orden } = req.body;
+        // `orden` no se acepta ni se reenvía: el service lo conserva intacto.
+        const { nombre, descripcion } = req.body;
         if (!nombre) {
             return res.status(400).json({ success: false, message: 'El nombre es obligatorio.' });
         }
         await configService.editarCategoria(Number(req.params.id), {
             nombre: String(nombre).trim(),
-            descripcion: descripcion ? String(descripcion).trim() : null,
-            orden: Number.isFinite(Number(orden)) ? Number(orden) : 0
+            descripcion: descripcion ? String(descripcion).trim() : null
         }, req.user.username, req.ip);
         res.json({ success: true, message: 'Categoría actualizada exitosamente.' });
     } catch (error) {
