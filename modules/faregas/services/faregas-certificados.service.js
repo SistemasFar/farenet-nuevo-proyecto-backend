@@ -1405,11 +1405,20 @@ exports.guardarGNV = async (id, data, userContext) => {
             }
         }
 
+        // Observaciones del inspector. Campo opcional: se guarda exactamente lo
+        // que escribió el usuario, con recorte exterior y el mismo límite de
+        // 250 caracteres que el formulario. Cadena vacía o ausente se guarda
+        // como NULL (sin observación). No se toca ningún otro dato GNV.
+        const LIMITE_OBSERVACIONES_GNV = 250;
+        const observacionesGnv = typeof data.observaciones === 'string'
+            ? data.observaciones.trim().slice(0, LIMITE_OBSERVACIONES_GNV) || null
+            : null;
+
         const qUpd = `
             INSERT INTO fg_certificado_gnv (
                 certificado_id, taller_autorizado_id, vigencia_hasta, taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion, modalidad, numero_chip,
-                combustible_posterior, peso_neto_posterior
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                combustible_posterior, peso_neto_posterior, observaciones
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT (certificado_id) DO UPDATE SET
                 taller_autorizado_id = EXCLUDED.taller_autorizado_id,
                 vigencia_hasta = EXCLUDED.vigencia_hasta,
@@ -1420,7 +1429,8 @@ exports.guardarGNV = async (id, data, userContext) => {
                 modalidad = EXCLUDED.modalidad,
                 numero_chip = EXCLUDED.numero_chip,
                 combustible_posterior = EXCLUDED.combustible_posterior,
-                peso_neto_posterior = EXCLUDED.peso_neto_posterior
+                peso_neto_posterior = EXCLUDED.peso_neto_posterior,
+                observaciones = EXCLUDED.observaciones
         `;
         
         await client.query(qUpd, [
@@ -1434,7 +1444,8 @@ exports.guardarGNV = async (id, data, userContext) => {
             modalidadGNV,
             numeroChip,
             data.combustiblePosterior || null,
-            data.pesoNetoPosterior || null
+            data.pesoNetoPosterior || null,
+            observacionesGnv
         ]);
 
         await client.query('COMMIT');
@@ -2232,7 +2243,12 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
             return { html };
         }
         const html = generateGnvAnualHtml({
-            cabecera: cabeceraComun,
+            // La plantilla GNV ANUAL imprime la observación en su sección
+            // OBSERVACIONES a partir de `cabecera.observaciones`. Se alimenta
+            // con el dato persistido en fg_certificado_gnv, nunca con el estado
+            // del navegador: el mismo render sirve para la previsualización y
+            // para el documento definitivo.
+            cabecera: { ...cabeceraComun, observaciones: gnv.observaciones || null },
             vehiculo: vehiculoPlantilla,
             gnv: gnv,
             verificaciones: dataGnv.verificaciones || [],
