@@ -325,13 +325,25 @@ const construirChecksCertificado = ({ resumen, integracion }) => {
     const agregar = (codigo, condicion, mensajeOk, mensajeError, detalles = null) => {
         checks.push(check(codigo, condicion ? 'OK' : 'BLOQUEO', condicion ? mensajeOk : mensajeError, detalles));
     };
+    const total = Number(resumen?.totales?.total);
+    const baseImponible = Number(resumen?.totales?.baseImponible);
+    const igv = Number(resumen?.totales?.igv);
+    const precioAntesDescuento = Number(resumen?.totales?.precioAntesDescuento);
+    const descuento = Number(resumen?.totales?.descuento);
+    const totalCeroPorDescuentoCompleto = total === 0
+        && precioAntesDescuento > 0
+        && descuento > 0
+        && Math.abs(precioAntesDescuento - descuento) <= 0.01;
+    const totalAdmitido = total > 0 || totalCeroPorDescuentoCompleto;
 
     agregar('CLIENTE', Boolean(resumen?.cliente?.numeroDocumento && resumen?.cliente?.nombreRazonSocial),
         'Los datos fiscales del cliente están completos.', 'Faltan datos fiscales del cliente.');
     agregar('CATALOGO_FISCAL', resumen?.items?.length > 0 && resumen.items.every(item => item.productoFacturacionId),
         'La tarifa tiene producto fiscal vinculado.', 'La tarifa no tiene producto fiscal vinculado.');
-    agregar('CALCULOS', Boolean(resumen?.totales?.total > 0)
-        && Math.abs(Number(resumen?.totales?.baseImponible || 0) + Number(resumen?.totales?.igv || 0) - Number(resumen?.totales?.total || 0)) <= 0.01,
+    agregar('CALCULOS', totalAdmitido
+        && Number.isFinite(baseImponible)
+        && Number.isFinite(igv)
+        && Math.abs(baseImponible + igv - total) <= 0.01,
     'Los totales tributarios son consistentes.', 'Los totales tributarios no son consistentes.');
     agregar('SERIE', Boolean(resumen?.comprobante?.serie),
         'Existe una serie prevista.', 'No existe una serie tributaria prevista.');

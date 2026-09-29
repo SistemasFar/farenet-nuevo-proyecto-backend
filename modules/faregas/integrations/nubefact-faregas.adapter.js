@@ -50,6 +50,35 @@ const construirItem = (item) => {
     return resultado;
 };
 
+const esLineaGratuitaPorDescuentoCompleto = (item) => {
+    const cantidad = Number(item.cantidad || 1);
+    const baseOriginal = dosDecimales(Number(item.valor_unitario || 0) * cantidad);
+    const descuento = dosDecimales(item.descuento || 0);
+    const subtotal = dosDecimales(item.base_imponible ?? item.subtotal);
+    const total = dosDecimales(item.importe_total ?? item.total);
+    return baseOriginal > 0
+        && descuento > 0
+        && Math.abs(baseOriginal - descuento) <= 0.01
+        && subtotal === 0
+        && total === 0;
+};
+
+const construirItemGratuito = (item) => {
+    const cantidad = Number(item.cantidad || 1);
+    const valorReferencialUnitario = dosDecimales(item.precio_unitario);
+    const valorReferencialTotal = dosDecimales(valorReferencialUnitario * cantidad);
+    return {
+        ...construirItem(item),
+        valor_unitario: valorReferencialUnitario,
+        precio_unitario: valorReferencialUnitario,
+        descuento: 0,
+        subtotal: valorReferencialTotal,
+        tipo_de_igv: 6,
+        igv: 0,
+        total: valorReferencialTotal
+    };
+};
+
 const obtenerIndicadorDetraccion = () => {
     const decision = String(config.nubefact.detractionDecision || 'PENDIENTE').trim().toUpperCase();
     if (decision === 'APLICA') {
@@ -147,8 +176,16 @@ const construirPayloadNubefact = ({
         baseDescuento = descuentoTotal / 1.18;
     }
 
+    const lineasGratuitas = detalles.filter(esLineaGratuitaPorDescuentoCompleto);
+    const totalGratuita = dosDecimales(lineasGratuitas.reduce(
+        (total, item) => total + Number(item.precio_unitario || 0) * Number(item.cantidad || 1),
+        0
+    ));
+    const descuentoOneroso = dosDecimales(Math.max(0, descuentoTotal - totalGratuita));
     const items = detalles.length > 0
-        ? detalles.map(construirItem)
+        ? detalles.map(item => esLineaGratuitaPorDescuentoCompleto(item)
+            ? construirItemGratuito(item)
+            : construirItem(item))
         : [construirItem({
             unidad_snapshot: 'ZZ',
             codigo_sku_snapshot: `FAREGAS-${certificadoData.tipo_certificado_clave || 'OPERACION'}`,
@@ -182,13 +219,13 @@ const construirPayloadNubefact = ({
         moneda: 1,
         tipo_de_cambio: '',
         porcentaje_de_igv: 18,
-        total_descuento: dosDecimales(descuentoTotal),
+        total_descuento: descuentoOneroso,
         total_anticipo: 0,
         total_gravada: dosDecimales(resumenTributario?.totales?.baseImponible ?? facturacion.base_imponible),
         total_inafecta: 0,
         total_exonerada: 0,
         total_igv: dosDecimales(resumenTributario?.totales?.igv ?? facturacion.igv),
-        total_gratuita: 0,
+        total_gratuita: totalGratuita,
         total_otros_cargos: 0,
         total: dosDecimales(resumenTributario?.totales?.total ?? facturacion.importe_total),
         percepcion_tipo: '',

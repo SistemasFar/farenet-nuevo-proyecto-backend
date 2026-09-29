@@ -35,6 +35,10 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
     const total = redondear(contexto.importe_total ?? descuento?.importe_final ?? precioLista);
     const baseImponible = redondear(contexto.base_imponible ?? (total / 1.18));
     const igv = redondear(contexto.igv ?? (total - baseImponible));
+    const totalCeroPorDescuentoCompleto = total === 0
+        && precioLista > 0
+        && importeDescuento > 0
+        && Math.abs(precioLista - importeDescuento) <= 0.01;
     const cantidad = Number(detalle?.cantidad || 1);
     const unidad = mayusculas(detalle?.producto_unidad || detalle?.unidad_snapshot);
     const codigoInterno = texto(detalle?.producto_sku || detalle?.codigo_sku_snapshot || detalle?.servicio_codigo);
@@ -64,7 +68,11 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
     agregarSi(errores, !esCodigoClasificacionSunatValidoOpcional(codigoSunat), 'El código de clasificación SUNAT debe contener 8 dígitos.');
     agregarSi(errores, afectacionIgv !== '10', 'El tipo de afectación IGV del servicio debe ser 10.');
     agregarSi(errores, !seriePrevista, `No existe una serie productiva de ${esFactura ? 'factura' : 'boleta'} para la sede.`);
-    agregarSi(errores, !Number.isFinite(total) || total <= 0, 'El total de la operación no es válido.');
+    agregarSi(
+        errores,
+        !Number.isFinite(total) || total < 0 || (total === 0 && !totalCeroPorDescuentoCompleto),
+        'El total de la operación no es válido.'
+    );
     agregarSi(errores, Math.abs(redondear(baseImponible + igv) - total) > 0.01, 'La base imponible y el IGV no coinciden con el total.');
     agregarSi(advertencias, !texto(contexto.email), 'No se registró un correo; Nubefact no enviará automáticamente el comprobante al cliente.');
     agregarSi(advertencias, !codigoSunat, 'No se registró código de clasificación SUNAT/UNSPSC; es un dato opcional.');
