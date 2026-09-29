@@ -177,6 +177,22 @@ router.put('/:id/estado', verificarToken, requireAdministrarFormatos, async (req
   }
 });
 
+// Antes que `/:id/versiones/:versionId` para que la intención sea evidente.
+// Las validaciones (protegido, en uso, con variantes) viven en el service: esta
+// ruta no se limita a borrar por id aunque el frontend oculte el botón.
+router.delete('/:id', verificarToken, requireAdministrarFormatos, async (req, res) => {
+  try {
+    const eliminado = await faregasFormatosService.eliminar(req.params.id);
+    res.json({
+      message: 'Formato eliminado correctamente.',
+      formato: { id: eliminado.id, codigo: eliminado.codigo, nombre: eliminado.nombre },
+      versiones_eliminadas: eliminado.versionesEliminadas
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 router.delete('/:id/versiones/:versionId', verificarToken, requireAdministrarFormatos, async (req, res) => {
   try {
     await faregasFormatosService.eliminarVersion(req.params.id, req.params.versionId);

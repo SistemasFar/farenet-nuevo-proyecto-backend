@@ -11,30 +11,41 @@ const permiso = (...claves) => async(req,res,next)=>{
     }catch(e){res.status(500).json({success:false,message:'No se pudo validar el permiso.'});}
 };
 
+// Submódulos de navegación (MENU_CHIPS_*). Son la puerta de entrada al
+// submódulo y NO sustituyen a los CHIPS_* operativos, que se siguen exigiendo.
+// Un perfil sin el submódulo recibe 403 aunque escriba la URL a mano, y un
+// perfil con el submódulo pero sin el permiso operativo tampoco puede operar.
+// Los dos middlewares se encadenan: ambos tienen que pasar.
+const inventario = (...operativo) => [permiso('MENU_CHIPS_INVENTARIO'), permiso(...operativo)];
+const tipos = (...operativo) => [permiso('MENU_CHIPS_TIPOS'), permiso(...operativo)];
+const ventas = (...operativo) => [permiso('MENU_CHIPS_VENTAS'), permiso(...operativo)];
+
 router.use(authFaregasMiddleware);
-// MENU_CHIPS habilita la consulta básica desde el módulo. CHIPS_VER se conserva
-// como compatibilidad para integraciones/perfiles técnicos existentes.
-router.get('/productos/catalogos',permiso('MENU_CHIPS','CHIPS_VER'),controller.catalogosProductosInventariables);
-router.get('/productos',permiso('MENU_CHIPS','CHIPS_VER'),controller.listarProductosInventariables);
-router.post('/productos',permiso('CHIPS_CONFIGURAR'),controller.crearProductoInventariable);
-router.put('/productos/:id',permiso('CHIPS_CONFIGURAR'),controller.editarProductoInventariable);
-router.get('/productos/:id/impacto',permiso('CHIPS_CONFIGURAR'),controller.impactoProductoInventariable);
-router.delete('/productos/:id',permiso('CHIPS_CONFIGURAR'),controller.eliminarProductoInventariable);
-router.get('/',permiso('MENU_CHIPS','CHIPS_VER'),controller.listar);
-router.get('/resumen',permiso('MENU_CHIPS','CHIPS_VER'),controller.resumen);
+router.get('/productos/catalogos',...tipos('CHIPS_CONFIGURAR'),controller.catalogosProductosInventariables);
+router.get('/productos',...tipos('CHIPS_CONFIGURAR'),controller.listarProductosInventariables);
+router.post('/productos',...tipos('CHIPS_CONFIGURAR'),controller.crearProductoInventariable);
+router.put('/productos/:id',...tipos('CHIPS_CONFIGURAR'),controller.editarProductoInventariable);
+router.get('/productos/:id/impacto',...tipos('CHIPS_CONFIGURAR'),controller.impactoProductoInventariable);
+router.delete('/productos/:id',...tipos('CHIPS_CONFIGURAR'),controller.eliminarProductoInventariable);
+router.get('/',...inventario('CHIPS_VER'),controller.listar);
+router.get('/resumen',...inventario('CHIPS_VER'),controller.resumen);
+// Se consulta desde el wizard de NuevoCertificado, no desde Chips: conserva el
+// permiso amplio que tenía para no afectar el flujo de certificados.
 router.get('/disponibilidad/:numeroChip',controller.consultarDisponibilidad);
-router.post('/ingresos',permiso('CHIPS_INGRESAR'),controller.ingresar);
-router.post('/transferencias',permiso('CHIPS_TRANSFERIR'),controller.transferir);
-// Lectura: consultar el inventario y el histórico de ventas.
-router.get('/ventas',permiso('CHIPS_VER'),controller.listarVentas);
-router.get('/ventas/:operacionId',permiso('CHIPS_VER'),controller.obtenerDetalleVenta);
+router.post('/ingresos',...inventario('CHIPS_INGRESAR'),controller.ingresar);
+router.post('/transferencias',...inventario('CHIPS_TRANSFERIR'),controller.transferir);
+// Lectura: consultar el histórico de ventas.
+router.get('/ventas',...ventas('CHIPS_VER'),controller.listarVentas);
+router.get('/ventas/:operacionId',...ventas('CHIPS_VER'),controller.obtenerDetalleVenta);
 // Escritura: reservar/liberar, validar y registrar la venta con su comprobante.
-router.post('/reservas',permiso('CHIPS_VENDER'),controller.reservar);
-router.post('/liberaciones',permiso('CHIPS_VENDER'),controller.liberar);
-router.post('/ventas',permiso('CHIPS_VENDER'),controller.vender);
-router.post('/venta-directa/validar',permiso('CHIPS_VENDER'),controller.validarVentaDirecta);
-router.post('/venta-directa',permiso('CHIPS_VENDER'),controller.crearVentaDirecta);
-router.post('/bajas',permiso('CHIPS_BAJA'),controller.baja);
+router.post('/reservas',...ventas('CHIPS_VENDER'),controller.reservar);
+router.post('/liberaciones',...ventas('CHIPS_VENDER'),controller.liberar);
+router.post('/ventas',...ventas('CHIPS_VENDER'),controller.vender);
+router.post('/venta-directa/validar',...ventas('CHIPS_VENDER'),controller.validarVentaDirecta);
+router.post('/venta-directa',...ventas('CHIPS_VENDER'),controller.crearVentaDirecta);
+router.post('/bajas',...inventario('CHIPS_BAJA'),controller.baja);
+// Catálogo fiscal compartido con Configuración > Productos: conserva el permiso
+// amplio original para no afectar ese módulo.
 router.get('/catalogo-fiscales', permiso('MENU_CHIPS','CHIPS_VER','MENU_CONFIGURACION','CONFIGURACION_PRODUCTOS'), controller.listarCatalogoChipsFiscales);
-router.get('/:id/movimientos',permiso('MENU_CHIPS','CHIPS_VER'),controller.historial);
+router.get('/:id/movimientos',...inventario('CHIPS_VER'),controller.historial);
 module.exports=router;

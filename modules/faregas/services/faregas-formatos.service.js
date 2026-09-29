@@ -202,6 +202,89 @@ const faregasFormatosService = {
       return res.rows[0];
   },
 
+  /**
+   * Elimina un formato. Las reglas siguen el modelo ya establecido en la base:
+   *
+   *  - `es_protegido`  -> nunca se elimina (son los formatos base del sistema);
+   *  - asignado a operaciones (`fg_servicio.formato_id`, FK NO ACTION) -> no;
+   *  - con variantes hijas (`formato_padre_id`, FK NO ACTION) -> no. No se hace
+   *    cascada con las hijas porque el modelo no la contempla: son formatos
+   *    independientes que se asignan a otras operaciones;
+   *  - sus versiones SÍ caen en cascada: la FK de
+   *    `fg_certificado_formato_version.formato_id` es ON DELETE CASCADE, es
+   *    decir, la versión es parte del formato. Aun así, si algún certificado
+   *    emitido apuntan a una de esas versiones (FK NO ACTION) se bloquea, para no
+   *    dejar que el usuario vea un error crudo de clave foránea.
+   *
+   * Devuelve el nombre y código del formato eliminado para el mensaje final.
+   */
+  eliminar: async (id) => {
+      const fRes = await db.query(
+          'SELECT id, codigo, nombre, es_protegido FROM fg_certificado_formato WHERE id = $1', [id]);
+      if (fRes.rowCount === 0) throw new Error('Formato no encontrado');
+      const formato = fRes.rows[0];
+
+      if (formato.es_protegido) {
+          throw new Error(
+              'El formato no puede eliminarse porque está marcado como protegido por el sistema. '
+              + 'Para cambiarlo, crea una variante dinámica desde este formato.');
+      }
+
+      const operaciones = await db.query(
+          'SELECT codigo FROM fg_servicio WHERE formato_id = $1 ORDER BY codigo', [id]);
+      if (operaciones.rowCount > 0) {
+          const lista = operaciones.rows.map((r) => `- ${r.codigo}`).join('\n');
+          throw new Error(
+              'El formato no puede eliminarse porque está asignado a las operaciones:\n\n'
+              + `${lista}\n\nDesasigna el formato de esas operaciones o cámbialo antes de eliminarlo.`);
+      }
+
+      const hijos = await db.query(
+          'SELECT codigo FROM fg_certificado_formato WHERE formato_padre_id = $1 ORDER BY codigo', [id]);
+      if (hijos.rowCount > 0) {
+          const lista = hijos.rows.map((r) => `- ${r.codigo}`).join('\n');
+          throw new Error(
+              'El formato no puede eliminarse porque tiene variantes que dependen de él:\n\n'
+              + `${lista}\n\nElimina primero las variantes o reasígnalas a otro formato base.`);
+      }
+
+      const certificados = await db.query(`
+          SELECT COUNT(*)::int AS total
+          FROM fg_certificado c
+          JOIN fg_certificado_formato_version v ON v.id = c.formato_version_id
+          WHERE v.formato_id = $1
+      `, [id]);
+      if (certificados.rows[0].total > 0) {
+          throw new Error(
+              `El formato no puede eliminarse porque ${certificados.rows[0].total} certificado(s) emitidos `
+              + 'ya usan una de sus plantillas. No se pueden borrar certificados históricos.');
+      }
+
+      // Las versiones caen en cascada por la FK existente; se hace explícito en
+      // la misma transacción para que el borrado sea atómico y auditable.
+      const client = await db.connect();
+      try {
+          await client.query('BEGIN');
+          const versiones = await client.query(
+              'SELECT COUNT(*)::int AS total FROM fg_certificado_formato_version WHERE formato_id = $1', [id]);
+          await client.query('DELETE FROM fg_certificado_formato_version WHERE formato_id = $1', [id]);
+          const borrado = await client.query(
+              'DELETE FROM fg_certificado_formato WHERE id = $1 RETURNING id, codigo, nombre', [id]);
+          await client.query('COMMIT');
+          return {
+              id: borrado.rows[0].id,
+              codigo: borrado.rows[0].codigo,
+              nombre: borrado.rows[0].nombre,
+              versionesEliminadas: versiones.rows[0].total
+          };
+      } catch (e) {
+          await client.query('ROLLBACK');
+          throw e;
+      } finally {
+          client.release();
+      }
+  },
+
   guardarBorradorVersion: async (formatoId, fileData, originalName) => {
     if (!fileData) throw new Error('Archivo requerido');
     

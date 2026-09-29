@@ -88,74 +88,127 @@ test('5. el filtro "Sin categoría" sigue soportado', () => {
 
 // ===========================================================================
 // 2. El caso reportado, contra la base real
+//
+// Estos tests NO dependen de un SKU concreto del entorno: crean el suyo y lo
+// borran al terminar. El caso reportado fue el SKU 999 / "LUHAN LUHAN", pero si
+// el usuario lo elimina en su pruebas manuales, el test debe seguir teniendo
+// sentido por sí solo.
 // ===========================================================================
 
-test('6. el SKU 999 está en BD y NO en la primera página', conBase(async () => {
-    const existe = await db.query(
-        "SELECT id, codigo_sku, descripcion, categoria_id, activo, es_para_venta, unidad FROM fg_producto_facturacion WHERE codigo_sku = '999'");
-    assert.equal(existe.rowCount, 1, 'el SKU 999 debe existir');
-    const p = existe.rows[0];
-    assert.equal(p.descripcion, 'LUHAN LUHAN');
-    assert.equal(p.activo, true);
-    assert.equal(p.es_para_venta, true);
-    assert.equal(p.unidad, 'NIU');
+/** Crea un producto con categoría, activo y para venta, y devuelve su id. */
+const crearProductoBuscable = async (marca) => {
+    const cat = await db.query('SELECT id FROM fg_categoria_servicio ORDER BY id LIMIT 1');
+    const r = await db.query(`
+        INSERT INTO fg_producto_facturacion
+            (codigo_sku, descripcion, tipo_producto, categoria_id, cuenta_por_cobrar,
+             unidad, precio_unitario, tipo_afectacion_igv, disponible_pos,
+             es_para_venta, es_para_compra, tiene_icbper, activo)
+        VALUES ($1, 'LUHAN LUHAN', 'Producto', $2, '222', 'NIU', 222, '10', FALSE,
+                TRUE, FALSE, FALSE, TRUE)
+        RETURNING id, codigo_sku, descripcion, categoria_id, activo, es_para_venta, unidad
+    `, ['999', cat.rows[0].id]);
+    return r.rows[0];
+};
 
-    const pagina1 = await productos.listar({ page: 1, pageSize: 10 });
-    assert.equal(pagina1.items.some((x) => x.codigo_sku === '999'), false,
-        'el SKU 999 no debe estar en la primera página: es lo que dispara el bug');
+/** El SKU de prueba debe caer FUERA de la primera página, que es el disparador. */
+const skuFueraDeLaPrimeraPagina = async (sku) => {
+    // Con el orden por codigo_sku, basta con que el catálogo tenga más de una
+    // página y que el SKU no esté entre los 10 primeros.
+    const primera = await productos.listar({ page: 1, pageSize: 10 });
+    return !primera.items.some((x) => x.codigo_sku === sku);
+};
+
+test('6. un producto buscable NO está en la primera página', conBase(async () => {
+    const p = await crearProductoBuscable(Date.now());
+    try {
+        assert.equal(p.descripcion, 'LUHAN LUHAN');
+        assert.equal(p.activo, true);
+        assert.equal(p.es_para_venta, true);
+        assert.equal(p.unidad, 'NIU');
+        assert.equal(await skuFueraDeLaPrimeraPagina(p.codigo_sku), true,
+            'el producto debe quedar fuera de la primera página: es lo que dispara el bug');
+    } finally {
+        await db.query('DELETE FROM fg_producto_facturacion WHERE id = $1', [p.id]);
+    }
 }));
 
-test('7. el síntoma: filtrar en memoria la página 1 no encuentra nada', conBase(async () => {
+test('7. el síntoma: filtrar en memoria la primera página no encuentra nada', conBase(async () => {
     // Esto es EXACTAMENTE lo que hacía la UI y producía "0 de 10 productos".
-    const pagina1 = await productos.listar({ page: 1, pageSize: 10 });
-    const filtrado = pagina1.items.filter((x) =>
-        `${x.codigo_sku} ${x.descripcion}`.toLowerCase().includes('luhan'));
-    assert.equal(filtrado.length, 0);
+    const p = await crearProductoBuscable(Date.now());
+    try {
+        const pagina1 = await productos.listar({ page: 1, pageSize: 10 });
+        const filtrado = pagina1.items.filter((x) =>
+            `${x.codigo_sku} ${x.descripcion}`.toLowerCase().includes('luhan'));
+        assert.equal(filtrado.length, 0, 'la página 1 no debe contener el producto');
+    } finally {
+        await db.query('DELETE FROM fg_producto_facturacion WHERE id = $1', [p.id]);
+    }
 }));
 
-test('8. la corrección: buscar por descripción encuentra el SKU 999', conBase(async () => {
-    const r = await productos.listar({ buscar: 'LUHAN', page: 1, pageSize: 10 });
-    const encontrado = r.items.find((x) => x.codigo_sku === '999');
-    assert.ok(encontrado, 'buscar LUHAN debe devolver el SKU 999');
-    assert.equal(encontrado.descripcion, 'LUHAN LUHAN');
-    assert.equal(r.page, 1);
-    assert.equal(r.totalPages, 1);
+test('8. la corrección: buscar por descripción lo encuentra', conBase(async () => {
+    const p = await crearProductoBuscable(Date.now());
+    try {
+        const r = await productos.listar({ buscar: 'LUHAN', page: 1, pageSize: 10 });
+        const encontrado = r.items.find((x) => x.id === p.id);
+        assert.ok(encontrado, 'buscar LUHAN debe devolver el producto creado');
+        assert.equal(encontrado.descripcion, 'LUHAN LUHAN');
+        assert.equal(r.page, 1);
+    } finally {
+        await db.query('DELETE FROM fg_producto_facturacion WHERE id = $1', [p.id]);
+    }
 }));
 
-test('9. la corrección: buscar por SKU encuentra el SKU 999', conBase(async () => {
-    const r = await productos.listar({ buscar: '999', page: 1, pageSize: 10 });
-    assert.equal(r.total, 1, 'sólo debe coincidir el SKU 999');
-    assert.equal(r.items[0].codigo_sku, '999');
-    assert.equal(r.items[0].descripcion, 'LUHAN LUHAN');
+test('9. la corrección: buscar por SKU lo encuentra', conBase(async () => {
+    const p = await crearProductoBuscable(Date.now());
+    try {
+        const r = await productos.listar({ buscar: p.codigo_sku, page: 1, pageSize: 10 });
+        assert.ok(r.items.some((x) => x.id === p.id), 'buscar por SKU debe encontrarlo');
+        assert.equal(r.total >= 1, true);
+    } finally {
+        await db.query('DELETE FROM fg_producto_facturacion WHERE id = $1', [p.id]);
+    }
 }));
 
 test('10. el total es el del resultado filtrado, no el del catálogo', conBase(async () => {
-    const todas = await productos.listar({ page: 1, pageSize: 10 });
-    const filtradas = await productos.listar({ buscar: 'LUHAN', page: 1, pageSize: 10 });
-    assert.ok(filtradas.total < todas.total, 'el filtro debe reducir el total');
-    assert.equal(filtradas.totalPages, Math.ceil(filtradas.total / filtradas.limit));
-    assert.equal(filtradas.items.length, filtradas.total,
-        'con menos de 10 coincidencias, items y total coinciden');
+    const p = await crearProductoBuscable(Date.now());
+    try {
+        const todas = await productos.listar({ page: 1, pageSize: 10 });
+        const filtradas = await productos.listar({ buscar: 'LUHAN', page: 1, pageSize: 10 });
+        assert.ok(filtradas.total < todas.total, 'el filtro debe reducir el total');
+        assert.equal(filtradas.totalPages, Math.ceil(filtradas.total / filtradas.limit));
+        assert.equal(filtradas.items.length, Math.min(filtradas.total, filtradas.limit));
+    } finally {
+        await db.query('DELETE FROM fg_producto_facturacion WHERE id = $1', [p.id]);
+    }
 }));
 
 test('11. la búsqueda es parcial y no distingue mayúsculas', conBase(async () => {
-    const mayus = await productos.listar({ buscar: 'LUHAN', pageSize: 10 });
-    const minus = await productos.listar({ buscar: 'luhan', pageSize: 10 });
-    const parcial = await productos.listar({ buscar: 'uhan', pageSize: 10 });
-    assert.ok(mayus.total > 0);
-    assert.equal(mayus.total, minus.total);
-    assert.equal(mayus.total, parcial.total);
+    const p = await crearProductoBuscable(Date.now());
+    try {
+        const mayus = await productos.listar({ buscar: 'LUHAN', pageSize: 10 });
+        const minus = await productos.listar({ buscar: 'luhan', pageSize: 10 });
+        const parcial = await productos.listar({ buscar: 'uhan', pageSize: 10 });
+        assert.ok(mayus.items.some((x) => x.id === p.id), 'debe encontrarlo en mayúsculas');
+        assert.equal(mayus.total, minus.total);
+        assert.equal(mayus.total, parcial.total);
+    } finally {
+        await db.query('DELETE FROM fg_producto_facturacion WHERE id = $1', [p.id]);
+    }
 }));
 
 test('12. la búsqueda se combina con los demás filtros', conBase(async () => {
-    const base = await productos.listar({ buscar: 'LUHAN', pageSize: 10 });
-    if (base.total === 0) return;
-    const conEstado = await productos.listar({ buscar: 'LUHAN', estado: true, pageSize: 10 });
-    const conVenta = await productos.listar({ buscar: 'LUHAN', paraVenta: true, pageSize: 10 });
-    assert.ok(conEstado.total <= base.total);
-    assert.ok(conVenta.total <= base.total);
-    for (const p of conEstado.items) assert.equal(p.activo, true);
-    for (const p of conVenta.items) assert.equal(p.es_para_venta, true);
+    const p = await crearProductoBuscable(Date.now());
+    try {
+        const conEstado = await productos.listar({ buscar: 'LUHAN', estado: true, pageSize: 10 });
+        const conVenta = await productos.listar({ buscar: 'LUHAN', paraVenta: true, pageSize: 10 });
+        const solo = await productos.listar({ buscar: 'LUHAN', pageSize: 10 });
+        assert.ok(conEstado.total <= solo.total);
+        assert.ok(conVenta.total <= solo.total);
+        for (const x of conEstado.items) assert.equal(x.activo, true);
+        for (const x of conVenta.items) assert.equal(x.es_para_venta, true);
+    } finally {
+        await db.query('DELETE FROM fg_producto_facturacion WHERE id = $1', [p.id]);
+    }
 }));
 
 test('13. el catálogo de unidades no cambia al filtrar', conBase(async () => {

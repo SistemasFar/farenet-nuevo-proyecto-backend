@@ -517,8 +517,11 @@ test('la autorización de entorno nunca viene del frontend', () => {
         assert.doesNotMatch(fuente, /req\.(body|query|params)/);
         assert.doesNotMatch(fuente, /demo\s*===|ambiente\s*===\s*req/);
     }
+    // Borrar un tipo de chip exige su submódulo de navegación Y el permiso
+    // operativo CHIPS_CONFIGURAR (los dos middlewares van encadenados).
     const rutas = require('fs').readFileSync(require.resolve('../routes/faregas-chips.routes'), 'utf8');
-    assert.match(rutas, /router\.delete\('\/productos\/:id',permiso\('CHIPS_CONFIGURAR'\)/);
+    assert.match(rutas, /router\.delete\('\/productos\/:id',\.\.\.tipos\('CHIPS_CONFIGURAR'\)/);
+    assert.match(rutas, /const tipos = \(\.\.\.operativo\) => \[permiso\('MENU_CHIPS_TIPOS'\), permiso\(\.\.\.operativo\)\];/);
     const rutasDesc = require('fs').readFileSync(require.resolve('../routes/faregas-descuentos.routes'), 'utf8');
     assert.match(rutasDesc, /router\.delete\('\/:id', requireAdministrar/);
 });
