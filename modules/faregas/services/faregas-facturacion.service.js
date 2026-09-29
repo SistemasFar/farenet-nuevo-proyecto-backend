@@ -6,6 +6,7 @@ const correlativosNubefactService = require('./faregas-correlativos-nubefact.ser
 const readinessService = require('./faregas-nubefact-readiness.service');
 const integrationsConfig = require('../../../config/integrations.config');
 const chipCertificadoService = require('./faregas-chip-certificado.service');
+const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
 const { validarAccesoPlanta } = require('./faregas-auth.service');
 const { esCodigoClasificacionSunatValidoOpcional } = require('./faregas-pagos.rules');
 const {
@@ -530,14 +531,15 @@ async function persistirRespuestaNubeFact(reserva, resultadoEmision, recuperacio
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        await client.query(
+        const facturacionActualizada = await client.query(
             `UPDATE fg_facturacion SET
                 estado = $1, aceptada_sunat = $2, sunat_description = $3, sunat_responsecode = $4,
                 sunat_soap_error = $5, enlace_pdf = $6, enlace_xml = $7, enlace_cdr = $8,
                 cadena_qr = $9, codigo_hash = $10, respuesta_proveedor = $11::jsonb,
                 fecha_aceptacion = CASE WHEN $2 THEN CURRENT_TIMESTAMP ELSE fecha_aceptacion END,
                 usuario_modificacion = $12, fecha_modificacion = CURRENT_TIMESTAMP
-             WHERE id = $13`,
+             WHERE id = $13
+             RETURNING *`,
             [
                 estado, aceptada, body.sunat_description || body.errors || resultado.reason || null,
                 body.sunat_responsecode || null, body.sunat_soap_error || resultado.error || null,
@@ -558,8 +560,13 @@ async function persistirRespuestaNubeFact(reserva, resultadoEmision, recuperacio
                 reserva.intentoId
             ]
         );
-        if (aceptada === true && hooks.onAceptada) {
-            await hooks.onAceptada(client);
+        // La misma puerta que habilita la emisión del certificado decide el
+        // postproceso. En PRODUCCIÓN exige aceptación SUNAT; en DEMO acepta el
+        // comprobante generado por NubeFact con identidad y PDF/XML. Así el
+        // chip se consume en el primer intento y no queda una factura válida
+        // separada de su movimiento de inventario.
+        if (esDocumentoBaseOperable(facturacionActualizada.rows[0]) && hooks.onDocumentoOperable) {
+            await hooks.onDocumentoOperable(client);
         }
         if (aceptada === true && reserva.facturacion.operacion_id) {
             await client.query(
@@ -618,7 +625,7 @@ exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}
     const recuperacion = await consultarEmisionIncierta(proveedor, reserva, resultadoEmision);
 
     return await persistirRespuestaNubeFact(reserva, resultadoEmision, recuperacion, userContext, {
-        onAceptada: async (client) => {
+        onDocumentoOperable: async (client) => {
             await chipCertificadoService.consumirEnFacturacion(client, {
                 certificadoId,
                 operacionId: reserva.facturacion.operacion_id,
