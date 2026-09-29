@@ -169,6 +169,10 @@ const validarProductoChip = async (client, requiereChip, productoChipId) => {
 
 const validarPrecioChip = (requiereChip, precioChip) => {
     if (!requiereChip) return null;
+    // El precio operativo del chip se resuelve por sede desde la configuración
+    // del tipo de chip. `precio_chip` se conserva únicamente por compatibilidad
+    // con productos antiguos que ya tuvieran ese valor grabado.
+    if (precioChip === null || precioChip === undefined || precioChip === '') return null;
     const precio = Number(precioChip);
     if (!Number.isFinite(precio) || precio <= 0) throw new Error('CHIP_PRECIO_INVALIDO');
     return precio;

@@ -77,7 +77,7 @@ const normalizar = (body, { crear = false } = {}) => {
         }
         productoChipId = idProducto(body.producto_chip_id);
         precioChip = numeroNullable(body.precio_chip, 'Monto del chip');
-        if (precioChip === null || precioChip <= 0) {
+        if (precioChip !== null && precioChip <= 0) {
             const error = new Error('El monto del chip debe ser mayor que cero.');
             error.status = 400;
             throw error;

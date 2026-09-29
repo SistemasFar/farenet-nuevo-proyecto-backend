@@ -32,6 +32,9 @@ const configuracionFormato = (value) => {
     return typeof value === 'object' && !Array.isArray(value) ? value : {};
 };
 
+const usaFormatoDinamico = (certificado) => certificado.servicio_tipo_flujo === 'TALLER_INSPECCION'
+    && !(certificado.formato_es_protegido === true && certificado.formato_motor === 'SISTEMA');
+
 const valorAnidado = (objeto, clave) => String(clave || '').split('.')
     .reduce((actual, parte) => (actual == null ? undefined : actual[parte]), objeto);
 
@@ -720,7 +723,8 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
                cl.tipo_documento AS cliente_tipo_doc, cl.nro_documento AS cliente_nro_doc, cl.nombre_razon_social AS cliente_nombre,
                s.codigo AS servicio_codigo, s.nombre AS servicio_nombre, s.modalidad AS servicio_modalidad,
                s.tipo_flujo AS servicio_tipo_flujo, s.formato_id AS servicio_formato_id,
-               f.nombre AS formato_nombre,
+               f.nombre AS formato_nombre, f.codigo AS formato_codigo,
+               f.motor AS formato_motor, f.es_protegido AS formato_es_protegido,
                fv.id AS formato_version_resuelta_id, fv.version AS formato_version,
                fv.estado AS formato_version_estado, fv.motor AS formato_version_motor,
                fv.configuracion AS formato_version_configuracion,
@@ -1784,6 +1788,8 @@ exports.validarEmision = async (id, userContext) => {
     const rCert = await db.query(`
         SELECT c.*, t.clave AS tipo_clave,
                s.tipo_flujo AS servicio_tipo_flujo,
+               f.motor AS formato_motor,
+               f.es_protegido AS formato_es_protegido,
                fv.id AS formato_version_resuelta_id,
                fv.estado AS formato_version_estado,
                fv.motor AS formato_version_motor,
@@ -1823,7 +1829,9 @@ exports.validarEmision = async (id, userContext) => {
 
     const errores = [];
     const pushError = (seccion, campo, codigo, mensaje) => errores.push({ seccion, campo, codigo, mensaje });
-    const esFormularioDinamico = cert.servicio_tipo_flujo === 'TALLER_INSPECCION';
+    // Un formato SISTEMA protegido ya tiene una plantilla base utilizable. La
+    // versión dinámica sólo es obligatoria para formatos personalizables.
+    const esFormularioDinamico = usaFormatoDinamico(cert);
 
     // Las operaciones TALLER_INSPECCION se definen por las variables de su
     // formato. No deben heredar los campos vehiculares GNV/GLP de la clave
@@ -2445,4 +2453,4 @@ exports.obtenerTaller = async (id, user) => {
     return cert.formato_datos_snapshot;
 };
 
-exports._private = Object.freeze({ validarVariablesFormatoDinamico });
+exports._private = Object.freeze({ validarVariablesFormatoDinamico, usaFormatoDinamico });

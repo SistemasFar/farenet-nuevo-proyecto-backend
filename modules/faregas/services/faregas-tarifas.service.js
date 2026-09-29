@@ -83,7 +83,7 @@ exports.obtenerCatalogoPorPlanta = async (plantaKey, queryable = db) => {
             COALESCE(pfc.id, pf.id) AS chip_producto_facturacion_id,
             COALESCE(pfc.codigo_sku, pf.codigo_sku) AS chip_producto_sku,
             COALESCE(pfc.descripcion, pf.descripcion) AS chip_producto_descripcion,
-            COALESCE(pf.precio_chip, pfc.precio_unitario) AS chip_precio
+            COALESCE(pis.precio, pfc.precio_unitario, pf.precio_chip) AS chip_precio
         FROM fg_tarifa t
         JOIN fg_servicio s ON s.id = t.servicio_id
         JOIN fg_categoria_servicio c ON c.id = s.categoria_id
@@ -151,7 +151,7 @@ exports.obtenerTarifaOperativaPorCodigo = async (plantaKey, tarifaCodigo, querya
             ,COALESCE(pfc.unidad, pf.unidad) AS chip_producto_unidad
             ,COALESCE(pfc.tipo_afectacion_igv, pf.tipo_afectacion_igv) AS chip_producto_afectacion_igv
             ,COALESCE(pfc.codigo_clasificacion_sunat, pf.codigo_clasificacion_sunat) AS chip_producto_codigo_sunat
-            ,COALESCE(pf.precio_chip, pfc.precio_unitario) AS chip_precio
+            ,COALESCE(pis.precio, pfc.precio_unitario, pf.precio_chip) AS chip_precio
         FROM fg_tarifa t
         JOIN fg_servicio s ON s.id = t.servicio_id
         JOIN fg_planta p ON p.key = t.planta_key
