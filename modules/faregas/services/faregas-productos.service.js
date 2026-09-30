@@ -1,4 +1,5 @@
 const db = require('../../../config/database');
+const { randomUUID } = require('node:crypto');
 const configService = require('./faregas-config.service');
 const productosImpactoService = require('./faregas-productos-impacto.service');
 const paginacion = require('./faregas-paginacion.rules');
@@ -59,6 +60,15 @@ exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId, page, 
     const result = await db.query(`
         SELECT p.id, p.codigo_sku, p.descripcion, p.tipo_producto, p.categoria_dms,
                p.categoria_id, c.codigo AS categoria_codigo, c.nombre AS categoria_nombre,
+               COALESCE(ARRAY(
+                   SELECT DISTINCT planta.nombre
+                   FROM fg_tarifa tarifa
+                   JOIN fg_planta planta ON planta.key = tarifa.planta_key
+                   WHERE tarifa.producto_facturacion_id = p.id
+                     AND tarifa.activo = TRUE
+                     AND planta.activo = TRUE
+                   ORDER BY planta.nombre
+               ), ARRAY[]::text[]) AS sedes_faregas,
                p.cuenta_por_cobrar, p.codigo_barras, p.unidad,
                p.precio_unitario, p.precio_referencia,
                p.valor_referencial_unitario, p.codigo_clasificacion_sunat,
@@ -182,11 +192,21 @@ const validarPrecioChip = (requiereChip, precioChip) => {
     return precio;
 };
 
-exports.crear = async (producto, username, ip_direccion) => {
+/**
+ * Núcleo de inserción + auditoría de un producto fiscal. Lo comparten
+ * `exports.crear` y `exports.crearSinCategoria`: misma transacción, mismo
+ * INSERT, misma auditoría y mismo mapeo de errores.
+ *
+ * `validarCategoria` llega como Bandera porque la única diferencia entre ambos
+ * métodos es si la categoría funcional es obligatoria.
+ */
+const insertarProducto = async (producto, username, ip_direccion, { validarCategoria }) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        await validarCategoriaActiva(client, producto.categoria_id);
+        if (validarCategoria) {
+            await validarCategoriaActiva(client, producto.categoria_id);
+        }
         const productoChipIdValidado = await validarProductoChip(client, producto.requiere_chip, producto.producto_chip_id);
         const precioChipValidado = validarPrecioChip(producto.requiere_chip, producto.precio_chip);
         const result = await client.query(`
@@ -231,6 +251,40 @@ exports.crear = async (producto, username, ip_direccion) => {
     } finally {
         client.release();
     }
+};
+
+exports.crear = async (producto, username, ip_direccion) =>
+    insertarProducto(producto, username, ip_direccion, { validarCategoria: true });
+
+/**
+ * Alta de producto fiscal para migración / carga maestra DMS, cuando todavía
+ * NO se ha definido su categoría funcional.
+ *
+ * Es la ÚNICA diferencia respecto a `exports.crear`: `categoria_id` puede ser
+ * NULL. Todo lo demás es idéntico porque se delega en `insertarProducto`:
+ * misma validación de chip, mismos tipos, mismo INSERT, misma transacción,
+ * misma auditoría (`CREAR_PRODUCTO`) y mismo `SKU_DUPLICADO`.
+ *
+ * NO se expone como endpoint. `validarCategoriaActiva` sigue exigiendo
+ * categoría en `exports.crear` y en `exports.editar`, así que el API público y
+ * el formulario estándar no pueden crear productos sin categoría. Este método
+ * es para scripts de migración/homologación controlados.
+ *
+ * `categoria_dms` se conserva tal cual venga (puede ser NULL o el texto de
+ * sede de DMS): es información de origen, no la categoría funcional.
+ */
+exports.crearSinCategoria = async (producto, username, ip_direccion) => {
+    if (producto.categoria_id !== null && producto.categoria_id !== undefined) {
+        const error = new Error('CREAR_SIN_CATEGORIA_NO_PERMITE_CATEGORIA');
+        error.status = 400;
+        throw error;
+    }
+    return insertarProducto(
+        { ...producto, categoria_id: null },
+        username,
+        ip_direccion,
+        { validarCategoria: false }
+    );
 };
 
 exports.editar = async (id, producto, username, ip_direccion) => {
@@ -279,6 +333,176 @@ exports.editar = async (id, producto, username, ip_direccion) => {
         await client.query('COMMIT');
     } catch (error) {
         await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * Homologa exclusivamente la categoría funcional de un lote controlado.
+ *
+ * No se publica mediante rutas HTTP. La función existe para cargas internas
+ * auditables y evita reutilizar `editar`, que reemplaza el producto completo.
+ * Las filas quedan bloqueadas hasta verificar que todos los demás campos
+ * permanecen idénticos y confirmar la transacción.
+ */
+exports.actualizarCategoriasMasivas = async (
+    asignaciones,
+    username,
+    ip_direccion,
+    { esperadosActualizar, esperadosYaCorrectos } = {}
+) => {
+    if (!Array.isArray(asignaciones) || asignaciones.length === 0) {
+        throw new Error('HOMOLOGACION_SIN_ASIGNACIONES');
+    }
+
+    const normalizadas = asignaciones.map(({ producto_id, categoria_id }) => ({
+        producto_id: Number(producto_id),
+        categoria_id: Number(categoria_id)
+    }));
+    if (normalizadas.some(({ producto_id, categoria_id }) =>
+        !Number.isInteger(producto_id) || producto_id <= 0
+        || !Number.isInteger(categoria_id) || categoria_id <= 0
+    )) {
+        throw new Error('HOMOLOGACION_ASIGNACION_INVALIDA');
+    }
+
+    const idsProductos = normalizadas.map(({ producto_id }) => producto_id);
+    if (new Set(idsProductos).size !== idsProductos.length) {
+        throw new Error('HOMOLOGACION_PRODUCTO_DUPLICADO');
+    }
+
+    const client = await db.connect();
+    const loteId = randomUUID();
+    try {
+        await client.query('BEGIN');
+
+        const categoriasDestino = [...new Set(normalizadas.map(({ categoria_id }) => categoria_id))];
+        const categorias = new Map();
+        for (const categoriaId of categoriasDestino) {
+            const categoria = await validarCategoriaActiva(client, categoriaId);
+            categorias.set(categoriaId, categoria);
+        }
+
+        const bloqueados = await client.query(`
+            SELECT *
+            FROM fg_producto_facturacion
+            WHERE id = ANY($1::integer[])
+            ORDER BY id
+            FOR UPDATE
+        `, [idsProductos]);
+        if (bloqueados.rowCount !== normalizadas.length) {
+            throw new Error('HOMOLOGACION_PRODUCTOS_INCOMPLETOS');
+        }
+
+        const antesPorId = new Map(bloqueados.rows.map((fila) => [Number(fila.id), fila]));
+        if (bloqueados.rows.some((fila) => String(fila.codigo_sku) === '1111112')) {
+            throw new Error('HOMOLOGACION_PRODUCTO_PRUEBA_BLOQUEADO');
+        }
+
+        const cambios = [];
+        const yaCorrectos = [];
+        for (const asignacion of normalizadas) {
+            const antes = antesPorId.get(asignacion.producto_id);
+            if (Number(antes.categoria_id) === asignacion.categoria_id) {
+                yaCorrectos.push({
+                    producto_id: asignacion.producto_id,
+                    codigo_sku: antes.codigo_sku,
+                    categoria_id: asignacion.categoria_id
+                });
+                continue;
+            }
+
+            const actualizado = await client.query(`
+                UPDATE fg_producto_facturacion
+                SET categoria_id = $1
+                WHERE id = $2
+                  AND categoria_id IS NOT DISTINCT FROM $3::integer
+            `, [asignacion.categoria_id, asignacion.producto_id, antes.categoria_id]);
+            if (actualizado.rowCount !== 1) {
+                throw new Error('HOMOLOGACION_ESTADO_CONCURRENTE');
+            }
+
+            const categoria = categorias.get(asignacion.categoria_id);
+            await configService.registrarAuditoria(client, {
+                username,
+                entidad: 'PRODUCTO_FACTURACION',
+                accion: 'HOMOLOGAR_CATEGORIA',
+                identificador: antes.codigo_sku,
+                detalles: {
+                    lote_id: loteId,
+                    antes: { categoria_id: antes.categoria_id },
+                    despues: {
+                        categoria_id: asignacion.categoria_id,
+                        categoria_codigo: categoria.codigo
+                    }
+                },
+                planta_key: null,
+                ip_direccion
+            });
+            cambios.push({
+                producto_id: asignacion.producto_id,
+                codigo_sku: antes.codigo_sku,
+                categoria_id_anterior: antes.categoria_id,
+                categoria_id_nueva: asignacion.categoria_id
+            });
+        }
+
+        if (Number.isInteger(esperadosActualizar) && cambios.length !== esperadosActualizar) {
+            throw new Error('HOMOLOGACION_CANTIDAD_ACTUALIZADA_INESPERADA');
+        }
+        if (Number.isInteger(esperadosYaCorrectos) && yaCorrectos.length !== esperadosYaCorrectos) {
+            throw new Error('HOMOLOGACION_CANTIDAD_CORRECTA_INESPERADA');
+        }
+
+        const despues = await client.query(`
+            SELECT *
+            FROM fg_producto_facturacion
+            WHERE id = ANY($1::integer[])
+            ORDER BY id
+        `, [idsProductos]);
+        if (despues.rowCount !== bloqueados.rowCount) {
+            throw new Error('HOMOLOGACION_VERIFICACION_INCOMPLETA');
+        }
+
+        const asignacionPorId = new Map(normalizadas.map((fila) => [fila.producto_id, fila]));
+        for (const filaDespues of despues.rows) {
+            const filaAntes = antesPorId.get(Number(filaDespues.id));
+            const asignacion = asignacionPorId.get(Number(filaDespues.id));
+            if (Number(filaDespues.categoria_id) !== asignacion.categoria_id) {
+                throw new Error('HOMOLOGACION_CATEGORIA_NO_APLICADA');
+            }
+            for (const campo of Object.keys(filaAntes)) {
+                if (campo === 'categoria_id') continue;
+                const antesComparable = filaAntes[campo] instanceof Date
+                    ? filaAntes[campo].toISOString()
+                    : filaAntes[campo];
+                const despuesComparable = filaDespues[campo] instanceof Date
+                    ? filaDespues[campo].toISOString()
+                    : filaDespues[campo];
+                if (JSON.stringify(antesComparable) !== JSON.stringify(despuesComparable)) {
+                    throw new Error(`HOMOLOGACION_CAMPO_ALTERADO:${campo}`);
+                }
+            }
+        }
+
+        await client.query('COMMIT');
+        return {
+            lote_id: loteId,
+            recibidos: normalizadas.length,
+            actualizados: cambios.length,
+            ya_correctos: yaCorrectos.length,
+            auditorias: cambios.length,
+            cambios,
+            correctos: yaCorrectos
+        };
+    } catch (error) {
+        try {
+            await client.query('ROLLBACK');
+        } catch (_rollbackError) {
+            // Se conserva el error que causó el rollback.
+        }
         throw error;
     } finally {
         client.release();
