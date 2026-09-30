@@ -258,3 +258,25 @@ test('15. la paginación del listado usa las acciones del hook', () => {
     assert.match(seccion, /onCambioPagina=\{listado\.irAPagina\}/);
     assert.match(seccion, /onCambioPageSize=\{listado\.cambiarPageSize\}/);
 });
+
+test('16. el listado entrega el comprobante anidado que consume la pantalla', () => {
+    const bloque = bloqueListarVentas();
+    assert.match(bloque, /facturacion:\s*row\.facturacion_id == null \? null : \{/);
+    assert.match(bloque, /enlacePdf:\s*row\.enlace_pdf/);
+    assert.match(bloque, /anulacionId:\s*row\.anulacion_id == null \? null : Number\(row\.anulacion_id\)/);
+    assert.match(bloque, /estadoAnulacion:\s*row\.estado_anulacion/);
+    assert.match(bloque, /LEFT JOIN LATERAL[\s\S]*?fg_documento_anulacion/);
+});
+
+test('17. Ventas de chips reutiliza las acciones reales de ver y anular comprobante', () => {
+    const seccion = VISTA.slice(VISTA.indexOf('function TabVentas'));
+    assert.match(seccion, /const verComprobante = async/);
+    assert.match(seccion, /faregasChipsApi\.generarAnulacionOperacion/);
+    assert.match(seccion, /faregasChipsApi\.consultarAnulacionOperacion/);
+    assert.match(seccion, /title="Ver comprobante"/);
+    assert.match(seccion, /title="Anular comprobante"/);
+    assert.match(seccion, /venta\.facturacion\.anulacionEnPlazo === true/);
+    assert.doesNotMatch(seccion, /anulacionHastaMs\) > Date\.now\(\)/,
+        'el reloj del navegador no debe contradecir el plazo calculado por PostgreSQL');
+    assert.match(API, /\/chips\/ventas\/\$\{operacionId\}\/facturacion\/anulaciones/);
+});

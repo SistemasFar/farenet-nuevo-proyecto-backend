@@ -249,7 +249,19 @@ exports.listarVentas = async (plantaKey, user, filtros = {}) => {
     f.id AS facturacion_id,
     f.estado AS comprobante_estado,
     f.nro_comprobante,
-    f.enlace_pdf
+    f.enlace_pdf,
+    f.enlace_xml,
+    f.aceptada_sunat,
+    f.entorno_facturador,
+    (SELECT clock_timestamp() >= MIN(i.fecha_creacion)
+            AND clock_timestamp() < MIN(i.fecha_creacion) + INTERVAL '24 hours'
+       FROM fg_facturacion_intento i
+      WHERE i.facturacion_id = f.id) AS anulacion_en_plazo,
+    (SELECT EXTRACT(EPOCH FROM (MIN(i.fecha_creacion) + INTERVAL '24 hours')) * 1000
+       FROM fg_facturacion_intento i
+      WHERE i.facturacion_id = f.id) AS anulacion_hasta_ms,
+    anulacion.id AS anulacion_id,
+    anulacion.estado AS estado_anulacion
     FROM fg_operacion_comercial oc
     JOIN fg_operacion_detalle od
     ON od.operacion_id = oc.id
@@ -260,8 +272,15 @@ exports.listarVentas = async (plantaKey, user, filtros = {}) => {
     LEFT JOIN fg_facturacion f
     ON f.operacion_id = oc.id
     AND f.certificado_id IS NULL
+    LEFT JOIN LATERAL (
+        SELECT a.id, a.estado
+        FROM fg_documento_anulacion a
+        WHERE a.facturacion_id = f.id
+        ORDER BY a.id DESC
+        LIMIT 1
+    ) anulacion ON TRUE
     WHERE ${where}
-    GROUP BY oc.id, f.id
+    GROUP BY oc.id, f.id, anulacion.id, anulacion.estado
     ORDER BY oc.fecha_creacion DESC, oc.id DESC
     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
         [...params, limit, offset]
@@ -280,7 +299,20 @@ exports.listarVentas = async (plantaKey, user, filtros = {}) => {
             facturacionId: row.facturacion_id == null ? null : Number(row.facturacion_id),
             comprobanteEstado: row.comprobante_estado,
             nroComprobante: row.nro_comprobante,
-            enlacePdf: row.enlace_pdf
+            enlacePdf: row.enlace_pdf,
+            facturacion: row.facturacion_id == null ? null : {
+                id: Number(row.facturacion_id),
+                estado: row.comprobante_estado,
+                nroComprobante: row.nro_comprobante,
+                enlacePdf: row.enlace_pdf,
+                enlaceXml: row.enlace_xml,
+                aceptadaSunat: row.aceptada_sunat,
+                entornoFacturador: row.entorno_facturador,
+                anulacionEnPlazo: row.anulacion_en_plazo === true,
+                anulacionHastaMs: row.anulacion_hasta_ms,
+                anulacionId: row.anulacion_id == null ? null : Number(row.anulacion_id),
+                estadoAnulacion: row.estado_anulacion
+            }
         })),
         Number(conteo.rows[0]?.total || 0),
         page,

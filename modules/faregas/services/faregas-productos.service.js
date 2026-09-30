@@ -59,10 +59,12 @@ exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId, page, 
     const result = await db.query(`
         SELECT p.id, p.codigo_sku, p.descripcion, p.tipo_producto, p.categoria_dms,
                p.categoria_id, c.codigo AS categoria_codigo, c.nombre AS categoria_nombre,
-               p.cuenta_por_cobrar, p.unidad, p.precio_unitario, p.precio_referencia,
+               p.cuenta_por_cobrar, p.codigo_barras, p.unidad,
+               p.precio_unitario, p.precio_referencia,
                p.valor_referencial_unitario, p.codigo_clasificacion_sunat,
-               p.tipo_afectacion_igv, p.porcentaje_isc, p.disponible_pos,
-               p.es_para_venta, p.es_para_compra, p.tiene_icbper, p.activo,
+               p.tipo_afectacion_igv, p.codigo_afectacion_isc, p.porcentaje_isc,
+               p.disponible_pos, p.es_para_venta, p.es_para_compra,
+               p.tiene_icbper, p.imagen_url, p.activo,
                p.requiere_chip, p.producto_chip_id, p.precio_chip,
                p.fecha_creacion, p.fecha_modificacion
         FROM fg_producto_facturacion p
@@ -120,10 +122,12 @@ exports.listarPorCategoria = async () => {
     const result = await db.query(`
         SELECT p.id, p.codigo_sku, p.descripcion, p.tipo_producto, p.categoria_dms,
                p.categoria_id, c.codigo AS categoria_codigo, c.nombre AS categoria_nombre,
-               p.cuenta_por_cobrar, p.unidad, p.precio_unitario, p.precio_referencia,
+               p.cuenta_por_cobrar, p.codigo_barras, p.unidad,
+               p.precio_unitario, p.precio_referencia,
                p.valor_referencial_unitario, p.codigo_clasificacion_sunat,
-               p.tipo_afectacion_igv, p.porcentaje_isc, p.disponible_pos,
-               p.es_para_venta, p.es_para_compra, p.tiene_icbper, p.activo,
+               p.tipo_afectacion_igv, p.codigo_afectacion_isc, p.porcentaje_isc,
+               p.disponible_pos, p.es_para_venta, p.es_para_compra,
+               p.tiene_icbper, p.imagen_url, p.activo,
                p.requiere_chip, p.producto_chip_id, p.precio_chip,
                p.fecha_creacion, p.fecha_modificacion
         FROM fg_producto_facturacion p
@@ -188,25 +192,29 @@ exports.crear = async (producto, username, ip_direccion) => {
         const result = await client.query(`
             INSERT INTO fg_producto_facturacion (
                 codigo_sku, descripcion, tipo_producto, categoria_dms, categoria_id,
-                cuenta_por_cobrar, unidad, precio_unitario, precio_referencia,
+                cuenta_por_cobrar, codigo_barras, unidad,
+                precio_unitario, precio_referencia,
                 valor_referencial_unitario, codigo_clasificacion_sunat,
-                tipo_afectacion_igv, porcentaje_isc, disponible_pos,
-                es_para_venta, es_para_compra, tiene_icbper, activo,
+                tipo_afectacion_igv, codigo_afectacion_isc, porcentaje_isc,
+                disponible_pos, es_para_venta, es_para_compra, tiene_icbper,
+                imagen_url, activo,
                 requiere_chip, producto_chip_id, precio_chip
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9,
-                $10, $11, $12, $13, $14, $15, $16, $17, $18,
-                $19, $20, $21
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15, $16, $17, $18, $19,
+                $20, $21, $22, $23, $24
             ) RETURNING id
         `, [
             producto.codigo_sku, producto.descripcion, producto.tipo_producto,
             producto.categoria_dms, producto.categoria_id,
-            producto.cuenta_por_cobrar, producto.unidad,
+            producto.cuenta_por_cobrar, producto.codigo_barras, producto.unidad,
             producto.precio_unitario, producto.precio_referencia,
             producto.valor_referencial_unitario, producto.codigo_clasificacion_sunat,
-            producto.tipo_afectacion_igv, producto.porcentaje_isc,
+            producto.tipo_afectacion_igv, producto.codigo_afectacion_isc,
+            producto.porcentaje_isc,
             producto.disponible_pos, producto.es_para_venta,
-            producto.es_para_compra, producto.tiene_icbper, producto.activo,
+            producto.es_para_compra, producto.tiene_icbper, producto.imagen_url,
+            producto.activo,
             Boolean(producto.requiere_chip), productoChipIdValidado, precioChipValidado
         ]);
         await configService.registrarAuditoria(client, {
@@ -234,27 +242,32 @@ exports.editar = async (id, producto, username, ip_direccion) => {
         await validarCategoriaActiva(client, producto.categoria_id);
         const productoChipIdValidado = await validarProductoChip(client, producto.requiere_chip, producto.producto_chip_id);
         const precioChipValidado = validarPrecioChip(producto.requiere_chip, producto.precio_chip);
+        const activo = producto.activo === undefined ? actual.rows[0].activo : producto.activo;
         await client.query(`
             UPDATE fg_producto_facturacion SET
                 descripcion = $1, tipo_producto = $2, categoria_dms = $3,
-                categoria_id = $4, cuenta_por_cobrar = $5, unidad = $6,
-                precio_unitario = $7, precio_referencia = $8,
-                valor_referencial_unitario = $9,
-                codigo_clasificacion_sunat = $10, tipo_afectacion_igv = $11,
-                porcentaje_isc = $12, disponible_pos = $13,
-                es_para_venta = $14, es_para_compra = $15, tiene_icbper = $16,
-                requiere_chip = $17, producto_chip_id = $18, precio_chip = $19,
+                categoria_id = $4, cuenta_por_cobrar = $5, codigo_barras = $6,
+                unidad = $7, precio_unitario = $8, precio_referencia = $9,
+                valor_referencial_unitario = $10,
+                codigo_clasificacion_sunat = $11, tipo_afectacion_igv = $12,
+                codigo_afectacion_isc = $13, porcentaje_isc = $14,
+                disponible_pos = $15, es_para_venta = $16,
+                es_para_compra = $17, tiene_icbper = $18, imagen_url = $19,
+                activo = $20, requiere_chip = $21,
+                producto_chip_id = $22, precio_chip = $23,
                 fecha_modificacion = CURRENT_TIMESTAMP
-            WHERE id = $20
+            WHERE id = $24
         `, [
             producto.descripcion, producto.tipo_producto, producto.categoria_dms,
             producto.categoria_id, producto.cuenta_por_cobrar,
-            producto.unidad, producto.precio_unitario,
+            producto.codigo_barras, producto.unidad, producto.precio_unitario,
             producto.precio_referencia, producto.valor_referencial_unitario,
             producto.codigo_clasificacion_sunat, producto.tipo_afectacion_igv,
-            producto.porcentaje_isc, producto.disponible_pos,
+            producto.codigo_afectacion_isc, producto.porcentaje_isc,
+            producto.disponible_pos,
             producto.es_para_venta, producto.es_para_compra,
-            producto.tiene_icbper, Boolean(producto.requiere_chip), productoChipIdValidado,
+            producto.tiene_icbper, producto.imagen_url, activo,
+            Boolean(producto.requiere_chip), productoChipIdValidado,
             precioChipValidado, id
         ]);
         await configService.registrarAuditoria(client, {

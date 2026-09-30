@@ -91,21 +91,24 @@ const normalizar = (body, { crear = false } = {}) => {
         categoria_dms: textoNullable(body.categoria_dms),
         categoria_id: idCategoria(body.categoria_id),
         cuenta_por_cobrar: textoNullable(body.cuenta_por_cobrar),
+        codigo_barras: textoNullable(body.codigo_barras),
         unidad: textoNullable(body.unidad),
         precio_unitario: numeroNullable(body.precio_unitario, 'Precio unitario'),
-        precio_referencia: numeroNullable(body.precio_referencia, 'Precio referencia'),
+        precio_referencia: numeroNullable(body.precio_referencia, 'Precio de venta unitario'),
         valor_referencial_unitario: numeroNullable(body.valor_referencial_unitario, 'Valor referencial'),
         codigo_clasificacion_sunat: textoNullable(body.codigo_clasificacion_sunat),
         tipo_afectacion_igv: afectacion,
+        codigo_afectacion_isc: textoNullable(body.codigo_afectacion_isc),
         porcentaje_isc: numeroNullable(body.porcentaje_isc, 'Porcentaje ISC'),
         disponible_pos: booleano(body.disponible_pos, 'Disponible POS', false),
         es_para_venta: booleano(body.es_para_venta, 'Es para venta', true),
         es_para_compra: booleano(body.es_para_compra, 'Es para compra', false),
         tiene_icbper: booleano(body.tiene_icbper, 'Tiene ICBPER', false),
+        imagen_url: textoNullable(body.imagen_url),
+        activo: booleano(body.activo, 'Activo', crear ? true : undefined),
         requiere_chip: requiereChip,
         producto_chip_id: productoChipId,
-        precio_chip: precioChip,
-        ...(crear ? { activo: booleano(body.activo, 'Activo', true) } : {})
+        precio_chip: precioChip
     };
 };
 

@@ -112,7 +112,11 @@ test('2. listar ventas y ver detalle exigen CHIPS_VER (lectura)', () => {
 });
 
 test('2b. vender, validar, reservar y liberar exigen CHIPS_VENDER (escritura)', () => {
-    for (const ruta of ['/ventas', '/venta-directa', '/venta-directa/validar', '/reservas', '/liberaciones']) {
+    for (const ruta of [
+        '/ventas', '/venta-directa', '/venta-directa/validar', '/reservas', '/liberaciones',
+        '/ventas/:operacionId/facturacion/anulaciones',
+        '/ventas/:operacionId/facturacion/anulaciones/:anulacionId/consultar'
+    ]) {
         assert.deepEqual(permisoDe('POST', ruta).permisos, ['CHIPS_VENDER'], `POST ${ruta}`);
     }
 });

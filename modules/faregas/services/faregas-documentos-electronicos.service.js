@@ -60,6 +60,23 @@ const validarAccesoFacturacion = async (executor, certificadoId, userContext, bl
     return row;
 };
 
+const validarAccesoFacturacionOperacion = async (executor, operacionId, userContext, bloquear = false) => {
+    const result = await executor.query(`
+        SELECT f.*, oc.planta_key, oc.estado AS operacion_estado
+        FROM fg_facturacion f
+        JOIN fg_operacion_comercial oc ON oc.id = f.operacion_id
+        WHERE f.operacion_id = $1
+          AND f.certificado_id IS NULL
+        ORDER BY f.id DESC
+        LIMIT 1${bloquear ? ' FOR UPDATE OF f' : ''}
+    `, [operacionId]);
+    if (result.rowCount === 0) throw errorNegocio('FACTURACION_FALTANTE', 404);
+    const row = result.rows[0];
+    const acceso = await validarAccesoPlanta(userContext.username, userContext.perfil_id, row.planta_key);
+    if (!acceso) throw errorNegocio('PLANTA_NO_AUTORIZADA', 403);
+    return row;
+};
+
 const validarSinAnulacionActiva = async (executor, facturacionId) => {
     const result = await executor.query(`
         SELECT id, estado
@@ -522,14 +539,14 @@ const validarPlazoAnulacion = async (client, objetivo) => {
     if (!result.rows[0]?.vigente) throw errorNegocio('PLAZO_ANULACION_VENCIDO', 409);
 };
 
-exports.generarAnulacion = async (certificadoId, data, userContext, dependencies = {}) => {
+const generarAnulacionConAcceso = async (referenciaId, data, userContext, dependencies, validarAcceso) => {
     const motivo = String(data.motivo || '').trim();
     if (!motivo || motivo.length > 100) throw errorNegocio('MOTIVO_ANULACION_INVALIDO');
     const client = await db.connect();
     let reserva;
     try {
         await client.query('BEGIN');
-        const facturacion = await validarAccesoFacturacion(client, certificadoId, userContext, true);
+        const facturacion = await validarAcceso(client, referenciaId, userContext, true);
         await validarSinAnulacionActiva(client, facturacion.id);
         const objetivo = await obtenerObjetivoAnulacion(client, facturacion, data.tipoDocumento, data.documentoId);
         if (!esDocumentoBaseOperable(objetivo.row)) throw errorNegocio('DOCUMENTO_NO_ANULABLE', 409);
@@ -578,6 +595,12 @@ exports.generarAnulacion = async (certificadoId, data, userContext, dependencies
     return completarAnulacion(reserva, resultado, userContext);
 };
 
+exports.generarAnulacion = async (certificadoId, data, userContext, dependencies = {}) =>
+    generarAnulacionConAcceso(certificadoId, data, userContext, dependencies, validarAccesoFacturacion);
+
+exports.generarAnulacionOperacion = async (operacionId, data, userContext, dependencies = {}) =>
+    generarAnulacionConAcceso(operacionId, data, userContext, dependencies, validarAccesoFacturacionOperacion);
+
 const completarAnulacion = async (reserva, resultado, userContext) => {
     const respuesta = limpiarRespuestaProveedor(resultado.data) || {};
     const estado = mapearEstadoProveedor(resultado, 'DOCUMENTO_RELACIONADO');
@@ -611,8 +634,8 @@ const completarAnulacion = async (reserva, resultado, userContext) => {
     return { id: Number(reserva.anulacion.id), estado, ticketSunat: respuesta.sunat_ticket_numero || null, respuesta };
 };
 
-exports.consultarAnulacion = async (certificadoId, anulacionId, userContext, dependencies = {}) => {
-    const facturacion = await validarAccesoFacturacion(db, certificadoId, userContext);
+const consultarAnulacionConAcceso = async (referenciaId, anulacionId, userContext, dependencies, validarAcceso) => {
+    const facturacion = await validarAcceso(db, referenciaId, userContext);
     const result = await db.query(`SELECT * FROM fg_documento_anulacion
         WHERE id=$1 AND (facturacion_id=$2 OR credito_id IN (SELECT id FROM fg_credito WHERE facturacion_id=$2)
           OR debito_id IN (SELECT id FROM fg_debito WHERE facturacion_id=$2))`, [anulacionId, facturacion.id]);
@@ -634,6 +657,12 @@ exports.consultarAnulacion = async (certificadoId, anulacionId, userContext, dep
     const resultado = await proveedor.consultarAnulacion(payload, { credentials: configuracion.credentials });
     return completarAnulacion({ facturacion, objetivo, anulacion, payload, operacionId }, resultado, userContext);
 };
+
+exports.consultarAnulacion = async (certificadoId, anulacionId, userContext, dependencies = {}) =>
+    consultarAnulacionConAcceso(certificadoId, anulacionId, userContext, dependencies, validarAccesoFacturacion);
+
+exports.consultarAnulacionOperacion = async (operacionId, anulacionId, userContext, dependencies = {}) =>
+    consultarAnulacionConAcceso(operacionId, anulacionId, userContext, dependencies, validarAccesoFacturacionOperacion);
 
 exports._private = { validarPlazoNotaCredito,
     validarDatosNota,

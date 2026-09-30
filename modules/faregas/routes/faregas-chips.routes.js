@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../../../config/database');
 const { authFaregasMiddleware } = require('../middlewares/faregas-auth.middleware');
 const controller = require('../controllers/faregas-chips.controller');
+const documentosElectronicosController = require('../controllers/faregas-documentos-electronicos.controller');
 const router = express.Router();
 
 const permiso = (...claves) => async(req,res,next)=>{
@@ -37,6 +38,8 @@ router.post('/transferencias',...inventario('CHIPS_TRANSFERIR'),controller.trans
 // Lectura: consultar el histórico de ventas.
 router.get('/ventas',...ventas('CHIPS_VER'),controller.listarVentas);
 router.get('/ventas/:operacionId',...ventas('CHIPS_VER'),controller.obtenerDetalleVenta);
+router.post('/ventas/:operacionId/facturacion/anulaciones',...ventas('CHIPS_VENDER'),documentosElectronicosController.generarAnulacionOperacion);
+router.post('/ventas/:operacionId/facturacion/anulaciones/:anulacionId/consultar',...ventas('CHIPS_VENDER'),documentosElectronicosController.consultarAnulacionOperacion);
 // Escritura: reservar/liberar, validar y registrar la venta con su comprobante.
 router.post('/reservas',...ventas('CHIPS_VENDER'),controller.reservar);
 router.post('/liberaciones',...ventas('CHIPS_VENDER'),controller.liberar);

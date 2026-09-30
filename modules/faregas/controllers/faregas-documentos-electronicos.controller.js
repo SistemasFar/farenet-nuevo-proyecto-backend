@@ -119,3 +119,37 @@ exports.consultarAnulacion = async (req, res) => {
         return res.json({ ok: true, data });
     } catch (error) { return responderError(res, error); }
 };
+
+const auditarOperacion = async (req, evento, entidadId, mensaje, datos = {}) => {
+    await auditoriaService.registrarEvento(auditoriaService.contextoRequest(req, {
+        categoria: 'FACTURACION',
+        evento,
+        entidad: 'fg_operacion_comercial',
+        entidad_id: Number(req.params.operacionId),
+        mensaje,
+        paso: 'VENTA_CHIPS',
+        datos: { documentoAnulacionId: entidadId || null, ...datos }
+    }));
+};
+
+exports.generarAnulacionOperacion = async (req, res) => {
+    try {
+        const data = await documentosService.generarAnulacionOperacion(
+            Number(req.params.operacionId), req.body || {}, req.user
+        );
+        await auditarOperacion(req, 'DOCUMENTO_ANULACION_ENVIADA', data.id,
+            'Se envió una solicitud de anulación del comprobante de venta de chips.', { estado: data.estado });
+        return res.json({ ok: true, data });
+    } catch (error) { return responderError(res, error); }
+};
+
+exports.consultarAnulacionOperacion = async (req, res) => {
+    try {
+        const data = await documentosService.consultarAnulacionOperacion(
+            Number(req.params.operacionId), Number(req.params.anulacionId), req.user
+        );
+        await auditarOperacion(req, 'DOCUMENTO_ANULACION_CONSULTADA', Number(req.params.anulacionId),
+            'Se consultó la anulación del comprobante de venta de chips.', { estado: data.estado });
+        return res.json({ ok: true, data });
+    } catch (error) { return responderError(res, error); }
+};
