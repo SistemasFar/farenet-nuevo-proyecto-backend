@@ -44,16 +44,36 @@ const authMiddleware = async (req, res, next) => {
 
 router.use(authMiddleware);
 
+// Desde 20261001 el módulo Facturación se abre por submódulos. Este middleware
+// protege el área administrativa de comprobantes y preparación, que es donde un
+// perfil CONTADOR (Comprobantes) sí debe poder entrar, pero sin abrirle Series.
+//
+// Se conservan las vías operativas que ya existían (MENU_CONFIGURACION con
+// CONFIGURACION_SERIES, y CONFIGURACION_SERIES suelto) para no quitar acceso a
+// quien lo tenía por esa vía. Lo que cambia es que MENU_FACTURACION a secas ya
+// no basta: hace falta el submódulo correspondiente.
 const facturacionAdminMiddleware = async (req, res, next) => {
     if (req.user?.perfil_id === 'SISTEMAS') return next();
+    // El endpoint de readiness es la pestaña PREPARACIÓN; el resto es COMPROBANTES.
+    const esReadiness = req.path.endsWith('/readiness');
+    const submodulo = esReadiness ? 'MENU_FACTURACION_PREPARACION' : 'MENU_FACTURACION_COMPROBANTES';
     try {
         const permiso = await db.query(`
             SELECT 1 FROM fg_perfil_permiso
             WHERE perfil_clave = $1
-              AND permiso_clave IN ('MENU_FACTURACION', 'MENU_CONFIGURACION', 'CONFIGURACION_SERIES')
+              AND (
+                  permiso_clave = $2
+                  OR permiso_clave IN ('MENU_CONFIGURACION', 'CONFIGURACION_SERIES')
+              )
             LIMIT 1
-        `, [req.user?.perfil_id]);
-        if (permiso.rowCount === 0) return res.status(403).json({ message: 'No tiene permiso para consultar comprobantes.' });
+        `, [req.user?.perfil_id, submodulo]);
+        if (permiso.rowCount === 0) {
+            return res.status(403).json({
+                message: esReadiness
+                    ? 'No tiene permiso para consultar la preparación de facturación.'
+                    : 'No tiene permiso para consultar comprobantes.'
+            });
+        }
         return next();
     } catch (error) {
         console.error('[FAREGAS FACTURACION ADMIN AUTH]', error);
@@ -131,6 +151,11 @@ router.post('/borradores/:id/facturacion/anulaciones', documentosElectronicosCon
 router.post('/borradores/:id/facturacion/anulaciones/:anulacionId/consultar', documentosElectronicosController.consultarAnulacion);
 
 // PREVISUALIZACIÓN Y EMISIÓN
+//
+// Estas rutas NO pasan por facturacionAdminMiddleware, y a propósito: emitir un
+// certificado desde el wizard es una operación operativa, no administración del
+// módulo Facturación. Un perfil sin MENU_FACTURACION_SERIES debe poder seguir
+// emitiendo sus certificados igual que antes de dividir los permisos.
 router.get('/borradores/:id/previsualizacion', controller.obtenerPrevisualizacion);
 router.get('/borradores/:id/validar-emision', controller.validarEmision);
 router.post('/borradores/:id/emitir', controller.emitir);

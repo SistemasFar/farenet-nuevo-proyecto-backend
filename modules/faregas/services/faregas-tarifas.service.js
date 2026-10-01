@@ -2,10 +2,33 @@ const db = require('../../../config/database');
 
 const FLUJOS_DE_CERTIFICADO = new Set(['CERTIFICACION', 'TALLER_INSPECCION']);
 
+const resolverPrecioComercial = ({
+    productoFacturacionId,
+    precioReferencia,
+    precioUnitario,
+    precioTarifa
+}) => {
+    if (productoFacturacionId !== null && productoFacturacionId !== undefined) {
+        if (precioReferencia !== null && precioReferencia !== undefined) {
+            return Number(precioReferencia);
+        }
+        if (precioUnitario !== null && precioUnitario !== undefined) {
+            return Number(precioUnitario);
+        }
+    }
+    return Number(precioTarifa);
+};
+
 const construirCatalogo = (sede, rows) => {
     const categorias = new Map();
 
     for (const row of rows) {
+        const precioComercial = resolverPrecioComercial({
+            productoFacturacionId: row.producto_facturacion_id,
+            precioReferencia: row.producto_precio_referencia,
+            precioUnitario: row.producto_precio_unitario,
+            precioTarifa: row.precio_tarifa
+        });
         if (!categorias.has(row.categoria_codigo)) {
             categorias.set(row.categoria_codigo, {
                 codigo: row.categoria_codigo,
@@ -28,7 +51,7 @@ const construirCatalogo = (sede, rows) => {
             tarifa: {
                 id: Number(row.tarifa_id),
                 codigo: row.tarifa_codigo,
-                precio: Number(row.precio),
+                precio: precioComercial,
                 productoFacturacionId: row.producto_facturacion_id ? Number(row.producto_facturacion_id) : null,
                 requiereChip: row.requiere_chip === true,
                 chip: row.requiere_chip === true ? {
@@ -40,7 +63,7 @@ const construirCatalogo = (sede, rows) => {
                     descripcion: row.chip_producto_descripcion || null,
                     precio: row.chip_precio === null ? null : Number(row.chip_precio)
                 } : null,
-                importeTotal: Number(row.precio) + (row.requiere_chip === true && row.chip_precio !== null ? Number(row.chip_precio) : 0)
+                importeTotal: precioComercial + (row.requiere_chip === true && row.chip_precio !== null ? Number(row.chip_precio) : 0)
             }
         });
     }
@@ -74,8 +97,10 @@ exports.obtenerCatalogoPorPlanta = async (plantaKey, queryable = db) => {
             s.modalidad,
             t.id AS tarifa_id,
             t.codigo AS tarifa_codigo,
-            t.precio,
+            t.precio AS precio_tarifa,
             t.producto_facturacion_id,
+            pf.precio_referencia AS producto_precio_referencia,
+            pf.precio_unitario AS producto_precio_unitario,
             pf.requiere_chip,
             pf.producto_chip_id,
             pi.codigo AS chip_codigo,
@@ -124,8 +149,10 @@ exports.obtenerTarifaOperativaPorCodigo = async (plantaKey, tarifaCodigo, querya
         SELECT
             t.id,
             t.codigo,
-            t.precio,
+            t.precio AS precio_tarifa,
             t.producto_facturacion_id,
+            pf.precio_referencia AS producto_precio_referencia,
+            pf.precio_unitario AS producto_precio_unitario,
             s.id AS servicio_id,
             s.codigo AS servicio_codigo,
             s.nombre AS servicio_nombre,
@@ -185,7 +212,16 @@ exports.obtenerTarifaOperativaPorCodigo = async (plantaKey, tarifaCodigo, querya
     `, [plantaKey, tarifaCodigo]);
 
     if (result.rowCount === 0) return null;
-    return { ...result.rows[0], precio: Number(result.rows[0].precio) };
+    const row = result.rows[0];
+    return {
+        ...row,
+        precio: resolverPrecioComercial({
+            productoFacturacionId: row.producto_facturacion_id,
+            precioReferencia: row.producto_precio_referencia,
+            precioUnitario: row.producto_precio_unitario,
+            precioTarifa: row.precio_tarifa
+        })
+    };
 };
 
 exports.validarTarifaCertificacion = (tarifa) => {
@@ -199,3 +235,4 @@ exports.validarTarifaCertificacion = (tarifa) => {
 };
 
 exports.construirCatalogo = construirCatalogo;
+exports.resolverPrecioComercial = resolverPrecioComercial;

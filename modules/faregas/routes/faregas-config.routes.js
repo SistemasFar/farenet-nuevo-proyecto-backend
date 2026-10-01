@@ -126,11 +126,18 @@ const requireConfigTarifasPerm = async (req, res, next) => {
 
 const requireConfigSeriesPerm = async (req, res, next) => {
     try {
+        // Desde 20261001 el acceso a la pestaña Series exige su submódulo de
+        // navegación (MENU_FACTURACION_SERIES), además de una vía operativa:
+        // MENU_CONFIGURACION + CONFIGURACION_SERIES. Sin el submódulo, escribir
+        // la URL a mano no abre la administración de series.
+        //
+        // MENU_FACTURACION a secas ya NO abre estos endpoints: un perfil con el
+        // módulo pero sin el submódulo tampoco puede administrarlos.
         const permisoDb = await db.query(
             `SELECT 1 FROM fg_perfil_permiso
              WHERE perfil_clave = $1
                AND (
-                   permiso_clave = 'MENU_FACTURACION'
+                   permiso_clave = 'MENU_FACTURACION_SERIES'
                    OR (
                        permiso_clave = 'MENU_CONFIGURACION'
                        AND EXISTS (

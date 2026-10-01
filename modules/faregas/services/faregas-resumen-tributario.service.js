@@ -2,6 +2,7 @@ const db = require('../../../config/database');
 const integrationsConfig = require('../../../config/integrations.config');
 const correlativosNubefactService = require('./faregas-correlativos-nubefact.service');
 const nubefactConfigService = require('./faregas-nubefact-config.service');
+const tarifasService = require('./faregas-tarifas.service');
 const { esUnidadTributariaAdmitida } = require('./faregas-producto-fiscal.rules');
 const { esCodigoClasificacionSunatValidoOpcional } = require('./faregas-pagos.rules');
 
@@ -300,13 +301,15 @@ const obtenerDetalle = async (contexto, queryable) => {
         SELECT od.id AS detalle_id, od.cantidad, od.orden,
                od.codigo_sku_snapshot, od.descripcion_snapshot, od.unidad_snapshot,
                od.afectacion_igv_snapshot, od.codigo_sunat_snapshot,
-               t.id AS tarifa_id, t.precio AS tarifa_precio,
+               t.id AS tarifa_id, t.precio AS precio_tarifa,
                s.id AS servicio_id, s.codigo AS servicio_codigo, s.nombre AS servicio_nombre,
                pf.id AS producto_facturacion_id, pf.codigo_sku AS producto_sku,
                pf.descripcion AS producto_descripcion, pf.unidad AS producto_unidad,
                pf.codigo_clasificacion_sunat AS producto_codigo_sunat,
                pf.tipo_afectacion_igv AS producto_afectacion_igv,
                pf.activo AS producto_activo,
+               pf.precio_referencia AS producto_precio_referencia,
+               pf.precio_unitario AS producto_precio_unitario,
                pf.requiere_chip AS producto_requiere_chip,
                pf.precio_chip AS producto_precio_chip
         FROM fg_tarifa t
@@ -323,7 +326,17 @@ const obtenerDetalle = async (contexto, queryable) => {
         ORDER BY od.id DESC NULLS LAST
         LIMIT 1
     `, [contexto.planta_key, contexto.tarifa_codigo, contexto.certificado_id]);
-    return result.rows[0] || null;
+    if (result.rowCount === 0) return null;
+    const detalle = result.rows[0];
+    return {
+        ...detalle,
+        tarifa_precio: tarifasService.resolverPrecioComercial({
+            productoFacturacionId: detalle.producto_facturacion_id,
+            precioReferencia: detalle.producto_precio_referencia,
+            precioUnitario: detalle.producto_precio_unitario,
+            precioTarifa: detalle.precio_tarifa
+        })
+    };
 };
 
 const obtenerDetalles = async (contexto, queryable) => {
@@ -489,6 +502,7 @@ exports.construirDetallesNubefact = (resumen) => (resumen?.items || []).map(item
 
 exports._private = {
     construirResumen,
+    obtenerDetalle,
     mediosPago,
     redondear
 };

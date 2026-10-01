@@ -63,7 +63,12 @@ test('las series se administran desde Facturación, no desde Configuración', ()
 });
 
 test('no existen subpestañas internas dentro de Series', () => {
-    expect_contains(FACTURACION, "pestana('SERIES', 'SERIES')");
+    // Desde 20261001 la pestaña SERIES se declara en la tabla de pestañas con su
+    // submódulo de navegación, en vez de escribirse como llamada literal a
+    // `pestana(...)`: las tres se dibujan por iteración para que cada una pueda
+    // depender de su propio permiso. Lo que importa aquí es que Series sigue
+    // siendo UNA sola pantalla.
+    expect_contains(FACTURACION, "id: 'SERIES', permiso: 'MENU_FACTURACION_SERIES', label: 'SERIES'");
     expect_contains(FACTURACION, '<TabSeries />');
     // La barra interna "SERIES NUBEFACT | MAESTRO DMS" no debe existir.
     expect_no_contains(FACTURACION, 'SERIES NUBEFACT');

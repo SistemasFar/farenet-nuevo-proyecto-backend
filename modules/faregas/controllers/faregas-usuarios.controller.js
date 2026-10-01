@@ -82,17 +82,37 @@ exports.eliminarUsuario = async (req, res) => {
     try {
         const usuarioObjetivo = req.params.username;
         if (req.user.username === usuarioObjetivo) {
-            return res.status(409).json({ message: 'No puedes eliminar tu propio usuario mientras tienes una sesi�n activa.' });
+            return res.status(409).json({ message: 'No puedes eliminar tu propio usuario mientras tienes una sesión activa.' });
         }
 
-        await service.eliminarUsuario(usuarioObjetivo);
-        res.json({ success: true });
+        const resultado = await service.eliminarUsuario(usuarioObjetivo);
+        return res.json({
+            success: true,
+            username: resultado?.username ?? usuarioObjetivo,
+            // Las sesiones se cierran solas; se informa cuántas para que el
+            // operador no las busque después.
+            sesiones_cerradas: resultado?.sesionesCerradas ?? 0
+        });
     } catch (e) {
-        if (e.message === 'HAS_SESSIONS') {
-            return res.status(409).json({ message: 'No se puede eliminar el usuario porque tiene sesiones registradas.' });
+        // El historial de negocio se detecta antes del DELETE, así que el
+        // servicio responde 409 con el detalle de qué lo bloquea. Este camino
+        // cubre además el 23503 que devolviera la base de datos, para no
+        // degradarlo a un 500 genérico.
+        const historialPorServicio = e.code === 'USUARIO_CON_HISTORIAL';
+        const historialPorFk = e.code === '23503';
+        if (historialPorServicio || historialPorFk) {
+            const bloqueos = e.bloqueos || [];
+            const detalle = bloqueos.length
+                ? `tiene ${bloqueos.map((b) => `${b.total} ${b.etiqueta}`).join(', ')}.`
+                : 'tiene historial asociado.';
+            return res.status(409).json({
+                message: `No se puede eliminar el usuario porque ${detalle}`,
+                usuario: e.username ?? req.params.username,
+                bloqueos
+            });
         }
         console.error(e);
-        res.status(500).json({ message: 'Error interno del servidor' });
+        return res.status(500).json({ message: 'Error interno del servidor' });
     }
 };
 

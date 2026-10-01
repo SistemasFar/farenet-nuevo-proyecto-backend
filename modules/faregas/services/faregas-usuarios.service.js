@@ -442,15 +442,114 @@ exports.obtenerPermisos = async () => {
     return result.rows;
 };
 
+/**
+ * Tablas cuyo historial de negocio impide borrar un usuario, con la etiqueta que
+ * se muestra al operador. Se deriva de las FK reales hacia `fg_usuario`: 30
+ * constraints en 17 tablas, todas `RESTRICT` o `NO ACTION` (ninguna `CASCADE`,
+ * para que el historial nunca se borre en silencio).
+ *
+ * `fg_usuario_sesion` y `fg_usuario_planta` NO aparecen: son dependencias
+ * operativas del acceso, no historial, y se limpian antes de intentar el borrado.
+ */
+const HISTORIAL_USUARIO = [
+    { tabla: 'fg_certificado', etiqueta: 'certificados' },
+    { tabla: 'fg_operacion_comercial', etiqueta: 'operaciones comerciales' },
+    { tabla: 'fg_chip', etiqueta: 'chips' },
+    { tabla: 'fg_chip_movimiento', etiqueta: 'movimientos de chip' },
+    { tabla: 'fg_vehiculo', etiqueta: 'vehículos' },
+    { tabla: 'fg_ejecutivo', etiqueta: 'ejecutivos' },
+    { tabla: 'fg_credito', etiqueta: 'créditos' },
+    { tabla: 'fg_debito', etiqueta: 'débitos' },
+    { tabla: 'fg_descuento', etiqueta: 'descuentos' },
+    { tabla: 'fg_descuentocliente', etiqueta: 'descuentos de cliente' },
+    { tabla: 'fg_descuentocomprobante', etiqueta: 'descuentos de comprobante' },
+    { tabla: 'fg_descuentodetalle', etiqueta: 'detalles de descuento' },
+    { tabla: 'fg_documento_anulacion', etiqueta: 'anulaciones de documento' },
+    { tabla: 'fg_documento_electronico_operacion', etiqueta: 'documentos electrónicos' },
+    { tabla: 'fg_auditoria_config', etiqueta: 'registros de auditoría' }
+];
+
+/** Nombres de columna por los que cada tabla referencia al usuario. */
+const COLUMNAS_REFERENCIA = {
+    fg_certificado: ['usuario_creacion', 'usuario_modificacion'],
+    fg_operacion_comercial: ['usuario_creacion', 'usuario_modificacion'],
+    fg_chip: ['creado_por', 'actualizado_por'],
+    fg_chip_movimiento: ['usuario'],
+    fg_vehiculo: ['usuario_creacion', 'usuario_modificacion'],
+    fg_ejecutivo: ['username', 'usuario_creacion', 'usuario_modificacion'],
+    fg_credito: ['usuario_creacion', 'usuario_modificacion'],
+    fg_debito: ['usuario_creacion', 'usuario_modificacion'],
+    fg_descuento: ['usuario_creacion', 'usuario_modificacion'],
+    fg_descuentocliente: ['usuario_creacion', 'usuario_modificacion'],
+    fg_descuentocomprobante: ['usuario_creacion', 'usuario_modificacion'],
+    fg_descuentodetalle: ['usuario_creacion', 'usuario_modificacion'],
+    fg_documento_anulacion: ['usuario_creacion', 'usuario_modificacion'],
+    fg_documento_electronico_operacion: ['usuario_creacion'],
+    fg_auditoria_config: ['username']
+};
+
+/**
+ * Consulta qué historial bloquea a un usuario, para poder decirlo en el mensaje
+ * en vez de devolver un 500 genérico. Usa `to_regclass` para no fallar si una
+ * tabla llegara a no existir en alguna instalación.
+ */
+const detectarHistorial = async (username, executor) => {
+    const bloqueos = [];
+    for (const { tabla, etiqueta } of HISTORIAL_USUARIO) {
+        const columnas = COLUMNAS_REFERENCIA[tabla] || ['username'];
+        const existe = (await executor.query(
+            `SELECT to_regclass($1::text) IS NOT NULL AS existe`, [`public.${tabla}`])).rows[0].existe;
+        if (!existe) continue;
+        // Los parámetros empiezan en $1: el nombre de la tabla va interpolado en
+        // el FROM porque no puede ser un parámetro de binding.
+        const condiciones = columnas
+            .map((columna, indice) => `${columna} = $${indice + 1}`)
+            .join(' OR ');
+        const total = (await executor.query(
+            `SELECT COUNT(*)::int AS n FROM ${tabla} WHERE ${condiciones}`,
+            columnas.map(() => username))).rows[0].n;
+        if (total > 0) bloqueos.push({ tabla, etiqueta, total });
+    }
+    return bloqueos;
+};
+
+const errorHistorial = (username, bloqueos) => {
+    const error = new Error('HAS_HISTORIAL');
+    error.code = 'USUARIO_CON_HISTORIAL';
+    error.statusCode = 409;
+    error.username = username;
+    error.bloqueos = bloqueos;
+    return error;
+};
+
 exports.eliminarUsuario = async (username) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        const sesiones = await client.query('SELECT 1 FROM fg_usuario_sesion WHERE username = $1 LIMIT 1', [username]);
-        if (sesiones.rowCount > 0) throw new Error('HAS_SESSIONS');
-        await client.query('DELETE FROM fg_usuario_planta WHERE username = $1', [username]);
-        await client.query('DELETE FROM fg_usuario WHERE username = $1', [username]);
+
+        // Las sesiones registradas ya no bloquean el borrado: se cierran. Son
+        // dependencias del acceso, no historial de negocio, y dejarlas impedía
+        // retirar a un usuario que ya cerró sesión.
+        // Ojo con el nombre: en `fg_usuario_sesion` y `fg_usuario_planta` la FK
+        // se llama `usuario_username`; sólo `fg_usuario` usa `username` (su PK).
+        const sesiones = await client.query(
+            'DELETE FROM fg_usuario_sesion WHERE usuario_username = $1 RETURNING id', [username]);
+        await client.query('DELETE FROM fg_usuario_planta WHERE usuario_username = $1', [username]);
+
+        // Antes de borrar, se comprueba el historial. Si existe, se aborta con
+        // 409 y la transacción se revierte: no se toca ni un registro histórico.
+        const bloqueos = await detectarHistorial(username, client);
+        if (bloqueos.length > 0) throw errorHistorial(username, bloqueos);
+
+        const eliminado = await client.query(
+            'DELETE FROM fg_usuario WHERE username = $1 RETURNING username', [username]);
+
         await client.query('COMMIT');
+        return {
+            username: eliminado.rows[0]?.username ?? username,
+            sesionesCerradas: sesiones.rowCount,
+            sedesEliminadas: true
+        };
     } catch (e) {
         await client.query('ROLLBACK');
         throw e;
@@ -458,6 +557,8 @@ exports.eliminarUsuario = async (username) => {
         client.release();
     }
 };
+
+exports._private = { HISTORIAL_USUARIO, COLUMNAS_REFERENCIA, detectarHistorial };
 
 // MAESTROS DE PERSONA Y GEOGRAFIA
 exports.getMaestrosPersona = async () => {
