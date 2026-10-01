@@ -380,12 +380,13 @@ const obtenerPagos = async (ordenPagoId, queryable) => {
     return result.rows;
 };
 
-const obtenerSerie = async (plantaKey, tipoComprobante, queryable) => {
+const obtenerSerie = async (plantaKey, tipoComprobante, emisor, queryable) => {
     if (integrationsConfig.nubefact.correlativosV2Enabled) {
         const serie = await correlativosNubefactService.obtenerSeriePrevista({
             plantaKey,
+            empresaKey: emisor.empresaKey,
             tipoComprobante,
-            environment: integrationsConfig.nubefact.environment
+            environment: emisor.environment
         }, queryable);
         return tipoComprobante === 'FACTURA'
             ? { seriefactura: serie.serie, fuente: 'FG_SERIE_COMPROBANTE' }
@@ -464,7 +465,7 @@ exports.obtenerResumenTributario = async (certificadoId, queryable = db) => {
         obtenerDetalles(contexto, queryable),
         obtenerDescuento(certificadoId, queryable),
         obtenerPagos(contexto.orden_pago_id, queryable),
-        obtenerSerie(contexto.planta_key, contexto.tipo_comprobante, queryable)
+        obtenerSerie(contexto.planta_key, contexto.tipo_comprobante, emisor, queryable)
     ]);
     return construirResumen({ contexto, detalles, descuento, pagos, serie });
 };

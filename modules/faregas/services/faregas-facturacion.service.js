@@ -381,6 +381,7 @@ const reservarEmision = async (certificadoId, userContext) => {
             }
             const reservaCorrelativo = await correlativosNubefactService.reservarSiguiente({
                 plantaKey: certificado.planta_key,
+                empresaKey: configuracionEmisor.empresaKey,
                 tipoComprobante: facturacion.tipo_comprobante,
                 environment: configuracionEmisor.environment
             }, client);

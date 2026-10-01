@@ -62,29 +62,48 @@ const mapSerie = (row) => ({
 const consultarSerie = async ({ plantaKey, tipoComprobante, environment, empresaKey = null, bloquear = false }, executor = db) => {
     const tipo = validarTipo(tipoComprobante);
     const entorno = normalizarEntorno(environment);
-    const valores = [plantaKey, tipo, entorno];
-    const filtroEmpresa = empresaKey ? ' AND COALESCE(s.empresa_key, p.empresa_key) = $4' : '';
-    if (empresaKey) valores.push(empresaKey);
+    const empresaEmisora = String(empresaKey || '').trim();
+    if (!empresaEmisora) throw errorCorrelativo('EMPRESA_EMISORA_SERIE_REQUERIDA');
+
+    // DEMO pertenece a la cuenta emisora efectiva: todas las sedes que usan el
+    // mismo alias comparten una única fila y un único contador. PRODUCCION se
+    // mantiene deliberadamente acotada a la planta propietaria.
+    const demo = entorno === 'DEMO';
+    const valores = demo
+        ? [tipo, entorno, empresaEmisora]
+        : [plantaKey, tipo, entorno, empresaEmisora];
+    const alcance = demo
+        ? 'COALESCE(s.empresa_key, p.empresa_key) = $3'
+        : 's.planta_key = $1 AND COALESCE(s.empresa_key, p.empresa_key) = $4';
     let result;
     try {
         result = await executor.query(`
             SELECT s.*, COALESCE(s.empresa_key, p.empresa_key) AS empresa_key_resolved
             FROM fg_serie_comprobante s
             JOIN fg_planta p ON p.key = s.planta_key
-            WHERE s.planta_key = $1
-              AND s.tipo_comprobante = $2
+            WHERE ${alcance}
+              AND s.tipo_comprobante = $${demo ? 1 : 2}
               AND s.proveedor_emision = 'NUBEFACT'
-              AND s.entorno_emision = $3
+              AND s.entorno_emision = $${demo ? 2 : 3}
               AND s.activo = TRUE
               AND s.es_predeterminada = TRUE
-              AND p.activo = TRUE${filtroEmpresa}
-            LIMIT 1${bloquear ? ' FOR UPDATE OF s' : ''}
+              AND p.activo = TRUE
+            ORDER BY s.id
+            LIMIT 2${bloquear ? ' FOR UPDATE OF s' : ''}
         `, valores);
     } catch (error) {
         if (error.code === '42703') throw errorCorrelativo('MIGRACION_NUBEFACT_PENDIENTE');
         throw error;
     }
     if (result.rowCount === 0) throw errorCorrelativo('SERIE_COMPROBANTE_NO_CONFIGURADA');
+    if (result.rowCount !== 1) {
+        throw errorCorrelativo('SERIE_COMPROBANTE_AMBIGUA', {
+            plantaKey,
+            empresaKey: empresaEmisora,
+            tipoComprobante: tipo,
+            environment: entorno
+        });
+    }
     return mapSerie(result.rows[0]);
 };
 

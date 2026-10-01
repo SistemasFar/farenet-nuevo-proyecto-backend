@@ -181,7 +181,7 @@ const validarDatosNota = (tipo, data, facturacion, totalNotasAceptadas = 0) => {
     return { motivoCodigo, sustento, baseImponible, igv, importeTotal };
 };
 
-const reservarSerieNota = async (client, facturacion, tipo) => {
+const reservarSerieNota = async (client, facturacion, tipo, configuracionEmisor) => {
     const referencia = facturacion.tipo_comprobante === 'FACTURA' ? 'FACTURA' : 'BOLETA';
     const tipoAdmin = `NOTA_${tipo}_${referencia}`;
     if (!integrationsConfig.nubefact.correlativosV2Enabled) {
@@ -189,8 +189,9 @@ const reservarSerieNota = async (client, facturacion, tipo) => {
     }
     const reserva = await correlativosNubefactService.reservarSiguiente({
         plantaKey: facturacion.planta_key,
+        empresaKey: configuracionEmisor.empresaKey,
         tipoComprobante: tipoAdmin,
-        environment: facturacion.entorno_facturador || integrationsConfig.nubefact.environment
+        environment: configuracionEmisor.environment
     }, client);
     return {
         serie: reserva.serie,
@@ -289,7 +290,7 @@ const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaI
             `, [facturacion.id]);
             const totalNotasAceptadas = Number(sumQuery.rows[0].total);
             const normalizada = validarDatosNota(tipo, data, facturacion, totalNotasAceptadas);
-            const reserva = await reservarSerieNota(client, facturacion, tipo);
+            const reserva = await reservarSerieNota(client, facturacion, tipo, configuracion);
             const insert = await client.query(`
                 INSERT INTO ${meta.tabla} (
                     planta_key, facturacion_id, serie_comprobante_id, motivo_codigo,
