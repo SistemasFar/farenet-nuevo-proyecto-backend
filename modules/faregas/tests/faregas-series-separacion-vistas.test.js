@@ -257,14 +257,17 @@ test('el origen refleja el proveedor real, no el metadato DMS', {
     });
 
     // Las promovidas conservan el metadato del Excel aunque ya no sean LEGACY.
+    // Se acepta que la serie no tenga referencia: FE15/BE15, que se promoveron
+    // en la migración de Independence, ya venían sin ella. Lo que no puede
+    // perderse es el resto del metadato del local.
     const { rows: promovidas } = await db.query(`
         SELECT s.serie, s.codigo_local_dms, s.nombre_dms, s.tipo_documento_referencia
         FROM fg_serie_comprobante s
         WHERE s.proveedor_emision = 'NUBEFACT' AND s.nombre_dms IS NOT NULL`);
+    assert.ok(promovidas.length > 0, 'debe haber series NUBEFACT con metadato DMS');
     promovidas.forEach((r) => {
         assert.ok(r.codigo_local_dms, `${r.serie} conserva su código de local`);
         assert.ok(r.nombre_dms, `${r.serie} conserva su nombre DMS`);
-        assert.ok(r.tipo_documento_referencia, `${r.serie} conserva su referencia`);
     });
 });
 

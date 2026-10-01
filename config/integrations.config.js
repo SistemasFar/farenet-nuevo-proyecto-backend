@@ -30,9 +30,29 @@ const normalizarEntornoNubefact = (value = 'DEMO') => {
 
 // El alias sólo identifica una cuenta DEMO explícitamente autorizada.  No es
 // un fallback de credenciales y jamás se consulta para PRODUCCION.
-const obtenerAliasDemoFacturador = () => normalizarClaveCredencial(
-  process.env.NUBEFACT_FAREGAS_DEMO_CREDENTIAL_ALIAS
-);
+//
+// Se resuelve POR EMPRESA para que la empresa propietaria de una sede no tenga
+// que ser la titular de la credencial: la serie y `fg_planta.empresa_key`
+// siguen perteneciendo a la empresa real, sólo la credencial DEMO se presta.
+// El nombre de la variable se deriva de la propia clave de empresa, de modo que
+// `NUBEFACT_<EMPRESA>_DEMO_CREDENTIAL_ALIAS` es imposible de aplicar fuera de DEMO.
+const obtenerAliasDemoFacturadorPorEmpresa = (empresaKey) => {
+  const empresa = normalizarClaveCredencial(empresaKey);
+  if (!empresa) return '';
+  // Se conserva la variable histórica de FAREGAS para no romper instalaciones
+  // que ya la tenían configurada antes de existir la resolución por empresa.
+  const porEmpresa = normalizarClaveCredencial(
+    process.env[`NUBEFACT_${empresa}_DEMO_CREDENTIAL_ALIAS`]
+  );
+  if (porEmpresa) return porEmpresa;
+  if (empresa === 'FAREGAS') {
+    return normalizarClaveCredencial(process.env.NUBEFACT_FAREGAS_DEMO_CREDENTIAL_ALIAS);
+  }
+  return '';
+};
+
+// Alias de FAREGAS, conservado para los llamadores existentes.
+const obtenerAliasDemoFacturador = () => obtenerAliasDemoFacturadorPorEmpresa('FAREGAS');
 
 const obtenerCredencialesNubefact = (credencialClave, environment = 'DEMO') => {
   const clave = normalizarClaveCredencial(credencialClave);
@@ -102,6 +122,7 @@ const config = Object.freeze({
     notasCronReconciliationEnabled: getBooleanEnv('NUBEFACT_NOTAS_RECONCILIATION_ENABLED', false),
     reconciliationRetryMs: getIntegerEnv('NUBEFACT_RECONCILIATION_RETRY_MS', 900000),
     obtenerAliasDemoFacturador,
+    obtenerAliasDemoFacturadorPorEmpresa,
     obtenerCredenciales: obtenerCredencialesNubefact
   })
 });

@@ -15,9 +15,13 @@ const esEntornoProduccion = (environment) => ['PRODUCCION', 'PRODUCTION'].includ
 
 const esEntornoDemo = (environment) => String(environment || '').trim().toUpperCase() === 'DEMO';
 
+// El alias es estrictamente DEMO: cualquier otro entorno devuelve null y obliga
+// a usar la credencial de la propia empresa. La empresa propietaria de la fila
+// nunca se reescribe; sólo cambia quién presta la credencial en DEMO.
 const aliasDemoPara = (row) => {
-    if (!esEntornoDemo(row?.entorno) || row?.empresa_key !== 'FAREGAS') return null;
-    return integrationsConfig.nubefact.obtenerAliasDemoFacturador() || null;
+    if (!esEntornoDemo(row?.entorno)) return null;
+    const alias = integrationsConfig.nubefact.obtenerAliasDemoFacturadorPorEmpresa(row?.empresa_key);
+    return alias || null;
 };
 
 const validarSeguridadProduccion = ({
