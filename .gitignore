@@ -5,6 +5,7 @@ scripts/
 !/scripts/
 /scripts/*
 !/scripts/run-faregas-tests.js
+!/scripts/importar-series-dms.js
 
 # Scripts locales de diagnostico que pueden contener credenciales o ejecutar emisiones.
 query.js

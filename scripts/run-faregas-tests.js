@@ -26,6 +26,7 @@ const nubefactFiles = new Set([
     'faregas-productos-categorias.test.js',
     'faregas-resumen-tributario.service.test.js',
     'faregas-series.controller.test.js',
+    'faregas-series-dms.service.test.js',
     'faregas-tarifas-admin.controller.test.js'
 ]);
 

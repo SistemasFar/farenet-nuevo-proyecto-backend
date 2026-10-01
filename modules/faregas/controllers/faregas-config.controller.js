@@ -126,7 +126,12 @@ exports.getSedes = async (req, res) => {
         const resultado = await configService.getSedes({
             buscar: req.query.buscar,
             page: req.query.page,
-            pageSize: req.query.pageSize ?? req.query.limite
+            pageSize: req.query.pageSize ?? req.query.limite,
+            // `todos=1` devuelve el resultado completo del filtro, sin
+            // LIMIT/OFFSET. Lo usa la exportación a Excel, que debe escribir
+            // todas las filas del filtro y no sólo la página visible. El modo
+            // paginado por defecto no cambia.
+            todos: req.query.todos === '1' || req.query.todos === 'true'
         });
         // Sobre de paginacion en la raiz; `sedes` se conserva como arreglo para
         // no romper a los consumidores actuales.

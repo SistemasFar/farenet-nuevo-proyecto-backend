@@ -43,6 +43,11 @@ const entorno = (value) => {
     if (!['DEMO', 'PRODUCCION'].includes(result)) fallo('Entorno inválido.');
     return result;
 };
+const proveedor = (value) => {
+    const result = texto(value, 'Proveedor de emisión');
+    if (!['LEGACY', 'NUBEFACT'].includes(result)) fallo('Proveedor de emisión inválido.');
+    return result;
+};
 const referenciaPorTipo = (tipoComprobante) => {
     if (tipoComprobante.endsWith('_FACTURA')) return '01';
     if (tipoComprobante.endsWith('_BOLETA')) return '03';
@@ -80,17 +85,72 @@ const responder = (res, error) => {
 exports.listarSedes = async (_req, res) => {
     try { res.json({ success: true, sedes: await service.listarSedes() }); } catch (error) { responder(res, error); }
 };
+
+/**
+ * Listado del MAESTRO de series para Configuración. A diferencia de
+ * `listar`, la sede es un filtro opcional: sin `planta_key` devuelve el
+ * maestro completo, que es lo que necesita la exportación a Excel.
+ */
+exports.listarMaestro = async (req, res) => {
+    try {
+        const plantaKey = String(req.query.planta_key || '').trim() || null;
+        const activo = req.query.activo === 'true' ? true : req.query.activo === 'false' ? false : undefined;
+        // Filtro de origen: NUBEFACT frente al conjunto LEGACY (DMS + internas).
+        const origen = ['LEGACY', 'NUBEFACT'].includes(String(req.query.proveedor || '').toUpperCase())
+            ? String(req.query.proveedor).toUpperCase() : null;
+        const entornoParam = ['DEMO', 'PRODUCCION'].includes(String(req.query.entorno || '').toUpperCase())
+            ? String(req.query.entorno).toUpperCase() : null;
+        // Se devuelve también el estado de la migración para que la pantalla
+        // no tenga que consultarlo aparte: es el mismo dato que ya expone
+        // `GET /series`.
+        const [series, migracionNubefactAplicada] = await Promise.all([
+            service.listarMaestro({
+                plantaKey,
+                tipo: tipo(req.query.tipo, true),
+                activo,
+                buscar: String(req.query.buscar || '').trim() || null,
+                soloDms: req.query.solo_dms === 'true' || req.query.solo_dms === '1',
+                origen,
+                entorno: entornoParam
+            }),
+            service.migracionNubefactAplicada()
+        ]);
+        res.json({ success: true, series, migracionNubefactAplicada });
+    } catch (error) { responder(res, error); }
+};
+
 exports.listar = async (req, res) => {
     try {
         const plantaKey = texto(req.query.planta_key, 'Sede');
         const activo = req.query.activo === 'true' ? true : req.query.activo === 'false' ? false : undefined;
+        // Filtros de proveedor y ambiente para la vista de series NUBEFACT.
+        // Se aplican en el backend: la vista nunca debe recibir filas LEGACY.
+        const proveedor = ['LEGACY', 'NUBEFACT'].includes(String(req.query.proveedor || '').toUpperCase())
+            ? String(req.query.proveedor).toUpperCase() : null;
+        const entornoParam = ['DEMO', 'PRODUCCION'].includes(String(req.query.entorno || '').toUpperCase())
+            ? String(req.query.entorno).toUpperCase() : null;
         const [series, migracionNubefactAplicada] = await Promise.all([service.listar({
             plantaKey, tipo: tipo(req.query.tipo, true), activo,
-            buscar: String(req.query.buscar || '').trim() || null
+            buscar: String(req.query.buscar || '').trim() || null,
+            proveedor, entorno: entornoParam
         }), service.migracionNubefactAplicada()]);
         res.json({ success: true, series, migracionNubefactAplicada });
     } catch (error) { responder(res, error); }
 };
+/** Metadato DMS: texto opcional. Si no viene, queda NULL (no pisa nada). */
+const metadatoOpcional = (value) => {
+    if (value === undefined || value === null) return null;
+    const result = String(value).trim();
+    return result === '' ? null : result;
+};
+/** Los 6 campos de metadato DMS, tal cual llegan (texto o null). */
+const metadatoDms = (body) => [
+    'nombre_dms', 'codigo_local_dms', 'nombre_local_dms',
+    'telefono_local_dms', 'correo_local_dms', 'direccion_comercial_dms'
+].reduce((result, campo) => {
+    if (Object.prototype.hasOwnProperty.call(body, campo)) result[campo] = metadatoOpcional(body[campo]);
+    return result;
+}, {});
 exports.crear = async (req, res) => {
     try {
         const tipoComprobante = tipo(req.body.tipo_comprobante);
@@ -103,21 +163,33 @@ exports.crear = async (req, res) => {
             autogenerada: booleano(req.body.autogenerada, 'Autogenerada', true),
             contingencia: booleano(req.body.contingencia, 'Contingencia', false),
             activo: booleano(req.body.activo, 'Estado', true),
+            proveedor_emision: proveedor(req.body.proveedor_emision || 'NUBEFACT'),
             entorno_emision: entorno(req.body.entorno_emision),
             tipo_documento_referencia: referenciaPorTipo(tipoComprobante),
-            serie_pos: booleano(req.body.serie_pos, 'Serie POS', false)
+            serie_pos: booleano(req.body.serie_pos, 'Serie POS', false),
+            ...metadatoDms(req.body)
         }, req.user.username, req.ip);
         res.status(201).json({ success: true, id: serieId, message: 'Serie creada correctamente.' });
     } catch (error) { responder(res, error); }
 };
 exports.editar = async (req, res) => {
     try {
-        await service.editar(id(req.params.id), {
-            es_predeterminada: booleano(req.body.es_predeterminada, 'Predeterminada'),
-            autogenerada: booleano(req.body.autogenerada, 'Autogenerada'),
-            contingencia: booleano(req.body.contingencia, 'Contingencia'),
-            serie_pos: booleano(req.body.serie_pos, 'Serie POS', false)
-        }, req.user.username, req.ip);
+        const cuerpo = { ...metadatoDms(req.body) };
+        for (const [campo, etiqueta] of [
+            ['es_predeterminada', 'Predeterminada'], ['autogenerada', 'Autogenerada'],
+            ['contingencia', 'Contingencia'], ['serie_pos', 'Serie POS']
+        ]) {
+            if (req.body[campo] !== undefined) cuerpo[campo] = booleano(req.body[campo], etiqueta);
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, 'tipo_documento_referencia')) {
+            cuerpo.tipo_documento_referencia = metadatoOpcional(req.body.tipo_documento_referencia);
+        }
+        // ultimo_numero es opcional en la edición del maestro: si llega, el
+        // servicio aplica MAX(actual, recibido) para no retroceder.
+        if (req.body.ultimo_numero !== undefined && req.body.ultimo_numero !== null) {
+            cuerpo.ultimo_numero = ultimoNumero(req.body.ultimo_numero);
+        }
+        await service.editar(id(req.params.id), cuerpo, req.user.username, req.ip);
         res.json({ success: true, message: 'Serie actualizada correctamente.' });
     } catch (error) { responder(res, error); }
 };

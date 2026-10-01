@@ -226,6 +226,9 @@ router.put('/tarifas/:id', requireConfigTarifasPerm, tarifasAdminController.edit
 router.put('/tarifas/:id/estado', requireConfigTarifasPerm, tarifasAdminController.cambiarEstado);
 
 router.get('/series/sedes', requireConfigSeriesPerm, seriesController.listarSedes);
+// Maestro de series para la pantalla de Configuración: sede opcional y sin
+// sustitución por `seriedocumentobase`. Reutiliza el permiso CONFIGURACION_SERIES.
+router.get('/series/maestro', requireConfigSeriesPerm, seriesController.listarMaestro);
 router.get('/series', requireConfigSeriesPerm, seriesController.listar);
 router.post('/series', requireConfigSeriesPerm, seriesController.crear);
 router.put('/series/:id', requireConfigSeriesPerm, seriesController.editar);

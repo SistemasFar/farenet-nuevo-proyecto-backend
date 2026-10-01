@@ -29,21 +29,48 @@ const normalizarFila = (row) => ({
 exports.listarSedes = async () => {
     const result = await db.query(`
         SELECT p.key, p.nombre, p.direccion, p.activo,
-               COUNT(s.id) FILTER (WHERE s.activo) AS series_activas
+               COUNT(s.id) FILTER (WHERE s.activo) AS series_activas,
+               -- Contadores por ambiente para la vista de series NUBEFACT. Antes
+               -- la pantalla mostraba series_activas (todas las filas) como si
+               -- fueran las series visibles, y el número no correspondía a lo
+               -- que la tabla listaba.
+               COUNT(s.id) FILTER (WHERE s.activo AND s.proveedor_emision = 'NUBEFACT'
+                    AND s.entorno_emision = 'DEMO') AS nubefact_demo,
+               COUNT(s.id) FILTER (WHERE s.activo AND s.proveedor_emision = 'NUBEFACT'
+                    AND s.entorno_emision = 'PRODUCCION') AS nubefact_produccion
         FROM fg_planta p
         LEFT JOIN fg_serie_comprobante s ON s.planta_key = p.key
         GROUP BY p.key, p.nombre, p.direccion, p.activo
         ORDER BY p.activo DESC, p.nombre
     `);
-    return result.rows.map((row) => ({ ...row, series_activas: Number(row.series_activas) }));
+    return result.rows.map((row) => ({
+        ...row,
+        series_activas: Number(row.series_activas),
+        nubefact_demo: Number(row.nubefact_demo),
+        nubefact_produccion: Number(row.nubefact_produccion)
+    }));
 };
 
-exports.listar = async ({ plantaKey, tipo, activo, buscar } = {}) => {
+/**
+ * Listado de series operativas de una sede.
+ *
+ * `proveedor` y `entorno` se filtran EN SQL, no en el cliente: la vista de
+ * series Nubefact sólo debe recibir filas `NUBEFACT` del ambiente elegido. Es
+ * además lo que elimina los duplicados visuales (BE02, FE02, ... repetidos),
+ * que eran filas LEGACY distintas a las que el backend sustituía por la serie
+ * de `seriedocumentobase`.
+ *
+ * No cambia ningún consumidor de emisión: el motor Nubefact resuelve su propia
+ * consulta en `faregas-correlativos-nubefact.service.js`.
+ */
+exports.listar = async ({ plantaKey, tipo, activo, buscar, proveedor, entorno } = {}) => {
     const valores = [plantaKey];
     const condiciones = ['s.planta_key = $1'];
     if (tipo) { valores.push(tipo); condiciones.push(`s.tipo_comprobante = $${valores.length}`); }
     if (activo === true || activo === false) { valores.push(activo); condiciones.push(`s.activo = $${valores.length}`); }
     if (buscar) { valores.push(`%${buscar}%`); condiciones.push(`s.serie ILIKE $${valores.length}`); }
+    if (proveedor) { valores.push(proveedor); condiciones.push(`s.proveedor_emision = $${valores.length}`); }
+    if (entorno) { valores.push(entorno); condiciones.push(`s.entorno_emision = $${valores.length}`); }
     const migracionAplicada = await migracionNubefactAplicada(db);
     const serieOperativa = migracionAplicada
         ? "CASE WHEN s.proveedor_emision = 'LEGACY' THEN "
@@ -121,7 +148,61 @@ exports.reservarSiguienteNumeroSerie = async (plantaKey, tipoComprobante, execut
     return normalizarFila(result.rows[0]);
 };
 
+/**
+ * Metadato del maestro DMS de series. Son columnas de origen, nullable: una
+ * serie histórica que no venga del Excel simplemente las tiene en NULL.
+ * `serie` conserva el código del Excel (p. ej. "NCF"), que no es lo mismo que
+ * `serie.serie` (la serie de comprobante, p. ej. "FC12").
+ */
+const COLUMNAS_METADATO_DMS = [
+    'nombre_dms', 'codigo_local_dms', 'nombre_local_dms',
+    'telefono_local_dms', 'correo_local_dms', 'direccion_comercial_dms'
+];
+
+/** Normaliza un valor de metadato DMS: texto sintrimear o NULL (nunca ''). */
+const metadatoDms = (value) => {
+    if (value === undefined || value === null) return null;
+    const texto = String(value).trim();
+    return texto === '' ? null : texto;
+};
+
+/** Extrae del objeto de entrada sólo las claves DMS definidas, como NULL o texto. */
+const metadatoDmsDe = (origen = {}) => COLUMNAS_METADATO_DMS.reduce((acc, columna) => {
+    if (Object.prototype.hasOwnProperty.call(origen, columna)) {
+        acc[columna] = metadatoDms(origen[columna]);
+    }
+    return acc;
+}, {});
+
+const numeroDmsDesdeSerie = (row) => {
+    const serie = String(row.serie || '').trim().toUpperCase();
+    const reglas = {
+        FACTURA: [/^F0([0-9]{2})$/, 'E'],
+        BOLETA: [/^B0([0-9]{2})$/, 'E'],
+        NOTA_CREDITO_FACTURA: [/^FC([0-9]{2})$/, 'C'],
+        NOTA_CREDITO_BOLETA: [/^BC([0-9]{2})$/, 'C'],
+        NOTA_DEBITO_FACTURA: [/^FD([0-9]{2})$/, 'D'],
+        NOTA_DEBITO_BOLETA: [/^BD([0-9]{2})$/, 'D']
+    };
+    const regla = reglas[row.tipo_comprobante];
+    if (!regla) return serie;
+    const coincidencia = serie.match(regla[0]);
+    return coincidencia ? `${regla[1]}${coincidencia[1]}` : serie;
+};
+
+/**
+ * Alta de serie en el maestro `fg_serie_comprobante`.
+ *
+ * `proveedor_emision` y `entorno_emision` son opcionales y su valor por
+ * defecto conserva el comportamiento anterior ('NUBEFACT'): las series que
+ * trae el maestro DMS se registran como 'LEGACY'/'PRODUCCION' porque NO son
+ * series de Nubefact, y así no alteran qué series puede elegir el motor de
+ * emisión ni la serie predeterminada que resuelve la facturación.
+ */
 exports.crear = async (serie, username, ipDireccion) => {
+    const proveedorEmision = serie.proveedor_emision || 'NUBEFACT';
+    const entornoEmision = serie.entorno_emision || 'PRODUCCION';
+    const metadato = metadatoDmsDe(serie);
     const client = await db.connect();
     try {
         await client.query('BEGIN');
@@ -133,15 +214,23 @@ exports.crear = async (serie, username, ipDireccion) => {
                 planta_key, empresa_key, tipo_comprobante, serie, ultimo_numero,
                 es_predeterminada, autogenerada, contingencia, activo,
                 proveedor_emision, entorno_emision,
-                tipo_documento_referencia, serie_pos
-            ) VALUES ($1,(SELECT empresa_key FROM fg_planta WHERE key = $1),$2,$3,$4,$5,$6,$7,$8,'NUBEFACT',$9,$10,$11)
+                tipo_documento_referencia, serie_pos,
+                nombre_dms, codigo_local_dms, nombre_local_dms,
+                telefono_local_dms, correo_local_dms, direccion_comercial_dms
+            ) VALUES ($1,(SELECT empresa_key FROM fg_planta WHERE key = $1),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
             RETURNING id
         `, [
             serie.planta_key, serie.tipo_comprobante, serie.serie, serie.ultimo_numero,
             serie.es_predeterminada, serie.autogenerada, serie.contingencia, serie.activo,
-            serie.entorno_emision, serie.tipo_documento_referencia, serie.serie_pos
+            proveedorEmision, entornoEmision,
+            serie.tipo_documento_referencia, serie.serie_pos,
+            metadato.nombre_dms, metadato.codigo_local_dms, metadato.nombre_local_dms,
+            metadato.telefono_local_dms, metadato.correo_local_dms, metadato.direccion_comercial_dms
         ]);
-        const despues = { ...serie, sede_nombre: planta.rows[0].nombre };
+        const despues = {
+            ...serie, proveedor_emision: proveedorEmision, entorno_emision: entornoEmision,
+            sede_nombre: planta.rows[0].nombre, ...metadato
+        };
         await configService.registrarAuditoria(client, {
             username, entidad: 'SERIE_COMPROBANTE', accion: 'CREAR_SERIE',
             identificador: `${serie.planta_key}:${serie.tipo_comprobante}:${serie.serie}`,
@@ -170,47 +259,86 @@ exports.crear = async (serie, username, ipDireccion) => {
     } finally { client.release(); }
 };
 
+/**
+ * Actualiza una serie existente.
+ *
+ * Además de los campos que ya manejaba, acepta el metadato DMS y
+ * `ultimo_numero` con la regla de NO retroceder numeración:
+ *
+ *     nuevo_ultimo_numero = MAX(actual, recibido)
+ *
+ * Un valor recibido menor se conserva el actual. Una propiedad ausente no
+ * cambia el valor almacenado; una propiedad presente con `null` sí permite
+ * representar una celda vacía del maestro DMS.
+ */
 exports.editar = async (id, cambios, username, ipDireccion) => {
+    const metadato = metadatoDmsDe(cambios);
+    const ultimoNumero = cambios.ultimo_numero === undefined || cambios.ultimo_numero === null
+        ? null
+        : Number(cambios.ultimo_numero);
     const client = await db.connect();
     try {
         await client.query('BEGIN');
         const actualResult = await client.query('SELECT * FROM fg_serie_comprobante WHERE id = $1 FOR UPDATE', [id]);
         if (actualResult.rowCount === 0) throw new Error('SERIE_NO_ENCONTRADA');
         const actual = actualResult.rows[0];
-        const tipoDocumentoReferencia = actual.tipo_comprobante.endsWith('_FACTURA')
-            ? '01'
-            : actual.tipo_comprobante.endsWith('_BOLETA') ? '03' : null;
+        const valor = (nombre) => cambios[nombre] === undefined ? actual[nombre] : cambios[nombre];
+        const tipoDocumentoReferencia = cambios.tipo_documento_referencia !== undefined
+            ? metadatoDms(cambios.tipo_documento_referencia)
+            : (actual.tipo_comprobante.endsWith('_FACTURA')
+                ? '01'
+                : actual.tipo_comprobante.endsWith('_BOLETA') ? '03' : null);
+        // Se resuelve en JS para validar y auditar el valor final explícito.
+        const nuevoNumero = ultimoNumero === null
+            ? Number(actual.ultimo_numero)
+            : Math.max(Number(actual.ultimo_numero), ultimoNumero);
         await client.query(`
             UPDATE fg_serie_comprobante
             SET es_predeterminada = $1, autogenerada = $2,
                 contingencia = $3, tipo_documento_referencia = $4,
-                serie_pos = $5, fecha_modificacion = CURRENT_TIMESTAMP
-            WHERE id = $6
+                serie_pos = $5, ultimo_numero = $6,
+                fecha_modificacion = CURRENT_TIMESTAMP,
+                nombre_dms = $7, codigo_local_dms = $8,
+                nombre_local_dms = $9, telefono_local_dms = $10,
+                correo_local_dms = $11, direccion_comercial_dms = $12
+            WHERE id = $13
         `, [
-            cambios.es_predeterminada, cambios.autogenerada, cambios.contingencia,
-            tipoDocumentoReferencia, cambios.serie_pos, id
+            valor('es_predeterminada'), valor('autogenerada'), valor('contingencia'),
+            tipoDocumentoReferencia, valor('serie_pos'), nuevoNumero,
+            ...COLUMNAS_METADATO_DMS.map((nombre) => (
+                Object.prototype.hasOwnProperty.call(metadato, nombre) ? metadato[nombre] : actual[nombre]
+            )),
+            id
         ]);
         const despues = {
             ...actual,
-            es_predeterminada: cambios.es_predeterminada,
-            autogenerada: cambios.autogenerada,
-            contingencia: cambios.contingencia,
+            es_predeterminada: valor('es_predeterminada'),
+            autogenerada: valor('autogenerada'),
+            contingencia: valor('contingencia'),
             tipo_documento_referencia: tipoDocumentoReferencia,
-            serie_pos: cambios.serie_pos
+            serie_pos: valor('serie_pos'),
+            ultimo_numero: nuevoNumero,
+            ...COLUMNAS_METADATO_DMS.reduce((acc, nombre) => {
+                acc[nombre] = Object.prototype.hasOwnProperty.call(metadato, nombre)
+                    ? metadato[nombre]
+                    : actual[nombre];
+                return acc;
+            }, {})
         };
         await configService.registrarAuditoria(client, {
             username, entidad: 'SERIE_COMPROBANTE', accion: 'EDITAR_SERIE',
             identificador: `${actual.planta_key}:${actual.tipo_comprobante}:${actual.serie}`,
             detalles: { antes: actual, despues }, planta_key: actual.planta_key, ip_direccion: ipDireccion
         });
-        if (actual.es_predeterminada !== cambios.es_predeterminada) {
+        if (actual.es_predeterminada !== despues.es_predeterminada) {
             await configService.registrarAuditoria(client, {
                 username, entidad: 'SERIE_COMPROBANTE', accion: 'CAMBIAR_SERIE_PREDETERMINADA',
                 identificador: `${actual.planta_key}:${actual.tipo_comprobante}`,
                 detalles: {
                     antes: actual.es_predeterminada ? { serie: actual.serie } : null,
-                    despues: cambios.es_predeterminada ? { serie: actual.serie } : null
-                }, planta_key: actual.planta_key, ip_direccion: ipDireccion
+                    despues: despues.es_predeterminada ? { serie: actual.serie } : null
+                },
+                planta_key: actual.planta_key, ip_direccion: ipDireccion
             });
         }
         await client.query('COMMIT');
@@ -221,6 +349,98 @@ exports.editar = async (id, cambios, username, ipDireccion) => {
         }
         throw error;
     } finally { client.release(); }
+};
+
+/**
+ * Listado del MAESTRO de series para la pantalla de Configuración.
+ *
+ * A diferencia de `exports.listar`, que sirve a la pantalla de Facturación:
+ *   - NO sustituye `serie`/`ultimo_numero` por los valores de
+ *     `seriedocumentobase`. Aquí se ve el valor REAL de la fila, que es el que
+ *     refleja el maestro DMS. La sustitución de las filas LEGACY es una
+ *     decisión de la pantalla de emisión y no debe gobernar al inventario
+ *     del maestro.
+ *   - La sede es un filtro OPCIONAL: el maestro se consulta completo y se
+ *     filtra por planta cuando se pide.
+ *   - `tipo_documento` (01/03/07/08) es el código SUNAT que trae el Excel;
+ *     `tipo_comprobante` es el enumerado interno. Se exponen ambos.
+ */
+exports.listarMaestro = async ({
+    plantaKey, tipo, activo, buscar, soloDms = false, origen, entorno
+} = {}) => {
+    const valores = [];
+    const condiciones = [];
+    const agregar = (sql, valor) => {
+        valores.push(valor);
+        condiciones.push(sql.replace('?', `$${valores.length}`));
+    };
+    if (plantaKey) agregar('s.planta_key = ?', plantaKey);
+    if (tipo) agregar('s.tipo_comprobante = ?', tipo);
+    if (activo === true || activo === false) agregar('s.activo = ?', activo);
+    if (origen) agregar('s.proveedor_emision = ?', origen);
+    // El ambiente sólo tiene sentido para las series NUBEFACT: las DMS y las
+    // LEGACY internas no se emiten por ambiente. Se aplica siempre que se pida.
+    if (entorno) agregar('s.entorno_emision = ?', entorno);
+    // La exportación DMS debe contener únicamente las filas realmente
+    // homologadas contra el Excel maestro. Las series internas/históricas no
+    // tienen esos metadatos y no se deben completar con datos inventados.
+    if (soloDms) condiciones.push('s.nombre_dms IS NOT NULL');
+    if (buscar) {
+        // La búsqueda del maestro abarca serie, nombre DMS y datos del local,
+        // así que el mismo patrón se registra una sola vez y se reutiliza.
+        valores.push(`%${buscar}%`);
+        const patron = `$${valores.length}`;
+        condiciones.push(`(s.serie ILIKE ${patron} OR COALESCE(s.nombre_dms, '') ILIKE ${patron}`
+            + ` OR COALESCE(s.nombre_local_dms, '') ILIKE ${patron}`
+            + ` OR COALESCE(s.codigo_local_dms, '') ILIKE ${patron})`);
+    }
+    const where = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
+    const result = await db.query(`
+        SELECT s.*, p.nombre AS sede_nombre, e.nombre AS empresa_nombre,
+               CASE s.tipo_comprobante
+                   WHEN 'FACTURA' THEN '01' WHEN 'BOLETA' THEN '03'
+                   WHEN 'NOTA_CREDITO_FACTURA' THEN '07' WHEN 'NOTA_CREDITO_BOLETA' THEN '07'
+                   WHEN 'NOTA_DEBITO_FACTURA' THEN '08' WHEN 'NOTA_DEBITO_BOLETA' THEN '08'
+                   ELSE NULL END AS tipo_documento,
+               CASE s.tipo_comprobante
+                   WHEN 'FACTURA' THEN 'FE' WHEN 'BOLETA' THEN 'BE'
+                   WHEN 'NOTA_CREDITO_FACTURA' THEN 'NCF' WHEN 'NOTA_CREDITO_BOLETA' THEN 'NCB'
+                   WHEN 'NOTA_DEBITO_FACTURA' THEN 'NDF' WHEN 'NOTA_DEBITO_BOLETA' THEN 'NDB'
+                   ELSE NULL END AS nombre_dms_calculado
+        FROM fg_serie_comprobante s
+        JOIN fg_planta p ON p.key = s.planta_key
+        LEFT JOIN fg_empresa e ON e.key = s.empresa_key
+        ${where}
+        ORDER BY p.nombre, s.tipo_comprobante, s.serie
+    `, valores);
+    return result.rows.map((row) => ({
+        ...row,
+        id: Number(row.id),
+        ultimo_numero: Number(row.ultimo_numero),
+        // El nombre DMS del Excel es la fuente; si la fila no lo tiene, se
+        // deduce del tipo para que la columna nunca salga vacía sin motivo. El
+        // origen se calcula antes, con el valor real de la columna.
+        nombre_dms: row.nombre_dms || row.nombre_dms_calculado,
+        numero_dms: numeroDmsDesdeSerie(row),
+        /**
+         * Origen de la fila, que es lo que habilita cada acción. Se resuelve
+         * aquí y no en el cliente para que la vista y la exportación compartan
+         * exactamente la misma clasificación.
+         *
+         *   NUBEFACT/DEMO        serie de Nubefact del ambiente DEMO
+         *   NUBEFACT/PRODUCCION  serie de Nubefact del ambiente PRODUCTIVO
+         *   DMS/LEGACY           homologada contra el Excel maestro DMS
+         *   LEGACY/FARENET       interna histórica, sin metadato DMS
+         */
+        origen: row.proveedor_emision === 'NUBEFACT'
+            ? `NUBEFACT/${row.entorno_emision}`
+            // El metadato importado del Excel es lo que distingue una serie DMS
+            // de una interna de FARENET. Se mira la columna tal como viene de la
+            // tabla: `row.nombre_dms` aún no fue sustituido por el valor derivado.
+            : (row.nombre_dms ? 'DMS/LEGACY' : 'LEGACY/FARENET'),
+        es_nubefact: row.proveedor_emision === 'NUBEFACT',
+        es_dms: row.proveedor_emision !== 'NUBEFACT' && Boolean(row.nombre_dms)
+    }));
 };
 
 exports.cambiarEstado = async (id, activo, username, ipDireccion) => {
@@ -306,4 +526,4 @@ exports.confirmarProduccion = async (id, datos, username, ipDireccion) => {
     } finally { client.release(); }
 };
 
-exports._private = { migracionNubefactAplicada, COLUMNAS_NUBEFACT };
+exports._private = { migracionNubefactAplicada, COLUMNAS_NUBEFACT, COLUMNAS_METADATO_DMS };
