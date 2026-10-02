@@ -1,5 +1,6 @@
 const service = require('../services/faregas-certificados.service');
 const rangosService = require('../services/faregas-correlativos-rangos.service');
+const sedeRangosService = require('../services/faregas-correlativos-sede.service');
 const db = require('../../../config/database');
 const auditoriaService = require('../services/faregas-auditoria.service');
 
@@ -768,6 +769,16 @@ exports.emitir = async (req, res) => {
         }
         if (['NO_VALIDO_PARA_EMISION', 'NO_EXISTE_RANGO_ACTIVO', 'RANGO_AGOTADO', 'FORMATO_NUMERO_NO_CONFIGURADO'].includes(error.message)) {
             return res.status(400).json({ ok: false, codigo: error.message, message: error.message });
+        }
+        // Sede sin correlativos en el inventario por sede. Se devuelve el texto
+        // acordado en lugar del código, para que el operador sepa qué hacer.
+        if (error.code === 'SEDE_SIN_CORRELATIVOS' || error.message === 'SEDE_SIN_CORRELATIVOS') {
+            return res.status(409).json({
+                ok: false,
+                codigo: 'SEDE_SIN_CORRELATIVOS',
+                message: error.detalles?.mensaje
+                    || sedeRangosService.MENSAJES.SEDE_SIN_CORRELATIVOS
+            });
         }
         res.status(500).json({ ok: false, message: error.message });
     }

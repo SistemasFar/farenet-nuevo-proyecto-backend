@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const controller = require('../controllers/faregas-certificados.controller');
+const correlativosController = require('../controllers/faregas-certificados-correlativos.controller');
 const pagosController = require('../controllers/faregas-pagos.controller');
 const facturacionController = require('../controllers/faregas-facturacion.controller');
 const documentosElectronicosController = require('../controllers/faregas-documentos-electronicos.controller');
@@ -86,6 +87,20 @@ router.get('/operaciones-disponibles', controller.obtenerOperacionesDisponibles)
 router.get('/catalogos/verificaciones', controller.obtenerCatalogoVerificaciones);
 
 router.get('/tipos', controller.obtenerTipos);
+
+// --- Correlativos por SEDE (modelo vigente) -------------------------------
+// Un rango pertenece a la sede. No se pide tipo, modalidad ni producto, ni al
+// listar ni al crear. Las rutas del modelo anterior quedan debajo para no
+// romper clientes que aún las consulten; la emisión usa las de aquí.
+router.get('/correlativos-sede', correlativosController.listarRangosSede);
+router.get('/correlativos-sede/resumen', correlativosController.resumenRangosSede);
+router.get('/correlativos-sede/auditoria', correlativosController.auditarRangosSede);
+router.get('/correlativos-sede/sugerencia', correlativosController.sugerirRangoSede);
+router.post('/correlativos-sede', correlativosController.agregarRangoSede);
+router.patch('/correlativos-sede/:id', correlativosController.editarRangoSede);
+router.patch('/correlativos-sede/:id/cerrar', correlativosController.cerrarRangoSede);
+
+// --- Modelo anterior, conservado ------------------------------------------
 router.get('/correlativos', controller.obtenerCorrelativos);
 router.get('/correlativos/:plantaKey/:tipo', controller.obtenerRangoActivo);
 router.post('/correlativos', controller.crearRango);

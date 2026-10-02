@@ -25,7 +25,7 @@ const clonar = (valor) => {
 };
 
 class RangeStore {
-  constructor({ nroActual = 23, nroMaximo = 1000099 } = {}) {
+  constructor({ nroActual = 23, nroMaximo = 1000099, rangosSede = null } = {}) {
     this.rango = {
       id: 81,
       planta_key: '201',
@@ -35,6 +35,10 @@ class RangeStore {
       nro_maximo: nroMaximo,
       activo: true
     };
+    // Inventario por sede. `null` significa "sede todavía no migrada": la
+    // emisión recurre al rango por (sede, tipo, modalidad). Un array, aunque
+    // esté vacío, significa sede migrada y el modelo por sede manda.
+    this.rangosSede = rangosSede === null ? null : rangosSede.map((r) => ({ ...r }));
     this.certificados = new Map();
     this.queries = [];
     this.failCertUpdate = false;
@@ -85,6 +89,7 @@ class RangeStore {
         if (sql === 'BEGIN') {
           snapshot = {
             rango: clonar(store.rango),
+            rangosSede: store.rangosSede ? clonar(store.rangosSede) : null,
             certificados: new Map([...store.certificados.entries()].map(([id, cert]) => [id, clonar(cert)]))
           };
           return { rowCount: 0, rows: [] };
@@ -97,6 +102,7 @@ class RangeStore {
         if (sql === 'ROLLBACK') {
           if (snapshot) {
             store.rango = snapshot.rango;
+            store.rangosSede = snapshot.rangosSede;
             store.certificados = snapshot.certificados;
           }
           snapshot = null;
@@ -112,7 +118,41 @@ class RangeStore {
           };
         }
 
+        // --- Inventario por sede (modelo vigente) ---------------------------
+        if (/SELECT COUNT\(\*\)::int n FROM fg_correlativo_certificado_sede/i.test(sql)) {
+          const total = (store.rangosSede || []).filter((r) => r.planta_key === params[0]).length;
+          return { rowCount: 1, rows: [{ n: total }] };
+        }
+
+        if (/pg_advisory_xact_lock/i.test(sql)) {
+          if (!liberarLock) liberarLock = await store.adquirirLock();
+          return { rowCount: 1, rows: [{}] };
+        }
+
+        if (/FROM fg_correlativo_certificado_sede/i.test(sql) && /FOR UPDATE/i.test(sql)) {
+          const candidatos = (store.rangosSede || []).filter((r) => (
+            r.planta_key === params[0]
+            && r.estado === 'ACTIVO'
+            && new Date(r.fecha_asignacion).getTime() <= Date.now()
+            && Number(r.numero_actual) < Number(r.rango_fin)
+          ));
+          candidatos.sort((a, b) => (
+            new Date(a.fecha_asignacion) - new Date(b.fecha_asignacion)
+            || Number(a.rango_inicio) - Number(b.rango_inicio)
+          ));
+          return { rowCount: candidatos.length ? 1 : 0, rows: candidatos.length ? [clonar(candidatos[0])] : [] };
+        }
+
+        if (/UPDATE fg_correlativo_certificado_sede/i.test(sql)) {
+          const rango = (store.rangosSede || []).find((r) => Number(r.id) === Number(params[0]));
+          if (!rango) return { rowCount: 0, rows: [] };
+          rango.numero_actual = Number(params[1]);
+          rango.estado = params[2];
+          return { rowCount: 1, rows: [] };
+        }
+
         if (/SELECT \* FROM fg_correlativo_certificado/i.test(sql) && /FOR UPDATE/i.test(sql)) {
+          if (!store.rango) return { rowCount: 0, rows: [] };
           if (!liberarLock) liberarLock = await store.adquirirLock();
           return { rowCount: 1, rows: [clonar(store.rango)] };
         }
@@ -507,6 +547,207 @@ test('correlativos de certificados: asignación al emitir', async (t) => {
       assert.equal(resultado.numero_certificado, 'DG-22-0100000');
       assert.equal(store.rango.nro_actual, 100000);
     });
+  });
+});
+
+// ===========================================================================
+// MODELO POR SEDE: el rango pertenece a la sede, no al tipo ni al producto.
+//
+// El store recibe `rangosSede` con ese array la emisión usa el inventario por
+// sede; con `null` (por defecto) recurre al modelo anterior. Estos casos fijan
+// que la numeración física se comparte entre tipos, modalidades y productos.
+// ===========================================================================
+
+const rangoDeSede = (id, rangoInicio, rangoFin, extra = {}) => ({
+  id,
+  planta_key: '201',
+  rango_inicio: rangoInicio,
+  numero_actual: rangoInicio - 1,
+  rango_fin: rangoFin,
+  estado: 'ACTIVO',
+  fecha_asignacion: '2026-01-01T00:00:00.000Z',
+  ...extra
+});
+
+test('correlativos por sede: el rango es de la sede, no del tipo', async (t) => {
+  await t.test('sede con un solo rango entrega su secuencia', async () => {
+    const store = new RangeStore({ rangosSede: [rangoDeSede(1, 11091, 11150)] });
+    store.agregarCertificado(50);
+    await withServiceMocks(store, async () => {
+      const resultado = await service.emitirCertificado(50, usuario);
+      assert.equal(resultado.numero_certificado, 'DG-39-0011091');
+      assert.equal(resultado.origen_correlativo, 'SEDE');
+      assert.equal(store.rangosSede[0].numero_actual, 11091);
+      assert.equal(store.rangosSede[0].estado, 'ACTIVO');
+    });
+  });
+
+  await t.test('dos tipos distintos consumen la MISMA secuencia de sede', async () => {
+    // El punto central del cambio: GLP y GNV no tienen contador propio.
+    const store = new RangeStore({ rangosSede: [rangoDeSede(1, 11091, 11150)] });
+    store.agregarCertificado(1, { tipo_clave: 'GNV_ANUAL', tipo_codigo: '22', modalidad_correlativo: 'ANUAL' });
+    store.agregarCertificado(2, { tipo_clave: 'GLP_ANUAL', tipo_codigo: '41', modalidad_correlativo: 'INICIAL' });
+    store.agregarCertificado(3, { tipo_clave: 'CONFORMIDAD', tipo_codigo: '39', modalidad_correlativo: 'UNICA' });
+    await withServiceMocks(store, async () => {
+      const gnv = await service.emitirCertificado(1, usuario);
+      const glp = await service.emitirCertificado(2, usuario);
+      const conf = await service.emitirCertificado(3, usuario);
+      assert.equal(gnv.numero_certificado, 'DG-22-0011091');
+      assert.equal(glp.numero_certificado, 'DG-41-0011092');
+      assert.equal(conf.numero_certificado, 'DG-39-0011093');
+      // Y el rango de la sede avanzó una vez por certificado, no por tipo.
+      assert.equal(store.rangosSede[0].numero_actual, 11093);
+      assert.equal(store.rangosSede.length, 1, 'no se creó un rango por tipo');
+    });
+  });
+
+  await t.test('COLINA: agotado el 11091-11150 la emisión sigue en 11401', async () => {
+    // Caso de control del enunciado.
+    const store = new RangeStore({
+      rangosSede: [
+        rangoDeSede(1, 11091, 11150, { numero_actual: 11150, estado: 'AGOTADO' }),
+        rangoDeSede(2, 11401, 11450)
+      ]
+    });
+    store.agregarCertificado(50, { tipo_clave: 'GLP_ANUAL', tipo_codigo: '41', modalidad_correlativo: 'ANUAL' });
+    store.agregarCertificado(51, { tipo_clave: 'GNV_ANUAL', tipo_codigo: '22', modalidad_correlativo: 'ANUAL' });
+    await withServiceMocks(store, async () => {
+      // nro_actual = 11149 -> la primera emisión toma 11150 y agota el bloque.
+      store.rangosSede[0].numero_actual = 11149;
+      store.rangosSede[0].estado = 'ACTIVO';
+      const primera = await service.emitirCertificado(50, usuario);
+      assert.equal(primera.numero_certificado, 'DG-41-0011150');
+      assert.equal(store.rangosSede[0].estado, 'AGOTADO', 'el bloque queda agotado');
+
+      const segunda = await service.emitirCertificado(51, usuario);
+      assert.equal(segunda.numero_certificado, 'DG-22-0011401',
+        'salta al inicio del siguiente bloque de la MISMA sede');
+      assert.equal(store.rangosSede[1].numero_actual, 11401);
+    });
+  });
+
+  await t.test('nunca salta de bloque mientras el anterior tenga números', async () => {
+    const store = new RangeStore({
+      rangosSede: [rangoDeSede(1, 11091, 11150), rangoDeSede(2, 11401, 11450)]
+    });
+    store.agregarCertificado(1);
+    store.agregarCertificado(2);
+    store.agregarCertificado(3);
+    await withServiceMocks(store, async () => {
+      await service.emitirCertificado(1, usuario);
+      await service.emitirCertificado(2, usuario);
+      await service.emitirCertificado(3, usuario);
+      assert.deepEqual(
+        store.rangosSede.map((r) => r.numero_actual),
+        [11093, 11400],
+        'tres emisiones consumieron del bloque más antiguo; el segundo sigue intacto'
+      );
+    });
+  });
+
+  await t.test('dos emisiones concurrentes en la misma sede no repiten número', async () => {
+    const store = new RangeStore({ rangosSede: [rangoDeSede(1, 11091, 11150)] });
+    store.agregarCertificado(1);
+    store.agregarCertificado(2);
+    await withServiceMocks(store, async () => {
+      const resultados = await Promise.all([
+        service.emitirCertificado(1, usuario),
+        service.emitirCertificado(2, usuario)
+      ]);
+      const numeros = resultados.map((r) => r.numero_certificado).sort();
+      assert.deepEqual(numeros, ['DG-39-0011091', 'DG-39-0011092']);
+      assert.equal(store.rangosSede[0].numero_actual, 11092);
+    });
+  });
+
+  await t.test('dos emisiones concurrentes sobre el último número cruzan al bloque siguiente', async () => {
+    // El caso donde el salto automático y la serialización tienen que coincidir.
+    const store = new RangeStore({
+      rangosSede: [
+        rangoDeSede(1, 11091, 11150, { numero_actual: 11150, estado: 'AGOTADO' }),
+        rangoDeSede(2, 11401, 11450)
+      ]
+    });
+    store.agregarCertificado(1);
+    store.agregarCertificado(2);
+    await withServiceMocks(store, async () => {
+      const resultados = await Promise.all([
+        service.emitirCertificado(1, usuario),
+        service.emitirCertificado(2, usuario)
+      ]);
+      assert.deepEqual(
+        resultados.map((r) => r.numero_certificado).sort(),
+        ['DG-39-0011401', 'DG-39-0011402']
+      );
+      assert.equal(store.rangosSede[1].numero_actual, 11402);
+    });
+  });
+
+  await t.test('rango agotado sin rango siguiente bloquea con el mensaje acordado', async () => {
+    // La sede está migrada (tiene filas en el inventario) pero ninguna
+    // disponible: no debe recurrir al modelo anterior ni emitir de más.
+    const store = new RangeStore({
+      rangosSede: [rangoDeSede(1, 11091, 11150, { numero_actual: 11150, estado: 'AGOTADO' })]
+    });
+    store.agregarCertificado(50);
+    await withServiceMocks(store, async () => {
+      await assert.rejects(service.emitirCertificado(50, usuario), /SEDE_SIN_CORRELATIVOS/);
+      assert.ok(store.queries.some(({ sql }) => sql === 'ROLLBACK'));
+      assert.equal(store.certificados.get(50).numero_certificado, null);
+      assert.equal(store.rangosSede[0].numero_actual, 11150, 'no se consumió nada');
+    });
+  });
+
+  await t.test('una sede sin inventario y sin rango legacy tampoco emite', async () => {
+    const store = new RangeStore({ rangosSede: null });
+    store.certificados.set(50, undefined);
+    store.agregarCertificado(50);
+    store.rango = null;
+    await withServiceMocks(store, async () => {
+      await assert.rejects(service.emitirCertificado(50, usuario), /NO_EXISTE_RANGO_ACTIVO/);
+    });
+  });
+
+  await t.test('rollback de una emisión no avanza el rango de la sede', async () => {
+    const store = new RangeStore({ rangosSede: [rangoDeSede(1, 11091, 11150)] });
+    store.agregarCertificado(50);
+    store.failCertUpdate = true;
+    await withServiceMocks(store, async () => {
+      await assert.rejects(service.emitirCertificado(50, usuario), /FALLO_SIMULADO_ACTUALIZACION_CERTIFICADO/);
+      assert.equal(store.rangosSede[0].numero_actual, 11090, 'vuelve al anterior consumo');
+      store.failCertUpdate = false;
+      const siguiente = await service.emitirCertificado(50, usuario);
+      assert.equal(siguiente.numero_certificado, 'DG-39-0011091', 'el número no se perdió ni se duplicó');
+    });
+  });
+
+  await t.test('un rango futuro no se consume antes de su fecha', async () => {
+    const store = new RangeStore({
+      rangosSede: [rangoDeSede(1, 11091, 11150, { fecha_asignacion: '2099-01-01T00:00:00.000Z' })]
+    });
+    store.agregarCertificado(50);
+    await withServiceMocks(store, async () => {
+      await assert.rejects(service.emitirCertificado(50, usuario), /SEDE_SIN_CORRELATIVOS/);
+    });
+  });
+
+  await t.test('la sede no migrada sigue usando el rango por tipo, y lo dice', async () => {
+    // Puente transitorio: sin rangos cargados la sede no deja de emitir.
+    const store = new RangeStore({ nroActual: 1000023, rangosSede: null });
+    store.agregarCertificado(50);
+    await withServiceMocks(store, async () => {
+      const resultado = await service.emitirCertificado(50, usuario);
+      assert.equal(resultado.numero_certificado, 'DG-39-1000024');
+      assert.equal(resultado.origen_correlativo, 'LEGACY');
+      assert.equal(store.rango.nro_actual, 1000024);
+    });
+  });
+
+  await t.test('la previsualización no toca el inventario por sede', async () => {
+    const fuente = fs.readFileSync(require.resolve('../services/faregas-certificados.service'), 'utf8');
+    const inicio = fuente.indexOf('exports.obtenerPrevisualizacion = async');
+    const bloque = fuente.slice(inicio, fuente.indexOf('const buildFormatoData', inicio));
+    assert.doesNotMatch(bloque, /consumirNumero|fg_correlativo_certificado_sede/);
   });
 });
 

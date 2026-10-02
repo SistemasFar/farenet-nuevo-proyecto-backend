@@ -5,6 +5,10 @@ const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-poli
 const { paraPlantilla } = require('../mappers/faregas-vehiculo.mapper');
 const tarifasService = require('./faregas-tarifas.service');
 const rangosService = require('./faregas-correlativos-rangos.service');
+// Inventario de rangos por sede: el modelo vigente de correlativos de
+// certificado. El servicio anterior queda importado para las rutas heredadas y
+// para el puente de sedes aún no migradas.
+const sedeRangos = require('./faregas-correlativos-sede.service');
 const chipCertificadoService = require('./faregas-chip-certificado.service');
 const vehiculosService = require('./faregas-vehiculos.service');
 const { normalizarNumeroChip, esNumeroChipCertificadoValido } = require('./faregas-chips.rules');
@@ -2134,40 +2138,57 @@ exports.emitirCertificado = async (id, userContext) => {
         // nuevamente el rango.
         let numero_certificado = cert.numero_certificado;
         let numeroAsignado = false;
+        let origenCorrelativo = null;
         if (!numero_certificado) {
-            const rCorrelativo = await client.query(`
-                SELECT * FROM fg_correlativo_certificado
-                WHERE planta_key = $1 AND tipo_certificado_clave = $2
-                  AND modalidad = $3 AND activo = true
-                FOR UPDATE
-            `, [cert.planta_key, cert.tipo_clave, cert.modalidad_correlativo]);
-
-            if (rCorrelativo.rowCount === 0) throw new Error('NO_EXISTE_RANGO_ACTIVO');
-            const rango = rCorrelativo.rows[0];
-            // nro_actual y nro_maximo son bigint: node-postgres los devuelve como
-            // string, y "11" >= "100" es true en comparación lexicográfica. Se
-            // convierten a número para no declarar agotado un rango con números
-            // libres cuando el actual tiene menos dígitos que el máximo.
-            if (Number(rango.nro_actual) >= Number(rango.nro_maximo)) throw new Error('RANGO_AGOTADO');
-
-            const siguiente = parseInt(rango.nro_actual) + 1;
-            if (siguiente > rango.nro_maximo) throw new Error('RANGO_AGOTADO');
-
             if (!cert.tipo_codigo || !cert.ancho_correlativo) {
                 throw new Error('CONFIGURACION_NUMERACION_INCOMPLETA');
             }
+            const ancho = Number(cert.ancho_correlativo);
+            const formato = (nro) => `DG-${cert.tipo_codigo}-${String(nro).padStart(ancho, '0')}`;
 
-            let ancho = Number(cert.ancho_correlativo);
+            // Modelo vigente: el número sale del inventario de RANGOS DE LA SEDE.
+            // Da igual el tipo, la modalidad o el producto: el bloque recibido
+            // por la sede sirve para cualquier certificado que emita, y cuando se
+            // agota la emisión continúa con el siguiente bloque de esa misma
+            // sede.
+            const consumo = await sedeRangos.consumirNumero(client, cert.planta_key);
+            if (consumo.migrada) {
+                numero_certificado = formato(consumo.nro);
+                numeroAsignado = true;
+                origenCorrelativo = 'SEDE';
+            } else {
+                // La sede todavía no fue migrada al inventario por sede: se usa
+                // el rango por (sede, tipo, modalidad) del modelo anterior para no
+                // dejarla sin poder emitir. Es un puente transitorio: en cuanto la
+                // sede tenga rangos cargados, esta rama deja de alcanzarse.
+                origenCorrelativo = 'LEGACY';
+                const rCorrelativo = await client.query(`
+                    SELECT * FROM fg_correlativo_certificado
+                    WHERE planta_key = $1 AND tipo_certificado_clave = $2
+                      AND modalidad = $3 AND activo = true
+                    FOR UPDATE
+                `, [cert.planta_key, cert.tipo_clave, cert.modalidad_correlativo]);
 
-            const numeroFormateado = String(siguiente).padStart(ancho, '0');
-            numero_certificado = `DG-${cert.tipo_codigo}-${numeroFormateado}`;
-            numeroAsignado = true;
+                if (rCorrelativo.rowCount === 0) throw new Error('NO_EXISTE_RANGO_ACTIVO');
+                const rango = rCorrelativo.rows[0];
+                // nro_actual y nro_maximo son bigint: node-postgres los devuelve como
+                // string, y "11" >= "100" es true en comparación lexicográfica. Se
+                // convierten a número para no declarar agotado un rango con números
+                // libres cuando el actual tiene menos dígitos que el máximo.
+                if (Number(rango.nro_actual) >= Number(rango.nro_maximo)) throw new Error('RANGO_AGOTADO');
 
-            await client.query(`
-                UPDATE fg_correlativo_certificado
-                SET nro_actual = $1, fecha_modificacion = CURRENT_TIMESTAMP
-                WHERE id = $2
-            `, [siguiente, rango.id]);
+                const siguiente = parseInt(rango.nro_actual, 10) + 1;
+                if (siguiente > rango.nro_maximo) throw new Error('RANGO_AGOTADO');
+
+                numero_certificado = formato(siguiente);
+                numeroAsignado = true;
+
+                await client.query(`
+                    UPDATE fg_correlativo_certificado
+                    SET nro_actual = $1, fecha_modificacion = CURRENT_TIMESTAMP
+                    WHERE id = $2
+                `, [siguiente, rango.id]);
+            }
         }
 
         // Update certificado
@@ -2185,7 +2206,8 @@ exports.emitirCertificado = async (id, userContext) => {
         
         return {
             numero_certificado,
-            numeroAsignado
+            numeroAsignado,
+            origen_correlativo: origenCorrelativo
         };
 
     } catch (e) {
