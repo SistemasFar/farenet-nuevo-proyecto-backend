@@ -408,7 +408,14 @@ exports.editarServicio = async (id, servicio, username, ip_direccion) => {
         // `asignarFormatoAServicio(id, null)`.
         const tocarFormato = Object.prototype.hasOwnProperty.call(servicio, 'formato_id')
             && servicio.formato_id !== undefined;
-        const formatoFinal = tocarFormato ? servicio.formato_id : anterior.formato_id;
+        let formatoFinal = tocarFormato ? servicio.formato_id : anterior.formato_id;
+
+        // CORRECCIÓN MÍNIMA: Si se está configurando para que NO genere certificado,
+        // o si cambia la clave de tipo de certificado (base incompatible),
+        // el formato base pierde sentido y debe desvincularse.
+        if (!servicio.requiere_certificado || servicio.tipo_certificado_clave !== anterior.tipo_certificado_clave) {
+            formatoFinal = null;
+        }
 
         await client.query(`
             UPDATE fg_servicio SET 
@@ -725,13 +732,37 @@ exports.asignarFormatoAServicio = async (servicioId, formatoId, username, ip_dir
         const check = await client.query('SELECT * FROM fg_servicio WHERE id = $1 FOR UPDATE', [servicioId]);
         if (check.rows.length === 0) throw new Error('Servicio no encontrado.');
         const servicio = check.rows[0];
-        if (!servicio.requiere_certificado) throw new Error('La operación no genera certificado.');
+        if (!servicio.requiere_certificado && formatoId !== null) throw new Error('La operación no genera certificado.');
 
-        const fCheck = await client.query(
-            'SELECT id FROM fg_certificado_formato WHERE id = $1 AND activo = TRUE',
-            [formatoId]
-        );
-        if (fCheck.rows.length === 0) throw new Error('Formato activo no encontrado.');
+        if (formatoId !== null) {
+            const fCheck = await client.query(
+                'SELECT id, codigo, formato_padre_id FROM fg_certificado_formato WHERE id = $1 AND activo = TRUE',
+                [formatoId]
+            );
+            if (fCheck.rows.length === 0) throw new Error('Formato activo no encontrado.');
+            
+            const formato = fCheck.rows[0];
+            let rootCodigo = formato.codigo;
+            
+            if (formato.formato_padre_id !== null) {
+                const rootCheck = await client.query(
+                    'SELECT codigo FROM fg_certificado_formato WHERE id = $1',
+                    [formato.formato_padre_id]
+                );
+                if (rootCheck.rows.length > 0) rootCodigo = rootCheck.rows[0].codigo;
+            }
+
+            let expectedRoot = null;
+            if (servicio.tipo_certificado_clave === 'GNV_ANUAL' && servicio.modalidad === 'INICIAL') expectedRoot = 'GNV_INICIAL';
+            else if (servicio.tipo_certificado_clave === 'GNV_ANUAL' && servicio.modalidad === 'ANUAL') expectedRoot = 'GNV_ANUAL';
+            else if (servicio.tipo_certificado_clave === 'GLP_ANUAL' && servicio.modalidad === 'INICIAL') expectedRoot = 'GLP_INICIAL';
+            else if (servicio.tipo_certificado_clave === 'GLP_ANUAL' && servicio.modalidad === 'ANUAL') expectedRoot = 'GLP_ANUAL';
+            else if (servicio.tipo_certificado_clave === 'CONFORMIDAD') expectedRoot = 'CONFORMIDAD';
+
+            if (expectedRoot && rootCodigo !== expectedRoot) {
+                throw new Error('FORMATO_INCOMPATIBLE_CON_TIPO_CERTIFICADO');
+            }
+        }
 
         await client.query('UPDATE fg_servicio SET formato_id = $1 WHERE id = $2', [formatoId, servicioId]);
 
