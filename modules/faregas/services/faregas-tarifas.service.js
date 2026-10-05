@@ -5,18 +5,23 @@ const FLUJOS_DE_CERTIFICADO = new Set(['CERTIFICACION', 'TALLER_INSPECCION']);
 const resolverPrecioComercial = ({
     productoFacturacionId,
     precioReferencia,
-    precioUnitario,
-    precioTarifa
+    precioUnitario
 }) => {
     if (productoFacturacionId !== null && productoFacturacionId !== undefined) {
+        // En fg_producto_facturacion, precio_referencia es el campo rotulado
+        // como "P. venta": el importe comercial final que ve y paga el cliente.
         if (precioReferencia !== null && precioReferencia !== undefined) {
             return Number(precioReferencia);
         }
+        // Compatibilidad con dos productos operativos históricos que todavía
+        // no tienen P. venta cargado. Nunca se toma fg_tarifa.precio.
         if (precioUnitario !== null && precioUnitario !== undefined) {
             return Number(precioUnitario);
         }
     }
-    return Number(precioTarifa);
+    // Ya no se usa tarifa.precio. Si no hay producto, devuelve null
+    // y el front/back manejará la configuración incompleta.
+    return null;
 };
 
 const construirCatalogo = (sede, rows) => {
@@ -26,8 +31,7 @@ const construirCatalogo = (sede, rows) => {
         const precioComercial = resolverPrecioComercial({
             productoFacturacionId: row.producto_facturacion_id,
             precioReferencia: row.producto_precio_referencia,
-            precioUnitario: row.producto_precio_unitario,
-            precioTarifa: row.precio_tarifa
+            precioUnitario: row.producto_precio_unitario
         });
         if (!categorias.has(row.categoria_codigo)) {
             categorias.set(row.categoria_codigo, {
@@ -137,6 +141,9 @@ exports.obtenerCatalogoPorPlanta = async (plantaKey, queryable = db) => {
           AND c.activo = TRUE
           AND s.activo = TRUE
           AND t.activo = TRUE
+          AND t.producto_facturacion_id IS NOT NULL
+          AND pf.activo = TRUE
+          AND pf.es_para_venta = TRUE
           AND s.tipo_flujo IN ('CERTIFICACION', 'TALLER_INSPECCION')
         ORDER BY c.orden, s.orden, s.nombre
     `, [plantaKey]);
@@ -208,6 +215,9 @@ exports.obtenerTarifaOperativaPorCodigo = async (plantaKey, tarifaCodigo, querya
           AND c.activo = TRUE
           AND s.activo = TRUE
           AND t.activo = TRUE
+          AND t.producto_facturacion_id IS NOT NULL
+          AND pf.activo = TRUE
+          AND pf.es_para_venta = TRUE
         LIMIT 1
     `, [plantaKey, tarifaCodigo]);
 
@@ -218,8 +228,7 @@ exports.obtenerTarifaOperativaPorCodigo = async (plantaKey, tarifaCodigo, querya
         precio: resolverPrecioComercial({
             productoFacturacionId: row.producto_facturacion_id,
             precioReferencia: row.producto_precio_referencia,
-            precioUnitario: row.producto_precio_unitario,
-            precioTarifa: row.precio_tarifa
+            precioUnitario: row.producto_precio_unitario
         })
     };
 };

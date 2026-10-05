@@ -10,12 +10,18 @@ const SIN_CATEGORIA = 'SIN_CATEGORIA';
 /** Normaliza los decimales que Postgres devuelve como numeric. */
 const mapearProducto = (producto) => ({
     ...producto,
+    // `fg_producto_facturacion.id` es bigint y node-postgres lo entrega como
+    // string. El contrato HTTP y el frontend lo tratan como number; si no se
+    // normaliza, Map distingue "273" de 273 y pierde relaciones válidas.
+    id: Number(producto.id),
     precio_unitario: producto.precio_unitario === null ? null : Number(producto.precio_unitario),
     precio_referencia: producto.precio_referencia === null ? null : Number(producto.precio_referencia),
     valor_referencial_unitario: producto.valor_referencial_unitario === null ? null : Number(producto.valor_referencial_unitario),
     porcentaje_isc: producto.porcentaje_isc === null ? null : Number(producto.porcentaje_isc),
     precio_chip: producto.precio_chip === null ? null : Number(producto.precio_chip)
 });
+
+exports.mapearProducto = mapearProducto;
 
 exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId, page, pageSize } = {}) => {
     const { page: pagina, limit, offset } = paginacion.normalizarPaginacion({ page, pageSize });

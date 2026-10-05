@@ -13,13 +13,16 @@ const serializarTarifa = (row) => ({
     categoria_id: row.categoria_id,
     categoria_codigo: row.categoria_codigo,
     categoria_nombre: row.categoria_nombre,
-    precio: Number(row.precio),
+    precio: row.producto_precio_unitario !== null && row.producto_precio_unitario !== undefined
+        ? Number(row.producto_precio_unitario)
+        : Number(row.precio), // Fallback legacy solo para vista incompleta
     producto_facturacion_id: row.producto_facturacion_id,
     producto_sku: row.producto_sku,
     producto_descripcion: row.producto_descripcion,
     producto_unidad: row.producto_unidad,
     producto_afectacion_igv: row.producto_afectacion_igv,
     producto_cuenta_por_cobrar: row.producto_cuenta_por_cobrar,
+    producto_precio_unitario: row.producto_precio_unitario === null ? null : Number(row.producto_precio_unitario),
     producto_precio_referencia: row.producto_precio_referencia === null ? null : Number(row.producto_precio_referencia),
     producto_activo: row.producto_activo,
     producto_es_para_venta: row.producto_es_para_venta,
@@ -66,6 +69,7 @@ exports.listar = async ({ plantaKey, buscar, categoria, activo } = {}) => {
                pf.codigo_sku AS producto_sku, pf.descripcion AS producto_descripcion,
                pf.unidad AS producto_unidad, pf.tipo_afectacion_igv AS producto_afectacion_igv,
                pf.cuenta_por_cobrar AS producto_cuenta_por_cobrar,
+               pf.precio_unitario AS producto_precio_unitario,
                pf.precio_referencia AS producto_precio_referencia,
                pf.activo AS producto_activo,
                pf.es_para_venta AS producto_es_para_venta,

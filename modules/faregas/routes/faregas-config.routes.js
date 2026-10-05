@@ -46,6 +46,25 @@ const requireConfigServiciosPerm = async (req, res, next) => {
     }
 };
 
+const requireConfigServiciosOProductosPerm = async (req, res, next) => {
+    try {
+        const permisoDb = await db.query(
+            `SELECT 1 FROM fg_perfil_permiso
+             WHERE perfil_clave = $1 AND permiso_clave IN ('MENU_CONFIGURACION', 'CONFIGURACION_SERVICIOS', 'CONFIGURACION_PRODUCTOS')
+             GROUP BY perfil_clave
+             HAVING COUNT(*) >= 2`,
+            [req.user.perfil_id]
+        );
+
+        if (permisoDb.rowCount === 0) {
+            return res.status(403).json({ success: false, message: 'No tiene permisos para consultar servicios.' });
+        }
+        next();
+    } catch (e) {
+        res.status(500).json({ success: false, message: 'Error al verificar permisos' });
+    }
+};
+
 const requireConfigCategoriasPerm = async (req, res, next) => {
     try {
         const permisoDb = await db.query(
@@ -196,8 +215,8 @@ router.put('/empresas/:key', requireConfigEmpresasPerm, configController.editarE
 router.put('/empresas/:key/estado', requireConfigEmpresasPerm, configController.cambiarEstadoEmpresa);
 router.put('/sedes/:key/empresa', requireConfigEmpresasPerm, configController.asignarEmpresaSede);
 
-router.get('/servicios', requireConfigServiciosPerm, configController.getServicios);
-router.get('/servicios/sedes', requireConfigServiciosPerm, configController.obtenerSedesPorServicio);
+router.get('/servicios', requireConfigServiciosOProductosPerm, configController.getServicios);
+router.get('/servicios/sedes', requireConfigServiciosOProductosPerm, configController.obtenerSedesPorServicio);
 router.post('/servicios', requireConfigServiciosPerm, configController.crearServicio);
 router.put('/servicios/:id', requireConfigServiciosPerm, configController.editarServicio);
 router.put('/servicios/:id/estado', requireConfigServiciosPerm, configController.cambiarEstadoServicio);
