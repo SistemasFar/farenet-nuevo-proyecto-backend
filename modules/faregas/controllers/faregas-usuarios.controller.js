@@ -34,6 +34,9 @@ exports.crearUsuario = async (req, res) => {
         const result = await service.crearUsuario(req.body, req.user.username);
         res.status(201).json(result);
     } catch (e) {
+        if (e.code === 'DATOS_USUARIO_INVALIDOS') {
+            return res.status(400).json({ message: e.message, errores: e.errores });
+        }
         if (e.code === '23505') { // unique_violation
             return res.status(409).json({ message: 'El usuario o n�mero de documento ya existe' });
         }
@@ -52,6 +55,9 @@ exports.actualizarUsuario = async (req, res) => {
         const result = await service.actualizarUsuario(usuarioObjetivo, req.body, req.user.username);
         res.json(result);
     } catch (e) {
+        if (e.code === 'DATOS_USUARIO_INVALIDOS') {
+            return res.status(400).json({ message: e.message, errores: e.errores });
+        }
         if (e.message === 'USERNAME_EXISTS') {
             return res.status(409).json({ message: 'El nuevo username ya est� en uso' });
         }

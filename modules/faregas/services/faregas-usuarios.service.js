@@ -1,10 +1,11 @@
 const db = require('../../../config/database');
 const bcrypt = require('bcryptjs');
 const paginacion = require('./faregas-paginacion.rules');
+const validacion = require('./faregas-usuarios-validacion.service');
 
-const normalizarTexto = (valor) => {
-    return String(valor || '').trim();
-};
+// El trim de los campos vive en `faregas-usuarios-validacion.service`, que es
+// quien devuelve los valores ya normalizados y validados. Aquí no se normaliza
+// nada por separado: lo que se guarda es exactamente lo que se comprobó.
 
 exports.obtenerUsuarios = async () => {
     const query = `
@@ -93,14 +94,21 @@ exports.obtenerUsuariosPaginado = async (filtros = {}) => {
 };
 
 exports.crearUsuario = async (data, creadorUsername) => {
-    const { 
-        username, password, perfil_id, estado, sedes, user_type,
-        tipoDocumentoKey, nroDocumento, nombres, apellidos, nombreRazonSocial,
-        paisKey, departamentoKey, provinciaKey, distritoKey, 
-        direccion, email, telefono, personaContacto 
+    const {
+        perfil_id, estado, sedes, user_type,
+        password, nombres, apellidos, nombreRazonSocial,
+        paisKey, departamentoKey, provinciaKey, distritoKey,
+        direccion, email, telefono, personaContacto
     } = data;
-    
-    const cleanUsername = normalizarTexto(username);
+
+    // Ninguna escritura llega a la base sin pasar por la validación. Se valida
+    // sobre `data` completo y se usan los valores NORMALIZADOS que devuelve,
+    // para que lo que se guarde sea exactamente lo que se comprobó.
+    const validado = validacion.exigirDatosValidos(data, { modo: 'crear' });
+    const cleanUsername = validado.datos.username;
+    const nroDocumento = validado.datos.nroDocumento;
+    const tipoDocumentoKey = validado.datos.tipoDocumentoKey;
+
     const hash = bcrypt.hashSync(password, 10);
     const cleanPerfil = perfil_id === '' ? null : perfil_id;
     const estadoBool = estado === true || estado === 'true';
@@ -180,13 +188,20 @@ exports.crearUsuario = async (data, creadorUsername) => {
 };
 
 exports.actualizarUsuario = async (oldUsername, data, modificadorUsername) => {
-    const { 
-        username, perfil_id, estado, sedes, user_type,
-        tipoDocumentoKey, nroDocumento, nombres, apellidos, nombreRazonSocial,
-        paisKey, departamentoKey, provinciaKey, distritoKey, 
-        direccion, email, telefono, personaContacto 
+    const {
+        perfil_id, estado, sedes, user_type,
+        nombres, apellidos, nombreRazonSocial,
+        paisKey, departamentoKey, provinciaKey, distritoKey,
+        direccion, email, telefono, personaContacto
     } = data;
-    const newUsername = normalizarTexto(username);
+
+    // Mismas reglas que en la creación. `modo: 'editar'` deja pasar la contraseña
+    // vacía, que es lo que el formulario ya entendía como "no cambiar".
+    const validado = validacion.exigirDatosValidos(data, { modo: 'editar' });
+    const newUsername = validado.datos.username;
+    const nroDocumento = validado.datos.nroDocumento;
+    const tipoDocumentoKey = validado.datos.tipoDocumentoKey;
+
     const cleanPerfil = perfil_id === '' ? null : perfil_id;
     const estadoBool = estado === true || estado === 'true';
     const tipoUsr = user_type || 'USER';
