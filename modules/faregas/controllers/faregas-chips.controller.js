@@ -38,10 +38,12 @@ const respond = (res, error) => {
         PLANTA_NO_AUTORIZADA: 'No tiene acceso a la sede de la operación.',
         TIPO_CHIP_NO_ENCONTRADA: 'El tipo de chip no existe.',
         TIPO_CHIP_BLOQUEADO: 'El tipo de chip tiene dependencias que no se pueden eliminar.',
+        SEDE_TRANSFERENCIA_CHIP_NO_PERMITIDA: 'Los chips sólo pueden transferirse entre COLINA, SURCO y SURQUILLO.',
+        SEDES_IGUALES: 'Seleccione una sede destino diferente a la sede de origen.',
         AMBIENTE_PRODUCCION: 'La limpieza de tipos de chip sólo está disponible en ambiente DEMO o desarrollo.'
     };
     const status = error.status
-        || ['CHIP_DUPLICADO','CHIP_NO_DISPONIBLE','CHIP_OTRA_SEDE','CHIP_ASIGNADO_CERTIFICADO','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO','PAGO_INCOMPLETO','PAGO_EXCEDE_TOTAL','VENTA_CHIP_NO_HABILITADA','STOCK_CHIP_NO_PERMITIDO','PRODUCTO_FISCAL_CHIP_INVALIDO','CONDICION_PAGO_NO_DISPONIBLE','TIPO_CHIP_BLOQUEADO','AMBIENTE_PRODUCCION'].includes(error.message) ? 409
+        || ['CHIP_DUPLICADO','CHIP_NO_DISPONIBLE','CHIP_OTRA_SEDE','CHIP_ASIGNADO_CERTIFICADO','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO','PAGO_INCOMPLETO','PAGO_EXCEDE_TOTAL','VENTA_CHIP_NO_HABILITADA','STOCK_CHIP_NO_PERMITIDO','PRODUCTO_FISCAL_CHIP_INVALIDO','CONDICION_PAGO_NO_DISPONIBLE','TIPO_CHIP_BLOQUEADO','AMBIENTE_PRODUCCION','SEDE_TRANSFERENCIA_CHIP_NO_PERMITIDA','SEDES_IGUALES'].includes(error.message) ? 409
         : ['OPERACION_NOT_FOUND','TIPO_CHIP_NO_ENCONTRADO'].includes(error.message) ? 404
         : ['PLANTA_NO_AUTORIZADA'].includes(error.message) ? 403 : 400;
     res.status(status).json({ success:false, codigo:error.message, message:mensajes[error.message] || error.message, detalles:error.detalles });

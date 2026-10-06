@@ -9,11 +9,13 @@ const {
   obtenerCatalogoVariables
 } = require('./faregas-formatos.variables');
 const { PLANTILLA_FAREGAS_HTML } = require('./faregas-formatos.templates');
+const { crearPlantillaConformidadHtml } = require('../templates/conformidad.template');
 const { convertirDocxAHtml } = require('./faregas-formatos-word');
 const {
     normalizarHtmlEditor,
     renderizarHtml,
-    variablesDesconocidas
+    variablesDesconocidas,
+    extraerVariablesHtml
 } = require('./faregas-formatos-html');
 const { DOMParser, XMLSerializer } = require('@xmldom/xmldom');
 
@@ -123,6 +125,43 @@ function rebuildTemplateFromOriginal(originalPath, mappings, outputPath) {
     const buf = zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
     fs.writeFileSync(outputPath, buf);
 }
+
+const configuracionHtmlBase = () => ({
+  html: PLANTILLA_FAREGAS_HTML,
+  variables_personalizadas: [],
+  variables_usadas: []
+});
+
+const FUENTES_OFICIALES_PROTEGIDAS = new Map([
+  ['CONFORMIDAD', () => {
+    const html = crearPlantillaConformidadHtml();
+    return {
+      html,
+      variables_personalizadas: [],
+      variables_usadas: extraerVariablesHtml(html)
+    };
+  }]
+]);
+
+const configuracionOficialProtegida = (codigo) => {
+  const crearFuente = FUENTES_OFICIALES_PROTEGIDAS.get(String(codigo || '').trim().toUpperCase());
+  return crearFuente ? crearFuente() : null;
+};
+
+const insertarBorradorHtml = async (client, formatoId, configuracion) => {
+  const versionRes = await client.query(
+    'SELECT COALESCE(MAX(version), 0) + 1 AS siguiente FROM fg_certificado_formato_version WHERE formato_id = $1',
+    [formatoId]
+  );
+  const insert = await client.query(
+    `INSERT INTO fg_certificado_formato_version
+       (formato_id, version, archivo_ruta, configuracion, estado, motor)
+     VALUES ($1, $2, 'HTML', $3, 'BORRADOR', 'HTML_DINAMICO')
+     RETURNING id, version, estado, motor, configuracion`,
+    [formatoId, versionRes.rows[0].siguiente, configuracion]
+  );
+  return insert.rows[0];
+};
 
 
 const faregasFormatosService = {
@@ -387,10 +426,6 @@ const faregasFormatosService = {
       if (formatoRes.rows[0].es_protegido) throw new Error('No se pueden crear versiones en formatos protegidos por el sistema');
       if (formatoRes.rows[0].motor !== 'HTML_DINAMICO') throw new Error('El formato no utiliza el motor HTML_DINAMICO');
 
-      const versionRes = await client.query(
-        'SELECT COALESCE(MAX(version), 0) + 1 AS siguiente FROM fg_certificado_formato_version WHERE formato_id = $1',
-        [formatoId]
-      );
       const anteriorRes = await client.query(
         `SELECT configuracion
          FROM fg_certificado_formato_version
@@ -401,17 +436,80 @@ const faregasFormatosService = {
       );
       const usarPlantillaBase = String(origen).toUpperCase() === 'PLANTILLA_FAREGAS';
       const configuracion = usarPlantillaBase
-        ? { html: PLANTILLA_FAREGAS_HTML, variables_personalizadas: [], variables_usadas: [] }
-        : anteriorRes.rows[0]?.configuracion || { html: PLANTILLA_FAREGAS_HTML, variables_personalizadas: [], variables_usadas: [] };
-      const insert = await client.query(
-        `INSERT INTO fg_certificado_formato_version
-           (formato_id, version, archivo_ruta, configuracion, estado, motor)
-         VALUES ($1, $2, 'HTML', $3, 'BORRADOR', 'HTML_DINAMICO')
-         RETURNING id, version, estado, motor, configuracion`,
-        [formatoId, versionRes.rows[0].siguiente, configuracion]
-      );
+        ? configuracionHtmlBase()
+        : anteriorRes.rows[0]?.configuracion || configuracionHtmlBase();
+      const version = await insertarBorradorHtml(client, formatoId, configuracion);
       await client.query('COMMIT');
-      return insert.rows[0];
+      return version;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  crearBorradorOficialProtegido: async (formatoId) => {
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const formatoRes = await client.query(
+        `SELECT id, codigo, motor, es_protegido, activo
+         FROM fg_certificado_formato
+         WHERE id = $1
+         FOR UPDATE`,
+        [formatoId]
+      );
+      if (formatoRes.rowCount === 0) throw new Error('Formato no encontrado');
+      const formato = formatoRes.rows[0];
+      if (!formato.es_protegido || formato.motor !== 'SISTEMA') {
+        throw new Error('La edición oficial sólo está disponible para formatos protegidos del sistema');
+      }
+      if (!formato.activo) throw new Error('No se puede versionar un formato protegido inactivo');
+
+      const borradorRes = await client.query(
+        `SELECT id, version, estado, motor, configuracion
+         FROM fg_certificado_formato_version
+         WHERE formato_id = $1 AND estado = 'BORRADOR'
+         ORDER BY version DESC
+         LIMIT 1
+         FOR UPDATE`,
+        [formatoId]
+      );
+      if (borradorRes.rowCount > 0) {
+        await client.query('COMMIT');
+        return {
+          version: borradorRes.rows[0],
+          reutilizada: true,
+          origen: 'BORRADOR_EXISTENTE'
+        };
+      }
+
+      const vigenteRes = await client.query(
+        `SELECT configuracion
+         FROM fg_certificado_formato_version
+         WHERE formato_id = $1
+           AND estado = 'VIGENTE'
+           AND motor = 'HTML_DINAMICO'
+         ORDER BY version DESC
+         LIMIT 1`,
+        [formatoId]
+      );
+      const tieneVigente = vigenteRes.rowCount > 0;
+      const configuracionOficial = configuracionOficialProtegida(formato.codigo);
+      const configuracion = vigenteRes.rows[0]?.configuracion
+        || configuracionOficial
+        || configuracionHtmlBase();
+      const version = await insertarBorradorHtml(client, formatoId, configuracion);
+
+      await client.query('COMMIT');
+      return {
+        version,
+        reutilizada: false,
+        origen: tieneVigente
+          ? 'VERSION_VIGENTE'
+          : (configuracionOficial ? 'FUENTE_OFICIAL_PROTEGIDA' : 'PLANTILLA_FAREGAS')
+      };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

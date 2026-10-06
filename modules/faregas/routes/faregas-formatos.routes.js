@@ -91,6 +91,20 @@ router.post('/:id/versiones/html', verificarToken, requireAdministrarFormatos, a
   }
 });
 
+router.post('/:id/versiones/protegido', verificarToken, requireAdministrarFormatos, async (req, res) => {
+  try {
+    const resultado = await faregasFormatosService.crearBorradorOficialProtegido(req.params.id);
+    res.status(resultado.reutilizada ? 200 : 201).json({
+      message: resultado.reutilizada
+        ? 'Este certificado ya tiene una versión borrador pendiente.'
+        : 'Nueva versión oficial guardada como borrador.',
+      ...resultado
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'No se pudo crear la versión oficial.' });
+  }
+});
+
 router.post('/:id/versiones/html/importar-docx', verificarToken, requireAdministrarFormatos, upload.single('archivo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: 'No se subió archivo.' });

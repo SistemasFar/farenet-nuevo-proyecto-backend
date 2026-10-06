@@ -16,7 +16,12 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
     const year = d.getFullYear();
     const fechaLima = `${day} de ${month} del ${year}`;
 
-    const tallerNombre = gnv.taller_razon_social || '';
+    // Los documentos nuevos llevan la sede que el backend resolvió y guardó
+    // junto al snapshot. Los emitidos antes de esta regla conservan el texto
+    // legacy con el que fueron generados.
+    const tallerNombre = gnv.taller_planta_key
+        ? gnv.taller_razon_social
+        : 'CONVERTIGAS S.A.C FAREGAS I';
 
     // Render components rows
     const compRowsHtml = componentes.length > 0 ? componentes.map((c, i) => `
@@ -203,7 +208,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
 
             <div class="certifica-hdr">CERTIFICA:</div>
             <div class="certifica-p">
-                Haber efectuado la evaluación de las condiciones de seguridad respecto de la conversión del sistema de combustión a Gas Natural Vehicular - GNV efectuada por el Taller de Conversión Autorizado: <strong>CONVERTIGAS S.A.C FAREGAS I</strong> al siguiente vehículo:
+                Haber efectuado la evaluación de las condiciones de seguridad respecto de la conversión del sistema de combustión a Gas Natural Vehicular - GNV efectuada por el Taller de Conversión Autorizado: <strong>${escapeHtml(tallerNombre || '-')}</strong> al siguiente vehículo:
             </div>
 
             <table class="data-table">

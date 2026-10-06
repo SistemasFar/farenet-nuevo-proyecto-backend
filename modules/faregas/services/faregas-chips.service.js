@@ -9,6 +9,20 @@ const { redondear } = require('./faregas-pagos.rules');
 const paginacion = require('./faregas-paginacion.rules');
 const chipsTiposImpactoService = require('./faregas-chips-tipos-impacto.service');
 
+// Únicas sedes que comercializan y, por tanto, pueden intercambiar stock de
+// chips. La restricción se valida aquí (además de la UI) para que no pueda
+// eludirse enviando manualmente otra planta al endpoint.
+const SEDES_TRANSFERENCIA_CHIPS = Object.freeze(['13', '98', '160']);
+const validarSedeTransferenciaChips = (plantaKey) => {
+    const key = String(plantaKey || '').trim();
+    if (!SEDES_TRANSFERENCIA_CHIPS.includes(key)) {
+        const error = new Error('SEDE_TRANSFERENCIA_CHIP_NO_PERMITIDA');
+        error.detalles = { plantaKey: key, sedesPermitidas: SEDES_TRANSFERENCIA_CHIPS };
+        throw error;
+    }
+    return key;
+};
+
 const normalizarCodigoProducto = (valor) => String(valor || '')
     .trim()
     .toUpperCase()
@@ -587,9 +601,11 @@ exports.catalogosProductosInventariables = async (plantaKey, user) => {
     const sedes = await db.query(`
         SELECT key, nombre
         FROM fg_planta
-        WHERE activo = TRUE AND empresa_key = 'FAREGAS'
+        WHERE activo = TRUE
+          AND empresa_key = 'FAREGAS'
+          AND key = ANY($1::varchar[])
         ORDER BY nombre
-    `);
+    `, [SEDES_TRANSFERENCIA_CHIPS]);
     return { sedes: sedes.rows };
 };
 
@@ -982,7 +998,9 @@ exports.ingresar = async ({ plantaKey, productoInventariableId, numeros, referen
 };
 
 exports.transferir = async ({ origenKey, destinoKey, productoInventariableId, numeros, referencia }, user) => {
-    if (origenKey === destinoKey) throw new Error('SEDES_IGUALES');
+    const origenPermitido = validarSedeTransferenciaChips(origenKey);
+    const destinoPermitido = validarSedeTransferenciaChips(destinoKey);
+    if (origenPermitido === destinoPermitido) throw new Error('SEDES_IGUALES');
     await validarAcceso(user, origenKey); await validarAcceso(user, destinoKey);
     const lote = normalizarLoteScanner(Array.isArray(numeros) ? numeros.join('\n') : numeros);
     if (!lote.validos.length || lote.duplicados.length || lote.errores.length) throw new Error('LOTE_CHIPS_INVALIDO');
@@ -1165,3 +1183,8 @@ exports.listarCatalogoChipsFiscales = async () => {
     `);
     return result.rows;
 };
+
+exports._private = Object.freeze({
+    SEDES_TRANSFERENCIA_CHIPS,
+    validarSedeTransferenciaChips
+});

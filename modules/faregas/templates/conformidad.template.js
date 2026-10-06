@@ -1,27 +1,50 @@
 const { escapeHtml, formatDateLong, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
 
 function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
+    const variablesDinamicas = options.variablesDinamicas === true;
     const cert = data.cabecera || {};
     const veh = data.vehiculo || {};
     const conf = data.conformidad || {};
     const titulares = data.titulares || [];
 
     const numCertificado = cert.numero_certificado || NUMERO_CERTIFICADO_PENDIENTE;
-    const fechaImp = formatDateLong(cert.fecha_emision);
+    const fechaImp = variablesDinamicas
+        ? {
+            dia: '{{documento.fecha_dia}}',
+            mes: '{{documento.fecha_mes}}',
+            anio: '{{documento.fecha_anio}}'
+        }
+        : formatDateLong(cert.fecha_emision);
 
     const propietarioNombre = titulares.length > 0
         ? titulares.map(t => t.nombre_razon_social).join(' / ')
         : (cert.cliente_nombre || '-');
 
-    const propietarioDireccion = titulares.length > 0
+    const propietarioDireccion = variablesDinamicas
+        ? '{{titular.direccion}}'
+        : titulares.length > 0
         ? (titulares[0].direccion || '-')
         : '-';
 
     const tipoConf = (conf.tipo_conformidad || 'MODIFICACION').toUpperCase();
 
-    const caracRegText = conf.caracteristica_registrable
+    const caracRegText = variablesDinamicas
+        ? '{{conformidad.caracteristica_registrable}}'
+        : conf.caracteristica_registrable
         ? escapeHtml(conf.caracteristica_registrable.toUpperCase())
         : '-';
+
+    const claseTipo = (tipo) => variablesDinamicas
+        ? `{{conformidad.clase_${tipo.toLowerCase()}}}`
+        : (tipoConf === tipo ? 'active' : '');
+    const marcaTipo = (tipo, valor) => variablesDinamicas
+        ? `{{conformidad.marca_${tipo.toLowerCase()}}}`
+        : (valor ? 'X' : '');
+    const bloquePreview = variablesDinamicas
+        ? `<div class="watermark {{documento.clase_preview}}">PREVISUALIZACIÓN</div>
+    <div class="preview-badge {{documento.clase_preview}}">⚠️ BORRADOR FAREGAS — PREVISUALIZACIÓN NO EMITIDA (DOCUMENTO SIN VALIDEZ LEGAL)</div>`
+        : (options.modo === "PREVIEW" ? `<div class="watermark">PREVISUALIZACIÓN</div>
+    <div class="preview-badge">⚠️ BORRADOR FAREGAS — PREVISUALIZACIÓN NO EMITIDA (DOCUMENTO SIN VALIDEZ LEGAL)</div>` : "");
 
     const entNombre = cert.entidad_certificadora_nombre || '-';
     const resDirectoral = cert.resolucion_directoral || '-';
@@ -75,6 +98,11 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             margin-bottom: 15px;
             border-radius: 6px;
         }
+        .preview-hidden { display: none !important; }
+        /* TipTap conserva los bloques editables como <p>. Sus márgenes de
+           navegador no deben agrandar celdas ni generar una segunda hoja. */
+        .documento-certificado p { margin: 0; }
+        body > p:last-child:empty { display: none; }
         .header {
             text-align: center;
             margin-bottom: 10px;
@@ -167,8 +195,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
     </style>
 </head>
 <body>
-    ${options.modo === "PREVIEW" ? `<div class="watermark">PREVISUALIZACIÓN</div>
-    <div class="preview-badge">⚠️ BORRADOR FAREGAS — PREVISUALIZACIÓN NO EMITIDA (DOCUMENTO SIN VALIDEZ LEGAL)</div>` : ""}
+    ${bloquePreview}
 
     <div class="documento-certificado">
         <div class="cert-content">
@@ -185,16 +212,16 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
 
     <table class="type-box">
         <tr>
-            <td style="width: 50%;" class="${tipoConf === 'MODIFICACION' ? 'active' : ''}">MODIFICACION</td>
-            <td style="width: 50%; text-align: center; font-weight: bold;">${conf.marca_modificacion ? 'X' : ''}</td>
+            <td style="width: 50%;" class="${claseTipo('MODIFICACION')}">MODIFICACION</td>
+            <td style="width: 50%; text-align: center; font-weight: bold;">${marcaTipo('MODIFICACION', conf.marca_modificacion)}</td>
         </tr>
         <tr>
-            <td style="width: 50%;" class="${tipoConf === 'MONTAJE' ? 'active' : ''}">MONTAJE</td>
-            <td style="width: 50%; text-align: center; font-weight: bold;">${conf.marca_montaje ? 'X' : ''}</td>
+            <td style="width: 50%;" class="${claseTipo('MONTAJE')}">MONTAJE</td>
+            <td style="width: 50%; text-align: center; font-weight: bold;">${marcaTipo('MONTAJE', conf.marca_montaje)}</td>
         </tr>
         <tr>
-            <td style="width: 50%;" class="${tipoConf === 'FABRICACION' ? 'active' : ''}">FABRICACION</td>
-            <td style="width: 50%; text-align: center; font-weight: bold;">${conf.marca_fabricacion ? 'X' : ''}</td>
+            <td style="width: 50%;" class="${claseTipo('FABRICACION')}">FABRICACION</td>
+            <td style="width: 50%; text-align: center; font-weight: bold;">${marcaTipo('FABRICACION', conf.marca_fabricacion)}</td>
         </tr>
     </table>
 
@@ -326,3 +353,56 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
 }
 
 module.exports = generateConformidadHtml;
+
+// El diseñador y el renderer histórico comparten deliberadamente esta misma
+// función estructural. La fábrica sólo cambia valores reales por variables;
+// no mantiene una segunda copia del certificado oficial.
+const variable = (key) => `{{${key}}}`;
+
+function crearPlantillaConformidadHtml() {
+    return generateConformidadHtml({
+        cabecera: {
+            numero_certificado: variable('certificado.numero'),
+            cliente_nombre: variable('titular.nombre'),
+            placa_nueva: variable('vehiculo.placa')
+        },
+        vehiculo: {
+            placa: variable('vehiculo.placa'),
+            clase: variable('vehiculo.clase'),
+            categoria: variable('vehiculo.categoria'),
+            modelo: variable('vehiculo.modelo'),
+            marca: variable('vehiculo.marca'),
+            serie: variable('vehiculo.serie_chasis'),
+            vin: variable('vehiculo.vin'),
+            motor: variable('vehiculo.motor'),
+            color: variable('vehiculo.color'),
+            carroceria: variable('vehiculo.carroceria'),
+            combustible: variable('vehiculo.combustible'),
+            potencia: variable('vehiculo.potencia'),
+            asientos: variable('vehiculo.asientos'),
+            pasajeros: variable('vehiculo.pasajeros'),
+            cilindrada: variable('vehiculo.cilindrada'),
+            cilindros: variable('vehiculo.cilindros'),
+            longitud: variable('vehiculo.longitud'),
+            altura: variable('vehiculo.altura'),
+            ancho: variable('vehiculo.ancho'),
+            peso_bruto: variable('vehiculo.peso_bruto'),
+            peso_seco: variable('vehiculo.peso_neto'),
+            peso_neto: variable('vehiculo.peso_neto'),
+            carga_util: variable('vehiculo.carga_util'),
+            ano_fabricacion: variable('vehiculo.anio_fabricacion'),
+            ano_modelo: variable('vehiculo.anio_modelo'),
+            formula_rodante: variable('vehiculo.formula_rodante'),
+            ejes: variable('vehiculo.ejes'),
+            ruedas: variable('vehiculo.ruedas'),
+            version: variable('vehiculo.version')
+        },
+        conformidad: {
+            caracteristica_registrable: variable('conformidad.caracteristica_registrable'),
+            uso_original_vehiculo: variable('conformidad.uso_original_vehiculo')
+        },
+        titulares: []
+    }, { modo: 'PREVIEW', variablesDinamicas: true });
+}
+
+module.exports.crearPlantillaConformidadHtml = crearPlantillaConformidadHtml;

@@ -12,8 +12,11 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
     const fechaImp = formatDateLong(cert.fecha_emision);
     const vigenciaHastaFmt = formatDateShort(gnv.vigencia_hasta).replace(/\//g, '-');
 
-    const tallerNombre = gnv.taller_razon_social || '';
-    const tallerSede = gnv.taller_sede || '';
+    // Los certificados antiguos no tienen taller_planta_key y mantienen su
+    // representación histórica. Los nuevos usan el snapshot resuelto por sede.
+    const tallerNombre = gnv.taller_planta_key
+        ? gnv.taller_razon_social
+        : 'CHARING S.A.C. SEDE SURQUILLO';
 
     // Verificaciones a-h
     const verifMap = {};
@@ -205,7 +208,7 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
 
     <div class="certifica-hdr">CERTIFICA</div>
     <div class="certifica-p">
-        Haber efectuado la evaluación de las condiciones de seguridad respecto de la conversión del sistema de combustión a Gas Natural - GNV, efectuada por el Taller de Conversión Autorizado: CHARING S.A.C. SEDE SURQUILLO, al siguiente vehículo:
+        Haber efectuado la evaluación de las condiciones de seguridad respecto de la conversión del sistema de combustión a Gas Natural - GNV, efectuada por el Taller de Conversión Autorizado: ${escapeHtml(tallerNombre || '-')}, al siguiente vehículo:
     </div>
 
     <table class="data-table">

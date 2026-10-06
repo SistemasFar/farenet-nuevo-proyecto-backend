@@ -34,10 +34,20 @@ exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId, page, 
 
     if (buscar) {
         valores.push(`%${buscar}%`);
-        const codigoParam = `$${valores.length}`;
-        valores.push(`%${buscar}%`);
-        const descripcionParam = `$${valores.length}`;
-        condiciones.push(`(p.codigo_sku ILIKE ${codigoParam} OR p.descripcion ILIKE ${descripcionParam})`);
+        const searchParam = `$${valores.length}`;
+        condiciones.push(`(
+            p.codigo_sku ILIKE ${searchParam} OR 
+            p.descripcion ILIKE ${searchParam} OR 
+            EXISTS (
+                SELECT 1
+                FROM fg_tarifa tarifa
+                JOIN fg_planta planta ON planta.key = tarifa.planta_key
+                WHERE tarifa.producto_facturacion_id = p.id
+                  AND tarifa.activo = TRUE
+                  AND planta.activo = TRUE
+                  AND planta.nombre ILIKE ${searchParam}
+            )
+        )`);
     }
     if (estado === true || estado === false) agregar('p.activo = ?', estado);
     if (paraVenta === true || paraVenta === false) agregar('p.es_para_venta = ?', paraVenta);

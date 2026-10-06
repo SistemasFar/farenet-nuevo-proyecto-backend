@@ -271,6 +271,11 @@ exports.crearBorrador = async (req, res) => {
         if (e.message === 'TIPO_INACTIVO') return res.status(400).json({ ok: false, message: 'El tipo de certificado está inactivo' });
         if (e.message === 'CLIENTE_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El cliente indicado no existe' });
         if (e.message === 'CLIENTE_INACTIVO') return res.status(400).json({ ok: false, message: 'El cliente está inactivo' });
+        if (e.code === 'GNV_NO_HABILITADO_EN_SEDE' || e.message === 'GNV_NO_HABILITADO_EN_SEDE') return res.status(409).json({
+            ok: false,
+            codigo: 'GNV_NO_HABILITADO_EN_SEDE',
+            message: 'La sede activa no está habilitada para certificados GNV.'
+        });
         if (e.message === 'CONFIGURACION_CHIP_INCOMPLETA') return res.status(409).json({
             ok: false,
             codigo: 'CONFIGURACION_CHIP_INCOMPLETA',
@@ -494,6 +499,27 @@ exports.guardarGNV = async (req, res) => {
         res.json({ ok: true, message: 'Datos GNV guardados correctamente' });
     } catch (error) {
         console.error('Error en guardarGNV:', error);
+        if (error.code === 'GNV_NO_HABILITADO_EN_SEDE' || error.message === 'GNV_NO_HABILITADO_EN_SEDE') {
+            return res.status(409).json({
+                ok: false,
+                codigo: 'GNV_NO_HABILITADO_EN_SEDE',
+                message: 'La sede del certificado no está habilitada para certificados GNV.'
+            });
+        }
+        if (error.code === 'GNV_COMBUSTIBLE_SIN_CAMBIO' || error.message === 'GNV_COMBUSTIBLE_SIN_CAMBIO') {
+            return res.status(400).json({
+                ok: false,
+                codigo: 'GNV_COMBUSTIBLE_SIN_CAMBIO',
+                message: 'El combustible después de la conversión debe ser diferente al combustible original.'
+            });
+        }
+        if (error.code === 'GNV_PESO_NETO_SIN_CAMBIO' || error.message === 'GNV_PESO_NETO_SIN_CAMBIO') {
+            return res.status(400).json({
+                ok: false,
+                codigo: 'GNV_PESO_NETO_SIN_CAMBIO',
+                message: 'El peso neto después de la conversión debe ser diferente al peso original.'
+            });
+        }
         res.status(400).json({ ok: false, message: error.message });
     }
 };

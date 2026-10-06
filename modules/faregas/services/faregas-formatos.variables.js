@@ -120,6 +120,55 @@
   }
 ];
 
+const variableConformidad = (key, label, grupo, demo) => ({ key, label, grupo, tipo: 'text', demo });
+
+const VARIABLES_CONFORMIDAD = [
+  variableConformidad('documento.clase_preview', 'Visibilidad de previsualización', 'Documento', ''),
+  variableConformidad('documento.fecha_dia', 'Día de emisión', 'Documento', '10'),
+  variableConformidad('documento.fecha_mes', 'Mes de emisión', 'Documento', 'septiembre'),
+  variableConformidad('documento.fecha_anio', 'Año de emisión', 'Documento', '2026'),
+  variableConformidad('titular.nombre', 'Razón social / Persona natural', 'Titular', 'JUAN PEREZ'),
+  variableConformidad('titular.direccion', 'Dirección del titular', 'Titular', 'AV. LOS INCAS 123'),
+  variableConformidad('vehiculo.placa', 'Placa de rodaje', 'Vehículo', 'ABC123'),
+  variableConformidad('vehiculo.clase', 'Clase', 'Vehículo', 'M1'),
+  variableConformidad('vehiculo.categoria', 'Categoría', 'Vehículo', 'M1'),
+  variableConformidad('vehiculo.modelo', 'Modelo', 'Vehículo', 'YARIS'),
+  variableConformidad('vehiculo.marca', 'Marca', 'Vehículo', 'TOYOTA'),
+  variableConformidad('vehiculo.serie_chasis', 'Serie / Chasis', 'Vehículo', 'JTDBR32E123456789'),
+  variableConformidad('vehiculo.motor', 'Motor', 'Vehículo', '1NZ1234567'),
+  variableConformidad('vehiculo.color', 'Color', 'Vehículo', 'PLATA'),
+  variableConformidad('vehiculo.carroceria', 'Carrocería', 'Vehículo', 'SEDAN'),
+  variableConformidad('vehiculo.combustible', 'Combustible', 'Vehículo', 'GASOLINA'),
+  variableConformidad('vehiculo.potencia', 'Potencia', 'Vehículo', '80 / 6000'),
+  variableConformidad('vehiculo.asientos', 'Asientos', 'Vehículo', '5'),
+  variableConformidad('vehiculo.pasajeros', 'Pasajeros', 'Vehículo', '4'),
+  variableConformidad('vehiculo.cilindrada', 'Cilindrada', 'Vehículo', '1497'),
+  variableConformidad('vehiculo.cilindros', 'Cilindros', 'Vehículo', '4'),
+  variableConformidad('vehiculo.longitud', 'Longitud', 'Vehículo', '4.30'),
+  variableConformidad('vehiculo.altura', 'Altura', 'Vehículo', '1.46'),
+  variableConformidad('vehiculo.ancho', 'Ancho', 'Vehículo', '1.70'),
+  variableConformidad('vehiculo.peso_bruto', 'Peso bruto', 'Vehículo', '1450'),
+  variableConformidad('vehiculo.peso_neto', 'Peso neto', 'Vehículo', '1010'),
+  variableConformidad('vehiculo.carga_util', 'Carga útil', 'Vehículo', '440'),
+  variableConformidad('vehiculo.anio_fabricacion', 'Año de fabricación', 'Vehículo', '2025'),
+  variableConformidad('vehiculo.anio_modelo', 'Año de modelo', 'Vehículo', '2026'),
+  variableConformidad('vehiculo.formula_rodante', 'Fórmula rodante', 'Vehículo', '4x2'),
+  variableConformidad('vehiculo.ejes', 'N° de ejes', 'Vehículo', '2'),
+  variableConformidad('vehiculo.ruedas', 'N° de ruedas', 'Vehículo', '4'),
+  variableConformidad('vehiculo.version', 'Versión', 'Vehículo', '1.5 GLI'),
+  variableConformidad('vehiculo.vin', 'VIN', 'Vehículo', 'JTDBR32E123456789'),
+  variableConformidad('conformidad.clase_modificacion', 'Clase activa Modificación', 'Conformidad', 'active'),
+  variableConformidad('conformidad.clase_montaje', 'Clase activa Montaje', 'Conformidad', ''),
+  variableConformidad('conformidad.clase_fabricacion', 'Clase activa Fabricación', 'Conformidad', ''),
+  variableConformidad('conformidad.marca_modificacion', 'Marca Modificación', 'Conformidad', 'X'),
+  variableConformidad('conformidad.marca_montaje', 'Marca Montaje', 'Conformidad', ''),
+  variableConformidad('conformidad.marca_fabricacion', 'Marca Fabricación', 'Conformidad', ''),
+  variableConformidad('conformidad.caracteristica_registrable', 'Característica registrable', 'Conformidad', 'MODIFICACIÓN DE CARACTERÍSTICAS'),
+  variableConformidad('conformidad.uso_original_vehiculo', 'Uso original del vehículo', 'Conformidad', 'PERSONAS')
+];
+
+const VARIABLES_DISPONIBLES = [...VARIABLES_CATALOG, ...VARIABLES_CONFORMIDAD];
+
 const CLAVE_PERSONALIZADA = /^personalizado\.[a-z0-9_]{1,60}$/;
 
 const obtenerVariablesPersonalizadas = (configuracion = {}) => {
@@ -144,12 +193,12 @@ const obtenerVariablesPersonalizadas = (configuracion = {}) => {
 };
 
 const obtenerCatalogoVariables = (configuracion = {}) => [
-  ...VARIABLES_CATALOG,
+  ...VARIABLES_DISPONIBLES,
   ...obtenerVariablesPersonalizadas(configuracion)
 ];
 
 module.exports = {
-  VARIABLES_CATALOG,
+  VARIABLES_CATALOG: VARIABLES_DISPONIBLES,
   obtenerVariablesPersonalizadas,
   obtenerCatalogoVariables
 };

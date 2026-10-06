@@ -12,7 +12,7 @@ const sedeRangos = require('./faregas-correlativos-sede.service');
 const chipCertificadoService = require('./faregas-chip-certificado.service');
 const vehiculosService = require('./faregas-vehiculos.service');
 const { normalizarNumeroChip, esNumeroChipCertificadoValido } = require('./faregas-chips.rules');
-const { NUMERO_CERTIFICADO_PENDIENTE } = require('../templates/template-utils');
+const { NUMERO_CERTIFICADO_PENDIENTE, formatDateLong } = require('../templates/template-utils');
 const { extraerVariablesHtml } = require('./faregas-formatos-html');
 const { obtenerCatalogoVariables } = require('./faregas-formatos.variables');
 
@@ -25,6 +25,9 @@ const VARIABLES_FORMATO_AUTOMATICAS = new Set([
     'chip.tipo',
     'chip.nombre'
 ]);
+const PREFIJOS_FORMATO_AUTOMATICOS = ['documento.', 'titular.', 'vehiculo.', 'conformidad.'];
+const esVariableFormatoAutomatica = (key) => VARIABLES_FORMATO_AUTOMATICAS.has(key)
+    || PREFIJOS_FORMATO_AUTOMATICOS.some((prefijo) => String(key || '').startsWith(prefijo));
 
 const CLAVE_VARIABLE_FORMATO = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
 
@@ -36,8 +39,14 @@ const configuracionFormato = (value) => {
     return typeof value === 'object' && !Array.isArray(value) ? value : {};
 };
 
-const usaFormatoDinamico = (certificado) => certificado.servicio_tipo_flujo === 'TALLER_INSPECCION'
-    && !(certificado.formato_es_protegido === true && certificado.formato_motor === 'SISTEMA');
+const usaFormatoDinamico = (certificado) => (
+    certificado.servicio_tipo_flujo === 'TALLER_INSPECCION'
+    && !(certificado.formato_es_protegido === true && certificado.formato_motor === 'SISTEMA')
+) || (
+    certificado.formato_es_protegido === true
+    && certificado.formato_version_resuelta_id
+    && certificado.formato_version_motor === 'HTML_DINAMICO'
+);
 
 const valorAnidado = (objeto, clave) => String(clave || '').split('.')
     .reduce((actual, parte) => (actual == null ? undefined : actual[parte]), objeto);
@@ -58,7 +67,7 @@ const validarVariablesFormatoDinamico = (cert, pushError) => {
     const variablesRequeridas = [...new Set([...variablesConfiguradas, ...variablesHtml]
         .map((key) => String(key || '').trim())
         .filter((key) => CLAVE_VARIABLE_FORMATO.test(key)))]
-        .filter((key) => !VARIABLES_FORMATO_AUTOMATICAS.has(key) && key !== 'inspeccion.observaciones');
+        .filter((key) => !esVariableFormatoAutomatica(key) && key !== 'inspeccion.observaciones');
     variablesRequeridas.forEach((key) => {
         const valor = valorAnidado(cert.formato_datos_snapshot || {}, key);
         if (valor === null || valor === undefined || String(valor).trim() === '') {
@@ -644,6 +653,12 @@ exports.crearBorrador = async (data, userContext) => {
     if (tipo.rowCount === 0) throw new Error('TIPO_NOT_FOUND');
     if (!tipo.rows[0].activo) throw new Error('TIPO_INACTIVO');
 
+    // No se crea un GNV en una sede sin entidad autorizada. La misma fuente se
+    // vuelve a consultar al guardar para normalizar también borradores antiguos.
+    if (tipoCertificadoClave === 'GNV_ANUAL') {
+        await resolverTallerGnvPorPlanta(db, planta_key);
+    }
+
     // Validar cliente si viene informado
     if (clienteId) {
         const cli = await db.query('SELECT estado FROM fg_cliente WHERE id = $1', [clienteId]);
@@ -744,7 +759,11 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
             SELECT version.id, version.version, version.estado, version.motor, version.configuracion
             FROM fg_certificado_formato_version version
             WHERE version.formato_id = f.id
-              AND (version.id = c.formato_version_id OR version.estado IN ('VIGENTE', 'BORRADOR'))
+              AND (
+                version.id = c.formato_version_id
+                OR version.estado = 'VIGENTE'
+                OR (version.estado = 'BORRADOR' AND f.es_protegido = FALSE)
+              )
             ORDER BY
                 CASE
                     WHEN version.id = c.formato_version_id THEN 0
@@ -819,7 +838,7 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
         }
     }, cert.formato_datos_snapshot || {});
     const camposFormato = variablesUsadas
-        .filter((key) => !VARIABLES_FORMATO_AUTOMATICAS.has(key))
+        .filter((key) => !esVariableFormatoAutomatica(key))
         .map((key) => {
             const variable = catalogoPorClave.get(key) || {};
             return {
@@ -870,6 +889,7 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
         telefonoCertificadora: cert.telefono_certificadora,
         lugarEmision: cert.lugar_emision,
         formatoDatosSnapshot: cert.formato_datos_snapshot || {},
+        formatoVersionAsignadaId: cert.formato_version_id || null,
         formatoVersionId: cert.formato_version_resuelta_id || cert.formato_version_id || null,
         comercial: {
             productoFacturacionCertificadoId: cert.producto_facturacion_certificado_id ? Number(cert.producto_facturacion_certificado_id) : null,
@@ -1370,18 +1390,67 @@ const obtenerYValidarBorrador = async (client, id, tipoRequerido, userContext) =
 
 // ================= GNV =================
 
+const normalizarCombustibleGnv = (valor) => String(valor || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+
+const combustiblesGnvSonEquivalentes = (antes, despues) => {
+    const combustibleAntes = normalizarCombustibleGnv(antes);
+    const combustibleDespues = normalizarCombustibleGnv(despues);
+    return Boolean(combustibleAntes && combustibleDespues && combustibleAntes === combustibleDespues);
+};
+
+const pesosGnvSonIguales = (antes, despues) => {
+    const pesoAntes = Number(String(antes ?? '').trim().replace(',', '.'));
+    const pesoDespues = Number(String(despues ?? '').trim().replace(',', '.'));
+    if (!Number.isFinite(pesoAntes) || !Number.isFinite(pesoDespues)) return false;
+    return Math.abs(pesoAntes - pesoDespues) < 0.001;
+};
+
+const errorValidacionGnv = (codigo) => {
+    const error = new Error(codigo);
+    error.code = codigo;
+    return error;
+};
+
+const resolverTallerGnvPorPlanta = async (client, plantaKey) => {
+    const resultado = await client.query(`
+        SELECT
+            ta.id,
+            ta.planta_key,
+            ta.razon_social,
+            ta.sede,
+            ta.direccion,
+            ta.codigo_autorizacion
+        FROM fg_taller_autorizado ta
+        JOIN fg_planta p ON p.key = ta.planta_key
+        WHERE ta.planta_key = $1
+          AND ta.estado = true
+          AND p.activo = true
+        LIMIT 1
+    `, [String(plantaKey)]);
+
+    if (resultado.rowCount === 0) {
+        const error = new Error('GNV_NO_HABILITADO_EN_SEDE');
+        error.code = 'GNV_NO_HABILITADO_EN_SEDE';
+        error.detalles = { plantaKey: String(plantaKey) };
+        throw error;
+    }
+
+    return resultado.rows[0];
+};
+
 exports.guardarGNV = async (id, data, userContext) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
         const certificado = await obtenerYValidarBorrador(client, id, 'GNV_ANUAL', userContext);
-
-        let snapshotTaller = null;
-        if (data.tallerAutorizadoId) {
-            const resTaller = await client.query('SELECT razon_social, sede, direccion, codigo_autorizacion FROM fg_taller_autorizado WHERE id = $1 AND estado = true', [data.tallerAutorizadoId]);
-            if (resTaller.rowCount === 0) throw new Error('TALLER_NOT_FOUND');
-            snapshotTaller = resTaller.rows[0];
-        }
+        // El taller GNV pertenece a la sede original del certificado. Se ignora
+        // cualquier tallerAutorizadoId recibido para impedir inconsistencias por
+        // manipulación del request o por borradores creados con el selector viejo.
+        const snapshotTaller = await resolverTallerGnvPorPlanta(client, certificado.planta_key);
 
         // Validar modalidad si se envía
         const modalidadGNV = data.modalidad ? data.modalidad.trim().toUpperCase() : null;
@@ -1413,6 +1482,28 @@ exports.guardarGNV = async (id, data, userContext) => {
             }
         }
 
+        // En una conversión inicial, "antes" y "después" representan estados
+        // distintos del vehículo. Se compara por significado (ignorando guiones,
+        // barras, espacios y tildes) para impedir equivalencias como
+        // "BI COMBUSTIBLE/GNV" y "BI - COMBUSTIBLE GNV". Esta protección vive
+        // también en backend para que no pueda eludirse manipulando el request.
+        if (modalidadGNV === 'INICIAL') {
+            const rVehiculoOriginal = await client.query(`
+                SELECT combustible, peso_neto
+                FROM fg_certificado_vehiculo
+                WHERE certificado_id = $1
+                LIMIT 1
+            `, [id]);
+            const vehiculoOriginal = rVehiculoOriginal.rows[0] || {};
+
+            if (combustiblesGnvSonEquivalentes(vehiculoOriginal.combustible, data.combustiblePosterior)) {
+                throw errorValidacionGnv('GNV_COMBUSTIBLE_SIN_CAMBIO');
+            }
+            if (pesosGnvSonIguales(vehiculoOriginal.peso_neto, data.pesoNetoPosterior)) {
+                throw errorValidacionGnv('GNV_PESO_NETO_SIN_CAMBIO');
+            }
+        }
+
         // Observaciones del inspector. Campo opcional: se guarda exactamente lo
         // que escribió el usuario, con recorte exterior y el mismo límite de
         // 250 caracteres que el formulario. Cadena vacía o ausente se guarda
@@ -1424,11 +1515,12 @@ exports.guardarGNV = async (id, data, userContext) => {
 
         const qUpd = `
             INSERT INTO fg_certificado_gnv (
-                certificado_id, taller_autorizado_id, vigencia_hasta, taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion, modalidad, numero_chip,
+                certificado_id, taller_autorizado_id, taller_planta_key, vigencia_hasta, taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion, modalidad, numero_chip,
                 combustible_posterior, peso_neto_posterior, observaciones
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             ON CONFLICT (certificado_id) DO UPDATE SET
                 taller_autorizado_id = EXCLUDED.taller_autorizado_id,
+                taller_planta_key = EXCLUDED.taller_planta_key,
                 vigencia_hasta = EXCLUDED.vigencia_hasta,
                 taller_razon_social = EXCLUDED.taller_razon_social,
                 taller_sede = EXCLUDED.taller_sede,
@@ -1443,12 +1535,13 @@ exports.guardarGNV = async (id, data, userContext) => {
         
         await client.query(qUpd, [
             id,
-            data.tallerAutorizadoId || null,
+            snapshotTaller.id,
+            snapshotTaller.planta_key,
             data.vigenciaHasta || null,
-            snapshotTaller ? snapshotTaller.razon_social : null,
-            snapshotTaller ? snapshotTaller.sede : null,
-            snapshotTaller ? snapshotTaller.direccion : null,
-            snapshotTaller ? snapshotTaller.codigo_autorizacion : null,
+            snapshotTaller.razon_social,
+            snapshotTaller.sede,
+            snapshotTaller.direccion,
+            snapshotTaller.codigo_autorizacion,
             modalidadGNV,
             numeroChip,
             data.combustiblePosterior || null,
@@ -1550,12 +1643,11 @@ exports.guardarGLP = async (id, data, userContext) => {
         await client.query('BEGIN');
         await obtenerYValidarBorrador(client, id, 'GLP_ANUAL', userContext);
 
-        let snapshotTaller = null;
-        if (data.tallerAutorizadoId) {
-            const resTaller = await client.query('SELECT razon_social, sede, direccion, codigo_autorizacion FROM fg_taller_autorizado WHERE id = $1 AND estado = true', [data.tallerAutorizadoId]);
-            if (resTaller.rowCount === 0) throw new Error('TALLER_NOT_FOUND');
-            snapshotTaller = resTaller.rows[0];
-        }
+        // FORZAR TALLER SURQUILLO PARA TODOS LOS CERTIFICADOS GLP
+        const resSurquillo = await client.query("SELECT id, razon_social, sede, direccion, codigo_autorizacion FROM fg_taller_autorizado WHERE sede = 'SURQUILLO' AND estado = true LIMIT 1");
+        if (resSurquillo.rowCount === 0) throw new Error("TALLER_SURQUILLO_NOT_FOUND");
+        const snapshotTaller = resSurquillo.rows[0];
+        data.tallerAutorizadoId = snapshotTaller.id;
 
         // Validar modalidad si se envía
         const modalidadGLP = data.modalidad ? data.modalidad.trim().toUpperCase() : null;
@@ -1809,7 +1901,11 @@ exports.validarEmision = async (id, userContext) => {
             SELECT version.id, version.estado, version.motor, version.configuracion
             FROM fg_certificado_formato_version version
             WHERE version.formato_id = f.id
-              AND (version.id = c.formato_version_id OR version.estado IN ('VIGENTE', 'BORRADOR'))
+              AND (
+                version.id = c.formato_version_id
+                OR version.estado = 'VIGENTE'
+                OR (version.estado = 'BORRADOR' AND f.es_protegido = FALSE)
+              )
             ORDER BY
                 CASE
                     WHEN version.id = c.formato_version_id THEN 0
@@ -2073,7 +2169,9 @@ exports.validarEmision = async (id, userContext) => {
     }
 
     // Conformidad Especifico
-    if (!esFormularioDinamico && cert.tipo_clave === 'CONFORMIDAD') {
+    // La versión HTML oficial cambia el renderer, no el formulario de negocio:
+    // Conformidad sigue capturando y validando fg_certificado_conformidad.
+    if ((!esFormularioDinamico || cert.formato_es_protegido) && cert.tipo_clave === 'CONFORMIDAD') {
         const rConf = await db.query('SELECT * FROM fg_certificado_conformidad WHERE certificado_id = $1', [id]);
         if (rConf.rowCount === 0) {
             pushError('conformidad', 'general', 'SECCION_FALTANTE', 'Faltan datos de Conformidad');
@@ -2104,7 +2202,8 @@ exports.emitirCertificado = async (id, userContext) => {
         // Bloquear certificado FOR UPDATE
         const rCert = await client.query(`
             SELECT c.*, t.clave as tipo_clave, t.codigo as tipo_codigo, t.ancho_correlativo,
-                   CASE WHEN t.clave = 'CONFORMIDAD' THEN 'UNICA' ELSE s.modalidad END AS modalidad_correlativo
+                   CASE WHEN t.clave = 'CONFORMIDAD' THEN 'UNICA' ELSE s.modalidad END AS modalidad_correlativo,
+                   s.formato_id AS servicio_formato_id
             FROM fg_certificado c
             JOIN fg_tipo_certificado t ON c.tipo_certificado_clave = t.clave
             LEFT JOIN fg_tarifa ta ON ta.codigo = c.tarifa_codigo AND ta.planta_key = c.planta_key
@@ -2191,16 +2290,31 @@ exports.emitirCertificado = async (id, userContext) => {
             }
         }
 
-        // Update certificado
+        let formatoVersionId = cert.formato_version_id || null;
+        if (cert.servicio_formato_id) {
+            const versionVigente = await client.query(
+                `SELECT id
+                 FROM fg_certificado_formato_version
+                 WHERE formato_id = $1 AND estado = 'VIGENTE'
+                 ORDER BY version DESC
+                 LIMIT 1`,
+                [cert.servicio_formato_id]
+            );
+            formatoVersionId = versionVigente.rows[0]?.id || formatoVersionId;
+        }
+
+        // Update certificado. La versión se fija al emitir para que las
+        // reimpresiones históricas no cambien cuando se publique otra versión.
         await client.query(`
             UPDATE fg_certificado
             SET estado = 'EMITIDO',
                 numero_certificado = $1,
                 fecha_emision = CURRENT_TIMESTAMP,
                 usuario_modificacion = $2,
-                fecha_modificacion = CURRENT_TIMESTAMP
+                fecha_modificacion = CURRENT_TIMESTAMP,
+                formato_version_id = $4
             WHERE id = $3
-        `, [numero_certificado, userContext.username, id]);
+        `, [numero_certificado, userContext.username, id, formatoVersionId]);
 
         await client.query('COMMIT');
         
@@ -2249,8 +2363,13 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
     // Una operación con formato HTML propio se renderiza desde su versión y su
     // snapshot dinámico, aunque reutilice una clave técnica base GNV/GLP para
     // correlativos. La clave base no debe imponerle el formulario vehicular.
-    if (borrador.servicio?.tipoFlujo === 'TALLER_INSPECCION' && borrador.formatoVersionId) {
-        const dataFormato = buildFormatoData(borrador);
+    const usaVersionOficialDinamica = borrador.formatoFormulario?.motor === 'HTML_DINAMICO'
+        && (borrador.estado !== 'EMITIDO' || Boolean(borrador.formatoVersionAsignadaId));
+    if ((borrador.servicio?.tipoFlujo === 'TALLER_INSPECCION' || usaVersionOficialDinamica) && borrador.formatoVersionId) {
+        const datosEspecificos = tipoClave === 'CONFORMIDAD'
+            ? await exports.obtenerConformidad(id, userContext)
+            : {};
+        const dataFormato = buildFormatoData(borrador, datosEspecificos);
         const { data: html } = await formatosService.renderVersion(borrador.formatoVersionId, dataFormato, true);
         return { html, tipo: tipoClave };
     }
@@ -2329,8 +2448,18 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
     }
 };
 
-const buildFormatoData = (borrador) => {
+const buildFormatoData = (borrador, extras = {}) => {
     const cli = borrador.cliente || {};
+    const veh = paraPlantilla(borrador.vehiculo || {});
+    const conf = extras.conformidad || {};
+    const titulares = Array.isArray(borrador.titulares) ? borrador.titulares : [];
+    const tipoConformidad = String(conf.tipo_conformidad || 'MODIFICACION').toUpperCase();
+    const fechaDocumento = formatDateLong(borrador.fechaEmision || new Date().toISOString().slice(0, 10));
+    const propietarioNombre = titulares.length > 0
+        ? titulares.map((titular) => titular.nombre_razon_social || titular.nombreRazonSocial || '').filter(Boolean).join(' / ')
+        : (cli.nombreRazonSocial || '-');
+    const propietarioDireccion = titulares[0]?.direccion || '-';
+    const valorOficial = (valor, alternativa = '-') => valor || alternativa;
     const numeroCertificadoVisible = borrador.numeroCertificado
         || (borrador.estado === 'EMITIDO' ? '' : NUMERO_CERTIFICADO_PENDIENTE);
     const datos = combinarObjetos({
@@ -2361,6 +2490,58 @@ const buildFormatoData = (borrador) => {
             numero: borrador.chipSeleccion?.chip?.numeroChip || '',
             tipo: borrador.chipSeleccion?.chip?.productoCodigo || '',
             nombre: borrador.chipSeleccion?.chip?.productoNombre || ''
+        },
+        documento: {
+            clase_preview: borrador.estado === 'EMITIDO' ? 'preview-hidden' : '',
+            fecha_dia: fechaDocumento.dia,
+            fecha_mes: fechaDocumento.mes,
+            fecha_anio: fechaDocumento.anio
+        },
+        titular: {
+            nombre: propietarioNombre,
+            direccion: propietarioDireccion
+        },
+        vehiculo: {
+            placa: valorOficial(veh.placa),
+            clase: valorOficial(veh.clase),
+            categoria: valorOficial(veh.categoria),
+            modelo: valorOficial(veh.modelo),
+            marca: valorOficial(veh.marca),
+            serie_chasis: valorOficial(veh.serie || veh.vin),
+            motor: valorOficial(veh.motor),
+            color: valorOficial(veh.color),
+            carroceria: valorOficial(veh.carroceria),
+            combustible: valorOficial(veh.combustible),
+            potencia: valorOficial(veh.potencia),
+            asientos: valorOficial(veh.asientos),
+            pasajeros: valorOficial(veh.pasajeros),
+            cilindrada: valorOficial(veh.cilindrada),
+            cilindros: valorOficial(veh.cilindros),
+            longitud: valorOficial(veh.longitud),
+            altura: valorOficial(veh.altura),
+            ancho: valorOficial(veh.ancho),
+            peso_bruto: valorOficial(veh.peso_bruto),
+            peso_neto: valorOficial(veh.peso_seco || veh.peso_neto),
+            carga_util: valorOficial(veh.carga_util),
+            anio_fabricacion: valorOficial(veh.ano_fabricacion),
+            anio_modelo: valorOficial(veh.ano_modelo || veh.ano_fabricacion),
+            formula_rodante: valorOficial(veh.formula_rodante),
+            ejes: valorOficial(veh.ejes),
+            ruedas: valorOficial(veh.ruedas),
+            version: valorOficial(veh.version),
+            vin: valorOficial(veh.vin || veh.serie)
+        },
+        conformidad: {
+            clase_modificacion: tipoConformidad === 'MODIFICACION' ? 'active' : '',
+            clase_montaje: tipoConformidad === 'MONTAJE' ? 'active' : '',
+            clase_fabricacion: tipoConformidad === 'FABRICACION' ? 'active' : '',
+            marca_modificacion: conf.marca_modificacion ? 'X' : '',
+            marca_montaje: conf.marca_montaje ? 'X' : '',
+            marca_fabricacion: conf.marca_fabricacion ? 'X' : '',
+            caracteristica_registrable: conf.caracteristica_registrable
+                ? String(conf.caracteristica_registrable).toUpperCase()
+                : '-',
+            uso_original_vehiculo: conf.uso_original_vehiculo || 'PERSONAS'
         }
     }, borrador.formatoDatosSnapshot || {});
     // El número definitivo siempre proviene del certificado, nunca de un
@@ -2475,4 +2656,10 @@ exports.obtenerTaller = async (id, user) => {
     return cert.formato_datos_snapshot;
 };
 
-exports._private = Object.freeze({ validarVariablesFormatoDinamico, usaFormatoDinamico });
+exports._private = Object.freeze({
+    validarVariablesFormatoDinamico,
+    usaFormatoDinamico,
+    resolverTallerGnvPorPlanta,
+    combustiblesGnvSonEquivalentes,
+    pesosGnvSonIguales
+});
