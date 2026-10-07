@@ -21,6 +21,7 @@ const VARIABLES_FORMATO_AUTOMATICAS = new Set([
     'certificado.fecha_emision',
     'certificado.modalidad',
     'certificado.titulo',
+    'inspeccion.tipo_combustible',
     'chip.numero',
     'chip.tipo',
     'chip.nombre'
@@ -28,6 +29,36 @@ const VARIABLES_FORMATO_AUTOMATICAS = new Set([
 const PREFIJOS_FORMATO_AUTOMATICOS = ['documento.', 'titular.', 'vehiculo.', 'conformidad.'];
 const esVariableFormatoAutomatica = (key) => VARIABLES_FORMATO_AUTOMATICAS.has(key)
     || PREFIJOS_FORMATO_AUTOMATICOS.some((prefijo) => String(key || '').startsWith(prefijo));
+
+const tipoCombustibleCertificado = (tipoCertificadoClave) => {
+    const clave = String(tipoCertificadoClave || '').trim().toUpperCase();
+    if (clave === 'GNV_ANUAL') return 'Gas Natural Vehicular – GNV';
+    if (clave === 'GLP_ANUAL') return 'Gas Licuado de Petróleo – GLP';
+    return '';
+};
+
+const tituloInspeccionTaller = (tipoCertificadoClave, modalidad, fallback = '') => {
+    const clave = String(tipoCertificadoClave || '').trim().toUpperCase();
+    const combustible = clave === 'GNV_ANUAL' ? 'GNV' : clave === 'GLP_ANUAL' ? 'GLP' : '';
+    const variante = String(modalidad || '').trim().toUpperCase();
+    if (!combustible || !['INICIAL', 'ANUAL'].includes(variante)) return fallback;
+    return `CERTIFICADO DE INSPECCIÓN DE TALLER ${combustible} ${variante}`;
+};
+
+const tituloCertificadoDinamico = ({ tipoFlujo, tipoCertificadoClave, modalidad, fallback }) => (
+    tipoFlujo === 'TALLER_INSPECCION'
+        ? tituloInspeccionTaller(tipoCertificadoClave, modalidad, fallback)
+        : fallback
+);
+
+const formatearNumeroCertificado = ({ tipoFlujo, tipoCodigo, anchoCorrelativo, numero }) => {
+    const esInspeccionTaller = String(tipoFlujo || '').trim().toUpperCase() === 'TALLER_INSPECCION';
+    const prefijo = esInspeccionTaller ? '22' : String(tipoCodigo || '').trim();
+    const anchoConfigurado = Number(anchoCorrelativo);
+    const ancho = esInspeccionTaller ? Math.max(7, anchoConfigurado || 0) : anchoConfigurado;
+    if (!prefijo || !Number.isInteger(ancho) || ancho <= 0) return '';
+    return `DG-${prefijo}-${String(numero).padStart(ancho, '0')}`;
+};
 
 const CLAVE_VARIABLE_FORMATO = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
 
@@ -64,14 +95,33 @@ const validarVariablesFormatoDinamico = (cert, pushError) => {
     const variablesHtml = cert.formato_version_motor === 'HTML_DINAMICO'
         ? extraerVariablesHtml(configFormato.html || '')
         : [];
+    const isEmpresaActiva = (cert.formato_datos_snapshot || {})['__incluir_empresa'] === 'true';
     const variablesRequeridas = [...new Set([...variablesConfiguradas, ...variablesHtml]
         .map((key) => String(key || '').trim())
         .filter((key) => CLAVE_VARIABLE_FORMATO.test(key)))]
         .filter((key) => !esVariableFormatoAutomatica(key) && key !== 'inspeccion.observaciones');
+
+    const catalogo = new Map(obtenerCatalogoVariables(configFormato).map((v) => [v.key, v]));
+    
     variablesRequeridas.forEach((key) => {
-        const valor = valorAnidado(cert.formato_datos_snapshot || {}, key);
-        if (valor === null || valor === undefined || String(valor).trim() === '') {
+        const metadata = catalogo.get(key) || {};
+        
+        if (metadata.optionalGroup && metadata.optionalGroup.toLowerCase() === 'empresa' && !isEmpresaActiva) {
+            return;
+        }
+
+        const valorRaw = valorAnidado(cert.formato_datos_snapshot || {}, key);
+        const valor = valorRaw === null || valorRaw === undefined ? '' : String(valorRaw).trim();
+
+        if (!valor) {
             pushError('formato', key, 'CAMPO_REQUERIDO', `Complete ${key}`);
+        } else {
+            if (metadata.minLength && valor.length < metadata.minLength) {
+                pushError('formato', key, 'LONGITUD_INVALIDA', `${metadata.label}: mínimo ${metadata.minLength} caracteres`);
+            }
+            if (metadata.pattern && !new RegExp(metadata.pattern).test(valor)) {
+                pushError('formato', key, 'FORMATO_INVALIDO', `${metadata.label}: ${metadata.patternError || 'formato inválido'}`);
+            }
         }
     });
 };
@@ -815,7 +865,12 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
             numero: cert.numero_certificado || '',
             fecha_emision: cert.fecha_emision || '',
             modalidad: cert.servicio_modalidad || '',
-            titulo: cert.tipo_nombre || cert.servicio_nombre || ''
+            titulo: tituloCertificadoDinamico({
+                tipoFlujo: cert.servicio_tipo_flujo,
+                tipoCertificadoClave: cert.tipo_certificado_clave,
+                modalidad: cert.servicio_modalidad,
+                fallback: cert.tipo_nombre || cert.servicio_nombre || ''
+            })
         },
         taller: {
             nombre: cert.entidad_certificadora_nombre || '',
@@ -833,6 +888,7 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
             telefono: cert.telefono_certificadora || ''
         },
         inspeccion: {
+            tipo_combustible: tipoCombustibleCertificado(cert.tipo_certificado_clave),
             observaciones: cert.observaciones || '',
             fecha_proxima_inspeccion: ''
         }
@@ -845,8 +901,15 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
                 key,
                 label: variable.label || key.split('.').pop().replaceAll('_', ' '),
                 grupo: variable.grupo || 'Datos del certificado',
+                optionalGroup: variable.optionalGroup,
                 tipo: variable.tipo === 'date' ? 'date' : 'text',
                 requerido: key !== 'inspeccion.observaciones',
+                minLength: variable.minLength,
+                maxLength: variable.maxLength,
+                pattern: variable.pattern,
+                patternError: variable.patternError,
+                inputMode: variable.inputMode,
+                soloDigitos: variable.soloDigitos,
                 valor: valorAnidado(valoresBase, key) ?? ''
             };
         });
@@ -2203,7 +2266,8 @@ exports.emitirCertificado = async (id, userContext) => {
         const rCert = await client.query(`
             SELECT c.*, t.clave as tipo_clave, t.codigo as tipo_codigo, t.ancho_correlativo,
                    CASE WHEN t.clave = 'CONFORMIDAD' THEN 'UNICA' ELSE s.modalidad END AS modalidad_correlativo,
-                   s.formato_id AS servicio_formato_id
+                   s.formato_id AS servicio_formato_id,
+                   s.tipo_flujo AS servicio_tipo_flujo
             FROM fg_certificado c
             JOIN fg_tipo_certificado t ON c.tipo_certificado_clave = t.clave
             LEFT JOIN fg_tarifa ta ON ta.codigo = c.tarifa_codigo AND ta.planta_key = c.planta_key
@@ -2242,8 +2306,12 @@ exports.emitirCertificado = async (id, userContext) => {
             if (!cert.tipo_codigo || !cert.ancho_correlativo) {
                 throw new Error('CONFIGURACION_NUMERACION_INCOMPLETA');
             }
-            const ancho = Number(cert.ancho_correlativo);
-            const formato = (nro) => `DG-${cert.tipo_codigo}-${String(nro).padStart(ancho, '0')}`;
+            const formato = (nro) => formatearNumeroCertificado({
+                tipoFlujo: cert.servicio_tipo_flujo,
+                tipoCodigo: cert.tipo_codigo,
+                anchoCorrelativo: cert.ancho_correlativo,
+                numero: nro
+            });
 
             // Modelo vigente: el número sale del inventario de RANGOS DE LA SEDE.
             // Da igual el tipo, la modalidad o el producto: el bloque recibido
@@ -2465,9 +2533,14 @@ const buildFormatoData = (borrador, extras = {}) => {
     const datos = combinarObjetos({
         certificado: {
             numero: numeroCertificadoVisible,
-            fecha_emision: borrador.fechaEmision || new Date().toISOString().slice(0, 10),
+            fecha_emision: `${fechaDocumento.dia} del mes de ${fechaDocumento.mes.toLowerCase()} del ${fechaDocumento.anio}`,
             modalidad: borrador.servicio ? borrador.servicio.modalidad : '',
-            titulo: borrador.tipo ? borrador.tipo.nombre : ''
+            titulo: tituloCertificadoDinamico({
+                tipoFlujo: borrador.servicio?.tipoFlujo,
+                tipoCertificadoClave: borrador.tipo?.clave,
+                modalidad: borrador.servicio?.modalidad,
+                fallback: borrador.tipo ? borrador.tipo.nombre : ''
+            })
         },
         taller: {
             nombre: borrador.entidadCertificadoraNombre || '',
@@ -2484,6 +2557,7 @@ const buildFormatoData = (borrador, extras = {}) => {
             telefono: borrador.telefonoCertificadora || ''
         },
         inspeccion: {
+            tipo_combustible: tipoCombustibleCertificado(borrador.tipo?.clave),
             observaciones: borrador.observaciones || ''
         },
         chip: {
@@ -2659,6 +2733,9 @@ exports.obtenerTaller = async (id, user) => {
 exports._private = Object.freeze({
     validarVariablesFormatoDinamico,
     usaFormatoDinamico,
+    tipoCombustibleCertificado,
+    tituloInspeccionTaller,
+    formatearNumeroCertificado,
     resolverTallerGnvPorPlanta,
     combustiblesGnvSonEquivalentes,
     pesosGnvSonIguales

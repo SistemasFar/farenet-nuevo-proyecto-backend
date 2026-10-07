@@ -636,7 +636,12 @@ guardarMappings: async (formatoId, versionId, mappings) => {
   },
 
   generarPreview: async (formatoId, versionId) => {
-    const verRes = await db.query('SELECT archivo_ruta, configuracion, motor FROM fg_certificado_formato_version WHERE id = $1 AND formato_id = $2', [versionId, formatoId]);
+    const verRes = await db.query(`
+      SELECT v.archivo_ruta, v.configuracion, v.motor, f.codigo AS formato_codigo
+      FROM fg_certificado_formato_version v
+      JOIN fg_certificado_formato f ON f.id = v.formato_id
+      WHERE v.id = $1 AND v.formato_id = $2
+    `, [versionId, formatoId]);
     if (verRes.rowCount === 0) throw new Error('Versión no encontrada');
     const motorVersion = verRes.rows[0].motor || 'DOCX_DINAMICO';
     let config = verRes.rows[0].configuracion || {};
@@ -652,6 +657,10 @@ guardarMappings: async (formatoId, versionId, mappings) => {
         } else {
             dummyData[v.key] = v.demo;
         }
+    }
+    if (String(verRes.rows[0].formato_codigo || '').startsWith('TALLER_')) {
+        dummyData.certificado ||= {};
+        dummyData.certificado.numero = 'DG-22-0013393';
     }
 
     if (motorVersion === 'HTML_DINAMICO') {

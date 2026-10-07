@@ -32,91 +32,158 @@
     label: 'Nombre del Taller',
     grupo: 'Taller',
     tipo: 'text',
-    demo: 'TALLER DEMO S.A.C.'
+    demo: 'TALLER DEMO S.A.C.',
+    minLength: 2,
+    maxLength: 150,
+    pattern: "^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 .,&'()/-]+$",
+    patternError: 'Use únicamente letras, números y signos propios de una razón social.'
   },
   {
     key: 'taller.direccion',
     label: 'Dirección',
     grupo: 'Taller',
     tipo: 'text',
-    demo: 'AV. LOS INCAS 123'
+    demo: 'AV. LOS INCAS 123',
+    minLength: 5,
+    maxLength: 250,
+    pattern: '^[^<>\\r\\n]+$',
+    patternError: 'La dirección contiene caracteres no permitidos.'
   },
   {
     key: 'taller.telefono',
     label: 'Teléfono',
     grupo: 'Taller',
     tipo: 'text',
-    demo: '999888777'
+    demo: '999888777',
+    minLength: 7,
+    maxLength: 9,
+    pattern: '^\\d{7,9}$',
+    patternError: 'Ingrese únicamente números, entre 7 y 9 dígitos.',
+    inputMode: 'numeric',
+    soloDigitos: true
   },
   {
     key: 'taller.ciudad',
     label: 'Ciudad',
     grupo: 'Taller',
     tipo: 'text',
-    demo: 'LIMA'
+    demo: 'LIMA',
+    minLength: 2,
+    maxLength: 100,
+    pattern: "^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ .'-]+$",
+    patternError: 'La ciudad sólo puede contener letras, espacios, puntos, apóstrofes o guiones.'
   },
   {
     key: 'taller.representante_legal',
     label: 'Representante Legal',
     grupo: 'Taller',
     tipo: 'text',
-    demo: 'JUAN PEREZ'
+    demo: 'JUAN PEREZ',
+    minLength: 3,
+    maxLength: 150,
+    pattern: "^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ .'-]+$",
+    patternError: 'El representante legal sólo puede contener letras y signos propios de un nombre.'
   },
   {
     key: 'taller.numero_autorizacion',
     label: 'N° de Autorización',
     grupo: 'Taller',
     tipo: 'text',
-    demo: 'AUT-001-2026'
+    demo: 'AUT-001-2026',
+    minLength: 2,
+    maxLength: 50,
+    pattern: "^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 .,/()°º#-]+$",
+    patternError: 'El número de autorización contiene caracteres no permitidos.'
   },
   {
     key: 'empresa.razon_social',
     label: 'Razón Social Empresa',
     grupo: 'Empresa',
+    optionalGroup: 'Empresa',
     tipo: 'text',
-    demo: 'EMPRESA CERTIFICADORA S.A.'
+    demo: 'EMPRESA CERTIFICADORA S.A.',
+    minLength: 2,
+    maxLength: 150,
+    pattern: "^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 .,&'()/-]+$",
+    patternError: 'Use únicamente letras, números y signos propios de una razón social.'
   },
   {
     key: 'empresa.ruc',
     label: 'RUC Empresa',
     grupo: 'Empresa',
+    optionalGroup: 'Empresa',
     tipo: 'text',
-    demo: '20123456789'
+    demo: '20123456789',
+    minLength: 11,
+    maxLength: 11,
+    pattern: '^\\d{11}$',
+    patternError: 'El RUC debe contener exactamente 11 dígitos.',
+    inputMode: 'numeric',
+    soloDigitos: true
   },
   {
     key: 'empresa.resolucion',
     label: 'Resolución de Autorización',
     grupo: 'Empresa',
+    optionalGroup: 'Empresa',
     tipo: 'text',
-    demo: 'RES-050-2026-MTC'
+    demo: 'RES-050-2026-MTC',
+    minLength: 2,
+    maxLength: 50,
+    pattern: "^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 .,/()°º#-]+$",
+    patternError: 'La resolución contiene caracteres no permitidos.'
   },
   {
     key: 'empresa.direccion',
     label: 'Dirección de la Empresa',
     grupo: 'Empresa',
+    optionalGroup: 'Empresa',
     tipo: 'text',
-    demo: 'AV. INDUSTRIAL 123, LIMA'
+    demo: 'AV. INDUSTRIAL 123, LIMA',
+    minLength: 5,
+    maxLength: 250,
+    pattern: '^[^<>\\r\\n]+$',
+    patternError: 'La dirección contiene caracteres no permitidos.'
   },
   {
     key: 'empresa.telefono',
     label: 'Teléfono de la Empresa',
     grupo: 'Empresa',
+    optionalGroup: 'Empresa',
     tipo: 'text',
-    demo: '01 555-0101'
+    demo: '015550101',
+    minLength: 7,
+    maxLength: 9,
+    pattern: '^\\d{7,9}$',
+    patternError: 'Ingrese únicamente números, entre 7 y 9 dígitos.',
+    inputMode: 'numeric',
+    soloDigitos: true
+  },
+  {
+    key: 'inspeccion.tipo_combustible',
+    label: 'Sistema de combustible (GNV o GLP)',
+    grupo: 'Inspección',
+    tipo: 'text',
+    demo: 'Gas Natural Vehicular – GNV'
   },
   {
     key: 'inspeccion.observaciones',
     label: 'Observaciones',
     grupo: 'Inspección',
     tipo: 'text',
-    demo: 'NINGUNA OBSERVACIÓN RELEVANTE.'
+    demo: 'NINGUNA OBSERVACIÓN RELEVANTE.',
+    requerido: false,
+    maxLength: 1000
   },
   {
     key: 'inspeccion.fecha_proxima_inspeccion',
     label: 'Fecha Próxima Inspección',
     grupo: 'Inspección',
     tipo: 'date',
-    demo: '10/09/2027'
+    demo: '2027-09-10',
+    requerido: true,
+    pattern: '^\\d{4}-\\d{2}-\\d{2}$',
+    patternError: 'Seleccione una fecha válida.'
   }
 ];
 
