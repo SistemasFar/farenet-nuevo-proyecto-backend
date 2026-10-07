@@ -4,15 +4,38 @@ const clientesService = require('./faregas-clientes.service');
 const { normalizarLoteScanner } = require('./faregas-chips.rules');
 const {
     redondear,
-    normalizarPagos,
-    esProductoFiscalChipValido
+    normalizarPagos
 } = require('./faregas-pagos.rules');
+const {
+    validarSedeOperativaChips,
+    validarProductoFiscalChip
+} = require('./faregas-chips-fiscal.rules');
+const inventarioCantidadService = require('./faregas-inventario-cantidad.service');
 
 const texto = (value) => String(value ?? '').trim();
 
 const calcularBaseIgv = (importe) => {
     const base = redondear(Number(importe) / 1.18);
     return { base, igv: redondear(Number(importe) - base) };
+};
+
+const construirDetalleChip = (chip, config) => {
+    const calculo = calcularBaseIgv(config.precio);
+    return {
+        chipId: Number(chip.id),
+        numeroChip: chip.numero_chip,
+        productoFacturacionId: Number(config.producto_facturacion_id),
+        codigoSku: config.codigo_sku,
+        descripcion: config.descripcion,
+        unidad: config.unidad,
+        afectacionIgv: config.tipo_afectacion_igv,
+        codigoSunat: config.codigo_clasificacion_sunat,
+        precioUnitario: config.precio,
+        valorUnitario: calculo.base,
+        baseImponible: calculo.base,
+        igv: calculo.igv,
+        importeTotal: config.precio
+    };
 };
 
 const validarTextoCliente = (data) => {
@@ -73,13 +96,15 @@ const validarPago = async (client, pago) => {
 
 const obtenerConfiguracionProducto = async (client, plantaKey, productoInventariableId) => {
     const result = await client.query(`
-        SELECT pi.id, pi.codigo, pi.nombre, pi.activo,
-               pis.precio, pis.activo AS sede_activa,
+        SELECT pi.id, pi.codigo, pi.nombre, pi.tipo, pi.activo,
+               pis.precio AS precio_legacy, pis.activo AS sede_activa,
                pis.stock_permitido, pis.venta_habilitada,
-               COALESCE(pis.producto_facturacion_id, pi.producto_facturacion_id) AS producto_facturacion_id,
+               pis.producto_facturacion_id,
                pf.codigo_sku, pf.descripcion, pf.unidad,
                pf.tipo_afectacion_igv, pf.codigo_clasificacion_sunat,
-               pf.activo AS fiscal_activo, pf.es_para_venta
+               pf.activo AS fiscal_activo, pf.es_para_venta,
+               pf.precio_unitario AS valor_unitario_fiscal,
+               pf.precio_referencia AS precio_referencia
         FROM fg_producto_inventariable pi
         JOIN fg_producto_inventariable_sede pis
           ON pis.producto_inventariable_id = pi.id
@@ -89,7 +114,7 @@ const obtenerConfiguracionProducto = async (client, plantaKey, productoInventari
           ON p.key = pis.planta_key
          AND p.activo = TRUE
         LEFT JOIN fg_producto_facturacion pf
-          ON pf.id = COALESCE(pis.producto_facturacion_id, pi.producto_facturacion_id)
+          ON pf.id = pis.producto_facturacion_id
         WHERE pi.id = $1
           AND pi.activo = TRUE
         FOR UPDATE OF pis
@@ -100,36 +125,28 @@ const obtenerConfiguracionProducto = async (client, plantaKey, productoInventari
     const config = result.rows[0];
     if (config.stock_permitido !== true) throw new Error('STOCK_CHIP_NO_PERMITIDO');
     if (config.venta_habilitada !== true) throw new Error('VENTA_CHIP_NO_HABILITADA');
-    if (!config.producto_facturacion_id || !esProductoFiscalChipValido({
-        activo: config.fiscal_activo,
-        es_para_venta: config.es_para_venta,
-        codigo_sku: config.codigo_sku,
-        descripcion: config.descripcion,
-        unidad: config.unidad,
-        tipo_afectacion_igv: config.tipo_afectacion_igv,
-        codigo_clasificacion_sunat: config.codigo_clasificacion_sunat
-    })) {
-        throw new Error('PRODUCTO_FISCAL_CHIP_INVALIDO');
-    }
-
-    const precio = Number(config.precio);
-    if (!Number.isFinite(precio) || precio <= 0) throw new Error('PRECIO_PRODUCTO_INVALIDO');
-    config.precio = redondear(precio);
+    config.precio = validarProductoFiscalChip(config);
     return config;
 };
 
 const crearVentaDirecta = async (payload, userContext) => {
     const plantaKey = userContext?.planta_key;
     if (!plantaKey) throw new Error('PLANTA_REQUERIDA');
+    const tieneChips = Array.isArray(payload.chips) && payload.chips.length > 0;
+    const tieneCantidad = payload.productoInventariableId != null || payload.cantidad != null;
+    if (tieneChips === tieneCantidad) throw new Error('MODO_VENTA_INVALIDO');
 
-    if (!Array.isArray(payload.chips) || payload.chips.length === 0) {
-        throw new Error('CHIPS_REQUERIDOS');
+    let lote = null;
+    if (tieneChips) {
+        validarSedeOperativaChips(plantaKey);
+        lote = normalizarLoteScanner(payload.chips);
+        if (lote.errores.length > 0) throw new Error('CHIP_NUMERO_INVALIDO');
+        if (lote.duplicados.length > 0) throw new Error('CHIP_DUPLICADO');
+        if (lote.validos.length === 0) throw new Error('CHIPS_REQUERIDOS');
+    } else {
+        inventarioCantidadService.validarSedeHojas(plantaKey);
+        inventarioCantidadService.normalizarCantidad(payload.cantidad);
     }
-
-    const lote = normalizarLoteScanner(payload.chips);
-    if (lote.errores.length > 0) throw new Error('CHIP_NUMERO_INVALIDO');
-    if (lote.duplicados.length > 0) throw new Error('CHIP_DUPLICADO');
-    if (lote.validos.length === 0) throw new Error('CHIPS_REQUERIDOS');
 
     const condicionPago = texto(payload.condicionPago || 'CONTADO').toUpperCase();
     if (!['CONTADO', 'CREDITO'].includes(condicionPago)) throw new Error('CONDICION_PAGO_INVALIDA');
@@ -150,63 +167,60 @@ const crearVentaDirecta = async (payload, userContext) => {
     try {
         await client.query('BEGIN');
 
-        const chipsResult = await client.query(`
-            SELECT id, numero_chip, estado, planta_actual_key, producto_inventariable_id
-            FROM fg_chip
-            WHERE numero_chip = ANY($1::varchar[])
-            ORDER BY numero_chip
-            FOR UPDATE
-        `, [lote.validos]);
-
-        if (chipsResult.rowCount !== lote.validos.length) {
-            throw new Error('CHIP_NO_ENCONTRADO');
-        }
-
-        const chipsPorNumero = new Map(chipsResult.rows.map((chip) => [chip.numero_chip, chip]));
-        const chips = lote.validos.map((numero) => {
-            const chip = chipsPorNumero.get(numero);
-            if (!chip) throw new Error('CHIP_NO_ENCONTRADO');
-            if (chip.planta_actual_key !== plantaKey) throw new Error('CHIP_OTRA_SEDE');
-            if (chip.estado !== 'DISPONIBLE') {
-                const error = new Error('CHIP_NO_DISPONIBLE');
-                error.detalles = { chip: chip.numero_chip, estado: chip.estado };
-                throw error;
-            }
-            return chip;
-        });
-
-        const configuraciones = new Map();
-        for (const chip of chips) {
-            const productId = Number(chip.producto_inventariable_id);
-            if (!configuraciones.has(productId)) {
-                configuraciones.set(productId, await obtenerConfiguracionProducto(client, plantaKey, productId));
-            }
-        }
-
         let baseImponible = 0;
         let igv = 0;
         let importeTotal = 0;
         const detalles = [];
+        let chips = [];
+        let ventaCantidad = null;
 
-        for (const chip of chips) {
-            const config = configuraciones.get(Number(chip.producto_inventariable_id));
-            const calculo = calcularBaseIgv(config.precio);
-            const detalle = {
-                chipId: Number(chip.id),
-                numeroChip: chip.numero_chip,
-                productoFacturacionId: Number(config.producto_facturacion_id),
-                codigoSku: config.codigo_sku,
-                descripcion: config.descripcion,
-                unidad: config.unidad,
-                afectacionIgv: config.tipo_afectacion_igv,
-                codigoSunat: config.codigo_clasificacion_sunat,
-                precioUnitario: config.precio,
-                valorUnitario: calculo.base,
-                baseImponible: calculo.base,
-                igv: calculo.igv,
-                importeTotal: config.precio
-            };
-            detalles.push(detalle);
+        if (tieneChips) {
+            const chipsResult = await client.query(`
+                SELECT id, numero_chip, estado, planta_actual_key, producto_inventariable_id
+                FROM fg_chip
+                WHERE numero_chip = ANY($1::varchar[])
+                ORDER BY numero_chip
+                FOR UPDATE
+            `, [lote.validos]);
+
+            if (chipsResult.rowCount !== lote.validos.length) throw new Error('CHIP_NO_ENCONTRADO');
+            const chipsPorNumero = new Map(chipsResult.rows.map((chip) => [chip.numero_chip, chip]));
+            chips = lote.validos.map((numero) => {
+                const chip = chipsPorNumero.get(numero);
+                if (!chip) throw new Error('CHIP_NO_ENCONTRADO');
+                if (chip.planta_actual_key !== plantaKey) throw new Error('CHIP_OTRA_SEDE');
+                if (chip.estado !== 'DISPONIBLE') {
+                    const error = new Error('CHIP_NO_DISPONIBLE');
+                    error.detalles = { chip: chip.numero_chip, estado: chip.estado };
+                    throw error;
+                }
+                return chip;
+            });
+
+            const configuraciones = new Map();
+            for (const chip of chips) {
+                const productId = Number(chip.producto_inventariable_id);
+                if (!configuraciones.has(productId)) {
+                    const config = await obtenerConfiguracionProducto(client, plantaKey, productId);
+                    if (config.tipo !== 'CHIP_SERIALIZADO') throw new Error('PRODUCTO_CONTROL_INVALIDO');
+                    configuraciones.set(productId, config);
+                }
+            }
+
+            for (const chip of chips) {
+                const detalle = construirDetalleChip(chip, configuraciones.get(Number(chip.producto_inventariable_id)));
+                detalles.push(detalle);
+            }
+        } else {
+            ventaCantidad = await inventarioCantidadService.prepararVentaEnTransaccion(client, {
+                productoInventariableId: Number(payload.productoInventariableId),
+                cantidad: payload.cantidad,
+                plantaKey
+            });
+            detalles.push(ventaCantidad.detalle);
+        }
+
+        for (const detalle of detalles) {
             baseImponible = redondear(baseImponible + detalle.baseImponible);
             igv = redondear(igv + detalle.igv);
             importeTotal = redondear(importeTotal + detalle.importeTotal);
@@ -264,11 +278,12 @@ const crearVentaDirecta = async (payload, userContext) => {
                     afectacion_igv_snapshot, codigo_sunat_snapshot, valor_unitario,
                     precio_unitario, base_imponible, igv, importe_total,
                     genera_certificado_snapshot, orden
-                ) VALUES ($1, 'PRODUCTO', $2, 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, FALSE, $13)
+                ) VALUES ($1, 'PRODUCTO', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, FALSE, $14)
                 RETURNING id
             `, [
                 operacionId,
                 detalle.productoFacturacionId,
+                detalle.cantidad || 1,
                 detalle.codigoSku,
                 detalle.descripcion,
                 detalle.unidad,
@@ -283,10 +298,12 @@ const crearVentaDirecta = async (payload, userContext) => {
             ]);
             const detalleId = Number(detalleResult.rows[0].id);
             detalleIds.push(detalleId);
-            await client.query(
-                'INSERT INTO fg_operacion_detalle_chip (operacion_detalle_id, chip_id) VALUES ($1, $2)',
-                [detalleId, detalle.chipId]
-            );
+            if (detalle.chipId != null) {
+                await client.query(
+                    'INSERT INTO fg_operacion_detalle_chip (operacion_detalle_id, chip_id) VALUES ($1, $2)',
+                    [detalleId, detalle.chipId]
+                );
+            }
         }
 
         const ordenResult = await client.query(`
@@ -324,34 +341,44 @@ const crearVentaDirecta = async (payload, userContext) => {
             ]);
         }
 
-        for (const detalle of detalles) {
-            const actualizacion = await client.query(`
-                UPDATE fg_chip
-                SET estado = 'VENDIDO', operacion_reserva_id = NULL, reservado_en = NULL,
-                    actualizado_por = $2, actualizado_en = CURRENT_TIMESTAMP
-                WHERE id = $1
-                  AND estado = 'DISPONIBLE'
-                  AND planta_actual_key = $3
-            `, [detalle.chipId, userContext.username, plantaKey]);
-            if (actualizacion.rowCount !== 1) throw new Error('CHIP_NO_DISPONIBLE');
+        if (tieneChips) {
+            for (const detalle of detalles) {
+                const actualizacion = await client.query(`
+                    UPDATE fg_chip
+                    SET estado = 'VENDIDO', operacion_reserva_id = NULL, reservado_en = NULL,
+                        actualizado_por = $2, actualizado_en = CURRENT_TIMESTAMP
+                    WHERE id = $1
+                      AND estado = 'DISPONIBLE'
+                      AND planta_actual_key = $3
+                `, [detalle.chipId, userContext.username, plantaKey]);
+                if (actualizacion.rowCount !== 1) throw new Error('CHIP_NO_DISPONIBLE');
 
-            await client.query(`
-                INSERT INTO fg_chip_movimiento (
-                    chip_id, tipo_movimiento, planta_origen_key, usuario,
-                    operacion_comercial_id, referencia, detalles
-                ) VALUES ($1, 'VENTA', $2, $3, $4, $5, $6)
-            `, [
-                detalle.chipId,
+                await client.query(`
+                    INSERT INTO fg_chip_movimiento (
+                        chip_id, tipo_movimiento, planta_origen_key, usuario,
+                        operacion_comercial_id, referencia, detalles
+                    ) VALUES ($1, 'VENTA', $2, $3, $4, $5, $6)
+                `, [
+                    detalle.chipId,
+                    plantaKey,
+                    userContext.username,
+                    operacionId,
+                    `Operación comercial #${operacionId}`,
+                    JSON.stringify({
+                        estado_anterior: 'DISPONIBLE',
+                        estado_nuevo: 'VENDIDO',
+                        precio_unitario: detalle.precioUnitario
+                    })
+                ]);
+            }
+        } else {
+            await inventarioCantidadService.registrarSalidaVenta(client, {
+                detalle: ventaCantidad.detalle,
+                detalleId: detalleIds[0],
                 plantaKey,
-                userContext.username,
                 operacionId,
-                `Operación comercial #${operacionId}`,
-                JSON.stringify({
-                    estado_anterior: 'DISPONIBLE',
-                    estado_nuevo: 'VENDIDO',
-                    precio_unitario: detalle.precioUnitario
-                })
-            ]);
+                username: userContext.username
+            });
         }
 
         await client.query('COMMIT');
@@ -377,5 +404,6 @@ const crearVentaDirecta = async (payload, userContext) => {
 };
 
 module.exports = {
-    crearVentaDirecta
+    crearVentaDirecta,
+    _private: Object.freeze({ obtenerConfiguracionProducto, calcularBaseIgv, construirDetalleChip })
 };

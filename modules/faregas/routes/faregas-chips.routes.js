@@ -34,6 +34,8 @@ router.get('/resumen',...inventario('CHIPS_VER'),controller.resumen);
 // permiso amplio que tenía para no afectar el flujo de certificados.
 router.get('/disponibilidad/:numeroChip',controller.consultarDisponibilidad);
 router.post('/ingresos',...inventario('CHIPS_INGRESAR'),controller.ingresar);
+router.post('/inventario-cantidad/ingresos',...inventario('CHIPS_INGRESAR'),controller.ingresarCantidad);
+router.get('/inventario-cantidad/:productoInventariableId/movimientos',...inventario('CHIPS_VER'),controller.listarMovimientosCantidad);
 router.post('/transferencias',...inventario('CHIPS_TRANSFERIR'),controller.transferir);
 // Lectura: consultar el histórico de ventas.
 router.get('/ventas',...ventas('CHIPS_VER'),controller.listarVentas);

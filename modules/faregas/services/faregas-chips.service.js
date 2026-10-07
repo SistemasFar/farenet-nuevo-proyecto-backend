@@ -8,19 +8,23 @@ const {
 const { redondear } = require('./faregas-pagos.rules');
 const paginacion = require('./faregas-paginacion.rules');
 const chipsTiposImpactoService = require('./faregas-chips-tipos-impacto.service');
+const {
+    SEDES_OPERATIVAS_CHIPS,
+    validarSedeOperativaChips,
+    obtenerPrecioVentaFiscal
+} = require('./faregas-chips-fiscal.rules');
+const inventarioCantidadService = require('./faregas-inventario-cantidad.service');
 
 // Únicas sedes que comercializan y, por tanto, pueden intercambiar stock de
 // chips. La restricción se valida aquí (además de la UI) para que no pueda
 // eludirse enviando manualmente otra planta al endpoint.
-const SEDES_TRANSFERENCIA_CHIPS = Object.freeze(['13', '98', '160']);
+const SEDES_TRANSFERENCIA_CHIPS = SEDES_OPERATIVAS_CHIPS;
+const validarSedeAlmacenChips = (plantaKey) => {
+    return validarSedeOperativaChips(plantaKey, 'SEDE_ALMACEN_CHIP_NO_HABILITADA');
+};
+
 const validarSedeTransferenciaChips = (plantaKey) => {
-    const key = String(plantaKey || '').trim();
-    if (!SEDES_TRANSFERENCIA_CHIPS.includes(key)) {
-        const error = new Error('SEDE_TRANSFERENCIA_CHIP_NO_PERMITIDA');
-        error.detalles = { plantaKey: key, sedesPermitidas: SEDES_TRANSFERENCIA_CHIPS };
-        throw error;
-    }
-    return key;
+    return validarSedeOperativaChips(plantaKey, 'SEDE_TRANSFERENCIA_CHIP_NO_PERMITIDA');
 };
 
 const normalizarCodigoProducto = (valor) => String(valor || '')
@@ -52,6 +56,34 @@ const normalizarSedesProducto = (sedes) => {
     return [...unicas.values()];
 };
 
+const validarSedesConfiguracionChips = (sedes) => {
+    for (const sede of sedes) validarSedeOperativaChips(sede.plantaKey);
+    if (sedes.some((sede) => sede.ventaHabilitada && !sede.productoFacturacionId)) {
+        throw new Error('VENTA_REQUIERE_PRODUCTO_FISCAL');
+    }
+};
+
+const cargarProductosFiscalesConfigurados = async (client, sedes) => {
+    const ids = [...new Set(sedes.map((sede) => sede.productoFacturacionId).filter(Boolean))];
+    if (!ids.length) return new Map();
+    const result = await client.query(`
+        SELECT id, precio_referencia
+        FROM fg_producto_facturacion
+        WHERE id = ANY($1::bigint[])
+          AND activo = TRUE
+          AND es_para_venta = TRUE
+          AND COALESCE(BTRIM(codigo_sku), '') <> ''
+          AND COALESCE(BTRIM(descripcion), '') <> ''
+          AND UPPER(BTRIM(unidad)) IN ('NIU', 'ZZ')
+          AND BTRIM(tipo_afectacion_igv) = '10'
+          AND (COALESCE(BTRIM(codigo_clasificacion_sunat), '') = '' OR BTRIM(codigo_clasificacion_sunat) ~ '^\\d{8}$')
+          AND precio_referencia IS NOT NULL
+          AND precio_referencia > 0
+    `, [ids]);
+    if (result.rowCount !== ids.length) throw new Error('PRODUCTO_FISCAL_INVALIDO');
+    return new Map(result.rows.map((row) => [Number(row.id), Number(row.precio_referencia)]));
+};
+
 const validarAcceso = async (user, plantaKey) => {
     if (!await authService.validarAccesoPlanta(user.username, user.perfil_id, plantaKey)) {
         throw new Error('PLANTA_NO_AUTORIZADA');
@@ -61,8 +93,9 @@ const validarAcceso = async (user, plantaKey) => {
 const productoInventariableEnSede = async (queryable, plantaKey, productoInventariableId = null, bloquear = false) => {
     const result = await queryable.query(`
         SELECT pi.id, pi.codigo, pi.nombre,
-               COALESCE(pis.producto_facturacion_id, pi.producto_facturacion_id) AS producto_facturacion_id,
-               pis.precio, pis.activo, pis.stock_permitido, pis.venta_habilitada,
+               pis.producto_facturacion_id,
+               pis.precio AS precio_legacy, pf.precio_referencia AS precio_venta_fiscal,
+               pis.activo, pis.stock_permitido, pis.venta_habilitada,
                CASE
                    WHEN pf.id IS NOT NULL
                     AND pf.activo = TRUE
@@ -79,7 +112,7 @@ const productoInventariableEnSede = async (queryable, plantaKey, productoInventa
         JOIN fg_producto_inventariable_sede pis ON pis.producto_inventariable_id = pi.id
         JOIN fg_planta p ON p.key = pis.planta_key AND p.activo = TRUE
         LEFT JOIN fg_producto_facturacion pf
-          ON pf.id = COALESCE(pis.producto_facturacion_id, pi.producto_facturacion_id)
+          ON pf.id = pis.producto_facturacion_id
         WHERE pi.activo = TRUE AND pis.planta_key = $1
           AND (($2::bigint IS NULL AND pi.codigo = 'CHIP') OR pi.id = $2::bigint)
           AND pis.activo = TRUE${bloquear ? ' FOR UPDATE OF pis' : ''}
@@ -109,7 +142,9 @@ const exigirStockPermitido = (config) => {
 
 const exigirVentaHabilitada = (config) => {
     if (config.venta_habilitada !== true) throw new Error('VENTA_CHIP_NO_HABILITADA');
+    if (!config.producto_facturacion_id) throw new Error('CHIP_PRODUCTO_FISCAL_NO_CONFIGURADO');
     if (config.producto_fiscal_valido !== true) throw new Error('PRODUCTO_FISCAL_CHIP_INVALIDO');
+    obtenerPrecioVentaFiscal({ precio_referencia: config.precio_venta_fiscal });
 };
 
 exports.listar = async ({ plantaKey, productoInventariableId, estado, buscar, page = 1, pageSize = 10 }, user) => {
@@ -237,17 +272,20 @@ exports.listarVentas = async (plantaKey, user, filtros = {}) => {
     // El TOTAL se cuenta sobre el mismo GROUP BY que el listado, para que sea
     // el del resultado filtrado y nunca items.length.
     const conteo = await db.query(
-        `SELECT COUNT(*)::int AS total FROM (
-            SELECT oc.id
-            FROM fg_operacion_comercial oc
-            JOIN fg_operacion_detalle od ON od.operacion_id = oc.id
-            JOIN fg_operacion_detalle_chip odc ON odc.operacion_detalle_id = od.id
-            JOIN fg_chip c ON c.id = odc.chip_id
-            LEFT JOIN fg_facturacion f
-              ON f.operacion_id = oc.id AND f.certificado_id IS NULL
-            WHERE ${where}
-            GROUP BY oc.id, f.id
-        ) agrupado`,
+        `SELECT COUNT(*)::int AS total
+           FROM fg_operacion_comercial oc
+          WHERE ${where}
+            AND EXISTS (
+                SELECT 1
+                  FROM fg_operacion_detalle od_origen
+                  LEFT JOIN fg_operacion_detalle_chip odc_origen
+                    ON odc_origen.operacion_detalle_id = od_origen.id
+                  LEFT JOIN fg_inventario_cantidad_movimiento mic_origen
+                    ON mic_origen.operacion_detalle_id = od_origen.id
+                   AND mic_origen.tipo_movimiento = 'VENTA'
+                 WHERE od_origen.operacion_id = oc.id
+                   AND (odc_origen.chip_id IS NOT NULL OR mic_origen.id IS NOT NULL)
+            )`,
         params
     );
 
@@ -259,7 +297,14 @@ exports.listarVentas = async (plantaKey, user, filtros = {}) => {
     oc.nombre_cliente_snapshot,
     oc.estado AS estado_venta,
     oc.importe_total,
-    ARRAY_AGG(c.numero_chip ORDER BY c.numero_chip) AS chips,
+    COALESCE(ARRAY_AGG(c.numero_chip ORDER BY c.numero_chip)
+        FILTER (WHERE c.numero_chip IS NOT NULL), ARRAY[]::varchar[]) AS chips,
+    JSONB_AGG(DISTINCT JSONB_BUILD_OBJECT(
+        'codigo', od.codigo_sku_snapshot,
+        'descripcion', od.descripcion_snapshot,
+        'cantidad', od.cantidad,
+        'serial', c.numero_chip
+    )) AS productos,
     f.id AS facturacion_id,
     f.estado AS comprobante_estado,
     f.nro_comprobante,
@@ -279,10 +324,13 @@ exports.listarVentas = async (plantaKey, user, filtros = {}) => {
     FROM fg_operacion_comercial oc
     JOIN fg_operacion_detalle od
     ON od.operacion_id = oc.id
-    JOIN fg_operacion_detalle_chip odc
+    LEFT JOIN fg_operacion_detalle_chip odc
     ON odc.operacion_detalle_id = od.id
-    JOIN fg_chip c
+    LEFT JOIN fg_chip c
     ON c.id = odc.chip_id
+    LEFT JOIN fg_inventario_cantidad_movimiento mic
+      ON mic.operacion_detalle_id = od.id
+     AND mic.tipo_movimiento = 'VENTA'
     LEFT JOIN fg_facturacion f
     ON f.operacion_id = oc.id
     AND f.certificado_id IS NULL
@@ -294,6 +342,7 @@ exports.listarVentas = async (plantaKey, user, filtros = {}) => {
         LIMIT 1
     ) anulacion ON TRUE
     WHERE ${where}
+      AND (odc.chip_id IS NOT NULL OR mic.id IS NOT NULL)
     GROUP BY oc.id, f.id, anulacion.id, anulacion.estado
     ORDER BY oc.fecha_creacion DESC, oc.id DESC
     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -310,6 +359,7 @@ exports.listarVentas = async (plantaKey, user, filtros = {}) => {
             estadoVenta: row.estado_venta,
             importeTotal: Number(row.importe_total),
             chips: row.chips || [],
+            productos: row.productos || [],
             facturacionId: row.facturacion_id == null ? null : Number(row.facturacion_id),
             comprobanteEstado: row.comprobante_estado,
             nroComprobante: row.nro_comprobante,
@@ -500,6 +550,26 @@ exports.obtenerDetalleVenta = async (operacionId, user) => {
 exports.resumen = async (plantaKey, user, productoInventariableId = null) => {
     await validarAcceso(user, plantaKey);
     const producto = await productoInventariable(db, productoInventariableId);
+    if (producto.tipo === inventarioCantidadService.TIPO_CONTROL_CANTIDAD) {
+        const [configuracion, stock] = await Promise.all([
+            inventarioCantidadService.obtenerConfiguracion(db, producto.id, plantaKey),
+            inventarioCantidadService.consultarStock(db, producto.id, plantaKey)
+        ]);
+        return {
+            total: stock.ingresos,
+            disponibles: stock.stock,
+            reservados: 0,
+            vendidos: stock.vendidos,
+            baja: 0,
+            productoInventariableId: Number(producto.id),
+            productoCodigo: producto.codigo,
+            productoNombre: producto.nombre,
+            precio: Number(configuracion.precio || 0),
+            stockPermitido: true,
+            ventaHabilitada: true,
+            mappingFiscalCompleto: Boolean(configuracion.producto_facturacion_id)
+        };
+    }
     const [result, configuracion] = await Promise.all([
         db.query(`
         SELECT COUNT(*)::int total,
@@ -510,11 +580,14 @@ exports.resumen = async (plantaKey, user, productoInventariableId = null) => {
         FROM fg_chip WHERE planta_actual_key=$1 AND producto_inventariable_id=$2
         `, [plantaKey, producto.id]),
         db.query(`
-            SELECT precio, venta_habilitada
-            FROM fg_producto_inventariable_sede
-            WHERE producto_inventariable_id = $1
-              AND planta_key = $2
-              AND activo = TRUE
+            SELECT pis.precio AS precio_legacy, pis.stock_permitido, pis.venta_habilitada,
+                   pis.producto_facturacion_id,
+                   pf.precio_referencia AS precio_venta_fiscal
+            FROM fg_producto_inventariable_sede pis
+            LEFT JOIN fg_producto_facturacion pf ON pf.id = pis.producto_facturacion_id
+            WHERE pis.producto_inventariable_id = $1
+              AND pis.planta_key = $2
+              AND pis.activo = TRUE
         `, [producto.id, plantaKey])
     ]);
     const configuracionSede = configuracion.rows[0];
@@ -523,12 +596,12 @@ exports.resumen = async (plantaKey, user, productoInventariableId = null) => {
         productoInventariableId: Number(producto.id),
         productoCodigo: producto.codigo,
         productoNombre: producto.nombre,
-        // Se conserva como metadato de compatibilidad para consumidores antiguos.
-        // El inventario físico ya no depende de esta configuración comercial.
-        precio: Number(configuracionSede?.precio || 0),
-        stockPermitido: true,
+        // `precio` se conserva en el contrato HTTP, pero ya deriva del P. venta
+        // fiscal. La columna pis.precio permanece sólo como dato legacy.
+        precio: Number(configuracionSede?.precio_venta_fiscal || 0),
+        stockPermitido: configuracionSede?.stock_permitido === true,
         ventaHabilitada: configuracionSede?.venta_habilitada === true,
-        mappingFiscalCompleto: false
+        mappingFiscalCompleto: Boolean(configuracionSede?.producto_facturacion_id)
     };
 };
 
@@ -541,43 +614,58 @@ exports.listarProductosInventariables = async (plantaKey, user) => {
                    SELECT json_agg(json_build_object(
                        'plantaKey', p.key,
                        'plantaNombre', p.nombre,
-                       'precio', pis.precio,
+                        'precio', pf.precio_referencia,
+                        'precioLegacy', pis.precio,
+                        'precioVenta', pf.precio_referencia,
                        'stockPermitido', pis.stock_permitido,
                        'ventaHabilitada', pis.venta_habilitada,
-                       'productoFacturacionId', COALESCE(pis.producto_facturacion_id, pi.producto_facturacion_id),
+                        'productoFacturacionId', pis.producto_facturacion_id,
                        'productoFiscalCodigo', pf.codigo_sku,
-                       'productoFiscalDescripcion', pf.descripcion
+                        'productoFiscalDescripcion', pf.descripcion,
+                        'productoFiscalActivo', pf.activo,
+                        'productoFiscalParaVenta', pf.es_para_venta
                    ) ORDER BY p.nombre)
                    FROM fg_producto_inventariable_sede pis
                    JOIN fg_planta p ON p.key = pis.planta_key
                    LEFT JOIN fg_producto_facturacion pf
-                     ON pf.id = COALESCE(pis.producto_facturacion_id, pi.producto_facturacion_id)
+                      ON pf.id = pis.producto_facturacion_id
                    WHERE pis.producto_inventariable_id = pi.id
                      AND pis.activo = TRUE
-                     AND p.activo = TRUE
-                     AND p.empresa_key = 'FAREGAS'
+                      AND p.activo = TRUE
+                      AND p.empresa_key = 'FAREGAS'
+                      AND pis.planta_key = ANY($2::varchar[])
                ), '[]'::json) AS sedes,
-               (SELECT COUNT(*)::int FROM fg_chip c
-                WHERE c.producto_inventariable_id = pi.id) AS stock_total,
-               (SELECT COUNT(*)::int FROM fg_chip c
-                WHERE c.producto_inventariable_id = pi.id
-                  AND c.planta_actual_key = $1) AS stock_sede,
-               (SELECT COUNT(*)::int FROM fg_chip c
-                WHERE c.producto_inventariable_id = pi.id
-                  AND c.planta_actual_key = $1 AND c.estado = 'DISPONIBLE') AS disponibles_sede,
-               (SELECT COUNT(*)::int FROM fg_chip c
-                WHERE c.producto_inventariable_id = pi.id
-                  AND c.planta_actual_key = $1 AND c.estado = 'RESERVADO') AS reservados_sede,
-               (SELECT COUNT(*)::int FROM fg_chip c
-                WHERE c.producto_inventariable_id = pi.id
-                  AND c.planta_actual_key = $1 AND c.estado = 'VENDIDO') AS vendidos_sede,
-               (SELECT COUNT(*)::int FROM fg_chip c
-                WHERE c.producto_inventariable_id = pi.id
-                  AND c.planta_actual_key = $1 AND c.estado = 'BAJA') AS bajas_sede
+               CASE WHEN pi.tipo = 'CANTIDAD' THEN COALESCE((
+                   SELECT SUM(CASE WHEN m.sentido = 'ENTRADA' THEN m.cantidad ELSE -m.cantidad END)
+                   FROM fg_inventario_cantidad_movimiento m
+                   WHERE m.producto_inventariable_id = pi.id
+               ), 0) ELSE (SELECT COUNT(*) FROM fg_chip c WHERE c.producto_inventariable_id = pi.id) END AS stock_total,
+               CASE WHEN pi.tipo = 'CANTIDAD' THEN COALESCE((
+                   SELECT SUM(CASE WHEN m.sentido = 'ENTRADA' THEN m.cantidad ELSE -m.cantidad END)
+                   FROM fg_inventario_cantidad_movimiento m
+                   WHERE m.producto_inventariable_id = pi.id AND m.planta_key = $1
+               ), 0) ELSE (SELECT COUNT(*) FROM fg_chip c WHERE c.producto_inventariable_id = pi.id AND c.planta_actual_key = $1) END AS stock_sede,
+               CASE WHEN pi.tipo = 'CANTIDAD' THEN COALESCE((
+                   SELECT SUM(CASE WHEN m.sentido = 'ENTRADA' THEN m.cantidad ELSE -m.cantidad END)
+                   FROM fg_inventario_cantidad_movimiento m
+                   WHERE m.producto_inventariable_id = pi.id AND m.planta_key = $1
+               ), 0) ELSE (SELECT COUNT(*) FROM fg_chip c WHERE c.producto_inventariable_id = pi.id AND c.planta_actual_key = $1 AND c.estado = 'DISPONIBLE') END AS disponibles_sede,
+               CASE WHEN pi.tipo = 'CANTIDAD' THEN 0 ELSE (SELECT COUNT(*) FROM fg_chip c WHERE c.producto_inventariable_id = pi.id AND c.planta_actual_key = $1 AND c.estado = 'RESERVADO') END AS reservados_sede,
+               CASE WHEN pi.tipo = 'CANTIDAD' THEN COALESCE((
+                   SELECT SUM(m.cantidad) FROM fg_inventario_cantidad_movimiento m
+                   WHERE m.producto_inventariable_id = pi.id AND m.planta_key = $1 AND m.tipo_movimiento = 'VENTA'
+               ), 0) ELSE (SELECT COUNT(*) FROM fg_chip c WHERE c.producto_inventariable_id = pi.id AND c.planta_actual_key = $1 AND c.estado = 'VENDIDO') END AS vendidos_sede,
+               CASE WHEN pi.tipo = 'CANTIDAD' THEN 0 ELSE (SELECT COUNT(*) FROM fg_chip c WHERE c.producto_inventariable_id = pi.id AND c.planta_actual_key = $1 AND c.estado = 'BAJA') END AS bajas_sede
         FROM fg_producto_inventariable pi
         WHERE pi.activo = TRUE
+          AND EXISTS (
+              SELECT 1 FROM fg_producto_inventariable_sede visible
+              WHERE visible.producto_inventariable_id = pi.id
+                AND visible.planta_key = $1
+                AND visible.activo = TRUE
+          )
         ORDER BY pi.nombre, pi.codigo
-    `, [plantaKey]);
+    `, [plantaKey, SEDES_OPERATIVAS_CHIPS]);
     return result.rows.map((row) => ({
         id: Number(row.id),
         codigo: row.codigo,
@@ -598,15 +686,32 @@ exports.listarProductosInventariables = async (plantaKey, user) => {
 
 exports.catalogosProductosInventariables = async (plantaKey, user) => {
     await validarAcceso(user, plantaKey);
-    const sedes = await db.query(`
+    const [sedes, productosFiscales] = await Promise.all([db.query(`
         SELECT key, nombre
         FROM fg_planta
         WHERE activo = TRUE
           AND empresa_key = 'FAREGAS'
           AND key = ANY($1::varchar[])
         ORDER BY nombre
-    `, [SEDES_TRANSFERENCIA_CHIPS]);
-    return { sedes: sedes.rows };
+    `, [SEDES_TRANSFERENCIA_CHIPS]), db.query(`
+        SELECT id, codigo_sku, descripcion, precio_referencia
+        FROM fg_producto_facturacion
+        WHERE activo = TRUE
+          AND es_para_venta = TRUE
+          AND precio_referencia IS NOT NULL
+          AND precio_referencia > 0
+          AND (codigo_sku ILIKE '%CHIP%' OR descripcion ILIKE '%CHIP%')
+        ORDER BY codigo_sku, descripcion
+    `)]);
+    return {
+        sedes: sedes.rows,
+        productosFiscales: productosFiscales.rows.map((row) => ({
+            id: Number(row.id),
+            codigoSku: row.codigo_sku,
+            descripcion: row.descripcion,
+            precioVenta: Number(row.precio_referencia)
+        }))
+    };
 };
 
 exports.crearProductoInventariable = async (data, user, ipDireccion = null) => {
@@ -614,17 +719,11 @@ exports.crearProductoInventariable = async (data, user, ipDireccion = null) => {
     const nombre = normalizarNombreProducto(data.nombre);
     const tipo = String(data.tipo || 'CHIP_SERIALIZADO').trim().toUpperCase();
     const sedes = normalizarSedesProducto(data.sedes);
-    const productoFacturacionId = data.productoFacturacionId ? Number(data.productoFacturacionId) : null;
 
     if (codigo.length < 2 || codigo.length > 60) throw new Error('CODIGO_PRODUCTO_INVENTARIABLE_INVALIDO');
     if (nombre.length < 2 || nombre.length > 200) throw new Error('NOMBRE_PRODUCTO_INVENTARIABLE_INVALIDO');
     if (tipo.length < 2 || tipo.length > 100) throw new Error('TIPO_PRODUCTO_INVENTARIABLE_INVALIDO');
-    if (sedes.some((sede) => !Number.isFinite(sede.precio) || sede.precio <= 0)) {
-        throw new Error('PRECIO_PRODUCTO_INVENTARIABLE_INVALIDO');
-    }
-    if (sedes.some((sede) => sede.ventaHabilitada && !sede.productoFacturacionId && !productoFacturacionId)) {
-        throw new Error('VENTA_REQUIERE_PRODUCTO_FISCAL');
-    }
+    validarSedesConfiguracionChips(sedes);
 
     const client = await db.connect();
     try {
@@ -638,46 +737,14 @@ exports.crearProductoInventariable = async (data, user, ipDireccion = null) => {
         `, [sedes.map((sede) => sede.plantaKey)]);
         if (plantas.rowCount !== sedes.length) throw new Error('SEDE_FAREGAS_INVALIDA');
 
-        const productosFiscales = sedes
-            .map((sede) => sede.productoFacturacionId || productoFacturacionId)
-            .filter(Boolean);
-        if (productosFiscales.length) {
-            const fiscales = await client.query(`
-                SELECT id
-                FROM fg_producto_facturacion
-                WHERE id = ANY($1::bigint[])
-                  AND activo = TRUE
-                  AND es_para_venta = TRUE
-                  AND COALESCE(BTRIM(codigo_sku), '') <> ''
-                  AND COALESCE(BTRIM(descripcion), '') <> ''
-                  AND UPPER(BTRIM(unidad)) IN ('NIU', 'ZZ')
-                  AND BTRIM(tipo_afectacion_igv) = '10'
-                  AND (COALESCE(BTRIM(codigo_clasificacion_sunat), '') = '' OR BTRIM(codigo_clasificacion_sunat) ~ '^\\d{8}$')
-            `, [productosFiscales]);
-            if (fiscales.rowCount !== new Set(productosFiscales).size) {
-                throw new Error('PRODUCTO_FISCAL_INVALIDO');
-            }
-        }
-
-        if (productoFacturacionId) {
-            const fiscal = await client.query(`
-                SELECT id FROM fg_producto_facturacion
-                WHERE id = $1 AND activo = TRUE AND es_para_venta = TRUE
-                  AND COALESCE(BTRIM(codigo_sku), '') <> ''
-                  AND COALESCE(BTRIM(descripcion), '') <> ''
-                  AND UPPER(BTRIM(unidad)) IN ('NIU', 'ZZ')
-                  AND BTRIM(tipo_afectacion_igv) = '10'
-                  AND (COALESCE(BTRIM(codigo_clasificacion_sunat), '') = '' OR BTRIM(codigo_clasificacion_sunat) ~ '^\\d{8}$')
-            `, [productoFacturacionId]);
-            if (!fiscal.rowCount) throw new Error('PRODUCTO_FISCAL_INVALIDO');
-        }
+        const productosFiscales = await cargarProductosFiscalesConfigurados(client, sedes);
 
         const producto = await client.query(`
             INSERT INTO fg_producto_inventariable
                 (codigo, nombre, tipo, producto_facturacion_id, control_stock, activo)
             VALUES ($1, $2, $3, $4, TRUE, TRUE)
             RETURNING id, codigo, nombre, tipo
-        `, [codigo, nombre, tipo, productoFacturacionId]);
+        `, [codigo, nombre, tipo, null]);
         const productoId = Number(producto.rows[0].id);
 
         for (const sede of sedes) {
@@ -689,7 +756,7 @@ exports.crearProductoInventariable = async (data, user, ipDireccion = null) => {
             `, [
                 productoId,
                 sede.plantaKey,
-                sede.precio,
+                productosFiscales.get(sede.productoFacturacionId) || 0,
                 sede.stockPermitido,
                 sede.ventaHabilitada,
                 sede.productoFacturacionId
@@ -723,19 +790,10 @@ exports.editarProductoInventariable = async (id, data, user, ipDireccion = null)
     const nombre = normalizarNombreProducto(data.nombre);
     const tipo = String(data.tipo || 'OTRO_PRODUCTO_FISICO').trim().toUpperCase();
     const sedes = normalizarSedesProducto(data.sedes);
-    const recibeProductoFacturacion = Object.prototype.hasOwnProperty.call(data || {}, 'productoFacturacionId');
-    const productoFacturacionId = recibeProductoFacturacion && data.productoFacturacionId !== null && data.productoFacturacionId !== ''
-        ? Number(data.productoFacturacionId)
-        : null;
 
     if (nombre.length < 2 || nombre.length > 200) throw new Error('NOMBRE_PRODUCTO_INVENTARIABLE_INVALIDO');
     if (tipo.length < 2 || tipo.length > 100) throw new Error('TIPO_PRODUCTO_INVENTARIABLE_INVALIDO');
-    if (sedes.some((sede) => !Number.isFinite(sede.precio) || sede.precio <= 0)) {
-        throw new Error('PRECIO_PRODUCTO_INVENTARIABLE_INVALIDO');
-    }
-    if (sedes.some((sede) => sede.ventaHabilitada && !sede.productoFacturacionId && !productoFacturacionId)) {
-        throw new Error('VENTA_REQUIERE_PRODUCTO_FISCAL');
-    }
+    validarSedesConfiguracionChips(sedes);
 
     const client = await db.connect();
     try {
@@ -755,59 +813,20 @@ exports.editarProductoInventariable = async (id, data, user, ipDireccion = null)
             if (plantas.rowCount !== sedes.length) throw new Error('SEDE_FAREGAS_INVALIDA');
         }
 
-        const productosFiscales = sedes
-            .map((sede) => sede.productoFacturacionId || productoFacturacionId)
-            .filter(Boolean);
-        if (productosFiscales.length) {
-            const fiscales = await client.query(`
-                SELECT id
-                FROM fg_producto_facturacion
-                WHERE id = ANY($1::bigint[])
-                  AND activo = TRUE
-                  AND es_para_venta = TRUE
-                  AND COALESCE(BTRIM(codigo_sku), '') <> ''
-                  AND COALESCE(BTRIM(descripcion), '') <> ''
-                  AND UPPER(BTRIM(unidad)) IN ('NIU', 'ZZ')
-                  AND BTRIM(tipo_afectacion_igv) = '10'
-                  AND (COALESCE(BTRIM(codigo_clasificacion_sunat), '') = '' OR BTRIM(codigo_clasificacion_sunat) ~ '^\\d{8}$')
-            `, [productosFiscales]);
-            if (fiscales.rowCount !== new Set(productosFiscales).size) {
-                throw new Error('PRODUCTO_FISCAL_INVALIDO');
-            }
-        }
+        const productosFiscales = await cargarProductosFiscalesConfigurados(client, sedes);
 
-        if (productoFacturacionId) {
-            const fiscal = await client.query(`
-                SELECT id FROM fg_producto_facturacion
-                WHERE id = $1 AND activo = TRUE AND es_para_venta = TRUE
-                  AND COALESCE(BTRIM(codigo_sku), '') <> ''
-                  AND COALESCE(BTRIM(descripcion), '') <> ''
-                  AND UPPER(BTRIM(unidad)) IN ('NIU', 'ZZ')
-                  AND BTRIM(tipo_afectacion_igv) = '10'
-                  AND (COALESCE(BTRIM(codigo_clasificacion_sunat), '') = '' OR BTRIM(codigo_clasificacion_sunat) ~ '^\\d{8}$')
-            `, [productoFacturacionId]);
-            if (!fiscal.rowCount) throw new Error('PRODUCTO_FISCAL_INVALIDO');
-        }
-
-        if (recibeProductoFacturacion) {
-            await client.query(`
-                UPDATE fg_producto_inventariable
-                SET nombre = $1, tipo = $2, producto_facturacion_id = $3, fecha_modificacion = NOW()
-                WHERE id = $4
-            `, [nombre, tipo, productoFacturacionId, id]);
-        } else {
-            await client.query(`
-                UPDATE fg_producto_inventariable
-                SET nombre = $1, tipo = $2, fecha_modificacion = NOW()
-                WHERE id = $3
-            `, [nombre, tipo, id]);
-        }
+        await client.query(`
+            UPDATE fg_producto_inventariable
+            SET nombre = $1, tipo = $2, fecha_modificacion = NOW()
+            WHERE id = $3
+        `, [nombre, tipo, id]);
 
         await client.query(`
             UPDATE fg_producto_inventariable_sede
             SET activo = FALSE
             WHERE producto_inventariable_id = $1
-        `, [id]);
+              AND planta_key = ANY($2::varchar[])
+        `, [id, SEDES_OPERATIVAS_CHIPS]);
 
         for (const sede of sedes) {
             await client.query(`
@@ -817,7 +836,7 @@ exports.editarProductoInventariable = async (id, data, user, ipDireccion = null)
                 ) VALUES ($1, $2, $3, TRUE, $4, $5, $6)
                 ON CONFLICT (producto_inventariable_id, planta_key)
                 DO UPDATE SET
-                    precio = EXCLUDED.precio,
+                    precio = fg_producto_inventariable_sede.precio,
                     activo = TRUE,
                     stock_permitido = EXCLUDED.stock_permitido,
                     venta_habilitada = EXCLUDED.venta_habilitada,
@@ -825,7 +844,7 @@ exports.editarProductoInventariable = async (id, data, user, ipDireccion = null)
             `, [
                 id,
                 sede.plantaKey,
-                sede.precio,
+                productosFiscales.get(sede.productoFacturacionId) || 0,
                 sede.stockPermitido,
                 sede.ventaHabilitada,
                 sede.productoFacturacionId || null
@@ -970,6 +989,7 @@ exports.consultarDisponibilidad = async ({ plantaKey, numeroChip, certificadoId 
 };
 
 exports.ingresar = async ({ plantaKey, productoInventariableId, numeros, referencia }, user) => {
+    validarSedeAlmacenChips(plantaKey);
     await validarAcceso(user, plantaKey);
     const lote = normalizarLoteScanner(Array.isArray(numeros) ? numeros.join('\n') : numeros);
     if (!lote.validos.length || lote.duplicados.length || lote.errores.length) {
@@ -1070,6 +1090,7 @@ exports.liberar = async ({ plantaKey, numeroChip, operacionId, referencia }, use
 };
 
 exports.iniciarVentaSoloChip = async ({ plantaKey, numeroChip, clienteId }, user) => {
+    validarSedeOperativaChips(plantaKey);
     await validarAcceso(user, plantaKey);
     const numero = normalizarNumeroChip(numeroChip);
     const client = await db.connect();
@@ -1088,16 +1109,17 @@ exports.iniciarVentaSoloChip = async ({ plantaKey, numeroChip, clienteId }, user
         const pf = await client.query('SELECT * FROM fg_producto_facturacion WHERE id=$1', [config.producto_facturacion_id]);
         if (!pf.rowCount) throw new Error('PRODUCTO_FISCAL_CHIP_INVALIDO');
         const pfData = pf.rows[0];
+        const precioVenta = obtenerPrecioVentaFiscal(pfData);
 
-        const base = redondear(Number(config.precio) / 1.18);
-        const igv = redondear(Number(config.precio) - base);
+        const base = redondear(precioVenta / 1.18);
+        const igv = redondear(precioVenta - base);
 
         const operacion = await client.query(`
             INSERT INTO fg_operacion_comercial (
                 planta_key, cliente_id, moneda_key, base_imponible, igv,
                 importe_total, estado, usuario_creacion
             ) VALUES ($1,$2,'sol',$3,$4,$5,'PENDIENTE_PAGO',$6) RETURNING id
-        `, [plantaKey, clienteId || null, base, igv, Number(config.precio), user.username]);
+        `, [plantaKey, clienteId || null, base, igv, precioVenta, user.username]);
         const operacionId = Number(operacion.rows[0].id);
 
         await client.query(`
@@ -1116,7 +1138,7 @@ exports.iniciarVentaSoloChip = async ({ plantaKey, numeroChip, clienteId }, user
             pfData.codigo_clasificacion_sunat,
             pfData.id,
             base,
-            Number(config.precio),
+            precioVenta,
             igv
         ]);
 
@@ -1125,7 +1147,7 @@ exports.iniciarVentaSoloChip = async ({ plantaKey, numeroChip, clienteId }, user
             VALUES($1,'RESERVA',$2,$3,$4)`, [chip.id,plantaKey,user.username,operacionId]);
         
         await client.query('COMMIT');
-        return { operacionId, chipId: chip.id, numeroChip: chip.numero_chip, precio: Number(config.precio) };
+        return { operacionId, chipId: chip.id, numeroChip: chip.numero_chip, precio: precioVenta };
     } catch (e) {
         await client.query('ROLLBACK');
         throw e;
@@ -1186,5 +1208,6 @@ exports.listarCatalogoChipsFiscales = async () => {
 
 exports._private = Object.freeze({
     SEDES_TRANSFERENCIA_CHIPS,
+    validarSedeAlmacenChips,
     validarSedeTransferenciaChips
 });

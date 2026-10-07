@@ -21,3 +21,15 @@ test('una sede ajena no puede usarse como origen o destino de chips', () => {
             && error.detalles.plantaKey === '201'
     );
 });
+
+test('el ingreso de chips sólo acepta sedes con almacén', () => {
+    const { validarSedeAlmacenChips } = chipsService._private;
+    assert.equal(validarSedeAlmacenChips('13'), '13');
+    assert.equal(validarSedeAlmacenChips('98'), '98');
+    assert.equal(validarSedeAlmacenChips('160'), '160');
+    assert.throws(
+        () => validarSedeAlmacenChips('201'),
+        (error) => error.message === 'SEDE_ALMACEN_CHIP_NO_HABILITADA'
+            && error.detalles.plantaKey === '201'
+    );
+});

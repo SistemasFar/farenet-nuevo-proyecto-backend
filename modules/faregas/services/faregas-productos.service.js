@@ -38,14 +38,25 @@ exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId, page, 
         condiciones.push(`(
             p.codigo_sku ILIKE ${searchParam} OR 
             p.descripcion ILIKE ${searchParam} OR 
-            EXISTS (
+             EXISTS (
                 SELECT 1
                 FROM fg_tarifa tarifa
                 JOIN fg_planta planta ON planta.key = tarifa.planta_key
                 WHERE tarifa.producto_facturacion_id = p.id
                   AND tarifa.activo = TRUE
                   AND planta.activo = TRUE
-                  AND planta.nombre ILIKE ${searchParam}
+                   AND planta.nombre ILIKE ${searchParam}
+            ) OR EXISTS (
+                SELECT 1
+                FROM fg_producto_inventariable_sede inventario_sede
+                JOIN fg_planta planta_chip ON planta_chip.key = inventario_sede.planta_key
+                WHERE inventario_sede.producto_facturacion_id = p.id
+                  AND inventario_sede.activo = TRUE
+                  AND inventario_sede.stock_permitido = TRUE
+                  AND inventario_sede.venta_habilitada = TRUE
+                  AND inventario_sede.planta_key = ANY(ARRAY['13','98','160']::varchar[])
+                  AND planta_chip.activo = TRUE
+                  AND planta_chip.nombre ILIKE ${searchParam}
             )
         )`);
     }
@@ -77,14 +88,41 @@ exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId, page, 
         SELECT p.id, p.codigo_sku, p.descripcion, p.tipo_producto, p.categoria_dms,
                p.categoria_id, c.codigo AS categoria_codigo, c.nombre AS categoria_nombre,
                COALESCE(ARRAY(
-                   SELECT DISTINCT planta.nombre
-                   FROM fg_tarifa tarifa
-                   JOIN fg_planta planta ON planta.key = tarifa.planta_key
-                   WHERE tarifa.producto_facturacion_id = p.id
-                     AND tarifa.activo = TRUE
-                     AND planta.activo = TRUE
-                   ORDER BY planta.nombre
+                   SELECT DISTINCT vinculacion.nombre
+                   FROM (
+                       SELECT planta.nombre
+                       FROM fg_tarifa tarifa
+                       JOIN fg_planta planta ON planta.key = tarifa.planta_key
+                       WHERE tarifa.producto_facturacion_id = p.id
+                         AND tarifa.activo = TRUE
+                         AND planta.activo = TRUE
+                       UNION
+                       SELECT planta_chip.nombre
+                       FROM fg_producto_inventariable_sede inventario_sede
+                       JOIN fg_planta planta_chip ON planta_chip.key = inventario_sede.planta_key
+                       WHERE inventario_sede.producto_facturacion_id = p.id
+                         AND inventario_sede.activo = TRUE
+                         AND inventario_sede.stock_permitido = TRUE
+                         AND inventario_sede.venta_habilitada = TRUE
+                         AND inventario_sede.planta_key = ANY(ARRAY['13','98','160']::varchar[])
+                         AND planta_chip.activo = TRUE
+                   ) vinculacion
+                   ORDER BY vinculacion.nombre
                ), ARRAY[]::text[]) AS sedes_faregas,
+               COALESCE(ARRAY(
+                   SELECT DISTINCT CASE
+                       WHEN inventariable.tipo = 'CANTIDAD' THEN 'VENTA / INVENTARIO'
+                       ELSE 'VENTA DE CHIPS'
+                   END
+                   FROM fg_producto_inventariable_sede inventario_sede
+                   JOIN fg_producto_inventariable inventariable
+                     ON inventariable.id = inventario_sede.producto_inventariable_id
+                   WHERE inventario_sede.producto_facturacion_id = p.id
+                     AND inventario_sede.activo = TRUE
+                     AND inventario_sede.stock_permitido = TRUE
+                     AND inventario_sede.venta_habilitada = TRUE
+                     AND inventario_sede.planta_key = ANY(ARRAY['13','98','160']::varchar[])
+               ), ARRAY[]::text[]) AS usos_operativos,
                p.cuenta_por_cobrar, p.codigo_barras, p.unidad,
                p.precio_unitario, p.precio_referencia,
                p.valor_referencial_unitario, p.codigo_clasificacion_sunat,

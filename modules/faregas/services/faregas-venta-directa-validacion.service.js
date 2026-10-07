@@ -5,6 +5,8 @@ const {
     redondear,
     esProductoFiscalChipValido
 } = require('./faregas-pagos.rules');
+const { validarSedeOperativaChips } = require('./faregas-chips-fiscal.rules');
+const inventarioCantidadService = require('./faregas-inventario-cantidad.service');
 
 const ESTADOS_NO_DISPONIBLES = {
     RESERVADO: { codigo: 'CHIP_RESERVADO', motivo: 'Reservado' },
@@ -34,7 +36,7 @@ const construirItem = (numeroChip) => ({
 });
 
 const construirItemEncontrado = (row) => {
-    const precio = Number(row.precio);
+    const precio = Number(row.precio_venta_fiscal);
     const precioConfigurado = Number.isFinite(precio) && precio > 0;
 
     return {
@@ -50,7 +52,7 @@ const construirItemEncontrado = (row) => {
         precioConfigurado,
         stockPermitido: row.stock_permitido === true,
         ventaHabilitada: row.venta_habilitada === true,
-        productoFiscalValido: esProductoFiscalChipValido({
+        productoFiscalValido: Boolean(row.producto_facturacion_id) && esProductoFiscalChipValido({
             activo: row.fiscal_activo,
             es_para_venta: row.es_para_venta,
             codigo_sku: row.codigo_sku,
@@ -112,6 +114,14 @@ const evaluarChip = ({ row, plantaKey, plantaNombre }) => {
         );
     }
 
+    if (!row.producto_facturacion_id) {
+        return invalidar(
+            item,
+            'CHIP_PRODUCTO_FISCAL_NO_CONFIGURADO',
+            'Falta vincular el producto fiscal para esta sede'
+        );
+    }
+
     if (!item.productoFiscalValido) {
         return invalidar(
             item,
@@ -123,8 +133,8 @@ const evaluarChip = ({ row, plantaKey, plantaNombre }) => {
     if (!item.precioConfigurado) {
         return invalidar(
             item,
-            'PRECIO_PRODUCTO_INVALIDO',
-            'Precio no configurado para esta sede'
+            'PRECIO_VENTA_FISCAL_CHIP_INVALIDO',
+            'El producto fiscal no tiene un P. venta válido'
         );
     }
 
@@ -135,7 +145,63 @@ const validarVentaDirecta = async (payload, userContext, queryable = db) => {
     const plantaKey = String(userContext?.planta_key || '').trim();
     if (!plantaKey) throw new Error('PLANTA_REQUERIDA');
 
-    if (!Array.isArray(payload?.chips) || payload.chips.length === 0) {
+    const tieneChips = Array.isArray(payload?.chips) && payload.chips.length > 0;
+    const tieneCantidad = payload?.productoInventariableId != null || payload?.cantidad != null;
+    if (tieneChips && tieneCantidad) throw new Error('MODO_VENTA_INVALIDO');
+
+    if (tieneCantidad) {
+        inventarioCantidadService.validarSedeHojas(plantaKey);
+        const cantidad = inventarioCantidadService.normalizarCantidad(payload.cantidad);
+        const planta = await authService.validarAccesoPlanta(
+            userContext.username,
+            userContext.perfil_id,
+            plantaKey
+        );
+        if (!planta) throw new Error('PLANTA_NO_AUTORIZADA');
+
+        const config = await inventarioCantidadService.obtenerConfiguracion(
+            queryable,
+            Number(payload.productoInventariableId),
+            plantaKey
+        );
+        const stock = await inventarioCantidadService.consultarStock(
+            queryable,
+            Number(payload.productoInventariableId),
+            plantaKey
+        );
+        const precio = redondear(Number(config.precio));
+        const validoParaVenta = stock.stock >= cantidad;
+        return {
+            modo: 'CANTIDAD',
+            items: [{
+                numeroChip: null,
+                existe: true,
+                estado: validoParaVenta ? 'DISPONIBLE' : null,
+                plantaKey,
+                plantaNombre: planta.nombre || 'SURCO',
+                productoInventariableId: Number(config.id),
+                productoCodigo: config.codigo,
+                productoNombre: config.nombre,
+                cantidad,
+                disponible: stock.stock,
+                precio,
+                precioConfigurado: true,
+                stockPermitido: true,
+                ventaHabilitada: true,
+                productoFiscalValido: true,
+                validoParaVenta,
+                codigo: validoParaVenta ? null : 'STOCK_INSUFICIENTE',
+                motivo: validoParaVenta ? null : 'Stock insuficiente.'
+            }],
+            totalEstimado: redondear(precio * cantidad),
+            cantidadSolicitados: cantidad,
+            cantidadValidos: validoParaVenta ? cantidad : 0
+        };
+    }
+
+    validarSedeOperativaChips(plantaKey);
+
+    if (!tieneChips) {
         throw new Error('CHIPS_REQUERIDOS');
     }
 
@@ -160,7 +226,9 @@ const validarVentaDirecta = async (payload, userContext, queryable = db) => {
                pi.nombre AS producto_nombre,
                pi.activo AS producto_activo,
                pis.activo AS sede_activa,
-               pis.precio, pis.stock_permitido, pis.venta_habilitada,
+               pis.precio AS precio_legacy, pis.stock_permitido, pis.venta_habilitada,
+               pis.producto_facturacion_id,
+               pf.precio_referencia AS precio_venta_fiscal,
                pf.codigo_sku, pf.descripcion, pf.unidad,
                pf.tipo_afectacion_igv, pf.codigo_clasificacion_sunat,
                pf.activo AS fiscal_activo, pf.es_para_venta
@@ -173,7 +241,7 @@ const validarVentaDirecta = async (payload, userContext, queryable = db) => {
           ON pis.producto_inventariable_id = pi.id
          AND pis.planta_key = $2
         LEFT JOIN fg_producto_facturacion pf
-          ON pf.id = COALESCE(pis.producto_facturacion_id, pi.producto_facturacion_id)
+          ON pf.id = pis.producto_facturacion_id
         WHERE c.numero_chip = ANY($1::varchar[])
         ORDER BY c.numero_chip
     `, [lote.validos, plantaKey]);

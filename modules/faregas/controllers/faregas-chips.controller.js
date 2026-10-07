@@ -1,6 +1,7 @@
 const service = require('../services/faregas-chips.service');
 const ventaDirectaValidacionService = require('../services/faregas-venta-directa-validacion.service');
 const ventaDirectaFase2Service = require('../services/faregas-venta-directa-fase2.service');
+const inventarioCantidadService = require('../services/faregas-inventario-cantidad.service');
 
 const respond = (res, error) => {
     const mensajes = {
@@ -14,8 +15,10 @@ const respond = (res, error) => {
         CHIP_NO_DISPONIBLE: 'Uno o más chips ya no están disponibles.',
         STOCK_CHIP_NO_PERMITIDO: 'El producto de chip no tiene stock permitido en esta sede.',
         VENTA_CHIP_NO_HABILITADA: 'El producto de chip no está habilitado para venta en esta sede.',
+        CHIP_PRODUCTO_FISCAL_NO_CONFIGURADO: 'Falta vincular un producto fiscal al tipo de chip en esta sede.',
         PRODUCTO_FISCAL_CHIP_INVALIDO: 'El producto fiscal configurado para el chip no es válido.',
         PRECIO_PRODUCTO_INVALIDO: 'El precio configurado del chip no es válido.',
+        PRECIO_VENTA_FISCAL_CHIP_INVALIDO: 'El producto fiscal vinculado no tiene un P. venta válido.',
         DATOS_FACTURACION_INVALIDOS: 'Los datos fiscales no permiten emitir el comprobante.',
         DATOS_CLIENTE_REQUERIDOS: 'Complete los datos del cliente.',
         DATOS_CLIENTE_INVALIDOS: 'Los datos del cliente no son válidos.',
@@ -38,12 +41,22 @@ const respond = (res, error) => {
         PLANTA_NO_AUTORIZADA: 'No tiene acceso a la sede de la operación.',
         TIPO_CHIP_NO_ENCONTRADA: 'El tipo de chip no existe.',
         TIPO_CHIP_BLOQUEADO: 'El tipo de chip tiene dependencias que no se pueden eliminar.',
+        SEDE_ALMACEN_CHIP_NO_HABILITADA: 'El ingreso de chips sólo está habilitado en los almacenes de COLINA, SURCO y SURQUILLO.',
         SEDE_TRANSFERENCIA_CHIP_NO_PERMITIDA: 'Los chips sólo pueden transferirse entre COLINA, SURCO y SURQUILLO.',
+        SEDE_CHIP_NO_HABILITADA: 'La venta de chips sólo está habilitada en COLINA, SURCO y SURQUILLO.',
+        CANTIDAD_INVALIDA: 'Ingrese una cantidad entera mayor a cero.',
+        REFERENCIA_INVALIDA: 'La referencia admite como máximo 250 caracteres.',
+        PRODUCTO_CANTIDAD_NO_CONFIGURADO_SEDE: 'El producto por cantidad no está configurado para esta sede.',
+        SEDE_PRODUCTO_CANTIDAD_NO_HABILITADA: 'Los productos de hojas sólo están habilitados en SURCO.',
+        STOCK_PRODUCTO_NO_PERMITIDO: 'El producto no tiene control de stock habilitado en esta sede.',
+        VENTA_PRODUCTO_NO_HABILITADA: 'El producto no está habilitado para venta en esta sede.',
+        STOCK_INSUFICIENTE: 'Stock insuficiente.',
+        MODO_VENTA_INVALIDO: 'Seleccione chips serializados o un producto por cantidad.',
         SEDES_IGUALES: 'Seleccione una sede destino diferente a la sede de origen.',
         AMBIENTE_PRODUCCION: 'La limpieza de tipos de chip sólo está disponible en ambiente DEMO o desarrollo.'
     };
     const status = error.status
-        || ['CHIP_DUPLICADO','CHIP_NO_DISPONIBLE','CHIP_OTRA_SEDE','CHIP_ASIGNADO_CERTIFICADO','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO','PAGO_INCOMPLETO','PAGO_EXCEDE_TOTAL','VENTA_CHIP_NO_HABILITADA','STOCK_CHIP_NO_PERMITIDO','PRODUCTO_FISCAL_CHIP_INVALIDO','CONDICION_PAGO_NO_DISPONIBLE','TIPO_CHIP_BLOQUEADO','AMBIENTE_PRODUCCION','SEDE_TRANSFERENCIA_CHIP_NO_PERMITIDA','SEDES_IGUALES'].includes(error.message) ? 409
+        || ['CHIP_DUPLICADO','CHIP_NO_DISPONIBLE','CHIP_OTRA_SEDE','CHIP_ASIGNADO_CERTIFICADO','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO','PAGO_INCOMPLETO','PAGO_EXCEDE_TOTAL','VENTA_CHIP_NO_HABILITADA','STOCK_CHIP_NO_PERMITIDO','CHIP_PRODUCTO_FISCAL_NO_CONFIGURADO','PRODUCTO_FISCAL_CHIP_INVALIDO','PRECIO_VENTA_FISCAL_CHIP_INVALIDO','CONDICION_PAGO_NO_DISPONIBLE','TIPO_CHIP_BLOQUEADO','AMBIENTE_PRODUCCION','SEDE_ALMACEN_CHIP_NO_HABILITADA','SEDE_TRANSFERENCIA_CHIP_NO_PERMITIDA','SEDE_CHIP_NO_HABILITADA','SEDES_IGUALES','STOCK_INSUFICIENTE','SEDE_PRODUCTO_CANTIDAD_NO_HABILITADA','VENTA_PRODUCTO_NO_HABILITADA','STOCK_PRODUCTO_NO_PERMITIDO'].includes(error.message) ? 409
         : ['OPERACION_NOT_FOUND','TIPO_CHIP_NO_ENCONTRADO'].includes(error.message) ? 404
         : ['PLANTA_NO_AUTORIZADA'].includes(error.message) ? 403 : 400;
     res.status(status).json({ success:false, codigo:error.message, message:mensajes[error.message] || error.message, detalles:error.detalles });
@@ -59,6 +72,8 @@ exports.impactoProductoInventariable = async(req,res)=>{try{res.json({success:tr
 exports.eliminarProductoInventariable = async(req,res)=>{try{res.json({success:true,resultado:await service.eliminarProductoInventariable(Number(req.params.id),req.user,req.ip)});}catch(e){respond(res,e);}};
 exports.consultarDisponibilidad = async(req,res)=>{try{res.json({success:true,chip:await service.consultarDisponibilidad({plantaKey:req.user.planta_key,numeroChip:req.params.numeroChip,certificadoId:req.query.certificadoId},req.user)});}catch(e){respond(res,e);}};
 exports.ingresar = async(req,res)=>{try{res.status(201).json({success:true,chips:await service.ingresar({plantaKey:req.user.planta_key,...req.body},req.user)});}catch(e){respond(res,e);}};
+exports.ingresarCantidad = async(req,res)=>{try{res.status(201).json({success:true,movimiento:await inventarioCantidadService.registrarIngreso({plantaKey:req.user.planta_key,...req.body},req.user)});}catch(e){respond(res,e);}};
+exports.listarMovimientosCantidad = async(req,res)=>{try{res.json({success:true,movimientos:await inventarioCantidadService.listarMovimientos({plantaKey:req.user.planta_key,productoInventariableId:Number(req.params.productoInventariableId),limite:req.query.limite},req.user)});}catch(e){respond(res,e);}};
 exports.transferir = async(req,res)=>{try{res.json({success:true,cantidad:await service.transferir({...req.body,origenKey:req.user.planta_key},req.user)});}catch(e){respond(res,e);}};
 exports.reservar = async(req,res)=>{try{res.json({success:true,chip:await service.reservar({plantaKey:req.user.planta_key,...req.body},req.user)});}catch(e){respond(res,e);}};
 exports.liberar = async(req,res)=>{try{await service.liberar({plantaKey:req.user.planta_key,...req.body},req.user);res.json({success:true});}catch(e){respond(res,e);}};
@@ -107,7 +122,7 @@ exports.obtenerDetalleVenta = async (req, res) => {
 exports.validarVentaDirecta = async (req, res) => {
     try {
         const result = await ventaDirectaValidacionService.validarVentaDirecta(
-            { chips: req.body?.chips },
+            req.body || {},
             req.user
         );
         return res.json({ success: true, ...result });
