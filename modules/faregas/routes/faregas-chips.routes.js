@@ -22,8 +22,8 @@ const tipos = (...operativo) => [permiso('MENU_CHIPS_TIPOS'), permiso(...operati
 const ventas = (...operativo) => [permiso('MENU_CHIPS_VENTAS'), permiso(...operativo)];
 
 router.use(authFaregasMiddleware);
-router.get('/productos/catalogos',...tipos('CHIPS_CONFIGURAR'),controller.catalogosProductosInventariables);
-router.get('/productos',...tipos('CHIPS_CONFIGURAR'),controller.listarProductosInventariables);
+router.get('/productos/catalogos', permiso('MENU_CHIPS_TIPOS', 'MENU_CHIPS_INVENTARIO'), permiso('CHIPS_VER', 'CHIPS_CONFIGURAR'), controller.catalogosProductosInventariables);
+router.get('/productos', permiso('MENU_CHIPS_TIPOS', 'MENU_CHIPS_INVENTARIO'), permiso('CHIPS_VER', 'CHIPS_CONFIGURAR'), controller.listarProductosInventariables);
 router.post('/productos',...tipos('CHIPS_CONFIGURAR'),controller.crearProductoInventariable);
 router.put('/productos/:id',...tipos('CHIPS_CONFIGURAR'),controller.editarProductoInventariable);
 router.get('/productos/:id/impacto',...tipos('CHIPS_CONFIGURAR'),controller.impactoProductoInventariable);
