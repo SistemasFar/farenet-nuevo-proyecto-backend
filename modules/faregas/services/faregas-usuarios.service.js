@@ -104,10 +104,10 @@ exports.crearUsuario = async (data, creadorUsername) => {
     // Ninguna escritura llega a la base sin pasar por la validación. Se valida
     // sobre `data` completo y se usan los valores NORMALIZADOS que devuelve,
     // para que lo que se guarde sea exactamente lo que se comprobó.
-    const validado = validacion.exigirDatosValidos(data, { modo: 'crear' });
-    const cleanUsername = validado.datos.username;
-    const nroDocumento = validado.datos.nroDocumento;
-    const tipoDocumentoKey = validado.datos.tipoDocumentoKey;
+    const datosValidados = validacion.exigirDatosValidos(data, { modo: 'crear' });
+    const cleanUsername = datosValidados.username;
+    const nroDocumento = datosValidados.nroDocumento;
+    const tipoDocumentoKey = datosValidados.tipoDocumentoKey;
 
     const hash = bcrypt.hashSync(password, 10);
     const cleanPerfil = perfil_id === '' ? null : perfil_id;
@@ -197,10 +197,10 @@ exports.actualizarUsuario = async (oldUsername, data, modificadorUsername) => {
 
     // Mismas reglas que en la creación. `modo: 'editar'` deja pasar la contraseña
     // vacía, que es lo que el formulario ya entendía como "no cambiar".
-    const validado = validacion.exigirDatosValidos(data, { modo: 'editar' });
-    const newUsername = validado.datos.username;
-    const nroDocumento = validado.datos.nroDocumento;
-    const tipoDocumentoKey = validado.datos.tipoDocumentoKey;
+    const datosValidados = validacion.exigirDatosValidos(data, { modo: 'editar' });
+    const newUsername = datosValidados.username;
+    const nroDocumento = datosValidados.nroDocumento;
+    const tipoDocumentoKey = datosValidados.tipoDocumentoKey;
 
     const cleanPerfil = perfil_id === '' ? null : perfil_id;
     const estadoBool = estado === true || estado === 'true';

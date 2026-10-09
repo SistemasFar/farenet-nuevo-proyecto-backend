@@ -667,6 +667,13 @@ exports.guardarGLP = async (req, res) => {
         res.json({ ok: true, message: 'Datos GLP guardados' });
     } catch (error) {
         console.error('Error en guardarGLP:', error);
+        if (error.code === 'GLP_COMBUSTIBLE_SIN_CAMBIO' || error.message === 'GLP_COMBUSTIBLE_SIN_CAMBIO') {
+            return res.status(400).json({
+                ok: false,
+                codigo: 'GLP_COMBUSTIBLE_SIN_CAMBIO',
+                message: 'El combustible original debe ser diferente a BI-COMBUSTIBLE GLP, que es el resultado de la conversión.'
+            });
+        }
         res.status(400).json({ ok: false, message: error.message });
     }
 };

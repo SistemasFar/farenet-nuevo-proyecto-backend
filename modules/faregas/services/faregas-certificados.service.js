@@ -1465,6 +1465,8 @@ const combustiblesGnvSonEquivalentes = (antes, despues) => {
     return Boolean(combustibleAntes && combustibleDespues && combustibleAntes === combustibleDespues);
 };
 
+const combustiblesGlpSonEquivalentes = combustiblesGnvSonEquivalentes;
+
 const pesosGnvSonIguales = (antes, despues) => {
     const pesoAntes = Number(String(antes ?? '').trim().replace(',', '.'));
     const pesoDespues = Number(String(despues ?? '').trim().replace(',', '.'));
@@ -1730,6 +1732,25 @@ exports.guardarGLP = async (id, data, userContext) => {
                 // NO eliminamos componentes
             } else if (modalidadAnterior === 'ANUAL' && modalidadGLP === 'INICIAL') {
                 await client.query('DELETE FROM fg_certificado_glp_verificacion WHERE certificado_id = $1', [id]);
+            }
+        }
+
+        // Una conversión GLP inicial debe partir de un combustible distinto al
+        // resultado BI-COMBUSTIBLE GLP. La comparación ignora espacios, barras
+        // y guiones para impedir equivalencias escritas de forma diferente.
+        if (modalidadGLP === 'INICIAL') {
+            const rVehiculoOriginal = await client.query(`
+                SELECT combustible
+                FROM fg_certificado_vehiculo
+                WHERE certificado_id = $1
+                LIMIT 1
+            `, [id]);
+            const vehiculoOriginal = rVehiculoOriginal.rows[0] || {};
+
+            if (combustiblesGlpSonEquivalentes(vehiculoOriginal.combustible, data.combustiblePosterior)) {
+                const error = new Error('GLP_COMBUSTIBLE_SIN_CAMBIO');
+                error.code = 'GLP_COMBUSTIBLE_SIN_CAMBIO';
+                throw error;
             }
         }
 
@@ -2138,6 +2159,7 @@ exports.validarEmision = async (id, userContext) => {
         if (anulacionActiva.rowCount > 0) {
             pushError('facturacion', 'anulacion', 'ANULACION_ACTIVA', 'El comprobante tiene una solicitud de anulación activa; el certificado queda bloqueado hasta conocer el resultado');
         }
+
     }
 
     // GNV Especifico
@@ -2738,5 +2760,6 @@ exports._private = Object.freeze({
     formatearNumeroCertificado,
     resolverTallerGnvPorPlanta,
     combustiblesGnvSonEquivalentes,
+    combustiblesGlpSonEquivalentes,
     pesosGnvSonIguales
 });
