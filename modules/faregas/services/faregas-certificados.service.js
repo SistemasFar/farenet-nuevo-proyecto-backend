@@ -1214,6 +1214,19 @@ exports.guardarVehiculoBorrador = async (
             }
         }
 
+        let combustible = data.combustible || null;
+        if (!combustible) {
+            const rCertGlpInfo = await client.query(`
+                SELECT c.tipo_certificado_clave, g.modalidad as glp_modalidad
+                FROM fg_certificado c
+                LEFT JOIN fg_certificado_glp g ON g.certificado_id = c.id
+                WHERE c.id = $1
+            `, [id]);
+            if (rCertGlpInfo.rows[0]?.tipo_certificado_clave === 'GLP_ANUAL' && rCertGlpInfo.rows[0]?.glp_modalidad === 'ANUAL') {
+                combustible = 'BI COMBUSTIBLE GLP';
+            }
+        }
+
         const qUpd = `
             INSERT INTO fg_certificado_vehiculo (
                 certificado_id, placa, categoria, clase, marca, modelo, version, anio_fabricacion, 
@@ -1226,34 +1239,34 @@ exports.guardarVehiculoBorrador = async (
                 $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
             )
             ON CONFLICT (certificado_id) DO UPDATE SET
-                placa = EXCLUDED.placa,
-                categoria = EXCLUDED.categoria,
-                clase = EXCLUDED.clase,
-                marca = EXCLUDED.marca,
-                modelo = EXCLUDED.modelo,
-                version = EXCLUDED.version,
-                anio_fabricacion = EXCLUDED.anio_fabricacion,
-                anio_modelo = EXCLUDED.anio_modelo,
-                vin = EXCLUDED.vin,
-                serie_chasis = EXCLUDED.serie_chasis,
-                numero_motor = EXCLUDED.numero_motor,
-                combustible = EXCLUDED.combustible,
-                color = EXCLUDED.color,
-                carroceria = EXCLUDED.carroceria,
-                numero_cilindros = EXCLUDED.numero_cilindros,
-                cilindrada = EXCLUDED.cilindrada,
-                numero_ejes = EXCLUDED.numero_ejes,
-                numero_ruedas = EXCLUDED.numero_ruedas,
-                numero_asientos = EXCLUDED.numero_asientos,
-                numero_pasajeros = EXCLUDED.numero_pasajeros,
-                longitud = EXCLUDED.longitud,
-                ancho = EXCLUDED.ancho,
-                alto = EXCLUDED.alto,
-                peso_neto = EXCLUDED.peso_neto,
-                peso_bruto = EXCLUDED.peso_bruto,
-                carga_util = EXCLUDED.carga_util,
-                potencia = EXCLUDED.potencia,
-                formula_rodante = EXCLUDED.formula_rodante
+                placa = COALESCE(EXCLUDED.placa, fg_certificado_vehiculo.placa),
+                categoria = COALESCE(EXCLUDED.categoria, fg_certificado_vehiculo.categoria),
+                clase = COALESCE(EXCLUDED.clase, fg_certificado_vehiculo.clase),
+                marca = COALESCE(EXCLUDED.marca, fg_certificado_vehiculo.marca),
+                modelo = COALESCE(EXCLUDED.modelo, fg_certificado_vehiculo.modelo),
+                version = COALESCE(EXCLUDED.version, fg_certificado_vehiculo.version),
+                anio_fabricacion = COALESCE(EXCLUDED.anio_fabricacion, fg_certificado_vehiculo.anio_fabricacion),
+                anio_modelo = COALESCE(EXCLUDED.anio_modelo, fg_certificado_vehiculo.anio_modelo),
+                vin = COALESCE(EXCLUDED.vin, fg_certificado_vehiculo.vin),
+                serie_chasis = COALESCE(EXCLUDED.serie_chasis, fg_certificado_vehiculo.serie_chasis),
+                numero_motor = COALESCE(EXCLUDED.numero_motor, fg_certificado_vehiculo.numero_motor),
+                combustible = COALESCE(EXCLUDED.combustible, fg_certificado_vehiculo.combustible),
+                color = COALESCE(EXCLUDED.color, fg_certificado_vehiculo.color),
+                carroceria = COALESCE(EXCLUDED.carroceria, fg_certificado_vehiculo.carroceria),
+                numero_cilindros = COALESCE(EXCLUDED.numero_cilindros, fg_certificado_vehiculo.numero_cilindros),
+                cilindrada = COALESCE(EXCLUDED.cilindrada, fg_certificado_vehiculo.cilindrada),
+                numero_ejes = COALESCE(EXCLUDED.numero_ejes, fg_certificado_vehiculo.numero_ejes),
+                numero_ruedas = COALESCE(EXCLUDED.numero_ruedas, fg_certificado_vehiculo.numero_ruedas),
+                numero_asientos = COALESCE(EXCLUDED.numero_asientos, fg_certificado_vehiculo.numero_asientos),
+                numero_pasajeros = COALESCE(EXCLUDED.numero_pasajeros, fg_certificado_vehiculo.numero_pasajeros),
+                longitud = COALESCE(EXCLUDED.longitud, fg_certificado_vehiculo.longitud),
+                ancho = COALESCE(EXCLUDED.ancho, fg_certificado_vehiculo.ancho),
+                alto = COALESCE(EXCLUDED.alto, fg_certificado_vehiculo.alto),
+                peso_neto = COALESCE(EXCLUDED.peso_neto, fg_certificado_vehiculo.peso_neto),
+                peso_bruto = COALESCE(EXCLUDED.peso_bruto, fg_certificado_vehiculo.peso_bruto),
+                carga_util = COALESCE(EXCLUDED.carga_util, fg_certificado_vehiculo.carga_util),
+                potencia = COALESCE(EXCLUDED.potencia, fg_certificado_vehiculo.potencia),
+                formula_rodante = COALESCE(EXCLUDED.formula_rodante, fg_certificado_vehiculo.formula_rodante)
         `;
 
         await client.query(qUpd, [
@@ -1269,7 +1282,7 @@ exports.guardarVehiculoBorrador = async (
             data.vin || null,
             data.serieChasis || null,
             data.numeroMotor || null,
-            data.combustible || null,
+            combustible,
             data.color || null,
             data.carroceria || null,
             data.numeroCilindros || null,
@@ -1596,9 +1609,9 @@ exports.guardarGNV = async (id, data, userContext) => {
                 taller_codigo_autorizacion = EXCLUDED.taller_codigo_autorizacion,
                 modalidad = EXCLUDED.modalidad,
                 numero_chip = EXCLUDED.numero_chip,
-                combustible_posterior = EXCLUDED.combustible_posterior,
-                peso_neto_posterior = EXCLUDED.peso_neto_posterior,
-                observaciones = EXCLUDED.observaciones
+                combustible_posterior = COALESCE(EXCLUDED.combustible_posterior, fg_certificado_gnv.combustible_posterior),
+                peso_neto_posterior = COALESCE(EXCLUDED.peso_neto_posterior, fg_certificado_gnv.peso_neto_posterior),
+                observaciones = COALESCE(EXCLUDED.observaciones, fg_certificado_gnv.observaciones)
         `;
         
         await client.query(qUpd, [
@@ -1774,9 +1787,9 @@ exports.guardarGLP = async (id, data, userContext) => {
                 taller_direccion = EXCLUDED.taller_direccion,
                 taller_codigo_autorizacion = EXCLUDED.taller_codigo_autorizacion,
                 modalidad = EXCLUDED.modalidad,
-                combustible_posterior = EXCLUDED.combustible_posterior,
-                peso_neto_posterior = EXCLUDED.peso_neto_posterior,
-                carga_util_posterior = EXCLUDED.carga_util_posterior
+                combustible_posterior = COALESCE(EXCLUDED.combustible_posterior, fg_certificado_glp.combustible_posterior),
+                peso_neto_posterior = COALESCE(EXCLUDED.peso_neto_posterior, fg_certificado_glp.peso_neto_posterior),
+                carga_util_posterior = COALESCE(EXCLUDED.carga_util_posterior, fg_certificado_glp.carga_util_posterior)
         `;
         
         await client.query(qUpd, [
@@ -1909,12 +1922,12 @@ exports.guardarConformidad = async (id, data, userContext) => {
                 certificado_id, tipo_conformidad, tipo_tramite, caracteristica_registrable, motivo, descripcion, uso_original_vehiculo, marca_modificacion, marca_montaje, marca_fabricacion
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (certificado_id) DO UPDATE SET
-                tipo_conformidad = EXCLUDED.tipo_conformidad,
-                tipo_tramite = EXCLUDED.tipo_tramite,
-                caracteristica_registrable = EXCLUDED.caracteristica_registrable,
-                motivo = EXCLUDED.motivo,
-                descripcion = EXCLUDED.descripcion,
-                uso_original_vehiculo = EXCLUDED.uso_original_vehiculo,
+                tipo_conformidad = COALESCE(EXCLUDED.tipo_conformidad, fg_certificado_conformidad.tipo_conformidad),
+                tipo_tramite = COALESCE(EXCLUDED.tipo_tramite, fg_certificado_conformidad.tipo_tramite),
+                caracteristica_registrable = COALESCE(EXCLUDED.caracteristica_registrable, fg_certificado_conformidad.caracteristica_registrable),
+                motivo = COALESCE(EXCLUDED.motivo, fg_certificado_conformidad.motivo),
+                descripcion = COALESCE(EXCLUDED.descripcion, fg_certificado_conformidad.descripcion),
+                uso_original_vehiculo = COALESCE(EXCLUDED.uso_original_vehiculo, fg_certificado_conformidad.uso_original_vehiculo),
                 marca_modificacion = EXCLUDED.marca_modificacion,
                 marca_montaje = EXCLUDED.marca_montaje,
                 marca_fabricacion = EXCLUDED.marca_fabricacion
@@ -2062,12 +2075,20 @@ exports.validarEmision = async (id, userContext) => {
                 'peso_neto', 'peso_bruto'
             ]);
         } else if (!esFormularioDinamico && cert.tipo_clave === 'GLP_ANUAL') {
-            checkCampos([
+            const rGlpMod = await db.query('SELECT modalidad FROM fg_certificado_glp WHERE certificado_id = $1', [id]);
+            const esAnual = rGlpMod.rowCount > 0 && rGlpMod.rows[0].modalidad === 'ANUAL';
+            const camposRequeridos = [
                 'categoria', 'marca', 'modelo', 'version', 'anio_fabricacion', 'numero_motor',
-                'numero_cilindros', 'cilindrada', 'combustible', 'numero_ejes', 'numero_ruedas',
+                'numero_cilindros', 'cilindrada', 'numero_ejes', 'numero_ruedas',
                 'numero_asientos', 'numero_pasajeros', 'longitud', 'ancho', 'alto', 
                 'peso_neto', 'peso_bruto', 'carga_util'
-            ]);
+            ];
+            if (!esAnual) {
+                camposRequeridos.push('combustible');
+            } else if (!veh.combustible) {
+                veh.combustible = 'BI COMBUSTIBLE GLP';
+            }
+            checkCampos(camposRequeridos);
         } else if (!esFormularioDinamico && cert.tipo_clave === 'CONFORMIDAD') {
             checkCampos([
                 'clase', 'categoria', 'modelo', 'marca', 'numero_motor', 'color', 'carroceria',
@@ -2183,25 +2204,51 @@ exports.validarEmision = async (id, userContext) => {
             }
         }
 
-        const rVer = await db.query('SELECT * FROM fg_certificado_gnv_verificacion WHERE certificado_id = $1', [id]);
-        const verifCodes = rVer.rows.map(v => v.codigo);
-        const reqCodes = ['a','b','c','d','e','f','g','h'];
-        const missing = reqCodes.filter(c => !verifCodes.includes(c));
-        if (missing.length > 0) {
-            pushError('gnv', 'verificaciones', 'VERIFICACIONES_INCOMPLETAS', 'Faltan verificaciones GNV: ' + missing.join(', '));
-        }
-
-        rVer.rows.forEach(v => {
-            if (v.cumple === null) {
-                pushError('gnv', 'verificaciones', 'VERIFICACION_NO_EVALUADA', `Verificación ${v.codigo} no evaluada`);
-            } else if (v.cumple === false) {
-                pushError('gnv', 'verificaciones', 'VERIFICACION_NO_CUMPLE', `Verificación ${v.codigo} NO CUMPLE`);
-                const obs = (v.observacion || '').trim();
-                if (!obs) {
-                    pushError('gnv', 'observaciones', 'CAMPO_REQUERIDO', `Verificación ${v.codigo} NO CUMPLE pero no tiene observación`);
-                }
+        if (g.modalidad === 'ANUAL') {
+            const rVer = await db.query('SELECT * FROM fg_certificado_gnv_verificacion WHERE certificado_id = $1', [id]);
+            const verifCodes = rVer.rows.map(v => v.codigo);
+            const reqCodes = ['a','b','c','d','e','f','g','h'];
+            const missing = reqCodes.filter(c => !verifCodes.includes(c));
+            if (missing.length > 0) {
+                pushError('gnv', 'verificaciones', 'VERIFICACIONES_INCOMPLETAS', 'Faltan verificaciones GNV: ' + missing.join(', '));
             }
-        });
+
+            rVer.rows.forEach(v => {
+                if (v.cumple === null) {
+                    pushError('gnv', 'verificaciones', 'VERIFICACION_NO_EVALUADA', `Verificación ${v.codigo} no evaluada`);
+                } else if (v.cumple === false) {
+                    pushError('gnv', 'verificaciones', 'VERIFICACION_NO_CUMPLE', `Verificación ${v.codigo} NO CUMPLE`);
+                    const obs = (v.observacion || '').trim();
+                    if (!obs) {
+                        pushError('gnv', 'observaciones', 'CAMPO_REQUERIDO', `Verificación ${v.codigo} NO CUMPLE pero no tiene observación`);
+                    }
+                }
+            });
+        } else if (g.modalidad === 'INICIAL') {
+            if (!g.combustible_posterior) {
+                pushError('gnv', 'combustible_posterior', 'CAMPO_REQUERIDO', 'Combustible posterior requerido para GNV Inicial');
+            }
+            if (!g.peso_neto_posterior) {
+                pushError('gnv', 'peso_neto_posterior', 'CAMPO_REQUERIDO', 'Peso neto posterior requerido para GNV Inicial');
+            }
+            const rComp = await db.query('SELECT * FROM fg_certificado_gnv_componente WHERE certificado_id = $1', [id]);
+            const compTypes = rComp.rows.map(c => String(c.componente || '').toUpperCase());
+            if (!compTypes.some(t => t.includes('REDUCTOR'))) {
+                pushError('gnv', 'componentes', 'COMPONENTE_REQUERIDO', 'Se requiere componente Reductor para GNV Inicial');
+            }
+            if (!compTypes.some(t => t.includes('CILINDRO'))) {
+                pushError('gnv', 'componentes', 'COMPONENTE_REQUERIDO', 'Se requiere componente Cilindro para GNV Inicial');
+            }
+            rComp.rows.forEach(c => {
+                if (!c.marca) pushError('gnv', 'componentes', 'CAMPO_REQUERIDO', `Marca requerida para componente ${c.componente}`);
+                if (!c.numero_serie) pushError('gnv', 'componentes', 'CAMPO_REQUERIDO', `Serie requerida para componente ${c.componente}`);
+                const esCilindro = String(c.componente || '').toUpperCase().includes('CILINDRO');
+                if (esCilindro) {
+                    if (!c.capacidad_litros) pushError('gnv', 'componentes', 'CAMPO_REQUERIDO', 'Capacidad requerida para Cilindro');
+                    if (!c.mes_fabricacion || !c.anio_fabricacion) pushError('gnv', 'componentes', 'CAMPO_REQUERIDO', 'Fecha de fabricación requerida para Cilindro');
+                }
+            });
+        }
     }
 
     // GLP Especifico
@@ -2272,10 +2319,7 @@ exports.validarEmision = async (id, userContext) => {
             const c = rConf.rows[0];
             const validTipos = ['MODIFICACION', 'MONTAJE', 'FABRICACION'];
             if (!validTipos.includes(c.tipo_conformidad)) pushError('conformidad', 'tipo_conformidad', 'TIPO_INVALIDO', 'Tipo de conformidad inválido');
-            if (!c.tipo_tramite) pushError('conformidad', 'tipo_tramite', 'CAMPO_REQUERIDO', 'Tipo trámite requerido');
             if (!c.caracteristica_registrable) pushError('conformidad', 'caracteristica_registrable', 'CAMPO_REQUERIDO', 'Característica registrable requerida');
-            if (!c.motivo) pushError('conformidad', 'motivo', 'CAMPO_REQUERIDO', 'Motivo requerido');
-            if (!c.descripcion) pushError('conformidad', 'descripcion', 'CAMPO_REQUERIDO', 'Descripción requerida');
             if (!c.uso_original_vehiculo) pushError('conformidad', 'uso_original_vehiculo', 'CAMPO_REQUERIDO', 'Uso original requerido');
         }
     }
