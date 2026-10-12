@@ -51,6 +51,9 @@ const tituloCertificadoDinamico = ({ tipoFlujo, tipoCertificadoClave, modalidad,
         : fallback
 );
 
+const requiereExpedienteTecnicoGlp = (modalidad) =>
+    String(modalidad || '').trim().toUpperCase() === 'INICIAL';
+
 const formatearNumeroCertificado = ({ tipoFlujo, tipoCodigo, anchoCorrelativo, numero }) => {
     const esInspeccionTaller = String(tipoFlujo || '').trim().toUpperCase() === 'TALLER_INSPECCION';
     const prefijo = esInspeccionTaller ? '22' : String(tipoCodigo || '').trim();
@@ -502,9 +505,9 @@ const faregasAuthService = require('./faregas-auth.service');
 
 const PASOS_BORRADOR = Object.freeze([
     'DATOS_INICIALES',
-    'PAGO',
     'VEHICULO',
     'PREVISUALIZACION',
+    'PAGO',
     'FACTURACION',
     'VERIFICACION_EMISION'
 ]);
@@ -1761,7 +1764,10 @@ exports.guardarGLP = async (id, data, userContext) => {
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT (certificado_id) DO UPDATE SET
                 taller_autorizado_id = EXCLUDED.taller_autorizado_id,
-                expediente_tecnico = EXCLUDED.expediente_tecnico,
+                expediente_tecnico = CASE
+                    WHEN EXCLUDED.modalidad = 'ANUAL' THEN fg_certificado_glp.expediente_tecnico
+                    ELSE EXCLUDED.expediente_tecnico
+                END,
                 vigencia_hasta = EXCLUDED.vigencia_hasta,
                 taller_razon_social = EXCLUDED.taller_razon_social,
                 taller_sede = EXCLUDED.taller_sede,
@@ -1776,7 +1782,7 @@ exports.guardarGLP = async (id, data, userContext) => {
         await client.query(qUpd, [
             id,
             data.tallerAutorizadoId || null,
-            data.expedienteTecnico || null,
+            requiereExpedienteTecnicoGlp(modalidadGLP) ? (data.expedienteTecnico || null) : null,
             data.vigenciaHasta || null,
             snapshotTaller ? snapshotTaller.razon_social : null,
             snapshotTaller ? snapshotTaller.sede : null,
@@ -2207,7 +2213,9 @@ exports.validarEmision = async (id, userContext) => {
             const g = rGlp.rows[0];
             if (!g.taller_autorizado_id) pushError('glp', 'taller_autorizado_id', 'CAMPO_REQUERIDO', 'Taller autorizado requerido');
             if (!g.vigencia_hasta) pushError('glp', 'vigencia_hasta', 'CAMPO_REQUERIDO', 'Vigencia requerida');
-            if (!g.expediente_tecnico) pushError('glp', 'expediente_tecnico', 'CAMPO_REQUERIDO', 'Expediente técnico requerido');
+            if (requiereExpedienteTecnicoGlp(g.modalidad) && !g.expediente_tecnico) {
+                pushError('glp', 'expediente_tecnico', 'CAMPO_REQUERIDO', 'Expediente técnico requerido');
+            }
             // Modalidad requerida. INICIAL y ANUAL se emiten con su propia
             // plantilla (glp-inicial / glp-anual) bajo el mismo motor SISTEMA,
             // así que la captura INICIAL ya tiene formato de emisión resuelto.
@@ -2378,6 +2386,18 @@ exports.emitirCertificado = async (id, userContext) => {
                     WHERE id = $2
                 `, [siguiente, rango.id]);
             }
+        }
+
+        // En GLP ANUAL el expediente técnico comparte la única fuente oficial
+        // de numeración del certificado. Se sincroniza dentro de la misma
+        // transacción de emisión, después de obtener el correlativo y sin
+        // reservar ni consumir un número adicional.
+        if (cert.tipo_clave === 'GLP_ANUAL' && cert.modalidad_correlativo === 'ANUAL') {
+            await client.query(`
+                UPDATE fg_certificado_glp
+                SET expediente_tecnico = $2
+                WHERE certificado_id = $1 AND modalidad = 'ANUAL'
+            `, [id, numero_certificado]);
         }
 
         let formatoVersionId = cert.formato_version_id || null;
@@ -2761,5 +2781,6 @@ exports._private = Object.freeze({
     resolverTallerGnvPorPlanta,
     combustiblesGnvSonEquivalentes,
     combustiblesGlpSonEquivalentes,
-    pesosGnvSonIguales
+    pesosGnvSonIguales,
+    requiereExpedienteTecnicoGlp
 });

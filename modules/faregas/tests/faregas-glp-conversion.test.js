@@ -6,10 +6,14 @@ process.env.NODE_ENV = 'test';
 const db = require('../../../config/database');
 const authService = require('../services/faregas-auth.service');
 const certificados = require('../services/faregas-certificados.service');
+const sedeRangos = require('../services/faregas-correlativos-sede.service');
+const generateGlpAnualHtml = require('../templates/glp-anual.template');
 
 const ejecutarGuardadoGlp = async ({
     combustibleOriginal = 'GASOLINA',
-    combustiblePosterior = 'BI-COMBUSTIBLE GLP'
+    combustiblePosterior = 'BI-COMBUSTIBLE GLP',
+    modalidad = 'INICIAL',
+    expedienteTecnico = 'EXP-1'
 } = {}) => {
     const originalConnect = db.connect;
     const originalAcceso = authService.validarAccesoPlanta;
@@ -33,6 +37,7 @@ const ejecutarGuardadoGlp = async ({
             }
             if (texto.includes('INSERT INTO fg_certificado_glp')) {
                 parametrosGuardados = params;
+                parametrosGuardados.sql = texto;
                 return { rowCount: 1, rows: [] };
             }
             throw new Error(`Consulta inesperada: ${texto}`);
@@ -44,8 +49,8 @@ const ejecutarGuardadoGlp = async ({
     try {
         await certificados.guardarGLP(801, {
             vigenciaHasta: '2027-10-09',
-            expedienteTecnico: 'EXP-1',
-            modalidad: 'INICIAL',
+            expedienteTecnico,
+            modalidad,
             combustiblePosterior,
             pesoNetoPosterior: '1450',
             cargaUtilPosterior: '149'
@@ -69,4 +74,108 @@ test('GLP INICIAL permite un combustible original distinto', async () => {
     assert.ok(parametros);
     assert.equal(parametros[8], 'INICIAL');
     assert.equal(parametros[9], 'BI-COMBUSTIBLE GLP');
+});
+
+test('GLP ANUAL ignora una entrada manual nueva y preserva de forma explícita el valor histórico en conflicto', async () => {
+    const parametros = await ejecutarGuardadoGlp({
+        modalidad: 'ANUAL',
+        expedienteTecnico: 'DG-41-0066495'
+    });
+
+    assert.equal(parametros[2], null);
+    assert.match(parametros.sql, /WHEN EXCLUDED\.modalidad = 'ANUAL' THEN fg_certificado_glp\.expediente_tecnico/);
+    assert.equal(certificados._private.requiereExpedienteTecnicoGlp('ANUAL'), false);
+    assert.equal(certificados._private.requiereExpedienteTecnicoGlp('INICIAL'), true);
+});
+
+test('la plantilla GLP ANUAL usa siempre el número oficial y no el expediente manual legado', () => {
+    const html = generateGlpAnualHtml({
+        cabecera: { numero_certificado: 'DG-41-000151' },
+        vehiculo: {},
+        glp: { expediente_tecnico: 'DG-41-0066495' },
+        componentes: [],
+        verificaciones: [],
+        titulares: []
+    }, { modo: 'FINAL' });
+
+    assert.match(html, /expediente técnico <strong>N° DG-41-000151<\/strong>/);
+    assert.doesNotMatch(html, /DG-41-0066495/);
+});
+
+test('la previsualización sin correlativo muestra estado pendiente y no reutiliza el valor manual legado', () => {
+    const html = generateGlpAnualHtml({
+        cabecera: {},
+        vehiculo: {},
+        glp: { expediente_tecnico: 'DG-41-0066495' },
+        componentes: [],
+        verificaciones: [],
+        titulares: []
+    }, { modo: 'PREVIEW' });
+
+    assert.match(html, /expediente técnico <strong>N° PENDIENTE DE EMISIÓN<\/strong>/);
+    assert.doesNotMatch(html, /DG-41-0066495/);
+});
+
+test('la emisión GLP ANUAL consume un solo correlativo y sincroniza certificado y expediente', async () => {
+    const originalConnect = db.connect;
+    const originalValidarEmision = certificados.validarEmision;
+    const originalValidarAcceso = authService.validarAccesoCertificado;
+    const originalConsumirNumero = sedeRangos.consumirNumero;
+    let consumos = 0;
+    let expedientePersistido = null;
+    let certificadoPersistido = null;
+
+    db.connect = async () => ({
+        async query(sql, params = []) {
+            const texto = String(sql);
+            if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(texto)) return { rowCount: 0, rows: [] };
+            if (texto.includes('FROM fg_certificado c') && texto.includes('FOR UPDATE OF c')) {
+                return {
+                    rowCount: 1,
+                    rows: [{
+                        id: 802,
+                        estado: 'BORRADOR',
+                        planta_key: '160',
+                        tipo_clave: 'GLP_ANUAL',
+                        tipo_codigo: '41',
+                        ancho_correlativo: 6,
+                        modalidad_correlativo: 'ANUAL',
+                        servicio_tipo_flujo: 'CERTIFICACION',
+                        servicio_formato_id: null,
+                        formato_version_id: null,
+                        numero_certificado: null
+                    }]
+                };
+            }
+            if (texto.includes('UPDATE fg_certificado_glp')) {
+                expedientePersistido = params[1];
+                return { rowCount: 1, rows: [] };
+            }
+            if (texto.includes('UPDATE fg_certificado') && texto.includes("estado = 'EMITIDO'")) {
+                certificadoPersistido = params[0];
+                return { rowCount: 1, rows: [] };
+            }
+            throw new Error(`Consulta inesperada: ${texto}`);
+        },
+        release() {}
+    });
+    certificados.validarEmision = async () => ({ valido: true, errores: [] });
+    authService.validarAccesoCertificado = async () => true;
+    sedeRangos.consumirNumero = async () => {
+        consumos += 1;
+        return { migrada: true, nro: 151 };
+    };
+
+    try {
+        const resultado = await certificados.emitirCertificado(802, { username: 'test', perfil_id: 1 });
+        assert.equal(resultado.numero_certificado, 'DG-41-000151');
+        assert.equal(consumos, 1);
+        assert.equal(expedientePersistido, 'DG-41-000151');
+        assert.equal(certificadoPersistido, 'DG-41-000151');
+    } finally {
+        db.connect = originalConnect;
+        certificados.validarEmision = originalValidarEmision;
+        authService.validarAccesoCertificado = originalValidarAcceso;
+        sedeRangos.consumirNumero = originalConsumirNumero;
+    }
 });

@@ -48,7 +48,9 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json());
+// La importación administrativa de hasta 10,000 códigos se envía en un único
+// lote JSON; 2 MB evita fragmentarla en miles de solicitudes individuales.
+app.use(express.json({ limit: '2mb' }));
 
 const { getSwaggerOptions } = require('./config/swagger-config');
 

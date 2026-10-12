@@ -20,6 +20,12 @@ const MENSAJES = {
     EJECUTIVO_NO_REGISTRADO: 'No se pudo registrar el ejecutivo de la alianza.',
     REFERENCIA_DESCUENTO_INVALIDA: 'La sede o uno de los servicios seleccionados no existe o no tiene una tarifa activa.',
     REGLA_DESCUENTO_DUPLICADA: 'No se puede repetir el mismo servicio dentro de una sede.',
+    PREFIJO_CODIGO_INVALIDO: 'Indique un prefijo válido para generar los códigos.',
+    CANTIDAD_CODIGOS_INVALIDA: 'La cantidad debe estar entre 1 y 10,000 códigos.',
+    CODIGO_CLIENTE_INVALIDO: 'El código sólo puede contener letras, números, guion y guion bajo.',
+    MAX_USOS_INVALIDO: 'La cantidad máxima de usos debe ser un entero mayor a cero.',
+    VIGENCIA_CODIGO_INVALIDA: 'Debe indicar ambas fechas de vigencia o dejar ambas vacías.',
+    VIGENCIA_CODIGO_FUERA_DE_CAMPANA: 'La vigencia personalizada debe estar dentro de la campaña.',
     DESCUENTO_NO_ENCONTRADO: 'La campaña o descuento no existe.',
     DESCUENTO_BLOQUEADO: 'La campaña tiene dependencias que no se pueden eliminar.',
     AMBIENTE_PRODUCCION: 'La limpieza de campañas sólo está disponible en ambiente DEMO o desarrollo.'
@@ -188,6 +194,34 @@ exports.crearCodigo = async (req, res) => {
         res.status(201).json({ success: true, ...resultado });
     }
     catch (error) { responderError(res, error); }
+};
+
+exports.listarCodigos = async (req, res) => {
+    try {
+        res.json({ success: true, ...(await descuentosService.listarCodigosAdministracion(req.params.id, req.query)) });
+    } catch (error) { responderError(res, error); }
+};
+
+exports.generarLoteCodigos = async (req, res) => {
+    try {
+        const resultado = await descuentosService.generarLoteCodigos(req.params.id, req.body, req.user);
+        await registrarAdministracion(req, 'CODIGOS_DESCUENTO_LOTE',
+            `Generó ${resultado.creados} código(s) de descuento en lote.`,
+            'fg_descuento', req.params.id, resultado);
+        res.status(201).json({ success: true, ...resultado });
+    } catch (error) { responderError(res, error); }
+};
+
+exports.importarCodigos = async (req, res) => {
+    try {
+        const resultado = await descuentosService.importarCodigos(req.params.id, req.body, req.user);
+        if (!req.body.validarSolo) {
+            await registrarAdministracion(req, 'CODIGOS_DESCUENTO_IMPORTADOS',
+                `Importó ${resultado.creados} código(s) de descuento.`,
+                'fg_descuento', req.params.id, resultado);
+        }
+        res.status(req.body.validarSolo ? 200 : 201).json({ success: true, ...resultado });
+    } catch (error) { responderError(res, error); }
 };
 
 exports.actualizarCodigo = async (req, res) => {

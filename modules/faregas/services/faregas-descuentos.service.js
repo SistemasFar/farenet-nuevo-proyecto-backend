@@ -14,6 +14,23 @@ const errorNegocio = (codigo, statusCode = 400, detalles) => {
     return error;
 };
 
+const resolverPrecioServicio = (row) => tarifasService.resolverPrecioComercial({
+    productoFacturacionId: row.producto_facturacion_id,
+    precioReferencia: row.producto_precio_referencia,
+    precioUnitario: row.producto_precio_unitario
+});
+
+const mapearServicioAdministracion = (row) => ({
+    ...row,
+    precio: resolverPrecioServicio(row)
+});
+
+const calcularImporteFinal = (precio, tipoCalculo, valor) => {
+    if (tipoCalculo === 'FLAT') return Number(valor);
+    if (tipoCalculo === 'MONTO') return Math.max(0, Number(precio) - Number(valor));
+    return Math.max(0, Number(precio) * (1 - Number(valor) / 100));
+};
+
 // ----------------------------------------------------------------------
 // VALIDACIONES Y CONSULTA
 // ----------------------------------------------------------------------
@@ -488,17 +505,15 @@ exports.listarDescuentos = async (filtros = {}) => {
     }
     const result = await db.query(`
         SELECT d.*,
-               (SELECT COUNT(*) FROM fg_descuentodetalle dd
+               (SELECT COUNT(DISTINCT dd.servicio_id) FROM fg_descuentodetalle dd
                 WHERE dd.descuento_id=d.id AND dd.descuento_cliente_id IS NULL AND dd.activo=TRUE) AS total_servicios,
-               COUNT(DISTINCT dc.id) AS total_codigos,
-               STRING_AGG(DISTINCT dc.codigo, ',' ORDER BY dc.codigo) FILTER (WHERE dc.activo=TRUE) AS nombres_codigos,
+               (SELECT COUNT(*) FROM fg_descuentocliente dc_total
+                WHERE dc_total.descuento_id=d.id) AS total_codigos,
                COALESCE((SELECT SUM(dc_usos.usos_realizados)
                          FROM fg_descuentocliente dc_usos
                          WHERE dc_usos.descuento_id=d.id), 0) AS usos_realizados
         FROM fg_descuento d
-        LEFT JOIN fg_descuentocliente dc ON dc.descuento_id = d.id
         ${where}
-        GROUP BY d.id
         ORDER BY d.activo DESC, d.fecha_fin DESC, d.nombre
     `, params);
     return result.rows;
@@ -511,11 +526,15 @@ exports.obtenerMaestrosAdministracion = async () => {
                   FROM fg_servicio s JOIN fg_categoria_servicio c ON c.id = s.categoria_id
                   WHERE s.activo = TRUE ORDER BY c.orden, s.orden, s.nombre`),
         db.query(`SELECT t.planta_key, s.id, s.codigo, s.nombre, c.nombre AS categoria,
-                         t.precio, t.codigo AS tarifa_codigo
+                         s.tipo_certificado_clave, s.modalidad, s.tipo_flujo,
+                         t.codigo AS tarifa_codigo, t.producto_facturacion_id,
+                         pf.precio_referencia AS producto_precio_referencia,
+                         pf.precio_unitario AS producto_precio_unitario
                   FROM fg_tarifa t
                   JOIN fg_planta p ON p.key=t.planta_key
                   JOIN fg_servicio s ON s.id=t.servicio_id
                   JOIN fg_categoria_servicio c ON c.id=s.categoria_id
+                  LEFT JOIN fg_producto_facturacion pf ON pf.id=t.producto_facturacion_id
                   WHERE p.activo=TRUE AND t.activo=TRUE AND s.activo=TRUE AND c.activo=TRUE
                     AND s.tipo_flujo='CERTIFICACION'
                   ORDER BY p.nombre, c.orden, s.orden, s.nombre`),
@@ -524,7 +543,12 @@ exports.obtenerMaestrosAdministracion = async () => {
                   WHERE activo=TRUE
                   ORDER BY nombre`)
     ]);
-    return { plantas: plantas.rows, servicios: servicios.rows, serviciosPorPlanta: serviciosPorPlanta.rows, ejecutivos: ejecutivos.rows };
+    return {
+        plantas: plantas.rows,
+        servicios: servicios.rows,
+        serviciosPorPlanta: serviciosPorPlanta.rows.map(mapearServicioAdministracion),
+        ejecutivos: ejecutivos.rows
+    };
 };
 
 exports.crearDescuento = async (data, userContext) => {
@@ -666,7 +690,7 @@ exports.eliminarDescuento = async (id, userContext, ipDireccion = null) => {
 };
 
 exports.obtenerDetalleAdministracion = async (id) => {
-    const [descuento, reglas, codigos] = await Promise.all([
+    const [descuento, reglas] = await Promise.all([
         db.query('SELECT * FROM fg_descuento WHERE id=$1', [id]),
         db.query(`SELECT dd.planta_key AS "plantaKey", dd.servicio_id AS "servicioId",
                          dd.tipo_calculo AS "tipoCalculo", dd.valor,
@@ -676,16 +700,10 @@ exports.obtenerDetalleAdministracion = async (id) => {
                   WHERE dd.descuento_id=$1
                     AND dd.descuento_cliente_id IS NULL
                     AND dd.activo=TRUE
-                  ORDER BY p.nombre, dd.servicio_id`, [id]),
-        db.query(`SELECT dc.id, dc.codigo, dc.placa,
-                         dc.fecha_inicio, dc.fecha_fin, dc.max_usos,
-                         dc.usos_realizados, dc.activo
-                  FROM fg_descuentocliente dc
-                  WHERE dc.descuento_id=$1
-                  ORDER BY dc.fecha_creacion DESC`, [id])
+                  ORDER BY p.nombre, dd.servicio_id`, [id])
     ]);
     if (!descuento.rowCount) throw errorNegocio('DESCUENTO_NOT_FOUND', 404);
-    return { descuento: descuento.rows[0], reglas: reglas.rows, codigos: codigos.rows };
+    return { descuento: descuento.rows[0], reglas: reglas.rows };
 };
 
 const normalizarCodigoCliente = (data) => ({
@@ -747,23 +765,218 @@ const validarCodigoCliente = (regla) => {
     }
 };
 
+const normalizarPrefijoLote = (valor) => String(valor || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-_]+|[-_]+$/g, '');
+
+const generarItemsLote = (data) => {
+    const prefijo = normalizarPrefijoLote(data.prefijo);
+    const cantidad = Number(data.cantidad);
+    const maxUsos = Number(data.maxUsos || 1);
+    if (!prefijo || prefijo.length > 70) throw errorNegocio('PREFIJO_CODIGO_INVALIDO', 400);
+    if (!Number.isInteger(cantidad) || cantidad < 1 || cantidad > 10000) {
+        throw errorNegocio('CANTIDAD_CODIGOS_INVALIDA', 400);
+    }
+    if (!Number.isInteger(maxUsos) || maxUsos < 1) throw errorNegocio('MAX_USOS_INVALIDO', 400);
+    return Array.from({ length: cantidad }, (_, indice) => ({
+        codigo: `${prefijo}-${String(indice + 1).padStart(6, '0')}`,
+        placa: null,
+        maxUsos
+    }));
+};
+
+const normalizarItemImportacion = (item, indice) => {
+    const codigo = String(item?.codigo || '').trim().toUpperCase();
+    const placaOriginal = String(item?.placa || '').trim().toUpperCase();
+    const placa = placaOriginal.replace(/[^A-Z0-9]/g, '') || null;
+    const maxUsos = Number(item?.maxUsos ?? item?.max_usos ?? 1);
+    const errores = [];
+    if (!codigo) errores.push('CODIGO_VACIO');
+    else if (!/^[A-Z0-9_-]{2,80}$/.test(codigo)) errores.push('CODIGO_INVALIDO');
+    if (!Number.isInteger(maxUsos) || maxUsos < 1) errores.push('MAX_USOS_INVALIDO');
+    if (placaOriginal && (!placa || placa.length < 3 || placa.length > 12)) errores.push('PLACA_INVALIDA');
+    return { fila: indice + 2, codigo, placa, maxUsos, errores };
+};
+
+const validarVigenciaCodigos = (data, campana) => {
+    const fechaInicio = normalizarInicioDia(data.fechaInicio || null);
+    const fechaFin = normalizarFinDia(data.fechaFin || null);
+    if ((fechaInicio && !fechaFin) || (!fechaInicio && fechaFin)) {
+        throw errorNegocio('VIGENCIA_CODIGO_INVALIDA', 400);
+    }
+    if (fechaInicio && (
+        new Date(fechaInicio) < new Date(campana.fecha_inicio)
+        || new Date(fechaFin) > new Date(campana.fecha_fin)
+    )) throw errorNegocio('VIGENCIA_CODIGO_FUERA_DE_CAMPANA', 400);
+    return { fechaInicio, fechaFin };
+};
+
+const prepararItemsCodigos = (items) => {
+    const vistos = new Set();
+    const validos = [];
+    const errores = [];
+    let duplicadosArchivo = 0;
+    let rechazados = 0;
+    items.forEach((item, indice) => {
+        const normalizado = normalizarItemImportacion(item, indice);
+        if (normalizado.codigo && vistos.has(normalizado.codigo)) {
+            duplicadosArchivo += 1;
+            errores.push({ fila: normalizado.fila, codigo: normalizado.codigo, motivo: 'DUPLICADO_ARCHIVO' });
+            return;
+        }
+        if (normalizado.codigo) vistos.add(normalizado.codigo);
+        if (normalizado.errores.length) {
+            rechazados += 1;
+            errores.push(...normalizado.errores.map(motivo => ({ fila: normalizado.fila, codigo: normalizado.codigo, motivo })));
+            return;
+        }
+        validos.push(normalizado);
+    });
+    return { validos, errores, duplicadosArchivo, rechazados };
+};
+
+const insertarCodigosMasivos = async (client, descuentoId, items, vigencia, username) => {
+    const tamanoLote = 500;
+    for (let inicio = 0; inicio < items.length; inicio += tamanoLote) {
+        const lote = items.slice(inicio, inicio + tamanoLote);
+        await client.query(`INSERT INTO fg_descuentocliente
+            (descuento_id, codigo, tipo_documento, nro_documento, placa, planta_key,
+             tipo_calculo, valor_contado, valor_credito, fecha_inicio, fecha_fin,
+             max_usos, usuario_creacion)
+            SELECT $1, datos.codigo, NULL, NULL, datos.placa, NULL,
+                   NULL, NULL, NULL, $2, $3, datos.max_usos, $4
+            FROM UNNEST($5::text[], $6::text[], $7::integer[])
+                 AS datos(codigo, placa, max_usos)`, [
+            descuentoId,
+            vigencia.fechaInicio,
+            vigencia.fechaFin,
+            username,
+            lote.map(item => item.codigo),
+            lote.map(item => item.placa),
+            lote.map(item => item.maxUsos)
+        ]);
+    }
+};
+
+const procesarCodigosMasivos = async (client, descuentoId, items, data, userContext) => {
+    if (!Array.isArray(items) || items.length < 1 || items.length > 10000) {
+        throw errorNegocio('CANTIDAD_CODIGOS_INVALIDA', 400);
+    }
+    const campana = await client.query(
+        'SELECT fecha_inicio, fecha_fin FROM fg_descuento WHERE id=$1 FOR UPDATE',
+        [descuentoId]
+    );
+    if (!campana.rowCount) throw errorNegocio('DESCUENTO_NOT_FOUND', 404);
+    const reglas = await client.query(`SELECT 1 FROM fg_descuentodetalle
+        WHERE descuento_id=$1 AND descuento_cliente_id IS NULL AND activo=TRUE LIMIT 1`, [descuentoId]);
+    if (!reglas.rowCount) throw errorNegocio('REGLAS_DESCUENTO_REQUERIDAS', 409);
+    const vigencia = validarVigenciaCodigos(data, campana.rows[0]);
+    const preparados = prepararItemsCodigos(items);
+    const codigos = preparados.validos.map(item => item.codigo);
+    const existentes = codigos.length ? await client.query(`SELECT UPPER(BTRIM(codigo)) AS codigo
+        FROM fg_descuentocliente
+        WHERE UPPER(BTRIM(codigo)) = ANY($1::text[])`, [codigos]) : { rows: [] };
+    const existentesSet = new Set(existentes.rows.map(row => row.codigo));
+    const nuevos = preparados.validos.filter(item => !existentesSet.has(item.codigo));
+    const errores = [
+        ...preparados.errores,
+        ...preparados.validos.filter(item => existentesSet.has(item.codigo))
+            .map(item => ({ fila: item.fila, codigo: item.codigo, motivo: 'DUPLICADO_BD' }))
+    ];
+    if (!data.validarSolo) await insertarCodigosMasivos(client, descuentoId, nuevos, vigencia, userContext.username);
+    return {
+        solicitados: items.length,
+        creados: data.validarSolo ? 0 : nuevos.length,
+        validos: nuevos.length,
+        duplicados: preparados.duplicadosArchivo + existentesSet.size,
+        rechazados: preparados.rechazados,
+        errores: errores.slice(0, 100)
+    };
+};
+
+exports.listarCodigosAdministracion = async (descuentoId, filtros = {}) => {
+    const id = Number(descuentoId);
+    const limit = Math.min(100, Math.max(1, Number(filtros.limit) || 20));
+    const offset = Math.max(0, Number(filtros.offset) || 0);
+    const params = [id];
+    let where = 'WHERE dc.descuento_id=$1';
+    const estado = String(filtros.estado || 'TODOS').toUpperCase();
+    if (estado === 'ACTIVO' || estado === 'INACTIVO') {
+        params.push(estado === 'ACTIVO');
+        where += ` AND dc.activo=$${params.length}`;
+    }
+    const search = String(filtros.search || '').trim().toUpperCase();
+    if (search) {
+        params.push(`%${search}%`);
+        where += ` AND (UPPER(BTRIM(dc.codigo)) LIKE $${params.length}
+                    OR UPPER(BTRIM(COALESCE(dc.placa, ''))) LIKE $${params.length})`;
+    }
+    const total = await db.query(`SELECT COUNT(*)::integer AS total
+        FROM fg_descuentocliente dc ${where}`, params);
+    params.push(limit, offset);
+    const items = await db.query(`SELECT dc.id, dc.codigo, dc.placa, dc.fecha_inicio, dc.fecha_fin,
+               dc.max_usos, dc.usos_realizados, dc.activo
+        FROM fg_descuentocliente dc
+        ${where}
+        ORDER BY dc.fecha_creacion DESC, dc.id DESC
+        LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+    return { items: items.rows, total: Number(total.rows[0].total), limit, offset };
+};
+
+exports.generarLoteCodigos = async (descuentoId, data, userContext) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const resultado = await procesarCodigosMasivos(client, descuentoId, generarItemsLote(data), data, userContext);
+        await client.query('COMMIT');
+        return resultado;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.code === '23505') throw errorNegocio('CODIGO_CLIENTE_DUPLICADO', 409);
+        throw error;
+    } finally { client.release(); }
+};
+
+exports.importarCodigos = async (descuentoId, data, userContext) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const resultado = await procesarCodigosMasivos(client, descuentoId, data.items, data, userContext);
+        await client.query('COMMIT');
+        return resultado;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.code === '23505') throw errorNegocio('CODIGO_CLIENTE_DUPLICADO', 409);
+        throw error;
+    } finally { client.release(); }
+};
+
 const guardarReglasCampana = async (client, descuentoId, reglas, username) => {
     await client.query(`UPDATE fg_descuentodetalle
         SET activo=FALSE, usuario_modificacion=$2, fecha_modificacion=CURRENT_TIMESTAMP
         WHERE descuento_id=$1 AND descuento_cliente_id IS NULL`, [descuentoId, username]);
 
     for (const regla of reglas) {
-        const referencia = await client.query(`SELECT t.precio
+        const referencia = await client.query(`SELECT t.producto_facturacion_id,
+                    pf.precio_referencia AS producto_precio_referencia,
+                    pf.precio_unitario AS producto_precio_unitario
             FROM fg_tarifa t
             JOIN fg_planta p ON p.key=t.planta_key
             JOIN fg_servicio s ON s.id=t.servicio_id
             JOIN fg_categoria_servicio c ON c.id=s.categoria_id
+            LEFT JOIN fg_producto_facturacion pf ON pf.id=t.producto_facturacion_id
             WHERE t.planta_key=$1 AND t.servicio_id=$2 AND t.activo=TRUE
               AND p.activo=TRUE AND s.activo=TRUE AND c.activo=TRUE
               AND s.tipo_flujo='CERTIFICACION'`, [regla.plantaKey, regla.servicioId]);
         if (!referencia.rowCount) throw errorNegocio('REFERENCIA_DESCUENTO_INVALIDA', 400);
 
-        const tarifa = Number(referencia.rows[0].precio);
+        const tarifa = resolverPrecioServicio(referencia.rows[0]);
+        if (!Number.isFinite(tarifa) || tarifa <= 0) {
+            throw errorNegocio('REFERENCIA_DESCUENTO_INVALIDA', 400);
+        }
         const valoresFlat = [regla.valorContado, regla.valorCredito].filter(valor => valor != null);
         if ((regla.tipoCalculo === 'FLAT' && valoresFlat.some(valor => valor >= tarifa))
             || (regla.tipoCalculo === 'MONTO' && regla.valor > tarifa)) {
@@ -890,5 +1103,12 @@ exports.cambiarEstadoCodigo = async (id, activo, userContext) => {
 };
 
 exports._private = {
-    errorNegocio
+    errorNegocio,
+    resolverPrecioServicio,
+    mapearServicioAdministracion,
+    calcularImporteFinal,
+    generarItemsLote,
+    prepararItemsCodigos,
+    validarVigenciaCodigos,
+    procesarCodigosMasivos
 };

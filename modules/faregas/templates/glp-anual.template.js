@@ -349,7 +349,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
     </ol>
 
     <div style="text-align: justify; font-size: 9.5px; margin-bottom: 8px;">
-        Conste por el presente documento que el sistema de combustión a Gas Licuado de Petróleo-GLP del vehículo antes referido, no afecta negativamente la seguridad del mismo, el tránsito terrestre, el medio ambiente o incumplen con las condiciones técnicas establecidas en la normativa vigente en la materia, según consta en el expediente técnico <strong>N° ${escapeHtml(glp.expediente_tecnico || (options.modo === 'PREVIEW' ? 'PENDIENTE' : numCertificado))}</strong> habilitándose al mismo para cargar Gas Licuado de Petróleo-GLP, hasta el <strong>${escapeHtml(vigenciaHastaFmt)}</strong>.
+        Conste por el presente documento que el sistema de combustión a Gas Licuado de Petróleo-GLP del vehículo antes referido, no afecta negativamente la seguridad del mismo, el tránsito terrestre, el medio ambiente o incumplen con las condiciones técnicas establecidas en la normativa vigente en la materia, según consta en el expediente técnico <strong>N° ${escapeHtml(numCertificado)}</strong> habilitándose al mismo para cargar Gas Licuado de Petróleo-GLP, hasta el <strong>${escapeHtml(vigenciaHastaFmt)}</strong>.
     </div>
 
     <div class="obs-sec">

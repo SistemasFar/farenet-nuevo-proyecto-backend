@@ -32,6 +32,9 @@ router.patch('/:id/estado', requireAdministrar, controller.cambiarEstadoDescuent
 router.get('/:id/impacto', requireAdministrar, controller.impactoDescuento);
 router.delete('/:id', requireAdministrar, controller.eliminarDescuento);
 router.put('/:id/reglas', requireAdministrar, controller.guardarReglasDescuento);
+router.get('/:id/codigos', requireAdministrar, controller.listarCodigos);
+router.post('/:id/codigos/lote', requireAdministrar, controller.generarLoteCodigos);
+router.post('/:id/codigos/importar', requireAdministrar, controller.importarCodigos);
 router.post('/:id/codigos', requireAdministrar, controller.crearCodigo);
 router.put('/codigos/:id', requireAdministrar, controller.actualizarCodigo);
 router.patch('/codigos/:id/estado', requireAdministrar, controller.cambiarEstadoCodigo);
