@@ -42,9 +42,25 @@ function formatDateShort(dateInput) {
     return `${dia}/${mes}/${anio}`;
 }
 
+/**
+ * PostgreSQL devuelve columnas NUMERIC como texto con su escala declarada
+ * (por ejemplo, "1301.000"). Para impresión conserva el valor y elimina
+ * únicamente los ceros decimales que no aportan información.
+ */
+function formatNumberWithoutTrailingZeros(value, fallback = '-') {
+    if (value === null || value === undefined || String(value).trim() === '') return fallback;
+    const original = String(value).trim();
+    const normalized = original.replace(',', '.');
+    if (!/^-?\d+(?:\.\d+)?$/.test(normalized)) return original;
+    return normalized.includes('.')
+        ? normalized.replace(/0+$/, '').replace(/\.$/, '')
+        : normalized;
+}
+
 module.exports = {
     NUMERO_CERTIFICADO_PENDIENTE,
     escapeHtml,
     formatDateLong,
-    formatDateShort
+    formatDateShort,
+    formatNumberWithoutTrailingZeros
 };

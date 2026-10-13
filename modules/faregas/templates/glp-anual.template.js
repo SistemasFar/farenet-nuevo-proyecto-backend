@@ -1,4 +1,10 @@
-const { escapeHtml, formatDateLong, formatDateShort, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
+const {
+    escapeHtml,
+    formatDateLong,
+    formatDateShort,
+    formatNumberWithoutTrailingZeros,
+    NUMERO_CERTIFICADO_PENDIENTE
+} = require('./template-utils');
 
 function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
     const cert = data.cabecera || {};
@@ -55,13 +61,17 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
         if (modRaw.toUpperCase() === 'Q') modRaw = '';
         let modStr = escapeHtml(modRaw);
         if (c.componente === 'CILINDRO' && (c.capacidad_litros || c.anio_fabricacion)) {
-            const cap = c.capacidad_litros ? `${Number(c.capacidad_litros).toFixed(2)} LTS` : '';
-            const anio = c.anio_fabricacion ? `${c.mes_fabricacion ? String(c.mes_fabricacion).padStart(2, '0') + '-' : ''}${c.anio_fabricacion}` : '';
+            // El formato oficial GLP anual imprime capacidad/año. El mes se
+            // conserva en los datos históricos, pero no pertenece a esta celda.
+            const capacidad = formatNumberWithoutTrailingZeros(c.capacidad_litros, '');
+            const cap = capacidad ? `${capacidad} LTS` : '';
+            const anio = c.anio_fabricacion ? String(c.anio_fabricacion) : '';
             const extra = [cap, anio].filter(Boolean).join(' / ');
             if (extra) modStr = extra;
         }
+        const item = c.componente === 'CILINDRO' ? '1' : c.componente === 'REGULADOR' ? 'Q' : String(i + 1);
         return `<tr>
-            <td style="text-align: center;">${i + 1}</td>
+            <td style="text-align: center;">${item}</td>
             <td>${escapeHtml(c.componente)}</td>
             <td>${escapeHtml(c.marca || '-')}</td>
             <td>${modStr || '-'}</td>
@@ -76,7 +86,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             <td>NE</td>
         </tr>
         <tr>
-            <td style="text-align: center;">2</td>
+            <td style="text-align: center;">Q</td>
             <td>Regulador</td>
             <td>-</td>
             <td>-</td>
@@ -266,7 +276,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val">${escapeHtml(veh.placa || cert.placa_nueva || '-')}</td>
             <td class="num">10</td>
             <td>N° Cilindros / Cilindrada (cm3)</td>
-            <td class="val">${escapeHtml(veh.cilindros || '-')} / ${escapeHtml(veh.cilindrada || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.cilindros))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.cilindrada))}</td>
         </tr>
         <tr>
             <td class="num">3</td>
@@ -298,7 +308,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val">${escapeHtml(veh.version || '-')}</td>
             <td class="num">14</td>
             <td>Largo / Ancho / Alto (m)</td>
-            <td class="val">${escapeHtml(veh.longitud || '-')} / ${escapeHtml(veh.ancho || '-')} / ${escapeHtml(veh.altura || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.longitud))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.ancho))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.altura))}</td>
         </tr>
         <tr>
             <td class="num">7</td>
@@ -306,7 +316,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val">${escapeHtml(veh.ano_fabricacion || '-')}</td>
             <td class="num">15</td>
             <td>Peso neto (kg.)</td>
-            <td class="val">${escapeHtml(veh.peso_seco || veh.peso_neto || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.peso_seco || veh.peso_neto))}</td>
         </tr>
         <tr>
             <td class="num">8</td>
@@ -314,7 +324,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val">${escapeHtml(veh.vin || veh.serie || '-')}</td>
             <td class="num">16</td>
             <td>Peso bruto vehicular (kg.)</td>
-            <td class="val">${escapeHtml(veh.peso_bruto || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.peso_bruto))}</td>
         </tr>
         <tr>
             <td class="num">9</td>
@@ -322,7 +332,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val">${escapeHtml(veh.motor || '-')}</td>
             <td class="num">17</td>
             <td>Carga útil (kg.)</td>
-            <td class="val">${escapeHtml(veh.carga_util || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.carga_util))}</td>
         </tr>
     </table>
 

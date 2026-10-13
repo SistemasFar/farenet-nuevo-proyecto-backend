@@ -9,6 +9,18 @@ const certificados = require('../services/faregas-certificados.service');
 const sedeRangos = require('../services/faregas-correlativos-sede.service');
 const generateGlpAnualHtml = require('../templates/glp-anual.template');
 
+test('GLP anual exige capacidad/año sin modelo ni mes en el cilindro', () => {
+    const { camposRequeridosComponenteGlp } = certificados._private;
+    const anualCilindro = camposRequeridosComponenteGlp('ANUAL', 'CILINDRO').map(([campo]) => campo);
+    const inicialCilindro = camposRequeridosComponenteGlp('INICIAL', 'CILINDRO').map(([campo]) => campo);
+    const anualRegulador = camposRequeridosComponenteGlp('ANUAL', 'REGULADOR').map(([campo]) => campo);
+
+    assert.deepEqual(anualCilindro, ['marca', 'numero_serie', 'capacidad_litros', 'anio_fabricacion']);
+    assert.ok(inicialCilindro.includes('modelo'));
+    assert.ok(inicialCilindro.includes('mes_fabricacion'));
+    assert.deepEqual(anualRegulador, ['marca', 'numero_serie', 'modelo']);
+});
+
 const ejecutarGuardadoGlp = async ({
     combustibleOriginal = 'GASOLINA',
     combustiblePosterior = 'BI-COMBUSTIBLE GLP',

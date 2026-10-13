@@ -54,6 +54,29 @@ const tituloCertificadoDinamico = ({ tipoFlujo, tipoCertificadoClave, modalidad,
 const requiereExpedienteTecnicoGlp = (modalidad) =>
     String(modalidad || '').trim().toUpperCase() === 'INICIAL';
 
+const camposRequeridosComponenteGlp = (modalidad, componente) => {
+    const tipo = String(componente || '').trim().toUpperCase();
+    const esCilindro = tipo === 'CILINDRO';
+    const esAnual = String(modalidad || '').trim().toUpperCase() === 'ANUAL';
+    const campos = [
+        ['marca', `Marca requerida para componente ${tipo}`],
+        ['numero_serie', `Serie requerida para componente ${tipo}`]
+    ];
+    if (!(esAnual && esCilindro)) {
+        campos.push(['modelo', `Modelo requerido para componente ${tipo}`]);
+    }
+    if (esCilindro) {
+        campos.push(
+            ['capacidad_litros', 'Capacidad requerida para CILINDRO'],
+            ['anio_fabricacion', 'Año fabricación requerido para CILINDRO']
+        );
+        if (!esAnual) {
+            campos.push(['mes_fabricacion', 'Mes fabricación requerido para CILINDRO']);
+        }
+    }
+    return campos;
+};
+
 const formatearNumeroCertificado = ({ tipoFlujo, tipoCodigo, anchoCorrelativo, numero }) => {
     const esInspeccionTaller = String(tipoFlujo || '').trim().toUpperCase() === 'TALLER_INSPECCION';
     const prefijo = esInspeccionTaller ? '22' : String(tipoCodigo || '').trim();
@@ -2253,11 +2276,13 @@ exports.validarEmision = async (id, userContext) => {
 
     // GLP Especifico
     if (!esFormularioDinamico && cert.tipo_clave === 'GLP_ANUAL') {
+        let modalidadGlp = '';
         const rGlp = await db.query('SELECT * FROM fg_certificado_glp WHERE certificado_id = $1', [id]);
         if (rGlp.rowCount === 0) {
             pushError('glp', 'general', 'SECCION_FALTANTE', 'Faltan datos de GLP');
         } else {
             const g = rGlp.rows[0];
+            modalidadGlp = String(g.modalidad || '').trim().toUpperCase();
             if (!g.taller_autorizado_id) pushError('glp', 'taller_autorizado_id', 'CAMPO_REQUERIDO', 'Taller autorizado requerido');
             if (!g.vigencia_hasta) pushError('glp', 'vigencia_hasta', 'CAMPO_REQUERIDO', 'Vigencia requerida');
             if (requiereExpedienteTecnicoGlp(g.modalidad) && !g.expediente_tecnico) {
@@ -2277,13 +2302,8 @@ exports.validarEmision = async (id, userContext) => {
         if (!compTypes.includes('REGULADOR')) pushError('glp', 'componentes', 'COMPONENTE_REQUERIDO', 'Se requiere al menos 1 REGULADOR');
         
         rComp.rows.forEach(c => {
-            if (!c.marca) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', `Marca requerida para componente ${c.componente}`);
-            if (!c.modelo) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', `Modelo requerido para componente ${c.componente}`);
-            if (c.componente === 'CILINDRO') {
-                if (!c.numero_serie) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', 'Serie requerida para CILINDRO');
-                if (!c.capacidad_litros) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', 'Capacidad requerida para CILINDRO');
-                if (!c.mes_fabricacion) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', 'Mes fabricación requerido para CILINDRO');
-                if (!c.anio_fabricacion) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', 'Año fabricación requerido para CILINDRO');
+            for (const [campo, mensaje] of camposRequeridosComponenteGlp(modalidadGlp, c.componente)) {
+                if (!c[campo]) pushError('glp', 'componentes', 'CAMPO_REQUERIDO', mensaje);
             }
         });
 
@@ -2826,5 +2846,6 @@ exports._private = Object.freeze({
     combustiblesGnvSonEquivalentes,
     combustiblesGlpSonEquivalentes,
     pesosGnvSonIguales,
-    requiereExpedienteTecnicoGlp
+    requiereExpedienteTecnicoGlp,
+    camposRequeridosComponenteGlp
 });

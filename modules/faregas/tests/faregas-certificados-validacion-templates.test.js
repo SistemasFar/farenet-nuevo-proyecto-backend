@@ -65,9 +65,9 @@ test('GLP Anual: template muestra BI COMBUSTIBLE GLP fijo y expediente técnico 
     cabecera: { numero_certificado: 'GLP-ANUAL-002', fecha_emision: '2026-10-12', cliente_nombre: 'MARIA LOPEZ' },
     vehiculo: {
       placa: 'XYZ789', categoria: 'M1', marca: 'NISSAN', modelo: 'SENTRA', version: 'ADVANCE',
-      ano_fabricacion: '2019', serie: 'SER123456', motor: 'MOT888', cilindros: '4', cilindrada: '1600',
+      ano_fabricacion: '2019', serie: 'SER123456', motor: 'MOT888', cilindros: '4.000', cilindrada: '1600.000',
       ejes: '2', ruedas: '4', asientos: '5', pasajeros: '4',
-      longitud: '4.30', ancho: '1.75', altura: '1.50', peso_neto: '1200', peso_bruto: '1600', carga_util: '400'
+      longitud: '4.300', ancho: '1.750', altura: '1.500', peso_neto: '1301.000', peso_bruto: '1450.000', carga_util: '149.000'
     },
     glp: { vigencia_hasta: '2027-10-12' },
     componentes: [
@@ -93,6 +93,17 @@ test('GLP Anual: template muestra BI COMBUSTIBLE GLP fijo y expediente técnico 
   assert.match(html, /BI COMBUSTIBLE GLP/);
   assert.match(html, /GLP-ANUAL-002/);
   assert.equal($('table.comp-table tbody tr').length, 2);
+  const tablaVehiculo = $('table.data-table').text();
+  assert.match(tablaVehiculo, /4\s*\/\s*1600/);
+  assert.match(tablaVehiculo, /4\.3\s*\/\s*1\.75\s*\/\s*1\.5/);
+  assert.match(tablaVehiculo, /1301/);
+  assert.match(tablaVehiculo, /1450/);
+  assert.match(tablaVehiculo, /149/);
+  assert.doesNotMatch(tablaVehiculo, /(?:1301|1450|149|1600)\.000/);
+  assert.match($('table.comp-table tbody tr').first().text(), /45 LTS\s*\/\s*2019/);
+  assert.doesNotMatch($('table.comp-table').text(), /01-2019/);
+  assert.equal($('table.comp-table tbody tr').first().find('td').first().text().trim(), '1');
+  assert.equal($('table.comp-table tbody tr').eq(1).find('td').first().text().trim(), 'Q');
 });
 
 test('GNV Inicial: template no muestra fila de propietario, muestra componentes y conversion, sin 8 verificaciones', () => {
