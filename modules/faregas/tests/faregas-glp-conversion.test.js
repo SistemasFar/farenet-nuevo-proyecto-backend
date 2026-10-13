@@ -97,7 +97,7 @@ test('GLP ANUAL ignora una entrada manual nueva y preserva de forma explícita e
     assert.equal(parametros[2], null);
     assert.match(parametros.sql, /WHEN EXCLUDED\.modalidad = 'ANUAL' THEN fg_certificado_glp\.expediente_tecnico/);
     assert.equal(certificados._private.requiereExpedienteTecnicoGlp('ANUAL'), false);
-    assert.equal(certificados._private.requiereExpedienteTecnicoGlp('INICIAL'), true);
+    assert.equal(certificados._private.requiereExpedienteTecnicoGlp('INICIAL'), false);
 });
 
 test('la plantilla GLP ANUAL usa siempre el número oficial y no el expediente manual legado', () => {
@@ -190,4 +190,27 @@ test('la emisión GLP ANUAL consume un solo correlativo y sincroniza certificado
         authService.validarAccesoCertificado = originalValidarAcceso;
         sedeRangos.consumirNumero = originalConsumirNumero;
     }
+});
+
+test('GLP INICIAL: la plantilla usa el número oficial y en preview muestra estado pendiente', () => {
+    const generateGlpInicialHtml = require('../templates/glp-inicial.template');
+    const htmlPreview = generateGlpInicialHtml({
+        cabecera: {},
+        vehiculo: {},
+        glp: {},
+        componentes: [],
+        verificaciones: [],
+        titulares: []
+    }, { modo: 'PREVIEW' });
+    assert.match(htmlPreview, /expediente técnico <strong>N\.º PENDIENTE DE EMISIÓN<\/strong>/);
+
+    const htmlFinal = generateGlpInicialHtml({
+        cabecera: { numero_certificado: 'DG-41-000200' },
+        vehiculo: {},
+        glp: {},
+        componentes: [],
+        verificaciones: [],
+        titulares: []
+    }, { modo: 'FINAL' });
+    assert.match(htmlFinal, /expediente técnico <strong>N\.º DG-41-000200<\/strong>/);
 });

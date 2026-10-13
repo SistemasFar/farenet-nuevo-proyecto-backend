@@ -51,8 +51,7 @@ const tituloCertificadoDinamico = ({ tipoFlujo, tipoCertificadoClave, modalidad,
         : fallback
 );
 
-const requiereExpedienteTecnicoGlp = (modalidad) =>
-    String(modalidad || '').trim().toUpperCase() === 'INICIAL';
+const requiereExpedienteTecnicoGlp = (modalidad) => false;
 
 const camposRequeridosComponenteGlp = (modalidad, componente) => {
     const tipo = String(componente || '').trim().toUpperCase();
@@ -1802,6 +1801,7 @@ exports.guardarGLP = async (id, data, userContext) => {
                 taller_autorizado_id = EXCLUDED.taller_autorizado_id,
                 expediente_tecnico = CASE
                     WHEN EXCLUDED.modalidad = 'ANUAL' THEN fg_certificado_glp.expediente_tecnico
+                    WHEN EXCLUDED.modalidad = 'INICIAL' THEN fg_certificado_glp.expediente_tecnico
                     ELSE EXCLUDED.expediente_tecnico
                 END,
                 vigencia_hasta = EXCLUDED.vigencia_hasta,
@@ -2456,11 +2456,15 @@ exports.emitirCertificado = async (id, userContext) => {
         // de numeración del certificado. Se sincroniza dentro de la misma
         // transacción de emisión, después de obtener el correlativo y sin
         // reservar ni consumir un número adicional.
-        if (cert.tipo_clave === 'GLP_ANUAL' && cert.modalidad_correlativo === 'ANUAL') {
+        // En GLP (ANUAL e INICIAL) el expediente técnico comparte la única fuente oficial
+        // de numeración del certificado. Se sincroniza dentro de la misma
+        // transacción de emisión, después de obtener el correlativo y sin
+        // reservar ni consumir un número adicional.
+        if (cert.tipo_clave === 'GLP_ANUAL' && ['ANUAL', 'INICIAL'].includes(cert.modalidad_correlativo)) {
             await client.query(`
                 UPDATE fg_certificado_glp
                 SET expediente_tecnico = $2
-                WHERE certificado_id = $1 AND modalidad = 'ANUAL'
+                WHERE certificado_id = $1
             `, [id, numero_certificado]);
         }
 

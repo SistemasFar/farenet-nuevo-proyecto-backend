@@ -1,4 +1,4 @@
-const { escapeHtml, formatDateLong, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
+const { escapeHtml, formatDateLong, formatNumberWithoutTrailingZeros, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
 
 function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
     const variablesDinamicas = options.variablesDinamicas === true;
@@ -261,25 +261,25 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             <td>Modelo</td>
             <td class="val">${escapeHtml(veh.modelo || '-')}</td>
             <td>Ancho (metros)</td>
-            <td class="val">${escapeHtml(veh.ancho || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.ancho))}</td>
         </tr>
         <tr>
             <td>Marca</td>
             <td class="val">${escapeHtml(veh.marca || '-')}</td>
             <td>Peso bruto (kg)</td>
-            <td class="val">${escapeHtml(veh.peso_bruto || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.peso_bruto))}</td>
         </tr>
         <tr>
             <td>Serie / Chasis</td>
             <td class="val">${escapeHtml(veh.serie || veh.vin || '-')}</td>
             <td>Peso neto (kg)</td>
-            <td class="val">${escapeHtml(veh.peso_seco || veh.peso_neto || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.peso_seco || veh.peso_neto))}</td>
         </tr>
         <tr>
             <td>Motor</td>
             <td class="val">${escapeHtml(veh.motor || '-')}</td>
             <td>Carga útil (kg)</td>
-            <td class="val">${escapeHtml(veh.carga_util || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.carga_util))}</td>
         </tr>
         <tr>
             <td>Color</td>
@@ -301,25 +301,25 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         </tr>
         <tr>
             <td>Potencia (kw / rpm)</td>
-            <td class="val">${escapeHtml(veh.potencia || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.potencia))}</td>
             <td>Nº Ejes</td>
-            <td class="val">${escapeHtml(veh.ejes || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.ejes))}</td>
         </tr>
         <tr>
             <td>Asientos / Pasajeros</td>
-            <td class="val">${escapeHtml(veh.asientos || '-')} / ${escapeHtml(veh.pasajeros || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.asientos))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.pasajeros))}</td>
             <td>Nº Ruedas</td>
-            <td class="val">${escapeHtml(veh.ruedas || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.ruedas))}</td>
         </tr>
         <tr>
             <td>Cilindrada (cc) / Cilindros</td>
-            <td class="val">${escapeHtml(veh.cilindrada || '-')} / ${escapeHtml(veh.cilindros || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.cilindrada))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.cilindros))}</td>
             <td>Versión</td>
             <td class="val">${escapeHtml(veh.version || '-')}</td>
         </tr>
         <tr>
             <td>Longitud (metros)</td>
-            <td class="val">${escapeHtml(veh.longitud || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.longitud))}</td>
             <td>VIN</td>
             <td class="val">${escapeHtml(veh.vin || veh.serie || '-')}</td>
         </tr>

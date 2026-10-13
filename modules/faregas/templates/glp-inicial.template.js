@@ -1,4 +1,4 @@
-const { escapeHtml, formatDateLong, formatDateShort, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
+const { escapeHtml, formatDateLong, formatDateShort, formatNumberWithoutTrailingZeros, formatNumeroCertificado, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
 
 function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
     const cert = data.cabecera || {};
@@ -53,7 +53,8 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
         if (modRaw.toUpperCase() === 'Q') modRaw = '';
         let modStr = escapeHtml(modRaw);
         if (c.componente === 'CILINDRO' && (c.capacidad_litros || c.anio_fabricacion)) {
-            const cap = c.capacidad_litros ? `${c.capacidad_litros} LTS` : '';
+            const capVal = formatNumeroCertificado(c.capacidad_litros);
+            const cap = capVal ? `${capVal} LTS` : '';
             const anio = c.anio_fabricacion ? `${c.mes_fabricacion ? String(c.mes_fabricacion).padStart(2, '0') + '-' : ''}${c.anio_fabricacion}` : '';
             const extra = [cap, anio].filter(Boolean).join(' / ');
             if (extra) modStr = extra; // Solo mostrar el extra, omitiendo el modelo original
@@ -261,7 +262,7 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val" style="background-color: transparent;">${escapeHtml(veh.placa || cert.placa_nueva || '-')}</td>
             <td class="num">10</td>
             <td>N° Cilindros / Cilindrada (cm3)</td>
-            <td class="val" style="background-color: transparent;">${escapeHtml(veh.cilindros || '-')} / ${escapeHtml(veh.cilindrada || '-')}</td>
+            <td class="val" style="background-color: transparent;">${escapeHtml(formatNumberWithoutTrailingZeros(veh.cilindros))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.cilindrada))}</td>
         </tr>
         <tr>
             <td class="num">3</td>
@@ -277,7 +278,7 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val" style="background-color: transparent;">${escapeHtml(veh.marca || '-')}</td>
             <td class="num">12</td>
             <td>N° ejes / N° ruedas</td>
-            <td class="val" style="background-color: transparent;">${escapeHtml(veh.ejes || '-')} / ${escapeHtml(veh.ruedas || '-')}</td>
+            <td class="val" style="background-color: transparent;">${escapeHtml(formatNumberWithoutTrailingZeros(veh.ejes))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.ruedas))}</td>
         </tr>
         <tr>
             <td class="num">5</td>
@@ -285,7 +286,7 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val" style="background-color: transparent;">${escapeHtml(veh.modelo || '-')}</td>
             <td class="num">13</td>
             <td>N° Asientos / Pasajeros</td>
-            <td class="val" style="background-color: transparent;">${escapeHtml(veh.asientos || '-')} / ${escapeHtml(veh.pasajeros || '-')}</td>
+            <td class="val" style="background-color: transparent;">${escapeHtml(formatNumberWithoutTrailingZeros(veh.asientos))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.pasajeros))}</td>
         </tr>
         <tr>
             <td class="num">6</td>
@@ -293,7 +294,7 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val" style="background-color: transparent;">${escapeHtml(veh.version || '-')}</td>
             <td class="num">14</td>
             <td>Largo / Ancho / Alto (m)</td>
-            <td class="val" style="background-color: transparent;">${escapeHtml(veh.longitud || '-')} / ${escapeHtml(veh.ancho || '-')} / ${escapeHtml(veh.altura || '-')}</td>
+            <td class="val" style="background-color: transparent;">${escapeHtml(formatNumberWithoutTrailingZeros(veh.longitud))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.ancho))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.altura))}</td>
         </tr>
         <tr>
             <td class="num">7</td>
@@ -301,7 +302,7 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val" style="background-color: transparent;">${escapeHtml(veh.ano_fabricacion || '-')}</td>
             <td class="num">15</td>
             <td>Peso neto (kg.)</td>
-            <td class="val" style="background-color: transparent;">${escapeHtml(veh.peso_seco || veh.peso_neto || '-')}</td>
+            <td class="val" style="background-color: transparent;">${escapeHtml(formatNumberWithoutTrailingZeros(veh.peso_seco || veh.peso_neto))}</td>
         </tr>
         <tr>
             <td class="num">8</td>
@@ -309,7 +310,7 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val" style="background-color: transparent;">${escapeHtml(veh.vin || veh.serie || '-')}</td>
             <td class="num">16</td>
             <td>Peso bruto vehicular (kg.)</td>
-            <td class="val" style="background-color: transparent;">${escapeHtml(veh.peso_bruto || '-')}</td>
+            <td class="val" style="background-color: transparent;">${escapeHtml(formatNumberWithoutTrailingZeros(veh.peso_bruto))}</td>
         </tr>
         <tr>
             <td class="num">9</td>
@@ -317,7 +318,7 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val" style="background-color: transparent;">${escapeHtml(veh.motor || '-')}</td>
             <td class="num">17</td>
             <td>Carga útil (kg.)</td>
-            <td class="val" style="background-color: transparent;">${escapeHtml(veh.carga_util || '-')}</td>
+            <td class="val" style="background-color: transparent;">${escapeHtml(formatNumberWithoutTrailingZeros(veh.carga_util))}</td>
         </tr>
     </table>
 
@@ -347,12 +348,12 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
         <tr>
             <td class="num">15</td>
             <td>Peso neto (Kg.)</td>
-            <td class="val" style="background-color: transparent;">${escapeHtml(glp.peso_neto_posterior || '-')}</td>
+            <td class="val" style="background-color: transparent;">${escapeHtml(formatNumberWithoutTrailingZeros(glp.peso_neto_posterior))}</td>
         </tr>
         <tr>
             <td class="num">17</td>
             <td>Carga útil (Kg.)</td>
-            <td class="val" style="background-color: transparent;">${escapeHtml(glp.carga_util_posterior || '-')}</td>
+            <td class="val" style="background-color: transparent;">${escapeHtml(formatNumberWithoutTrailingZeros(glp.carga_util_posterior))}</td>
         </tr>
     </table>
 
@@ -362,7 +363,7 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
     </ol>
 
     <div style="text-align: justify; font-size: 9.5px; margin-bottom: 8px;">
-        Conste por el presente documento que el sistema de combustión a Gas Licuado de Petróleo-GLP del vehículo antes referido, no afecta negativamente la seguridad del mismo, el tránsito terrestre, el medio ambiente o incumple con las condiciones técnicas establecidas en la normativa vigente en la materia, según consta en el expediente técnico <strong>N.º ${escapeHtml(glp.expediente_tecnico || (options.modo === 'PREVIEW' ? 'PENDIENTE' : numCertificado))}</strong> habilitándose al mismo para cargar Gas Licuado de Petróleo-GLP, hasta el <strong>${escapeHtml(vigenciaHastaFmt)}</strong>.
+        Conste por el presente documento que el sistema de combustión a Gas Licuado de Petróleo-GLP del vehículo antes referido, no afecta negativamente la seguridad del mismo, el tránsito terrestre, el medio ambiente o incumple con las condiciones técnicas establecidas en la normativa vigente en la materia, según consta en el expediente técnico <strong>N.º ${escapeHtml(numCertificado)}</strong> habilitándose al mismo para cargar Gas Licuado de Petróleo-GLP, hasta el <strong>${escapeHtml(vigenciaHastaFmt)}</strong>.
     </div>
 
     <div class="obs-sec">

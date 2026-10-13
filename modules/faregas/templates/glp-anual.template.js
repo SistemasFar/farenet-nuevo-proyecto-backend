@@ -292,7 +292,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val">${escapeHtml(veh.marca || '-')}</td>
             <td class="num">12</td>
             <td>N° ejes / N° ruedas</td>
-            <td class="val">${escapeHtml(veh.ejes || '-')} / ${escapeHtml(veh.ruedas || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.ejes))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.ruedas))}</td>
         </tr>
         <tr>
             <td class="num">5</td>
@@ -300,7 +300,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val">${escapeHtml(veh.modelo || '-')}</td>
             <td class="num">13</td>
             <td>N° Asientos / Pasajeros</td>
-            <td class="val">${escapeHtml(veh.asientos || '-')} / ${escapeHtml(veh.pasajeros || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.asientos))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.pasajeros))}</td>
         </tr>
         <tr>
             <td class="num">6</td>

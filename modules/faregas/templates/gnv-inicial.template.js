@@ -1,4 +1,4 @@
-const { escapeHtml, formatDateLong, formatDateShort, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
+const { escapeHtml, formatDateLong, formatDateShort, formatNumberWithoutTrailingZeros, formatNumeroCertificado, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
 
 function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
     const cert = data.cabecera || {};
@@ -30,7 +30,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
             <td style="text-align: center;">${escapeHtml(c.componente || '')}</td>
             <td style="text-align: center; ">${escapeHtml(c.marca || '')}</td>
             <td style="text-align: center; ">${escapeHtml(c.numero_serie || '')}</td>
-            <td style="text-align: center; ">${escapeHtml(c.capacidad_litros || '')}</td>
+            <td style="text-align: center; ">${escapeHtml(formatNumeroCertificado(c.capacidad_litros))}</td>
             <td style="text-align: center; ">${escapeHtml(c.mes_fabricacion ? String(c.mes_fabricacion).padStart(2, '0') : '')}/${escapeHtml(c.anio_fabricacion || '')}</td>
         </tr>
     `).join('') : `
@@ -218,7 +218,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                     <td class="val">${escapeHtml(veh.placa || cert.placa_nueva || '-')}</td>
                     <td class="num">9</td>
                     <td class="label">N° Cilindros / Cilindrada (cm3)</td>
-                    <td class="val">${escapeHtml(veh.cilindros || '-')} / ${escapeHtml(veh.cilindrada || '-')}</td>
+                    <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.cilindros))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.cilindrada))}</td>
                 </tr>
                 <tr>
                     <td class="num">2</td>
@@ -234,7 +234,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                     <td class="val">${escapeHtml(veh.marca || '-')}</td>
                     <td class="num">11</td>
                     <td class="label">N° ejes / N° ruedas</td>
-                    <td class="val">${escapeHtml(veh.ejes || '-')} / ${escapeHtml(veh.ruedas || '-')}</td>
+                    <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.ejes))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.ruedas))}</td>
                 </tr>
                 <tr>
                     <td class="num">4</td>
@@ -242,7 +242,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                     <td class="val">${escapeHtml(veh.modelo || '-')}</td>
                     <td class="num">12</td>
                     <td class="label">N° Asientos / Pasajeros</td>
-                    <td class="val">${escapeHtml(veh.asientos || '-')} / ${escapeHtml(veh.pasajeros || '-')}</td>
+                    <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.asientos))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.pasajeros))}</td>
                 </tr>
                 <tr>
                     <td class="num">5</td>
@@ -250,7 +250,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                     <td class="val">${escapeHtml(veh.version || '-')}</td>
                     <td class="num">13</td>
                     <td class="label">Largo / Ancho / Alto (m)</td>
-                    <td class="val">${escapeHtml(veh.longitud || '-')} / ${escapeHtml(veh.ancho || '-')} / ${escapeHtml(veh.altura || '-')}</td>
+                    <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.longitud))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.ancho))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.altura))}</td>
                 </tr>
                 <tr>
                     <td class="num">6</td>
@@ -266,7 +266,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                     <td class="val">${escapeHtml(veh.vin || veh.serie || '-')}</td>
                     <td class="num">15</td>
                     <td class="label">Peso Neto (Kg.)</td>
-                    <td class="val">${escapeHtml(veh.peso_neto || '-')}</td>
+                    <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.peso_neto))}</td>
                 </tr>
                 <tr>
                     <td class="num">8</td>
@@ -274,7 +274,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                     <td class="val">${escapeHtml(veh.motor || '-')}</td>
                     <td class="num">16</td>
                     <td class="label">Peso bruto vehicular (Kg.)</td>
-                    <td class="val">${escapeHtml(veh.peso_bruto || '-')}</td>
+                    <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.peso_bruto))}</td>
                 </tr>
             </table>
 
@@ -307,7 +307,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                 <tr>
                     <td class="num">15</td>
                     <td>PESO NETO (Kg.)</td>
-                    <td style="">${escapeHtml(gnv.peso_neto_posterior || '-')}</td>
+                    <td style="">${escapeHtml(formatNumberWithoutTrailingZeros(gnv.peso_neto_posterior))}</td>
                 </tr>
             </table>
 

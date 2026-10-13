@@ -57,10 +57,15 @@ function formatNumberWithoutTrailingZeros(value, fallback = '-') {
         : normalized;
 }
 
+function formatNumeroCertificado(value, fallback = '') {
+    return formatNumberWithoutTrailingZeros(value, fallback);
+}
+
 module.exports = {
     NUMERO_CERTIFICADO_PENDIENTE,
     escapeHtml,
     formatDateLong,
     formatDateShort,
-    formatNumberWithoutTrailingZeros
+    formatNumberWithoutTrailingZeros,
+    formatNumeroCertificado
 };
