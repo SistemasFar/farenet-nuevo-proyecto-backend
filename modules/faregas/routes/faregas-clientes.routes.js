@@ -49,6 +49,8 @@ router.get('/documento/:tipoDocumento/:nroDocumento', authMiddleware, clientesCo
 
 // GET /api/faregas/clientes/autocompletar/:tipoDocumento/:nroDocumento
 router.get('/autocompletar/:tipoDocumento/:nroDocumento', authMiddleware, clientesController.autocompletarPersona);
+router.get('/consultar-documento', authMiddleware, clientesController.consultarDocumento);
+router.get('/consultar-documento/:documento', authMiddleware, clientesController.consultarDocumento);
 
 // GET /api/faregas/clientes/vehiculo/:placa
 router.get('/vehiculo/:placa', vehicleLookupDebug.beginRequest, authMiddleware, clientesController.consultarVehiculoPorPlaca);

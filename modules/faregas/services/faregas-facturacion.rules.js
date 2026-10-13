@@ -22,8 +22,10 @@ const esFechaIsoValida = (value) => {
 
 const normalizarFacturacion = (data = {}) => {
     const tipoComprobante = limpiarTexto(data.tipoComprobante).toUpperCase();
-    const nroDocumento = limpiarTexto(data.nroDocumento).replace(/\D/g, '');
-    const tipoDocumentoCliente = nroDocumento.length === 11 ? 'RUC' : nroDocumento.length === 8 ? 'DNI' : '';
+    const nroDocumento = limpiarTexto(data.nroDocumento).toUpperCase();
+    const tipoDocumentoExplicito = limpiarTexto(data.tipoDocumentoCliente).toUpperCase();
+    const tipoDocumentoCliente = tipoDocumentoExplicito
+        || (/^\d{11}$/.test(nroDocumento) ? 'RUC' : /^\d{8}$/.test(nroDocumento) ? 'DNI' : '');
 
     return {
         tipoComprobante,
@@ -49,8 +51,15 @@ const validarFacturacion = (facturacion) => {
     if (!['BOLETA', 'FACTURA'].includes(facturacion.tipoComprobante)) {
         errores.push('El tipo de comprobante debe ser BOLETA o FACTURA.');
     }
-    if (!facturacion.tipoDocumentoCliente) {
-        errores.push('El documento debe contener 8 digitos (DNI) u 11 digitos (RUC).');
+    if (!['DNI', 'RUC', 'CARNETEXTRANJERIA'].includes(facturacion.tipoDocumentoCliente)) {
+        errores.push('Seleccione un tipo de documento valido para facturacion.');
+    } else if (facturacion.tipoDocumentoCliente === 'DNI' && !/^\d{8}$/.test(facturacion.nroDocumento)) {
+        errores.push('El DNI debe contener exactamente 8 digitos.');
+    } else if (facturacion.tipoDocumentoCliente === 'RUC' && !/^\d{11}$/.test(facturacion.nroDocumento)) {
+        errores.push('El RUC debe contener exactamente 11 digitos.');
+    } else if (facturacion.tipoDocumentoCliente === 'CARNETEXTRANJERIA'
+        && !/^[A-Z0-9]{1,20}$/.test(facturacion.nroDocumento)) {
+        errores.push('El carnet de extranjeria debe contener hasta 20 caracteres alfanumericos.');
     }
     if (facturacion.tipoComprobante === 'FACTURA' && facturacion.tipoDocumentoCliente !== 'RUC') {
         errores.push('Una FACTURA requiere un RUC de 11 digitos.');
@@ -107,6 +116,9 @@ const validarFacturacion = (facturacion) => {
 
 const validarFacturacionNubefact = (facturacion) => {
     const errores = [];
+    if (!['DNI', 'RUC'].includes(limpiarTexto(facturacion?.tipo_documento_cliente).toUpperCase())) {
+        errores.push('El tipo de documento seleccionado no tiene un mapeo fiscal habilitado para Nubefact.');
+    }
     if (facturacion?.tipo_comprobante === 'FACTURA'
         && !esRucValido(facturacion?.nro_documento)) {
         errores.push('El RUC no tiene un digito verificador valido.');

@@ -641,6 +641,7 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             tit.nro_documento AS "clienteDocumento",
             tit.nombre_razon_social AS "clienteNombre",
             t.clave AS "tipoCertificadoClave",
+            s.modalidad,
             COALESCE(s.nombre, t.nombre) AS "conceptoVehicular",
             op.estado AS "estadoPago",
             f.estado AS "estadoFacturacion",
@@ -2220,14 +2221,13 @@ exports.validarEmision = async (id, userContext) => {
         } else {
             const g = rGnv.rows[0];
             if (!g.taller_autorizado_id) pushError('gnv', 'taller_autorizado_id', 'CAMPO_REQUERIDO', 'Taller autorizado requerido');
-            if (!g.vigencia_hasta) pushError('gnv', 'vigencia_hasta', 'CAMPO_REQUERIDO', 'Vigencia requerida');
+            if (g.modalidad === 'ANUAL' && !g.vigencia_hasta) pushError('gnv', 'vigencia_hasta', 'CAMPO_REQUERIDO', 'Vigencia requerida');
             // Modalidad requerida
             if (!g.modalidad || !['INICIAL', 'ANUAL'].includes(g.modalidad)) {
                 pushError('gnv', 'modalidad', 'CAMPO_REQUERIDO', 'Modalidad GNV requerida (INICIAL o ANUAL)');
             }
-        }
 
-        if (g.modalidad === 'ANUAL') {
+            if (g.modalidad === 'ANUAL') {
             const rVer = await db.query('SELECT * FROM fg_certificado_gnv_verificacion WHERE certificado_id = $1', [id]);
             const verifCodes = rVer.rows.map(v => v.codigo);
             const reqCodes = ['a','b','c','d','e','f','g','h'];
@@ -2271,6 +2271,7 @@ exports.validarEmision = async (id, userContext) => {
                     if (!c.mes_fabricacion || !c.anio_fabricacion) pushError('gnv', 'componentes', 'CAMPO_REQUERIDO', 'Fecha de fabricación requerida para Cilindro');
                 }
             });
+        }
         }
     }
 

@@ -144,3 +144,31 @@ exports.consultarVehiculoPorPlaca = async (req, res) => {
         res.status(500).json({ ok: false, message: 'Error interno del servidor.' });
     }
 };
+
+exports.consultarDocumento = async (req, res) => {
+    try {
+        const tipoDocumento = req.query.tipoDocumento || req.query.tipo;
+        const numeroDocumento = req.query.numeroDocumento || req.query.numero || req.params.documento;
+        const resultado = tipoDocumento
+            ? await clientesService.consultarDocumento(tipoDocumento, numeroDocumento)
+            : await clientesService.consultarDocumento(numeroDocumento);
+        return res.status(200).json({ ok: true, ...resultado });
+    } catch (e) {
+        if (e.message === 'TIPO_DOCUMENTO_INVALIDO') {
+            return res.status(400).json({
+                ok: false,
+                encontrado: false,
+                message: 'Seleccione un tipo de documento válido.'
+            });
+        }
+        if (e.message === 'DOCUMENTO_INVALIDO') {
+            return res.status(400).json({
+                ok: false,
+                encontrado: false,
+                message: 'El número no cumple la regla del tipo de documento seleccionado.'
+            });
+        }
+        console.error('Error en consultarDocumento controller:', e);
+        return res.status(500).json({ ok: false, message: 'Error interno al consultar documento.' });
+    }
+};
