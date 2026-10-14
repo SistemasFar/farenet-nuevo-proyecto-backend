@@ -164,6 +164,11 @@ router.post('/borradores/:id/facturacion/notas', documentosElectronicosControlle
 router.post('/borradores/:id/facturacion/notas/:tipo/:notaId/emitir', documentosElectronicosController.reintentarNota);
 router.post('/borradores/:id/facturacion/anulaciones', documentosElectronicosController.generarAnulacion);
 router.post('/borradores/:id/facturacion/anulaciones/:anulacionId/consultar', documentosElectronicosController.consultarAnulacion);
+router.get('/borradores/:id/facturacion/pdf', facturacionController.descargarPdfFaregas);
+router.get('/borradores/:id/facturacion/html', facturacionController.obtenerHtmlFaregas);
+router.post('/borradores/:id/facturacion/regenerar-pdf', facturacionController.regenerarPdfFaregas);
+router.get('/facturacion/:facturacionId/pdf', facturacionController.descargarPdfFaregasPorFacturacionId);
+router.post('/facturacion/:facturacionId/regenerar-pdf', facturacionController.regenerarPdfFaregasPorFacturacionId);
 
 // PREVISUALIZACIÓN Y EMISIÓN
 //

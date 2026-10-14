@@ -10,6 +10,8 @@ const responderError = (res, error) => {
     const status = error.statusCode || (erroresChip.has(error.code || error.message) ? 409 : 500);
     const messages = {
         CERTIFICADO_NOT_FOUND: 'El certificado no existe.',
+        FACTURACION_NO_ENCONTRADA: 'No existe facturación asociada al comprobante solicitado.',
+        IDENTIFICADOR_INVALIDO: 'El identificador solicitado no es válido.',
         PLANTA_NO_AUTORIZADA: 'No tiene acceso a la planta del certificado.',
         CERTIFICADO_NO_EDITABLE: 'El certificado ya no se encuentra en estado BORRADOR.',
         DATOS_FACTURACION_INVALIDOS: 'Los datos de facturacion no son validos.',
@@ -153,4 +155,119 @@ exports.reintentarPorOperacion = async (req, res) => {
         const facturacion = await facturacionService.reintentarFacturacionOperacion(req.params.operacionId, req.user);
         res.json({ success: true, facturacion });
     } catch (error) { res.status(error.statusCode || 400).json({ success: false, message: error.message, detalles: error.detalles }); }
+};
+
+const comprobanteImpresoService = require('../services/faregas-comprobante-impreso.service');
+const db = require('../../../config/database');
+const { validarAccesoPlanta } = require('../services/faregas-auth.service');
+
+const idPositivo = (value) => {
+    const id = Number(value);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        const error = new Error('IDENTIFICADOR_INVALIDO');
+        error.statusCode = 400;
+        throw error;
+    }
+    return id;
+};
+
+const autorizarFacturacion = async (facturacionId, user) => {
+    const result = await db.query(
+        `SELECT f.id, c.planta_key
+         FROM fg_facturacion f
+         JOIN fg_certificado c ON c.id = f.certificado_id
+         WHERE f.id = $1`,
+        [idPositivo(facturacionId)]
+    );
+    if (result.rowCount === 0) {
+        const error = new Error('FACTURACION_NO_ENCONTRADA');
+        error.statusCode = 404;
+        throw error;
+    }
+    const autorizado = await validarAccesoPlanta(user.username, user.perfil_id, result.rows[0].planta_key);
+    if (!autorizado) {
+        const error = new Error('PLANTA_NO_AUTORIZADA');
+        error.statusCode = 403;
+        throw error;
+    }
+    return result.rows[0];
+};
+
+const obtenerFacturacionAutorizadaPorCertificado = async (certificadoId, user) => {
+    const result = await db.query(
+        `SELECT f.id
+         FROM fg_facturacion f
+         JOIN fg_certificado c ON c.id = f.certificado_id
+         WHERE f.certificado_id = $1`,
+        [idPositivo(certificadoId)]
+    );
+    if (result.rowCount === 0) {
+        const error = new Error('FACTURACION_NO_ENCONTRADA');
+        error.statusCode = 404;
+        throw error;
+    }
+    await autorizarFacturacion(result.rows[0].id, user);
+    return result.rows[0].id;
+};
+
+exports.descargarPdfFaregas = async (req, res) => {
+    try {
+        const facturacionId = await obtenerFacturacionAutorizadaPorCertificado(req.params.id, req.user);
+        const result = await comprobanteImpresoService.generarPdf(facturacionId);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="${result.filename}"`);
+        return res.sendFile(result.pdfPath);
+    } catch (error) {
+        return responderError(res, error);
+    }
+};
+
+exports.descargarPdfFaregasPorFacturacionId = async (req, res) => {
+    try {
+        const facturacionId = idPositivo(req.params.facturacionId || req.params.id);
+        await autorizarFacturacion(facturacionId, req.user);
+        const result = await comprobanteImpresoService.generarPdf(facturacionId);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="${result.filename}"`);
+        return res.sendFile(result.pdfPath);
+    } catch (error) {
+        return responderError(res, error);
+    }
+};
+
+exports.obtenerHtmlFaregas = async (req, res) => {
+    try {
+        const facturacionId = await obtenerFacturacionAutorizadaPorCertificado(req.params.id, req.user);
+        const html = await comprobanteImpresoService.generarHtml(facturacionId);
+        if (req.query.format === 'json') {
+            return res.json({ ok: true, html });
+        }
+        res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'");
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.send(html);
+    } catch (error) {
+        return responderError(res, error);
+    }
+};
+
+exports.regenerarPdfFaregas = async (req, res) => {
+    try {
+        const facturacionId = await obtenerFacturacionAutorizadaPorCertificado(req.params.id, req.user);
+        const result = await comprobanteImpresoService.regenerarRepresentacion(facturacionId);
+        return res.json({ ok: true, data: result });
+    } catch (error) {
+        return responderError(res, error);
+    }
+};
+
+exports.regenerarPdfFaregasPorFacturacionId = async (req, res) => {
+    try {
+        const facturacionId = idPositivo(req.params.facturacionId || req.params.id);
+        await autorizarFacturacion(facturacionId, req.user);
+        const result = await comprobanteImpresoService.regenerarRepresentacion(facturacionId);
+        return res.json({ ok: true, data: result });
+    } catch (error) {
+        return responderError(res, error);
+    }
 };

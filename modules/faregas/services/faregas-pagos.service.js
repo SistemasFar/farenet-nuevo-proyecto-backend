@@ -156,10 +156,6 @@ const validarReferenciaPago = async (client, pago) => {
         const tarjeta = await client.query('SELECT nombre FROM tarjeta WHERE key = $1', [pago.tarjetaKey]);
         if (tarjeta.rowCount === 0) throw new Error('TARJETA_NOT_FOUND');
         const nombre = String(tarjeta.rows[0].nombre || '').toUpperCase();
-        const sinDigitos = ['CUPONIDAD', 'PAGO WEB', 'YAPE', 'PLIN'].some(tipo => nombre.includes(tipo));
-        if (!sinDigitos && !/^\d{4}$/.test(String(pago.digitosTarjeta || ''))) {
-            throw new Error('DIGITOS_TARJETA_INVALIDOS');
-        }
         if (nombre.includes('CUPONIDAD') && String(pago.nroOperacion).trim().length !== 10) {
             throw new Error('OPERACION_CUPONIDAD_INVALIDA');
         }
@@ -185,6 +181,55 @@ const validarReferenciaPago = async (client, pago) => {
     }
 };
 
+const esFechaIsoValida = (value) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+    const [anio, mes, dia] = String(value).split('-').map(Number);
+    const fecha = new Date(Date.UTC(anio, mes - 1, dia));
+    return fecha.getUTCFullYear() === anio && fecha.getUTCMonth() === mes - 1 && fecha.getUTCDate() === dia;
+};
+
+const normalizarPeriodoCredito = (data = {}) => {
+    const condicionPago = String(data.condicionPago || 'CONTADO').trim().toUpperCase();
+    if (!['CONTADO', 'CREDITO'].includes(condicionPago)) throw new Error('CONDICION_PAGO_INVALIDA');
+    if (condicionPago === 'CONTADO') {
+        return { condicionPago, fechaInicioCredito: null, fechaVencimientoCredito: null };
+    }
+    const fechaInicioCredito = String(data.fechaInicioCredito || '').slice(0, 10);
+    const fechaVencimientoCredito = String(data.fechaVencimientoCredito || '').slice(0, 10);
+    if (!esFechaIsoValida(fechaInicioCredito)) throw new Error('FECHA_INICIO_CREDITO_INVALIDA');
+    if (!esFechaIsoValida(fechaVencimientoCredito)) throw new Error('FECHA_VENCIMIENTO_CREDITO_INVALIDA');
+    if (fechaVencimientoCredito < fechaInicioCredito) throw new Error('PERIODO_CREDITO_INVALIDO');
+    return { condicionPago, fechaInicioCredito, fechaVencimientoCredito };
+};
+
+const firmaPagoTarjeta = (pago) => [
+    String(pago.tarjetaKey || pago.tarjeta_key || ''),
+    String(pago.nroOperacion || pago.nrooperaciontarjeta || '').trim(),
+    Number(pago.importe || 0).toFixed(2)
+].join('|');
+
+const obtenerDigitosHistoricos = async (client, ordenId) => {
+    const result = await client.query(`
+        SELECT tarjeta_key, nrooperaciontarjeta, importe, digitotarjeta
+        FROM fg_pago
+        WHERE orden_pago_id = $1 AND digitotarjeta IS NOT NULL
+        ORDER BY id
+    `, [ordenId]);
+    const porFirma = new Map();
+    for (const row of result.rows) {
+        const firma = firmaPagoTarjeta(row);
+        const valores = porFirma.get(firma) || [];
+        valores.push(row.digitotarjeta);
+        porFirma.set(firma, valores);
+    }
+    return porFirma;
+};
+
+const tomarDigitosHistoricos = (porFirma, pago) => {
+    const valores = porFirma.get(firmaPagoTarjeta(pago));
+    return valores?.shift() || null;
+};
+
 exports.guardarPagosOperacion = async (operacionId, data, userContext) => {
     const client = await db.connect();
     try {
@@ -202,6 +247,7 @@ exports.guardarPagosOperacion = async (operacionId, data, userContext) => {
         if (Math.abs(Number(operacion.importe_total) - importeSolicitado) > 0.009) throw new Error('IMPORTE_NO_COINCIDE');
 
         const pagos = normalizarPagos(data.pagos);
+        const periodoCredito = normalizarPeriodoCredito(data);
         for (const pago of pagos) await validarReferenciaPago(client, pago);
 
         let ordenResult = await client.query(
@@ -227,6 +273,7 @@ exports.guardarPagosOperacion = async (operacionId, data, userContext) => {
         const totalPagado = redondear(pagos.reduce((total, pago) => total + pago.importe, 0));
         if (totalPagado - Number(orden.importe_total) > 0.009) throw new Error('PAGO_EXCEDE_TOTAL');
 
+        const digitosHistoricos = await obtenerDigitosHistoricos(client, orden.id);
         await client.query('DELETE FROM fg_pago WHERE orden_pago_id = $1', [orden.id]);
         for (const pago of pagos) {
             const base = redondear(pago.importe / 1.18);
@@ -243,7 +290,7 @@ exports.guardarPagosOperacion = async (operacionId, data, userContext) => {
                 )
             `, [
                 base,
-                pago.tipo === 'tarjeta' ? pago.digitosTarjeta || null : null,
+                pago.tipo === 'tarjeta' ? tomarDigitosHistoricos(digitosHistoricos, pago) : null,
                 pago.tipo === 'banco' ? pago.fechaDeposito : null,
                 igv,
                 pago.importe,
@@ -262,10 +309,17 @@ exports.guardarPagosOperacion = async (operacionId, data, userContext) => {
         const ordenActualizada = await client.query(`
             UPDATE fg_orden_pago
             SET importe_pagado = $2, saldo_pendiente = $3, estado = $4,
-                fechmodi = CURRENT_TIMESTAMP, usuariomodi_username = $5
+                formapago_key = $5, fecha_inicio_credito = $6,
+                fecha_vencimiento_credito = $7,
+                fechmodi = CURRENT_TIMESTAMP, usuariomodi_username = $8
             WHERE id = $1
             RETURNING *
-        `, [orden.id, totalPagado, saldo, estado, userContext.username]);
+        `, [
+            orden.id, totalPagado, saldo, estado,
+            periodoCredito.condicionPago === 'CREDITO' ? 'credito' : 'contado',
+            periodoCredito.fechaInicioCredito, periodoCredito.fechaVencimientoCredito,
+            userContext.username
+        ]);
         
         await client.query(`
             UPDATE fg_operacion_comercial
@@ -313,6 +367,7 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         const importeSolicitado = redondear(data.importeTotal);
         if (!Number.isFinite(importeSolicitado) || importeSolicitado < 0) throw new Error('IMPORTE_TOTAL_INVALIDO');
         const pagos = normalizarPagos(data.pagos);
+        const periodoCredito = normalizarPeriodoCredito(data);
         for (const pago of pagos) await validarReferenciaPago(client, pago);
 
         let ordenResult = await client.query(
@@ -360,6 +415,7 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         const totalPagado = redondear(pagos.reduce((total, pago) => total + pago.importe, 0));
         if (totalPagado - Number(orden.importe_total) > 0.009) throw new Error('PAGO_EXCEDE_TOTAL');
 
+        const digitosHistoricos = await obtenerDigitosHistoricos(client, orden.id);
         await client.query('DELETE FROM fg_pago WHERE orden_pago_id = $1', [orden.id]);
         for (const pago of pagos) {
             const base = redondear(pago.importe / 1.18);
@@ -376,7 +432,7 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
                 )
             `, [
                 base,
-                pago.tipo === 'tarjeta' ? pago.digitosTarjeta || null : null,
+                pago.tipo === 'tarjeta' ? tomarDigitosHistoricos(digitosHistoricos, pago) : null,
                 pago.tipo === 'banco' ? pago.fechaDeposito : null,
                 igv,
                 pago.importe,
@@ -395,10 +451,17 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         const ordenActualizada = await client.query(`
             UPDATE fg_orden_pago
             SET importe_pagado = $2, saldo_pendiente = $3, estado = $4,
-                fechmodi = CURRENT_TIMESTAMP, usuariomodi_username = $5
+                formapago_key = $5, fecha_inicio_credito = $6,
+                fecha_vencimiento_credito = $7,
+                fechmodi = CURRENT_TIMESTAMP, usuariomodi_username = $8
             WHERE id = $1
             RETURNING *
-        `, [orden.id, totalPagado, saldo, estado, userContext.username]);
+        `, [
+            orden.id, totalPagado, saldo, estado,
+            periodoCredito.condicionPago === 'CREDITO' ? 'credito' : 'contado',
+            periodoCredito.fechaInicioCredito, periodoCredito.fechaVencimientoCredito,
+            userContext.username
+        ]);
         await client.query(`
             UPDATE fg_operacion_comercial
             SET estado = $2, usuario_modificacion = $3, fecha_modificacion = CURRENT_TIMESTAMP
@@ -463,6 +526,9 @@ exports.obtenerPagos = async (certificadoId, userContext) => {
             importeTotal: resumenComercial.precioCertificado || certificado.tarifa_codigo
                 ? resumenComercial.importeTotal
                 : null,
+            condicionPago: 'CONTADO',
+            fechaInicioCredito: null,
+            fechaVencimientoCredito: null,
             resumenComercial
         };
     }
@@ -471,11 +537,17 @@ exports.obtenerPagos = async (certificadoId, userContext) => {
         orden,
         pagos: await exports.listarPagosPorOrden(orden.id),
         importeTotal: Number(orden.importe_total),
+        condicionPago: String(orden.formapago_key || '').toLowerCase() === 'credito' ? 'CREDITO' : 'CONTADO',
+        fechaInicioCredito: orden.fecha_inicio_credito || null,
+        fechaVencimientoCredito: orden.fecha_vencimiento_credito || null,
         resumenComercial: await obtenerResumenComercial(db, certificado)
     };
 };
 
 exports._private = {
     obtenerResumenComercial,
-    asegurarOperacionComercial
+    asegurarOperacionComercial,
+    validarReferenciaPago,
+    normalizarPeriodoCredito,
+    firmaPagoTarjeta
 };

@@ -4,6 +4,7 @@ const nubefactConfigService = require('./faregas-nubefact-config.service');
 const resumenTributarioService = require('./faregas-resumen-tributario.service');
 const correlativosNubefactService = require('./faregas-correlativos-nubefact.service');
 const readinessService = require('./faregas-nubefact-readiness.service');
+const facturacionSnapshotService = require('./faregas-facturacion-snapshot.service');
 const integrationsConfig = require('../../../config/integrations.config');
 const chipCertificadoService = require('./faregas-chip-certificado.service');
 const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
@@ -84,7 +85,14 @@ const respuestaPublica = (row, cuotas = []) => {
         direccion: row.direccion,
         email: row.email,
         telefono: row.telefono,
+        fechaDocumento: row.fecha_documento || null,
+        sedeNombre: row.sede_nombre_snapshot || null,
+        sedeDireccion: row.sede_direccion_snapshot || null,
+        sedeTelefono: row.sede_telefono_snapshot || null,
+        sedeCorreo: row.sede_correo_snapshot || null,
+        codigoDescuento: row.codigo_descuento_snapshot || null,
         condicionPago: row.condicion_pago || 'CONTADO',
+        fechaInicioCredito: row.fecha_inicio_credito || null,
         fechaVencimiento: row.fecha_vencimiento || null,
         medioPago: row.medio_pago || null,
         cuotas: cuotas.map(cuota => ({
@@ -114,6 +122,7 @@ const respuestaPublica = (row, cuotas = []) => {
         sunatResponsecode: row.sunat_responsecode,
         sunatSoapError: row.sunat_soap_error,
         enlacePdf: row.enlace_pdf,
+        enlacePdfFaregas: row.enlace_pdf_faregas || null,
         enlaceXml: row.enlace_xml,
         enlaceCdr: row.enlace_cdr,
         intentos: Number(row.intentos || 0),
@@ -127,11 +136,12 @@ const respuestaPublica = (row, cuotas = []) => {
 exports.obtenerFacturacion = async (certificadoId, userContext) => {
     const certificado = await obtenerCertificado(db, certificadoId, userContext);
     const result = await db.query(`
-        SELECT f.*,
+        SELECT f.*, op.fecha_inicio_credito,
                (clock_timestamp() >= emision.fecha_emision
                 AND clock_timestamp() < emision.fecha_emision + INTERVAL '24 hours') AS anulacion_en_plazo,
                (EXTRACT(EPOCH FROM (emision.fecha_emision + INTERVAL '24 hours')::timestamptz) * 1000) AS anulacion_hasta_ms
         FROM fg_facturacion f
+        LEFT JOIN fg_orden_pago op ON op.certificado_id = f.certificado_id
         LEFT JOIN LATERAL (
             SELECT MIN(fi.fecha_creacion) AS fecha_emision
             FROM fg_facturacion_intento fi WHERE fi.facturacion_id = f.id
@@ -255,12 +265,18 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
             );
         }
         await client.query(
-            `UPDATE fg_orden_pago SET formapago_key = $2, fechmodi = CURRENT_TIMESTAMP,
-                    usuariomodi_username = $3
+            `UPDATE fg_orden_pago SET formapago_key = $2,
+                    fecha_inicio_credito = $3, fecha_vencimiento_credito = $4,
+                    fechmodi = CURRENT_TIMESTAMP, usuariomodi_username = $5
              WHERE id = $1`,
-            [orden.id, normalizada.condicionPago === 'CREDITO' ? 'credito' : 'contado', userContext.username]
+            [
+                orden.id,
+                normalizada.condicionPago === 'CREDITO' ? 'credito' : 'contado',
+                normalizada.condicionPago === 'CREDITO' ? normalizada.fechaInicioCredito : null,
+                normalizada.condicionPago === 'CREDITO' ? normalizada.fechaVencimiento : null,
+                userContext.username
+            ]
         );
-
         // INTEGRACION DESCUENTOS: Vincular facturacion a comprobante de descuento
         await client.query(
             `UPDATE fg_descuentocomprobante
@@ -268,6 +284,15 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
              WHERE certificado_id = $2 AND estado = 'APLICADO'`,
             [result.rows[0].id, certificadoId]
         );
+
+        result.rows[0] = await facturacionSnapshotService.capturarSnapshotFacturacion({
+            queryable: client,
+            facturacionId: result.rows[0].id,
+            certificadoId
+        });
+        result.rows[0].fecha_inicio_credito = normalizada.condicionPago === 'CREDITO'
+            ? normalizada.fechaInicioCredito
+            : null;
 
         // Actualizar contacto del cliente si es el titular principal
         if (data.usarTitularPrincipalFac === true) {
@@ -413,6 +438,20 @@ const reservarEmision = async (certificadoId, userContext) => {
         if (reservaResult.rowCount > 0 && Math.abs(totalEsperadoConChip - Number(facturacion.importe_total)) > 0.009) {
             throw errorNegocio('DESCUENTO_FACTURACION_INCONSISTENTE', 409);
         }
+
+        const documentoReservado = {
+            serie: facturacion.serie,
+            numero: facturacion.numero,
+            nro_comprobante: facturacion.nro_comprobante,
+            serie_comprobante_id: facturacion.serie_comprobante_id
+        };
+        facturacion = await facturacionSnapshotService.capturarSnapshotFacturacion({
+            queryable: client,
+            facturacionId: facturacion.id,
+            certificadoId,
+            fechaDocumento: facturacionSnapshotService.fechaPeruIso()
+        });
+        Object.assign(facturacion, documentoReservado);
 
         const columnasReservaV2 = integrationsConfig.nubefact.correlativosV2Enabled
             ? ', serie_comprobante_id = $14, fecha_reserva_correlativo = CURRENT_TIMESTAMP'
@@ -735,9 +774,20 @@ exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => 
         await client.query('DELETE FROM fg_facturacion_intento WHERE facturacion_id = $1', [result.rows[0].id]);
         await client.query('DELETE FROM fg_facturacion_cuota WHERE facturacion_id = $1', [result.rows[0].id]);
         await client.query(
-            `UPDATE fg_orden_pago SET formapago_key = $2, fechmodi = CURRENT_TIMESTAMP, usuariomodi_username = $3 WHERE id = $1`,
-            [orden.id, normalizada.condicionPago === 'CREDITO' ? 'credito' : 'contado', userContext.username]
+            `UPDATE fg_orden_pago SET formapago_key = $2,
+                    fecha_inicio_credito = $3, fecha_vencimiento_credito = $4,
+                    fechmodi = CURRENT_TIMESTAMP, usuariomodi_username = $5 WHERE id = $1`,
+            [
+                orden.id,
+                normalizada.condicionPago === 'CREDITO' ? 'credito' : 'contado',
+                normalizada.condicionPago === 'CREDITO' ? normalizada.fechaInicioCredito : null,
+                normalizada.condicionPago === 'CREDITO' ? normalizada.fechaVencimiento : null,
+                userContext.username
+            ]
         );
+        result.rows[0].fecha_inicio_credito = normalizada.condicionPago === 'CREDITO'
+            ? normalizada.fechaInicioCredito
+            : null;
         await client.query('COMMIT');
         return respuestaPublica(result.rows[0], []);
     } catch (error) {

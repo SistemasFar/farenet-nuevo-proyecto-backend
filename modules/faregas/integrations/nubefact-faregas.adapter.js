@@ -1,4 +1,5 @@
 const config = require('../../../config/integrations.config');
+const { construirInformacionAdicional } = require('./nubefact-faregas-informacion-adicional');
 
 const dosDecimales = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
@@ -10,11 +11,28 @@ const crearCodigoUnico = (facturacionId, prefijo = 'FG') => {
     return codigo;
 };
 
+
 const fechaDocumento = (value) => {
     if (!value) return '';
-    const raw = String(value).slice(0, 10);
-    const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    return match ? `${match[3]}-${match[2]}-${match[1]}` : raw;
+    if (value instanceof Date) {
+        if (Number.isNaN(value.getTime())) return '';
+        return fechaPeru(value);
+    }
+    const raw = String(value).trim();
+    if (!raw) return '';
+    const matchIso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (matchIso) {
+        return `${matchIso[3]}-${matchIso[2]}-${matchIso[1]}`;
+    }
+    const matchPe = raw.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (matchPe) {
+        return raw;
+    }
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) {
+        return fechaPeru(parsed);
+    }
+    return '';
 };
 
 const tipoIgvNubefact = (value) => {
@@ -200,6 +218,12 @@ const construirPayloadNubefact = ({
             importe_total: facturacion.importe_total
         })];
     const credito = String(facturacion.condicion_pago || 'CONTADO').toUpperCase() === 'CREDITO';
+    const informacionAdicional = construirInformacionAdicional({
+        facturacion,
+        certificado: certificadoData,
+        vehiculo: vehiculoData,
+        detalles
+    });
 
     return {
         operacion: 'generar_comprobante',
@@ -214,7 +238,7 @@ const construirPayloadNubefact = ({
         cliente_email: facturacion.email || '',
         cliente_email_1: '',
         cliente_email_2: '',
-        fecha_de_emision: fechaPeru(),
+        fecha_de_emision: fechaDocumento(facturacion.fecha_documento) || fechaPeru(),
         fecha_de_vencimiento: fechaDocumento(facturacion.fecha_vencimiento),
         moneda: 1,
         tipo_de_cambio: '',
@@ -233,9 +257,9 @@ const construirPayloadNubefact = ({
         total_percepcion: 0,
         total_incluido_percepcion: 0,
         detraccion: obtenerIndicadorDetraccion(),
-        observaciones: certificadoData.id
+        observaciones: informacionAdicional.texto || (certificadoData.id
             ? `EXPEDIENTE FAREGAS ${certificadoData.id}`
-            : `OPERACION FAREGAS ${facturacion.operacion_id || facturacion.id}`,
+            : `OPERACION FAREGAS ${facturacion.operacion_id || facturacion.id}`),
         documento_que_se_modifica_tipo: '',
         documento_que_se_modifica_serie: '',
         documento_que_se_modifica_numero: '',

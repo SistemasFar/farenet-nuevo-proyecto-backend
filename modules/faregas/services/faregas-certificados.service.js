@@ -648,6 +648,7 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             f.aceptada_sunat AS "aceptadaSunat",
             f.entorno_facturador AS "entornoFacturador",
             f.enlace_pdf AS "enlacePdf",
+            f.enlace_pdf_faregas AS "enlacePdfFaregas",
             f.nro_comprobante AS "nroComprobante",
             (clock_timestamp() >= emision_factura.fecha_emision
              AND clock_timestamp() < emision_factura.fecha_emision + INTERVAL '24 hours') AS "anulacionEnPlazo",
@@ -2496,11 +2497,30 @@ exports.emitirCertificado = async (id, userContext) => {
         `, [numero_certificado, userContext.username, id, formatoVersionId]);
 
         await client.query('COMMIT');
+
+        // Generar la representación impresa propia de FAREGAS de forma segura tras fijar el correlativo DG
+        let enlacePdfFaregas = null;
+        try {
+            const rFact = await db.query('SELECT id FROM fg_facturacion WHERE certificado_id = $1 LIMIT 1', [id]);
+            if (rFact.rowCount > 0) {
+                const comprobanteImpresoService = require('./faregas-comprobante-impreso.service');
+                const repResult = await comprobanteImpresoService.generarPdf(rFact.rows[0].id).catch(err => {
+                    console.error('[FAREGAS_REPRESENTACION_IMPRESA_ERROR]', err.message);
+                });
+                if (repResult?.pdfPath) {
+                    const rUpdated = await db.query('SELECT enlace_pdf_faregas FROM fg_facturacion WHERE id = $1', [rFact.rows[0].id]);
+                    enlacePdfFaregas = rUpdated.rows[0]?.enlace_pdf_faregas || null;
+                }
+            }
+        } catch (errRep) {
+            console.error('[FAREGAS_REPRESENTACION_IMPRESA_ERROR]', errRep.message);
+        }
         
         return {
             numero_certificado,
             numeroAsignado,
-            origen_correlativo: origenCorrelativo
+            origen_correlativo: origenCorrelativo,
+            enlace_pdf_faregas: enlacePdfFaregas
         };
 
     } catch (e) {

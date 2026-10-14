@@ -41,11 +41,13 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
         && importeDescuento > 0
         && Math.abs(precioLista - importeDescuento) <= 0.01;
     const cantidad = Number(detalle?.cantidad || 1);
-    const unidad = mayusculas(detalle?.producto_unidad || detalle?.unidad_snapshot);
-    const codigoInterno = texto(detalle?.producto_sku || detalle?.codigo_sku_snapshot || detalle?.servicio_codigo);
-    const codigoSunat = texto(detalle?.producto_codigo_sunat || detalle?.codigo_sunat_snapshot);
-    const descripcion = texto(detalle?.producto_descripcion || detalle?.descripcion_snapshot || detalle?.servicio_nombre);
-    const afectacionIgv = texto(detalle?.producto_afectacion_igv || detalle?.afectacion_igv_snapshot);
+    // Una operación ya creada debe conservar exactamente la definición fiscal
+    // con la que se cotizó, aunque el maestro del producto cambie después.
+    const unidad = mayusculas(detalle?.unidad_snapshot || detalle?.producto_unidad);
+    const codigoInterno = texto(detalle?.codigo_sku_snapshot || detalle?.producto_sku || detalle?.servicio_codigo);
+    const codigoSunat = texto(detalle?.codigo_sunat_snapshot || detalle?.producto_codigo_sunat);
+    const descripcion = texto(detalle?.descripcion_snapshot || detalle?.producto_descripcion || detalle?.servicio_nombre);
+    const afectacionIgv = texto(detalle?.afectacion_igv_snapshot || detalle?.producto_afectacion_igv);
     const condicionPago = mayusculas(contexto.condicion_pago || contexto.formapago_key || 'CONTADO');
     const medioPago = texto(contexto.medio_pago) || mediosPago(pagos) || null;
     const credenciales = contexto.credencial_clave
@@ -166,7 +168,9 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
         sede: {
             key: texto(contexto.planta_key) || null,
             nombre: texto(contexto.sede_nombre) || null,
-            direccion: texto(contexto.sede_direccion) || null
+            direccion: texto(contexto.sede_direccion) || null,
+            telefono: texto(contexto.sede_telefono) || null,
+            correo: texto(contexto.sede_correo) || null
         },
         integracion: {
             proveedor: 'NUBEFACT',
@@ -183,14 +187,37 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
                 ? null
                 : Number(contexto.numero_asignado),
             numeroAsignado: contexto.numero_asignado !== null && contexto.numero_asignado !== undefined,
-            fuenteSerie: serie?.fuente || 'SIN_CONFIGURAR'
+            fuenteSerie: serie?.fuente || 'SIN_CONFIGURAR',
+            fechaDocumento: contexto.fecha_documento || null
         },
         cliente: {
             tipoDocumento: texto(contexto.tipo_documento_cliente) || null,
             numeroDocumento: texto(contexto.nro_documento) || null,
             nombreRazonSocial: texto(contexto.nombre_razon_social) || null,
             direccion: texto(contexto.direccion_cliente) || null,
-            email: texto(contexto.email) || null
+            email: texto(contexto.email) || null,
+            telefono: texto(contexto.telefono_cliente) || null
+        },
+        vehiculo: {
+            placa: texto(contexto.vehiculo_placa) || null,
+            tipo: texto(contexto.vehiculo_clase || contexto.vehiculo_categoria) || null,
+            marca: texto(contexto.vehiculo_marca) || null,
+            modelo: texto(contexto.vehiculo_modelo) || null,
+            motor: texto(contexto.vehiculo_motor) || null
+        },
+        certificado: {
+            tipo: texto(contexto.tipo_certificado_clave) || null,
+            numero: texto(contexto.numero_certificado) || null,
+            servicio: itemsList[0]?.descripcion || null
+        },
+        operacion: {
+            id: contexto.operacion_id == null ? null : Number(contexto.operacion_id)
+        },
+        descuento: {
+            codigo: texto(contexto.codigo_descuento_snapshot || descuento?.codigo) || null,
+            importeOriginal: precioLista,
+            importe: importeDescuento,
+            importeFinal: total
         },
         items: itemsList,
         totales: {
@@ -264,16 +291,25 @@ const construirResumen = (args) => {
 const obtenerContexto = async (certificadoId, queryable) => {
     const result = await queryable.query(`
         SELECT c.id AS certificado_id, c.planta_key, c.tarifa_codigo,
-               p.nombre AS sede_nombre, p.direccion AS sede_direccion,
+               c.tipo_certificado_clave, c.numero_certificado,
+               COALESCE(f.sede_nombre_snapshot, p.nombre) AS sede_nombre,
+               COALESCE(f.sede_direccion_snapshot, p.direccion) AS sede_direccion,
+               COALESCE(f.sede_telefono_snapshot, p.telefono) AS sede_telefono,
+               COALESCE(f.sede_correo_snapshot, p.correo) AS sede_correo,
                e.key AS empresa_key, e.nombre AS razon_social_emisor,
                e.ruc AS ruc_emisor, e.direccion AS direccion_emisor,
                ef.entorno AS entorno_facturador, ef.credencial_clave,
                f.id AS facturacion_id, f.tipo_comprobante, f.tipo_documento_cliente,
                f.nro_documento, f.nombre_razon_social, f.direccion AS direccion_cliente,
-               f.email, f.moneda_key, f.base_imponible, f.igv, f.importe_total,
+               f.email, f.telefono AS telefono_cliente,
+               f.fecha_documento, f.codigo_descuento_snapshot,
+               f.moneda_key, f.base_imponible, f.igv, f.importe_total,
                f.condicion_pago, f.fecha_vencimiento, f.medio_pago,
                f.serie AS serie_asignada, f.numero AS numero_asignado,
-               op.id AS orden_pago_id, op.formapago_key, op.operacion_id
+               op.id AS orden_pago_id, op.formapago_key, op.operacion_id,
+               v.placa AS vehiculo_placa, v.categoria AS vehiculo_categoria,
+               v.clase AS vehiculo_clase, v.marca AS vehiculo_marca,
+               v.modelo AS vehiculo_modelo, v.numero_motor AS vehiculo_motor
         FROM fg_certificado c
         JOIN fg_planta p ON p.key = c.planta_key
         JOIN fg_empresa e ON e.key = p.empresa_key
@@ -284,6 +320,7 @@ const obtenerContexto = async (certificadoId, queryable) => {
          AND ef.activo = TRUE
         LEFT JOIN fg_facturacion f ON f.certificado_id = c.id
         LEFT JOIN fg_orden_pago op ON op.certificado_id = c.id
+        LEFT JOIN fg_certificado_vehiculo v ON v.certificado_id = c.id
         WHERE c.id = $1
         LIMIT 1
     `, [certificadoId, integrationsConfig.nubefact.environment]);
@@ -370,11 +407,13 @@ const obtenerDetalles = async (contexto, queryable) => {
 
 const obtenerDescuento = async (certificadoId, queryable) => {
     const result = await queryable.query(`
-        SELECT importe_original, importe_descuento, importe_final, estado
-        FROM fg_descuentocomprobante
-        WHERE certificado_id = $1
-          AND estado IN ('RESERVADO', 'APLICADO')
-        ORDER BY id DESC
+        SELECT cmp.importe_original, cmp.importe_descuento, cmp.importe_final,
+               cmp.estado, dc.codigo
+        FROM fg_descuentocomprobante cmp
+        LEFT JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id
+        WHERE cmp.certificado_id = $1
+          AND cmp.estado IN ('RESERVADO', 'APLICADO')
+        ORDER BY cmp.id DESC
         LIMIT 1
     `, [certificadoId]);
     return result.rows[0] || null;

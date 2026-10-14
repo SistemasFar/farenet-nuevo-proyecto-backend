@@ -36,6 +36,7 @@ const normalizarFacturacion = (data = {}) => {
         email: limpiarTexto(data.email).toLowerCase() || null,
         telefono: limpiarTexto(data.telefono) || null,
         condicionPago: limpiarTexto(data.condicionPago || 'CONTADO').toUpperCase(),
+        fechaInicioCredito: limpiarTexto(data.fechaInicioCredito) || null,
         fechaVencimiento: limpiarTexto(data.fechaVencimiento) || null,
         medioPago: limpiarTexto(data.medioPago) || null,
         cuotas: Array.isArray(data.cuotas) ? data.cuotas.map((cuota, index) => ({
@@ -88,8 +89,16 @@ const validarFacturacion = (facturacion) => {
         errores.push('El medio de pago admite hasta 250 caracteres.');
     }
     if (facturacion.condicionPago === 'CREDITO') {
+        if (!esFechaIsoValida(facturacion.fechaInicioCredito)) {
+            errores.push('Una venta al credito requiere una fecha de inicio valida.');
+        }
         if (!esFechaIsoValida(facturacion.fechaVencimiento)) {
             errores.push('Una venta al credito requiere una fecha de vencimiento valida.');
+        }
+        if (esFechaIsoValida(facturacion.fechaInicioCredito)
+            && esFechaIsoValida(facturacion.fechaVencimiento)
+            && facturacion.fechaVencimiento < facturacion.fechaInicioCredito) {
+            errores.push('La fecha de vencimiento no puede ser anterior a la fecha de inicio del credito.');
         }
         if (facturacion.cuotas.length === 0) errores.push('Una venta al credito requiere al menos una cuota.');
         const numeros = new Set();
