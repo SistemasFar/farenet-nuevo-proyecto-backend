@@ -23,6 +23,20 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
         ? gnv.taller_razon_social
         : 'CONVERTIGAS S.A.C FAREGAS I';
 
+    // Observaciones del operador (campo opcional). Se extrae de data.gnv o data.cabecera.
+    // Si viene vacío o con marcadores ("null", "undefined", "-", "vacio"), no se imprime nada extra.
+    // Si contiene texto, se escapa contra HTML para evitar inyección y se preservan saltos de línea con <br>.
+    const rawObservaciones = gnv.observaciones || cert.observaciones || '';
+    let cleanObservaciones = typeof rawObservaciones === 'string'
+        ? rawObservaciones.trim().slice(0, 250)
+        : '';
+    if (['NULL', 'UNDEFINED', '-', 'VACÍO', 'VACIO'].includes(cleanObservaciones.toUpperCase())) {
+        cleanObservaciones = '';
+    }
+    const observacionHtml = cleanObservaciones
+        ? `<div style="margin-bottom: 8px;">${escapeHtml(cleanObservaciones).replace(/(?:\r\n|\r|\n)/g, '<br>')}</div>`
+        : '';
+
     // Render components rows
     const compRowsHtml = componentes.length > 0 ? componentes.map((c, i) => `
         <tr>
@@ -317,7 +331,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
 
             <div style="font-weight: bold; font-size: 11px; margin-top: 10px; margin-bottom: 5px;">OBSERVACIONES:</div>
             <div class="obs-sec">
-                Numerales del 1 al 16, obtenidos de la tarjeta de propiedad del vehículo y/o suministro del cliente, por tal motivo deberán ser verificados por el cliente antes de realizar cualquier trámite con este certificado. Las condiciones técnicas y de seguridad verificadas en el vehículo, corresponden a las expuestas en la NTP 111.015:2004 y Directiva N° 001-2005-MTC/15. La sigla "NE" significa "dato no especificado en los documentos o plaqueta del vehículo".<br><br>
+                ${observacionHtml}Numerales del 1 al 16, obtenidos de la tarjeta de propiedad del vehículo y/o suministro del cliente, por tal motivo deberán ser verificados por el cliente antes de realizar cualquier trámite con este certificado. Las condiciones técnicas y de seguridad verificadas en el vehículo, corresponden a las expuestas en la NTP 111.015:2004 y Directiva N° 001-2005-MTC/15. La sigla "NE" significa "dato no especificado en los documentos o plaqueta del vehículo".<br><br>
                 Cumpliendo con D.S. 047-2001-MTC, modificatorias 009-2012 MINAM, D.S N° 010-2017 – MINAM, carta N° 0124-2018-MINAM/VMGA/DGCA indicamos que el resultado de la prueba de emisiones contaminantes del vehículo es aprobatorio
             </div>
 

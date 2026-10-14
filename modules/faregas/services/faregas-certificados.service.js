@@ -2581,7 +2581,7 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
         };
         if (gnv.modalidad === 'INICIAL') {
             const html = generateGnvInicialHtml({
-                cabecera: cabeceraComun,
+                cabecera: { ...cabeceraComun, observaciones: gnv.observaciones || null },
                 vehiculo: vehiculoPlantilla,
                 propietario: borrador.titulares && borrador.titulares.length > 0 ? borrador.titulares[0] : {},
                 gnv: { ...gnv, componentes: dataGnv.componentes },
