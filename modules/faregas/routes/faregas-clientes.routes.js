@@ -35,7 +35,7 @@ const authMiddleware = async (req, res, next) => {
             return res.status(403).json({ message: 'Usuario inactivo' });
         }
         
-        req.user = decoded;
+        req.user = { ...decoded, perfil_id: userDb.rows[0].perfil_id };
         if (req.params.placa) vehicleLookupDebug.log('AUTH_OK');
         next();
     } catch (e) {
@@ -43,6 +43,28 @@ const authMiddleware = async (req, res, next) => {
         return res.status(401).json({ message: 'Token inválido o expirado' });
     }
 };
+
+const permisoConsultarClientes = async (req, res, next) => {
+    try {
+        const permiso = await db.query(`
+            SELECT 1
+            FROM fg_perfil_permiso
+            WHERE perfil_clave = $1
+              AND permiso_clave = 'MENU_FACTURACION_COMPROBANTES'
+            LIMIT 1
+        `, [req.user.perfil_id]);
+        if (permiso.rowCount === 0) {
+            return res.status(403).json({ ok: false, message: 'No tiene permiso para consultar clientes de facturación.' });
+        }
+        return next();
+    } catch (e) {
+        console.error('Error al validar permiso de clientes:', e);
+        return res.status(500).json({ ok: false, message: 'No se pudo validar el permiso de clientes.' });
+    }
+};
+
+// GET /api/faregas/clientes
+router.get('/', authMiddleware, permisoConsultarClientes, clientesController.listarClientes);
 
 // GET /api/faregas/clientes/documento/:tipoDocumento/:nroDocumento
 router.get('/documento/:tipoDocumento/:nroDocumento', authMiddleware, clientesController.obtenerClientePorDocumento);

@@ -9,6 +9,215 @@ const TIPOS_DOCUMENTO_CONSULTA = Object.freeze({
     CARNETEXTRANJERIA: { longitud: null, soloDigitos: false, proveedor: null }
 });
 
+const enteroAcotado = (value, fallback, min, max) => {
+    const numero = Number(value);
+    return Number.isInteger(numero) ? Math.min(max, Math.max(min, numero)) : fallback;
+};
+
+/**
+ * Listado administrativo de clientes.
+ *
+ * `fg_cliente` sigue siendo el maestro. Los datos fiscales de cada comprobante
+ * son snapshots inmutables, pero se usan como respaldo de presentación cuando
+ * el maestro todavía no tiene dirección, teléfono o correo. De esta manera el
+ * listado muestra toda la información disponible sin reescribir el histórico.
+ */
+exports.listarClientes = async (query = {}, dependencies = {}) => {
+    const queryable = dependencies.db || db;
+    const pagina = enteroAcotado(query.pagina, 1, 1, 100000);
+    const limite = enteroAcotado(query.limite, 20, 1, 100);
+    const offset = (pagina - 1) * limite;
+    const busqueda = texto(query.texto);
+    const estado = texto(query.estado).toUpperCase();
+    if (estado && !['ACTIVO', 'INACTIVO'].includes(estado)) {
+        const error = new Error('ESTADO_CLIENTE_INVALIDO');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const baseSql = `
+        WITH ultima_facturacion AS (
+            SELECT DISTINCT ON (UPPER(BTRIM(f.tipo_documento_cliente)), BTRIM(f.nro_documento))
+                   UPPER(BTRIM(f.tipo_documento_cliente)) AS tipo_documento,
+                   BTRIM(f.nro_documento) AS nro_documento,
+                   f.nombre_razon_social,
+                   f.direccion,
+                   f.telefono,
+                   f.email AS correo,
+                   f.fecha_creacion AS ultima_facturacion,
+                   f.planta_key AS facturacion_planta_key,
+                   p.nombre AS facturacion_planta_nombre
+            FROM fg_facturacion f
+            LEFT JOIN fg_planta p ON p.key = f.planta_key
+            WHERE NULLIF(BTRIM(f.tipo_documento_cliente), '') IS NOT NULL
+              AND NULLIF(BTRIM(f.nro_documento), '') IS NOT NULL
+            ORDER BY UPPER(BTRIM(f.tipo_documento_cliente)), BTRIM(f.nro_documento),
+                     f.fecha_creacion DESC, f.id DESC
+        ), identidades AS (
+            SELECT c.id,
+                   UPPER(BTRIM(c.tipo_documento)) AS tipo_documento,
+                   BTRIM(c.nro_documento) AS nro_documento,
+                   COALESCE(NULLIF(BTRIM(c.nombre_razon_social), ''), uf.nombre_razon_social) AS nombre_razon_social,
+                   COALESCE(NULLIF(BTRIM(c.direccion), ''), NULLIF(BTRIM(uf.direccion), '')) AS direccion,
+                   COALESCE(NULLIF(BTRIM(c.telefono), ''), NULLIF(BTRIM(uf.telefono), '')) AS telefono,
+                   COALESCE(NULLIF(BTRIM(c.correo), ''), NULLIF(BTRIM(uf.correo), '')) AS correo,
+                   c.estado,
+                   c.fecha_creacion,
+                   c.fecha_modificacion,
+                   uf.ultima_facturacion,
+                   uf.facturacion_planta_key,
+                   uf.facturacion_planta_nombre,
+                   'MAESTRO'::text AS origen
+            FROM fg_cliente c
+            LEFT JOIN ultima_facturacion uf
+              ON uf.tipo_documento = UPPER(BTRIM(c.tipo_documento))
+             AND uf.nro_documento = BTRIM(c.nro_documento)
+
+            UNION ALL
+
+            SELECT NULL::bigint AS id,
+                   uf.tipo_documento,
+                   uf.nro_documento,
+                   uf.nombre_razon_social,
+                   NULLIF(BTRIM(uf.direccion), '') AS direccion,
+                   NULLIF(BTRIM(uf.telefono), '') AS telefono,
+                   NULLIF(BTRIM(uf.correo), '') AS correo,
+                   TRUE AS estado,
+                   uf.ultima_facturacion AS fecha_creacion,
+                   uf.ultima_facturacion AS fecha_modificacion,
+                   uf.ultima_facturacion,
+                   uf.facturacion_planta_key,
+                   uf.facturacion_planta_nombre,
+                   'FACTURACION_HISTORICA'::text AS origen
+            FROM ultima_facturacion uf
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM fg_cliente c
+                WHERE UPPER(BTRIM(c.tipo_documento)) = uf.tipo_documento
+                  AND BTRIM(c.nro_documento) = uf.nro_documento
+            )
+        ), filtrados AS (
+            SELECT *
+            FROM identidades i
+            WHERE ($1::text = '' OR
+                   i.nombre_razon_social ILIKE '%' || $1 || '%' OR
+                   i.nro_documento ILIKE '%' || $1 || '%' OR
+                   COALESCE(i.telefono, '') ILIKE '%' || $1 || '%' OR
+                   COALESCE(i.correo, '') ILIKE '%' || $1 || '%' OR
+                   COALESCE(i.direccion, '') ILIKE '%' || $1 || '%')
+              AND ($2::text = '' OR
+                   ($2 = 'ACTIVO' AND i.estado = TRUE) OR
+                   ($2 = 'INACTIVO' AND i.estado = FALSE))
+        )
+    `;
+
+    const listadoSql = `${baseSql}
+        SELECT i.*,
+               (
+                   SELECT COUNT(DISTINCT relacionados.certificado_id)::int
+                   FROM (
+                       SELECT c.id AS certificado_id
+                       FROM fg_certificado c
+                       WHERE i.id IS NOT NULL AND c.cliente_id = i.id
+                       UNION
+                       SELECT t.certificado_id
+                       FROM fg_certificado_titular t
+                       WHERE (i.id IS NOT NULL AND t.cliente_id = i.id)
+                          OR (UPPER(BTRIM(t.tipo_documento)) = i.tipo_documento
+                              AND BTRIM(t.nro_documento) = i.nro_documento)
+                   ) relacionados
+               ) AS total_certificados,
+               (
+                   SELECT COUNT(*)::int
+                   FROM fg_facturacion f
+                   WHERE UPPER(BTRIM(f.tipo_documento_cliente)) = i.tipo_documento
+                     AND BTRIM(f.nro_documento) = i.nro_documento
+               ) AS total_comprobantes,
+               GREATEST(
+                   i.ultima_facturacion,
+                   (
+                       SELECT MAX(c.fecha_modificacion)
+                       FROM fg_certificado c
+                       WHERE i.id IS NOT NULL AND c.cliente_id = i.id
+                   ),
+                   i.fecha_modificacion,
+                   i.fecha_creacion
+               ) AS ultima_atencion,
+               COALESCE(
+                   i.facturacion_planta_key,
+                   (
+                       SELECT c.planta_key
+                       FROM fg_certificado c
+                       WHERE i.id IS NOT NULL AND c.cliente_id = i.id
+                       ORDER BY c.fecha_modificacion DESC, c.id DESC
+                       LIMIT 1
+                   )
+               ) AS ultima_planta_key,
+               COALESCE(
+                   i.facturacion_planta_nombre,
+                   (
+                       SELECT p.nombre
+                       FROM fg_certificado c
+                       JOIN fg_planta p ON p.key = c.planta_key
+                       WHERE i.id IS NOT NULL AND c.cliente_id = i.id
+                       ORDER BY c.fecha_modificacion DESC, c.id DESC
+                       LIMIT 1
+                   )
+               ) AS ultima_planta_nombre,
+               (
+                   SELECT v.placa
+                   FROM fg_certificado c
+                   JOIN fg_certificado_vehiculo v ON v.certificado_id = c.id
+                   WHERE (i.id IS NOT NULL AND c.cliente_id = i.id)
+                      OR EXISTS (
+                          SELECT 1 FROM fg_certificado_titular t
+                          WHERE t.certificado_id = c.id
+                            AND UPPER(BTRIM(t.tipo_documento)) = i.tipo_documento
+                            AND BTRIM(t.nro_documento) = i.nro_documento
+                      )
+                   ORDER BY c.fecha_modificacion DESC, c.id DESC
+                   LIMIT 1
+               ) AS ultima_placa
+        FROM filtrados i
+        ORDER BY ultima_atencion DESC NULLS LAST, i.nombre_razon_social, i.nro_documento
+        LIMIT $3 OFFSET $4
+    `;
+
+    const [listado, totalResult] = await Promise.all([
+        queryable.query(listadoSql, [busqueda, estado, limite, offset]),
+        queryable.query(`${baseSql} SELECT COUNT(*)::int AS total FROM filtrados`, [busqueda, estado])
+    ]);
+    const total = Number(totalResult.rows[0]?.total || 0);
+
+    return {
+        clientes: listado.rows.map(row => ({
+            id: row.id == null ? null : Number(row.id),
+            tipoDocumento: row.tipo_documento,
+            nroDocumento: row.nro_documento,
+            nombreRazonSocial: row.nombre_razon_social,
+            direccion: row.direccion || null,
+            telefono: row.telefono || null,
+            correo: row.correo || null,
+            estado: Boolean(row.estado),
+            origen: row.origen,
+            fechaCreacion: row.fecha_creacion,
+            fechaModificacion: row.fecha_modificacion,
+            totalCertificados: Number(row.total_certificados || 0),
+            totalComprobantes: Number(row.total_comprobantes || 0),
+            ultimaAtencion: row.ultima_atencion || null,
+            ultimaPlantaKey: row.ultima_planta_key || null,
+            ultimaPlantaNombre: row.ultima_planta_nombre || null,
+            ultimaPlaca: row.ultima_placa || null
+        })),
+        total,
+        pagina,
+        limite,
+        page: pagina,
+        limit: limite,
+        totalPages: total === 0 ? 0 : Math.ceil(total / limite)
+    };
+};
+
 exports.buscarClientePropio = async (tipoDocumento, nroDocumento, opciones = {}) => {
     const res = await db.query(`
         SELECT

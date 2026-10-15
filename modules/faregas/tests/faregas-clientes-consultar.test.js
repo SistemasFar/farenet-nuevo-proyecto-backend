@@ -388,3 +388,75 @@ test('validación explícita respeta la regla del tipo seleccionado', async () =
         (err) => err.message === 'TIPO_DOCUMENTO_INVALIDO'
     );
 });
+
+test('listarClientes pagina en backend y completa contactos desde la última facturación', async () => {
+    const consultas = [];
+    const fakeDb = {
+        query: async (sql, params) => {
+            consultas.push({ sql, params });
+            if (/SELECT COUNT\(\*\)::int AS total FROM filtrados/.test(sql)) {
+                assert.deepEqual(params, ['grace', 'ACTIVO']);
+                return { rows: [{ total: 1 }] };
+            }
+            assert.match(sql, /WITH ultima_facturacion AS/);
+            assert.match(sql, /LIMIT \$3 OFFSET \$4/);
+            assert.deepEqual(params, ['grace', 'ACTIVO', 20, 20]);
+            return { rows: [{
+                id: 10,
+                tipo_documento: 'DNI',
+                nro_documento: '74045612',
+                nombre_razon_social: 'GRACE',
+                direccion: 'CALLE PRUEBA 123',
+                telefono: '999999999',
+                correo: 'grace@example.com',
+                estado: true,
+                origen: 'MAESTRO',
+                fecha_creacion: '2026-10-01T10:00:00.000Z',
+                fecha_modificacion: '2026-10-15T10:00:00.000Z',
+                total_certificados: 2,
+                total_comprobantes: 3,
+                ultima_atencion: '2026-10-15T10:00:00.000Z',
+                ultima_planta_key: '98',
+                ultima_planta_nombre: 'SURCO',
+                ultima_placa: 'ABC123'
+            }] };
+        }
+    };
+
+    const resultado = await clientesService.listarClientes({
+        texto: 'grace', estado: 'ACTIVO', pagina: 2, limite: 20
+    }, { db: fakeDb });
+
+    assert.equal(consultas.length, 2);
+    assert.equal(resultado.total, 1);
+    assert.equal(resultado.page, 2);
+    assert.equal(resultado.totalPages, 1);
+    assert.deepEqual(resultado.clientes[0], {
+        id: 10,
+        tipoDocumento: 'DNI',
+        nroDocumento: '74045612',
+        nombreRazonSocial: 'GRACE',
+        direccion: 'CALLE PRUEBA 123',
+        telefono: '999999999',
+        correo: 'grace@example.com',
+        estado: true,
+        origen: 'MAESTRO',
+        fechaCreacion: '2026-10-01T10:00:00.000Z',
+        fechaModificacion: '2026-10-15T10:00:00.000Z',
+        totalCertificados: 2,
+        totalComprobantes: 3,
+        ultimaAtencion: '2026-10-15T10:00:00.000Z',
+        ultimaPlantaKey: '98',
+        ultimaPlantaNombre: 'SURCO',
+        ultimaPlaca: 'ABC123'
+    });
+});
+
+test('listarClientes rechaza estados no soportados antes de consultar la base', async () => {
+    await assert.rejects(
+        () => clientesService.listarClientes({ estado: 'BORRADO' }, {
+            db: { query: async () => { throw new Error('No debe consultar'); } }
+        }),
+        (error) => error.message === 'ESTADO_CLIENTE_INVALIDO' && error.statusCode === 400
+    );
+});

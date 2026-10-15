@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const healthController = require('../controllers/health.controller');
 const auditoriaOperativaMiddleware = require('../middlewares/faregas-auditoria-operativa.middleware');
@@ -39,11 +39,15 @@ const chipsRoutes = require('./faregas-chips.routes');
 router.use('/chips', chipsRoutes);
 
 
-// MÃ³dulo de operaciones comerciales sin certificado
+// Módulo de operaciones comerciales sin certificado
 const operacionesRoutes = require('./faregas-operaciones.routes');
 const formatosRoutes = require('./faregas-formatos.routes');
 router.use('/operaciones', operacionesRoutes);
 router.use('/formatos', formatosRoutes);
+
+// Módulo de Dashboard Global y por Sede
+const dashboardRoutes = require('./faregas-dashboard.routes');
+router.use('/dashboard', dashboardRoutes);
 
 module.exports = router;
 

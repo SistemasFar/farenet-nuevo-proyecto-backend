@@ -1,6 +1,19 @@
 const clientesService = require('../services/faregas-clientes.service');
 const vehicleLookupDebug = require('../utils/vehiculo-lookup-debug');
 
+exports.listarClientes = async (req, res) => {
+    try {
+        const resultado = await clientesService.listarClientes(req.query);
+        return res.status(200).json({ ok: true, data: resultado });
+    } catch (e) {
+        if (e.message === 'ESTADO_CLIENTE_INVALIDO') {
+            return res.status(400).json({ ok: false, message: 'El estado del cliente no es válido.' });
+        }
+        console.error('Error en listarClientes:', e);
+        return res.status(500).json({ ok: false, message: 'No se pudo cargar el listado de clientes.' });
+    }
+};
+
 exports.obtenerClientePorDocumento = async (req, res) => {
     try {
         const { tipoDocumento, nroDocumento } = req.params;
