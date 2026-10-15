@@ -9,6 +9,35 @@ const {
     mapearFormaPago,
     formatearFechaPeruana
 } = require('../services/faregas-comprobante-impreso.service');
+const {
+    DIRECCION_HISTORICA_FAREGAS,
+    obtenerIdentidadCorporativaFaregas
+} = require('../services/faregas-representacion-corporativa.service');
+
+test('identidad corporativa usa fg_empresa y aísla la dirección histórica de la fuente fiscal DEMO', async () => {
+    const queryable = {
+        async query(sql, params) {
+            assert.match(sql, /FROM fg_empresa/);
+            assert.deepEqual(params, ['FAREGAS']);
+            return {
+                rowCount: 1,
+                rows: [{
+                    nombre: 'SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.',
+                    ruc: '20521536463',
+                    direccion: 'Av. Secundaria 456'
+                }]
+            };
+        }
+    };
+
+    const identidad = await obtenerIdentidadCorporativaFaregas(queryable);
+
+    assert.deepEqual(identidad, {
+        razonSocial: 'SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.',
+        ruc: '20521536463',
+        direccion: DIRECCION_HISTORICA_FAREGAS
+    });
+});
 
 test('numeroALetras produce exactamente el formato oficial para comprobantes', () => {
     assert.equal(numeroALetras(70.00), 'Son: Setenta con 00/100 Soles');
@@ -46,7 +75,7 @@ test('A. Boleta al contado contiene bloques de sede, cliente, vehículo y certif
         emisor: {
             ruc: '20521536463',
             razonSocial: 'SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.',
-            direccion: 'JR. ALBERTO SECADA NRO. 315, CALLAO',
+            direccion: DIRECCION_HISTORICA_FAREGAS,
             puntoVenta: 'SURCO',
             telefono: '942900001',
             correo: 'cert_surco@faregas.pe'
@@ -97,6 +126,9 @@ test('A. Boleta al contado contiene bloques de sede, cliente, vehículo y certif
     const html = renderBoletaHtml(data);
 
     assert.match(html, /BOLETA DE VENTA ELECTRÓNICA/);
+    assert.match(html, /SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S\.A\.C\./);
+    assert.match(html, /20521536463/);
+    assert.match(html, /JR\. ALBERTO SECADA NRO\. 315, PROV\. CONST\. DEL CALLAO, CALLAO/);
     assert.match(html, /BBB1-00000160/);
     assert.match(html, /JUAN PEREZ/);
     assert.match(html, /12345678/);
@@ -141,7 +173,7 @@ test('C. Factura al contado contiene RUC, Domicilio fiscal y desglose tributario
         emisor: {
             ruc: '20521536463',
             razonSocial: 'SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.',
-            direccion: 'JR. ALBERTO SECADA NRO. 315, CALLAO',
+            direccion: DIRECCION_HISTORICA_FAREGAS,
             puntoVenta: 'TRENEMAN'
         },
         comprobante: {
@@ -189,6 +221,9 @@ test('C. Factura al contado contiene RUC, Domicilio fiscal y desglose tributario
 
     const html = renderFacturaHtml(data);
     assert.match(html, /FACTURA ELECTRÓNICA/);
+    assert.match(html, /SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S\.A\.C\./);
+    assert.match(html, /20521536463/);
+    assert.match(html, /JR\. ALBERTO SECADA NRO\. 315, PROV\. CONST\. DEL CALLAO, CALLAO/);
     assert.match(html, /FE12-00001516/);
     assert.match(html, /CALLE CHAVEZ DE LA ROSA 1 85DPTO 2 LIMA PE/);
     assert.match(html, /10094658336/);

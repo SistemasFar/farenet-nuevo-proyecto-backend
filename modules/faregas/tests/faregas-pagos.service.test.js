@@ -116,7 +116,7 @@ test('decisión de facturar al dueño se normaliza sólo desde un booleano expl�
 
 test('las cuotas de crédito deben permanecer dentro del período', () => {
     const base = {
-        tipoComprobante: 'FACTURA', tipoDocumentoCliente: 'RUC', nroDocumento: '20600444531',
+        tipoComprobante: 'FACTURA', tipoDocumentoCliente: 'RUC', nroDocumento: '20521536463',
         nombreRazonSocial: 'FAREGAS S.A.C.', direccion: 'LIMA', condicionPago: 'CREDITO',
         fechaInicioCredito: '2026-10-15', fechaVencimiento: '2026-11-07'
     };

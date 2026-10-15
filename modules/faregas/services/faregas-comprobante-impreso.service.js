@@ -5,6 +5,7 @@ const { renderBoletaHtml } = require('../templates/comprobante-boleta.template')
 const { renderFacturaHtml } = require('../templates/comprobante-factura.template');
 const { generarPdfDesdeHtml } = require('./faregas-pdf-generator.service');
 const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
+const { obtenerIdentidadCorporativaFaregas } = require('./faregas-representacion-corporativa.service');
 
 const COMPROBANTES_STORAGE_PATH = process.env.FAREGAS_COMPROBANTES_STORAGE_PATH
     || path.join(__dirname, '../../../uploads/comprobantes');
@@ -323,12 +324,13 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
     const formaPagoImpresa = esFactura
         ? (esCredito ? 'Crédito' : 'Contado')
         : mapearFormaPago('CONTADO', f.medio_pago, qPagos.rows);
+    const identidadCorporativa = await obtenerIdentidadCorporativaFaregas(db);
 
     const viewModel = {
         emisor: {
-            ruc: f.ruc_emisor,
-            razonSocial: f.razon_social_emisor,
-            direccion: f.direccion_emisor,
+            ruc: identidadCorporativa.ruc,
+            razonSocial: identidadCorporativa.razonSocial,
+            direccion: identidadCorporativa.direccion,
             puntoVenta: f.sede_nombre_snapshot,
             telefono: f.sede_telefono_snapshot || '',
             correo: f.sede_correo_snapshot || ''
