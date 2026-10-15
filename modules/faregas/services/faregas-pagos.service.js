@@ -156,6 +156,10 @@ const validarReferenciaPago = async (client, pago) => {
         const tarjeta = await client.query('SELECT nombre FROM tarjeta WHERE key = $1', [pago.tarjetaKey]);
         if (tarjeta.rowCount === 0) throw new Error('TARJETA_NOT_FOUND');
         const nombre = String(tarjeta.rows[0].nombre || '').toUpperCase();
+        const esMedioAlternativo = nombre.includes('CUPONIDAD') || nombre.includes('YAPE') || nombre.includes('PLIN');
+        if (!esMedioAlternativo && !['DEBITO', 'CREDITO'].includes(String(pago.modalidadTarjeta || '').toUpperCase())) {
+            throw new Error('MODALIDAD_TARJETA_REQUERIDA');
+        }
         if (nombre.includes('CUPONIDAD') && String(pago.nroOperacion).trim().length !== 10) {
             throw new Error('OPERACION_CUPONIDAD_INVALIDA');
         }
@@ -283,10 +287,10 @@ exports.guardarPagosOperacion = async (operacionId, data, userContext) => {
                     baseimponible, digitotarjeta, estado, fechacreacion, fechdeposito,
                     igv, importe, nrooperacionbanco, nrooperaciontarjeta, sendedtooffisis,
                     orden_pago_id, cuentacorriente_key, entidadfinanciera_key, moneda_key,
-                    tarjeta_key, tipocontado_key
+                    tarjeta_key, tipocontado_key, modalidad_tarjeta
                 ) VALUES (
                     $1, $2, 'CAN', CURRENT_TIMESTAMP, $3, $4, $5, $6, $7, false,
-                    $8, $9, $10, 'sol', $11, $12
+                    $8, $9, $10, 'sol', $11, $12, $13
                 )
             `, [
                 base,
@@ -300,7 +304,8 @@ exports.guardarPagosOperacion = async (operacionId, data, userContext) => {
                 pago.tipo === 'banco' ? pago.cuentaCorrienteKey : null,
                 pago.tipo === 'banco' ? pago.entidadFinancieraKey : null,
                 pago.tipo === 'tarjeta' ? pago.tarjetaKey : null,
-                pago.tipo
+                pago.tipo,
+                pago.tipo === 'tarjeta' ? pago.modalidadTarjeta : null
             ]);
         }
 
@@ -425,10 +430,10 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
                     baseimponible, digitotarjeta, estado, fechacreacion, fechdeposito,
                     igv, importe, nrooperacionbanco, nrooperaciontarjeta, sendedtooffisis,
                     orden_pago_id, cuentacorriente_key, entidadfinanciera_key, moneda_key,
-                    tarjeta_key, tipocontado_key
+                    tarjeta_key, tipocontado_key, modalidad_tarjeta
                 ) VALUES (
                     $1, $2, 'CAN', CURRENT_TIMESTAMP, $3, $4, $5, $6, $7, false,
-                    $8, $9, $10, 'sol', $11, $12
+                    $8, $9, $10, 'sol', $11, $12, $13
                 )
             `, [
                 base,
@@ -442,7 +447,8 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
                 pago.tipo === 'banco' ? pago.cuentaCorrienteKey : null,
                 pago.tipo === 'banco' ? pago.entidadFinancieraKey : null,
                 pago.tipo === 'tarjeta' ? pago.tarjetaKey : null,
-                pago.tipo
+                pago.tipo,
+                pago.tipo === 'tarjeta' ? pago.modalidadTarjeta : null
             ]);
         }
 
@@ -492,6 +498,7 @@ exports.listarPagosPorOrden = async (ordenId, queryable = db) => {
     const result = await queryable.query(`
         SELECT id, importe, baseimponible, igv, estado, fechacreacion, fechdeposito,
                tipocontado_key AS "tipoContadoKey", tarjeta_key AS "tarjetaKey",
+               modalidad_tarjeta AS "modalidadTarjeta",
                nrooperacionbanco AS "nroOperacionBanco",
                nrooperaciontarjeta AS "nroOperacionTarjeta",
                digitotarjeta AS "digitosTarjeta",

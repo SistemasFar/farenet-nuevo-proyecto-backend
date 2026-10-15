@@ -26,7 +26,7 @@ const responderError = (res, error) => {
         CHIP_NO_DISPONIBLE: 'El chip seleccionado ya no está disponible.',
         CHIP_ASIGNADO_OTRO_CERTIFICADO: 'El chip fue asociado a otro certificado.',
         CHIP_VENDIDO_SIN_TRAZABILIDAD: 'El chip figura vendido sin el movimiento de inventario esperado.',
-        VENTA_CREDITO_SIN_SALDO: 'La venta a crédito debe conservar un saldo pendiente.',
+        VENTA_CREDITO_SIN_SALDO: 'Una venta a crédito debe conservar un saldo pendiente. Cambie la condición a CONTADO o reduzca el pago inicial.',
         CUOTAS_NO_COINCIDEN_CON_SALDO: 'La suma de las cuotas debe coincidir con el saldo pendiente.',
         NUBEFACT_DESHABILITADO: 'La integracion con Nubefact esta deshabilitada.',
         NUBEFACT_NO_CONFIGURADO: 'Faltan la URL o el token de Nubefact.',

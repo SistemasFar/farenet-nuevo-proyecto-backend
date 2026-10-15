@@ -362,6 +362,12 @@ exports.consultarDocumento = async (tipoDocumento, numeroDocumento, opciones = {
             );
             const nombreRazonSocial = response.data?.razonSocial || response.data?.nombre || '';
             if (nombreRazonSocial) {
+                const clienteLocal = await exports.asegurarCliente({
+                    tipoDocumento: 'RUC',
+                    nroDocumento: docNormalizado,
+                    nombreRazonSocial,
+                    direccion: response.data.direccion || null
+                });
                 const cliente = {
                     documento: docNormalizado,
                     tipoDocumento: 'RUC',
@@ -372,7 +378,8 @@ exports.consultarDocumento = async (tipoDocumento, numeroDocumento, opciones = {
                     distrito: response.data.distrito || null,
                     correo: null,
                     telefono: null,
-                    clienteExistente: false
+                    clienteExistente: false,
+                    id: clienteLocal.id
                 };
                 return {
                     encontrado: true,
@@ -408,6 +415,12 @@ exports.consultarDocumento = async (tipoDocumento, numeroDocumento, opciones = {
                 const nombres = response.data.nombres || '';
                 const nombreCompleto = `${apellidos} ${nombres}`.trim() || response.data.nombre || nombres;
                 if (nombreCompleto) {
+                    const clienteLocal = await exports.asegurarCliente({
+                        tipoDocumento: 'DNI',
+                        nroDocumento: docNormalizado,
+                        nombreRazonSocial: nombreCompleto,
+                        direccion: response.data.direccion || null
+                    });
                     const cliente = {
                         documento: docNormalizado,
                         tipoDocumento: 'DNI',
@@ -417,7 +430,8 @@ exports.consultarDocumento = async (tipoDocumento, numeroDocumento, opciones = {
                         direccion: response.data.direccion || null,
                         correo: null,
                         telefono: null,
-                        clienteExistente: false
+                        clienteExistente: false,
+                        id: clienteLocal.id
                     };
                     return {
                         encontrado: true,

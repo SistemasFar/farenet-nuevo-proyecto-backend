@@ -217,7 +217,11 @@ const construirPayloadNubefact = ({
             igv: facturacion.igv,
             importe_total: facturacion.importe_total
         })];
-    const credito = String(facturacion.condicion_pago || 'CONTADO').toUpperCase() === 'CREDITO';
+    // Regla Faregas: sólo una FACTURA puede ser a crédito. La validación de
+    // negocio rechaza BOLETA + CRÉDITO; esta defensa adicional evita enviar
+    // cuotas si llegara un registro histórico inconsistente.
+    const credito = String(facturacion.tipo_comprobante || '').toUpperCase() === 'FACTURA'
+        && String(facturacion.condicion_pago || 'CONTADO').toUpperCase() === 'CREDITO';
     const informacionAdicional = construirInformacionAdicional({
         facturacion,
         certificado: certificadoData,
@@ -269,7 +273,10 @@ const construirPayloadNubefact = ({
         enviar_automaticamente_al_cliente: Boolean(config.nubefact.enviarCliente && facturacion.email),
         codigo_unico: facturacion.codigo_unico || crearCodigoUnico(facturacion.id),
         condiciones_de_pago: credito ? 'CREDITO' : 'CONTADO',
-        medio_de_pago: facturacion.medio_pago || '',
+        forma_de_pago: credito ? 'Credito' : 'Contado',
+        medio_de_pago: credito
+            ? 'credito'
+            : (String(facturacion.medio_pago || '').toLowerCase() === 'credito' ? '' : (facturacion.medio_pago || '')),
         cancelado: !credito,
         placa_vehiculo: vehiculoData.placa || '',
         orden_compra_servicio: '',

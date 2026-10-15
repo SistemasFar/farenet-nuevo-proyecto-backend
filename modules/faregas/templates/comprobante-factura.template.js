@@ -25,6 +25,8 @@ function renderFacturaHtml(data) {
         totales = {},
         descuento = null,
         qrSource = '',
+        logoDataUri = '',
+        cuotas = [],
         numeroCertificado = '',
         ordenTrabajo = ''
     } = data;
@@ -84,6 +86,14 @@ function renderFacturaHtml(data) {
         `;
     }).join('');
 
+    const cuotasHtml = cuotas.map((cuota) => `
+        <div class="cuota-row">
+            <strong>Cuota:</strong> ${escapeHtml(cuota.numero)}
+            <strong>Fecha:</strong> ${escapeHtml(cuota.fecha)}
+            <strong>Monto:</strong> S/ ${formatMoney(cuota.importe)}
+        </div>
+    `).join('');
+
     return `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -129,32 +139,15 @@ function renderFacturaHtml(data) {
             width: 58%;
         }
         .logo-box {
-            display: inline-flex;
-            align-items: center;
-            border: 1.5px solid #083b66;
-            border-radius: 4px;
-            padding: 4px 8px;
+            display: block;
+            width: 270px;
+            max-width: 100%;
             margin-bottom: 6px;
         }
-        .stg-shield {
-            background-color: #083b66;
-            color: #ffffff;
-            font-weight: bold;
-            font-size: 7pt;
-            padding: 4px 6px;
-            clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
-            margin-right: 8px;
-            display: inline-block;
-            text-align: center;
-            width: 24px;
-            height: 24px;
-            line-height: 16px;
-        }
-        .logo-text {
-            color: #083b66;
-            font-weight: 900;
-            font-size: 10.5pt;
-            letter-spacing: -0.2px;
+        .logo-box img {
+            display: block;
+            width: 100%;
+            height: auto;
         }
         .emisor-razon {
             font-weight: bold;
@@ -224,6 +217,18 @@ function renderFacturaHtml(data) {
             padding: 6px 10px;
             margin-bottom: 8px;
             font-size: 7.5pt;
+        }
+        .cuotas-box {
+            border: 1px solid #777777;
+            border-radius: 5px;
+            padding: 5px 10px;
+            margin-bottom: 8px;
+            font-size: 7.5pt;
+        }
+        .cuota-row {
+            display: flex;
+            gap: 8px;
+            padding: 1px 0;
         }
         .vehiculo-table {
             width: 100%;
@@ -335,10 +340,7 @@ function renderFacturaHtml(data) {
 
     <div class="top-row">
         <div class="emisor-col">
-            <div class="logo-box">
-                <span class="stg-shield">STG</span>
-                <span class="logo-text">CERTIFICADOR VEHICULAR</span>
-            </div>
+            ${logoDataUri ? `<div class="logo-box"><img src="${logoDataUri}" alt="Certificador Vehicular" /></div>` : ''}
             <div class="emisor-razon">${razonSocialEmisor}</div>
             <div class="emisor-direccion">${direccionEmisor}</div>
             <div class="emisor-contacto">
@@ -370,6 +372,8 @@ function renderFacturaHtml(data) {
             ${ordenTrabajo ? `<div><span class="info-label-right">Orden Trabajo:</span> ${ordenTrabajo}</div>` : ''}
         </div>
     </div>
+
+    ${cuotasHtml ? `<div class="cuotas-box">${cuotasHtml}</div>` : ''}
 
     <div class="vehiculo-box">
         <table class="vehiculo-table">
@@ -418,7 +422,7 @@ function renderFacturaHtml(data) {
             ${descuento && descuento.codigo ? `
                 <div class="descuento-box">
                     <div class="descuento-codigo">${escapeHtml(descuento.codigo)}</div>
-                    <div>${escapeHtml(descuento.descripcion || 'DESCUENTO')}</div>
+                    ${descuento.descripcion ? `<div>${escapeHtml(descuento.descripcion)}</div>` : ''}
                 </div>
             ` : ''}
         </div>

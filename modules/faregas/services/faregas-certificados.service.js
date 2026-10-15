@@ -2144,17 +2144,58 @@ exports.validarEmision = async (id, userContext) => {
         }
     }
 
+    // En producción, la facturación electrónica debe estar aceptada antes de
+    // consumir el correlativo definitivo. El modo de simulación es explícito,
+    // solo funciona fuera de producción y nunca altera el estado SUNAT.
+    const facturacionSimulada = integrationsConfig.nubefact.simulationEnabled;
+    const rFacturacion = await db.query(
+        `SELECT id, tipo_comprobante, condicion_pago, estado, nro_comprobante, aceptada_sunat, entorno_facturador,
+                proveedor, serie, numero, enlace_pdf, enlace_xml
+         FROM fg_facturacion
+         WHERE certificado_id = $1`,
+        [id]
+    );
+
     // Orden y pagos Faregas. La orden es la fuente de verdad del saldo antes de emitir.
     const rOrdenPago = await db.query(
-        'SELECT estado, importe_total, importe_pagado, saldo_pendiente FROM fg_orden_pago WHERE certificado_id = $1',
+        'SELECT id, estado, importe_total, importe_pagado, saldo_pendiente, formapago_key FROM fg_orden_pago WHERE certificado_id = $1',
         [id]
     );
     if (rOrdenPago.rowCount === 0) {
         pushError('pago', 'orden', 'ORDEN_PAGO_FALTANTE', 'Falta registrar la orden de pago del certificado');
     } else {
         const orden = rOrdenPago.rows[0];
-        if (orden.estado !== 'PAGADO' || Number(orden.saldo_pendiente) > 0.009) {
-            pushError('pago', 'saldo', 'PAGO_INCOMPLETO', `Pago incompleto. Saldo pendiente: S/ ${Number(orden.saldo_pendiente).toFixed(2)}`);
+        const fact = rFacturacion.rowCount > 0 ? rFacturacion.rows[0] : null;
+        const tipoComprobante = String(fact?.tipo_comprobante || '').toUpperCase();
+        const condicionPago = String(fact?.condicion_pago || (orden.formapago_key === 'credito' ? 'CREDITO' : 'CONTADO')).toUpperCase();
+        const esFacturaCredito = tipoComprobante === 'FACTURA' && condicionPago === 'CREDITO';
+
+        if (tipoComprobante === 'BOLETA' && (condicionPago === 'CREDITO' || orden.formapago_key === 'credito')) {
+            pushError('pago', 'condicion', 'BOLETA_CREDITO_INVALIDA', 'Una boleta solo puede emitirse con condición de pago CONTADO.');
+        } else if (esFacturaCredito) {
+            const saldoPendiente = Number(orden.saldo_pendiente || 0);
+            if (saldoPendiente <= 0.009) {
+                pushError('pago', 'saldo', 'CREDITO_SIN_SALDO', 'Una venta a crédito debe conservar un saldo pendiente. Cambie la condición a CONTADO o reduzca el pago inicial.');
+            } else if (fact?.id) {
+                const rCuotas = await db.query(
+                    'SELECT numero_cuota, fecha_pago, importe FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota',
+                    [fact.id]
+                );
+                if (rCuotas.rowCount === 0) {
+                    pushError('pago', 'cuotas', 'CUOTAS_REQUERIDAS', 'Una venta al crédito requiere al menos una cuota.');
+                } else {
+                    const sumaCuotas = rCuotas.rows.reduce((acc, c) => acc + Number(c.importe || 0), 0);
+                    if (Math.abs(sumaCuotas - saldoPendiente) > 0.009) {
+                        pushError('pago', 'cuotas', 'CUOTAS_SALDO_DISCREPANCIA', 'La suma de las cuotas debe ser igual al saldo pendiente.');
+                    }
+                }
+            } else {
+                pushError('pago', 'cuotas', 'CUOTAS_REQUERIDAS', 'Una venta al crédito requiere al menos una cuota.');
+            }
+        } else {
+            if (orden.estado !== 'PAGADO' || Number(orden.saldo_pendiente) > 0.009) {
+                pushError('pago', 'saldo', 'PAGO_INCOMPLETO', `Pago incompleto. Saldo pendiente: S/ ${Number(orden.saldo_pendiente).toFixed(2)}`);
+            }
         }
     }
 
@@ -2184,17 +2225,6 @@ exports.validarEmision = async (id, userContext) => {
         }
     }
 
-    // En producción, la facturación electrónica debe estar aceptada antes de
-    // consumir el correlativo definitivo. El modo de simulación es explícito,
-    // solo funciona fuera de producción y nunca altera el estado SUNAT.
-    const facturacionSimulada = integrationsConfig.nubefact.simulationEnabled;
-    const rFacturacion = await db.query(
-        `SELECT id, estado, nro_comprobante, aceptada_sunat, entorno_facturador,
-                proveedor, serie, numero, enlace_pdf, enlace_xml
-         FROM fg_facturacion
-         WHERE certificado_id = $1`,
-        [id]
-    );
     if (rFacturacion.rowCount === 0) {
         pushError('facturacion', 'general', 'FACTURACION_FALTANTE', 'Faltan los datos de facturacion');
     } else if (!facturacionSimulada && !esDocumentoBaseOperable(rFacturacion.rows[0])) {

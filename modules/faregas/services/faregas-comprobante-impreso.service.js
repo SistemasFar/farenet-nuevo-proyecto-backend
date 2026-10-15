@@ -8,6 +8,10 @@ const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-poli
 
 const COMPROBANTES_STORAGE_PATH = process.env.FAREGAS_COMPROBANTES_STORAGE_PATH
     || path.join(__dirname, '../../../uploads/comprobantes');
+const LOGO_CERTIFICADOR_PATH = path.join(__dirname, '../templates/assets/certificador-vehicular.png');
+const LOGO_CERTIFICADOR_DATA_URI = fs.existsSync(LOGO_CERTIFICADOR_PATH)
+    ? `data:image/png;base64,${fs.readFileSync(LOGO_CERTIFICADOR_PATH).toString('base64')}`
+    : '';
 
 function formatearFechaPeruana(dateVal) {
     if (!dateVal) return '';
@@ -21,15 +25,116 @@ function formatearFechaPeruana(dateVal) {
     return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
 }
 
-function mapearFormaPago(condicionPago, medioPago) {
+function normalizarMedioItem(item, opciones = {}) {
+    if (!item) return '';
+
+    if (typeof item === 'string') {
+        const raw = item.trim().toUpperCase();
+        if (!raw) return '';
+        if (raw === 'EFECTIVO') return 'Efectivo';
+        if (raw === 'TARJETA_DEBITO' || raw === 'DEBITO' || raw === 'TARJETA DEBITO' || raw === 'TARJETA DÉBITO') return 'Tarjeta de Débito';
+        if (raw === 'TARJETA_CREDITO' || raw === 'CREDITO_TARJETA' || raw === 'TARJETA CREDITO' || raw === 'TARJETA CRÉDITO') return 'Tarjeta de Crédito';
+        if (raw === 'TRANSFERENCIA') return 'Transferencia';
+        if (raw === 'DEPOSITO' || raw === 'DEPÓSITO' || raw === 'BANCO') return 'Depósito Bancario';
+        if (raw === 'YAPE' || raw === 'PLIN') return 'Billetera Digital';
+        if (raw === 'CUPONIDAD') return 'Cuponidad';
+        if (raw === 'TARJETA') {
+            const subtipo = String(opciones.tipoTarjeta || opciones.tipo_tarjeta || opciones.subtipo || '').toUpperCase();
+            if (subtipo.includes('CREDIT') || subtipo.includes('CRÉDIT')) return 'Tarjeta de Crédito';
+            if (subtipo.includes('DEBIT') || subtipo.includes('DÉBIT')) return 'Tarjeta de Débito';
+            return 'Tarjeta';
+        }
+        if (raw === 'BANCO') {
+            const subtipo = String(opciones.tipoBanco || opciones.tipo_banco || opciones.subtipo || '').toUpperCase();
+            if (subtipo === 'TRANSFERENCIA') return 'Transferencia';
+            return 'Depósito Bancario';
+        }
+        return item.charAt(0).toUpperCase() + item.slice(1).toLowerCase();
+    }
+
+    const tipo = String(item.tipo || item.tipocontado_key || item.medio_pago || item.medio || '').toUpperCase();
+    const subtipo = String(item.tipo_tarjeta || item.tipoTarjeta || item.subtipo || opciones.tipoTarjeta || opciones.tipo_tarjeta || '').toUpperCase();
+    const tarjetaNombre = String(item.tarjeta_nombre || item.tarjetaNombre || item.nombre || '').toUpperCase();
+    const tipoBanco = String(item.tipo_banco || item.tipoBanco || opciones.tipoBanco || opciones.tipo_banco || '').toUpperCase();
+
+    if (tipo === 'EFECTIVO') {
+        return 'Efectivo';
+    }
+
+    if (tipo === 'TARJETA' || tarjetaNombre) {
+        if (tarjetaNombre.includes('YAPE') || tarjetaNombre.includes('PLIN')) {
+            return 'Billetera Digital';
+        }
+        if (tarjetaNombre.includes('CUPONIDAD')) {
+            return 'Cuponidad';
+        }
+        if (subtipo.includes('CREDIT') || subtipo.includes('CRÉDIT')) {
+            return 'Tarjeta de Crédito';
+        }
+        if (subtipo.includes('DEBIT') || subtipo.includes('DÉBIT')) {
+            return 'Tarjeta de Débito';
+        }
+        return 'Tarjeta';
+    }
+
+    if (tipo === 'BANCO') {
+        if (tipoBanco === 'TRANSFERENCIA' || subtipo === 'TRANSFERENCIA') return 'Transferencia';
+        if (tipoBanco === 'DEPOSITO' || subtipo === 'DEPOSITO' || item.fechdeposito) return 'Depósito Bancario';
+        return 'Depósito Bancario';
+    }
+
+    if (tipo.includes('TRANSFER')) return 'Transferencia';
+    if (tipo.includes('DEPOSI')) return 'Depósito Bancario';
+
+    return 'Efectivo';
+}
+
+function mapearFormaPago(condicionPago, medioPago, pagosOpciones = null) {
     const cp = String(condicionPago || '').toUpperCase();
-    const mp = String(medioPago || '').toUpperCase();
-    if (cp === 'CREDITO' || cp.startsWith('CREDITO')) return 'Crédito';
-    if (mp === 'TARJETA_DEBITO' || mp === 'DEBITO') return 'Tarjeta de Débito';
-    if (mp === 'TARJETA_CREDITO' || mp === 'CREDITO_TARJETA') return 'Tarjeta de Crédito';
-    if (mp === 'TRANSFERENCIA') return 'Transferencia';
-    if (mp === 'YAPE' || mp === 'PLIN') return 'Billetera Digital';
-    return 'Contado';
+    if (cp === 'CREDITO' || cp.startsWith('CREDITO')) {
+        return 'Crédito';
+    }
+
+    let opciones = {};
+    let pagosArray = [];
+    if (typeof pagosOpciones === 'string') {
+        opciones = { tipoTarjeta: pagosOpciones };
+    } else if (Array.isArray(pagosOpciones)) {
+        pagosArray = pagosOpciones;
+    } else if (pagosOpciones && typeof pagosOpciones === 'object') {
+        if (Array.isArray(pagosOpciones.pagos)) pagosArray = pagosOpciones.pagos;
+        opciones = pagosOpciones;
+    }
+
+    if (Array.isArray(medioPago)) {
+        pagosArray = medioPago;
+    } else if (medioPago && typeof medioPago === 'object') {
+        return normalizarMedioItem(medioPago, opciones) || 'Efectivo';
+    }
+
+    if (pagosArray.length > 0) {
+        const metodos = [];
+        for (const p of pagosArray) {
+            const m = normalizarMedioItem(p, opciones);
+            if (m && !metodos.includes(m)) metodos.push(m);
+        }
+        if (metodos.length > 0) return metodos.join(' / ');
+    }
+
+    const mp = String(medioPago || '').trim();
+    if (!mp) return 'Efectivo';
+
+    if (mp.includes(',') || mp.includes('/')) {
+        const tokens = mp.split(/[,/]+/).map(t => t.trim()).filter(Boolean);
+        const metodos = [];
+        for (const token of tokens) {
+            const m = normalizarMedioItem(token, opciones);
+            if (m && !metodos.includes(m)) metodos.push(m);
+        }
+        if (metodos.length > 0) return metodos.join(' / ');
+    }
+
+    return normalizarMedioItem(mp, opciones) || 'Efectivo';
 }
 
 const moneda = valor => Number(valor || 0).toFixed(2);
@@ -129,10 +234,12 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
         `SELECT f.*,
                 c.numero_certificado, c.estado AS certificado_estado,
                 v.placa AS veh_placa, v.marca AS veh_marca, v.modelo AS veh_modelo,
-                v.clase AS veh_clase, v.numero_motor AS veh_motor
+                v.clase AS veh_clase, v.numero_motor AS veh_motor,
+                opc.placa AS operacion_placa
          FROM fg_facturacion f
          LEFT JOIN fg_certificado c ON c.id = f.certificado_id
          LEFT JOIN fg_certificado_vehiculo v ON v.certificado_id = f.certificado_id
+         LEFT JOIN fg_operacion_comercial opc ON opc.id = f.operacion_id
          WHERE f.id = $1`,
         [facturacionId]
     );
@@ -166,21 +273,56 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
     if (items.length === 0) throw new Error('DETALLE_FACTURACION_NO_DISPONIBLE');
 
     const qDescuento = await db.query(
-        `SELECT importe_descuento
-         FROM fg_descuentocomprobante
-         WHERE facturacion_id = $1 AND estado = 'APLICADO'
-         ORDER BY id DESC
+        `SELECT dc.importe_descuento,
+                dcl.codigo AS codigo_real,
+                d.nombre AS nombre_real
+         FROM fg_descuentocomprobante dc
+         JOIN fg_descuentocliente dcl ON dcl.id = dc.descuento_cliente_id
+         JOIN fg_descuento d ON d.id = dcl.descuento_id
+         WHERE dc.facturacion_id = $1 AND dc.estado = 'APLICADO'
+         ORDER BY dc.id DESC
          LIMIT 1`,
         [facturacionId]
     );
     const descuentoFiscal = Number(payloadFiscal.total_descuento || 0);
     f.descuento_fiscal_snapshot = descuentoFiscal;
-    const codigoDescuento = String(f.codigo_descuento_snapshot || '').trim();
+    const codigoDescuento = String(qDescuento.rows[0]?.codigo_real || f.codigo_descuento_snapshot || '').trim();
+    const nombreDescuento = String(qDescuento.rows[0]?.nombre_real || '').trim();
     const descuentoData = codigoDescuento ? {
         codigo: codigoDescuento,
-        descripcion: 'DESCUENTO APLICADO',
+        descripcion: nombreDescuento,
         monto: Number(qDescuento.rows[0]?.importe_descuento || descuentoFiscal)
     } : null;
+
+    const qPagos = await db.query(
+        `SELECT p.tipocontado_key, p.tarjeta_key, p.modalidad_tarjeta AS tipo_tarjeta,
+                p.digitotarjeta, p.nrooperaciontarjeta,
+                p.entidadfinanciera_key, p.fechdeposito, p.nrooperacionbanco,
+                t.nombre AS tarjeta_nombre,
+                ef.nombre AS entidad_nombre
+         FROM fg_orden_pago op
+         JOIN fg_pago p ON p.orden_pago_id = op.id AND p.estado = 'CAN'
+         LEFT JOIN tarjeta t ON t.key = p.tarjeta_key
+         LEFT JOIN entidadfinanciera ef ON ef.key = p.entidadfinanciera_key
+         WHERE ($1::bigint IS NOT NULL AND op.certificado_id = $1)
+            OR ($2::bigint IS NOT NULL AND op.operacion_id = $2)
+         ORDER BY p.id ASC`,
+        [f.certificado_id || null, f.operacion_id || null]
+    );
+
+    const qCuotas = await db.query(
+        `SELECT numero_cuota, fecha_pago, importe
+         FROM fg_facturacion_cuota
+         WHERE facturacion_id = $1
+         ORDER BY numero_cuota ASC`,
+        [facturacionId]
+    );
+
+    const esFactura = String(f.tipo_comprobante || '').toUpperCase() === 'FACTURA';
+    const esCredito = esFactura && String(f.condicion_pago || '').toUpperCase() === 'CREDITO';
+    const formaPagoImpresa = esFactura
+        ? (esCredito ? 'Crédito' : 'Contado')
+        : mapearFormaPago('CONTADO', f.medio_pago, qPagos.rows);
 
     const viewModel = {
         emisor: {
@@ -197,7 +339,7 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
             numero: f.numero,
             fechaDocumento: formatearFechaPeruana(f.fecha_documento),
             fechaVencimiento: formatearFechaPeruana(f.fecha_vencimiento || f.fecha_documento),
-            formaPago: mapearFormaPago(f.condicion_pago, f.medio_pago),
+            formaPago: formaPagoImpresa,
             moneda: 'Soles'
         },
         cliente: {
@@ -208,7 +350,7 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
             telefono: f.telefono || ''
         },
         vehiculo: {
-            placa: f.veh_placa || '',
+            placa: f.veh_placa || f.operacion_placa || '',
             marca: f.veh_marca || '',
             modelo: f.veh_modelo || '',
             tipo: f.veh_clase || '',
@@ -225,9 +367,15 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
             total: f.importe_total
         },
         descuento: descuentoData,
+        cuotas: esCredito ? qCuotas.rows.map(cuota => ({
+            numero: String(cuota.numero_cuota).padStart(3, '0'),
+            fecha: formatearFechaPeruana(cuota.fecha_pago),
+            importe: Number(cuota.importe || 0)
+        })) : [],
         numeroCertificado: f.numero_certificado,
-        ordenTrabajo: '',
-        qrSource: f.cadena_qr || ''
+        ordenTrabajo: f.veh_placa || f.operacion_placa || '',
+        qrSource: f.cadena_qr || '',
+        logoDataUri: LOGO_CERTIFICADOR_DATA_URI
     };
 
     validarConsistenciaFiscal(f, viewModel);

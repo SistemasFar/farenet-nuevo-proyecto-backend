@@ -116,7 +116,7 @@ test('A. Boleta al contado contiene bloques de sede, cliente, vehículo y certif
 test('B. Boleta con tarjeta conserva forma de pago Tarjeta de Débito', () => {
     assert.equal(mapearFormaPago('CONTADO', 'TARJETA_DEBITO'), 'Tarjeta de Débito');
     assert.equal(mapearFormaPago('CONTADO', 'TARJETA_CREDITO'), 'Tarjeta de Crédito');
-    assert.equal(mapearFormaPago('CONTADO', 'EFECTIVO'), 'Contado');
+    assert.equal(mapearFormaPago('CONTADO', 'EFECTIVO'), 'Efectivo');
 
     const data = {
         emisor: { ruc: '20521536463', puntoVenta: 'SURQUILLO' },
@@ -216,12 +216,20 @@ test('D. Factura a crédito incluye fecha de vencimiento y forma de pago Crédit
         cliente: { nombre: 'EMPRESA TRANSPORTE S.A.C.', tipoDoc: 'RUC', nroDoc: '20600123456', direccion: 'AV. LIMA 100' },
         vehiculo: { placa: 'XYZ987' },
         items: [{ cantidad: 1, unidad: 'NIU', descripcion: 'SERVICIO CONFORMIDAD', precioUnitario: 200, valorUnitario: 169.49, total: 200 }],
-        totales: { gravada: 169.49, igv: 30.51, total: 200 }
+        totales: { gravada: 169.49, igv: 30.51, total: 200 },
+        cuotas: [
+            { numero: '001', fecha: '31/10/2026', importe: 80 },
+            { numero: '002', fecha: '30/11/2026', importe: 120 }
+        ]
     };
 
     const html = renderFacturaHtml(data);
     assert.match(html, /Fecha Vencimiento:<\/span> 31\/10\/2026/);
     assert.match(html, /Forma de Pago:<\/span> Crédito/);
+    assert.match(html, /Cuota:<\/strong> 001/);
+    assert.match(html, /Fecha:<\/strong> 31\/10\/2026/);
+    assert.match(html, /Monto:<\/strong> S\/ 80\.00/);
+    assert.match(html, /Cuota:<\/strong> 002/);
 });
 
 test('E. Comprobante con descuento reproduce el bloque de código y resumen', () => {
@@ -286,4 +294,96 @@ test('Consistencia Fiscal: rechaza generación si importes difieren del comproba
     assert.throws(() => {
         validarConsistenciaFiscal(facturacion, viewModelInvalidaSerie);
     }, /INCONSISTENCIA_FISCAL/);
+});
+
+test('Caso A: Orden de Trabajo = Placa del vehículo en Boleta y Factura', () => {
+    const dataBoleta = {
+        emisor: { ruc: '20521536463', puntoVenta: 'SURQUILLO' },
+        comprobante: {
+            tipo: 'BOLETA', serie: 'BE20', numero: 8138,
+            fechaDocumento: '12/10/2026', fechaVencimiento: '12/10/2026',
+            moneda: 'Soles', formaPago: 'Tarjeta de Débito'
+        },
+        cliente: { nombre: 'SUDARIO LUCAS MARINA', tipoDoc: 'DNI', nroDoc: '40117627' },
+        vehiculo: { placa: 'B2X125' },
+        items: [{ cantidad: 1, unidad: 'NIU', descripcion: 'CERTIFICADO GNV', precioUnitario: 50, valorUnitario: 42.37, total: 50 }],
+        totales: { gravada: 42.37, igv: 7.63, total: 50 },
+        numeroCertificado: 'DG-22-0014037',
+        ordenTrabajo: 'B2X125'
+    };
+    const htmlBoleta = renderBoletaHtml(dataBoleta);
+    assert.match(htmlBoleta, /Orden Trabajo:<\/span>\s*B2X125/);
+    assert.match(htmlBoleta, /Numero Certificado:<\/span>\s*DG-22-0014037/);
+    assert.match(htmlBoleta, /Forma de Pago:<\/span>\s*Tarjeta de Débito/);
+
+    const dataFactura = {
+        ...dataBoleta,
+        comprobante: { ...dataBoleta.comprobante, tipo: 'FACTURA', serie: 'FE12', numero: 1516 },
+        cliente: { nombre: 'EMPRESA TRANSPORTE S.A.C.', tipoDoc: 'RUC', nroDoc: '20600123456', direccion: 'AV. LIMA 100' }
+    };
+    const htmlFactura = renderFacturaHtml(dataFactura);
+    assert.match(htmlFactura, /Orden Trabajo:<\/span>\s*B2X125/);
+    assert.match(htmlFactura, /Numero Certificado:<\/span>\s*DG-22-0014037/);
+    assert.match(htmlFactura, /Forma de Pago:<\/span>\s*Tarjeta de Débito/);
+});
+
+test('Caso B: Pago EFECTIVO -> Forma de Pago = Efectivo', () => {
+    assert.equal(mapearFormaPago('CONTADO', 'EFECTIVO'), 'Efectivo');
+    assert.equal(mapearFormaPago('CONTADO', [{ tipo: 'efectivo' }]), 'Efectivo');
+    assert.equal(mapearFormaPago('CONTADO', null, [{ tipocontado_key: 'efectivo' }]), 'Efectivo');
+});
+
+test('Caso C: Pago TARJETA con tipo DÉBITO -> Forma de Pago = Tarjeta de Débito', () => {
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA_DEBITO'), 'Tarjeta de Débito');
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA', 'DEBITO'), 'Tarjeta de Débito');
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA', { tipo_tarjeta: 'DEBITO' }), 'Tarjeta de Débito');
+    assert.equal(mapearFormaPago('CONTADO', [{ tipo: 'tarjeta', tipo_tarjeta: 'DEBITO' }]), 'Tarjeta de Débito');
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA'), 'Tarjeta', 'Una tarjeta histórica sin modalidad no debe inventarse como débito');
+});
+
+test('Caso D: Pago TARJETA con tipo CRÉDITO -> Forma de Pago = Tarjeta de Crédito', () => {
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA_CREDITO'), 'Tarjeta de Crédito');
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA', 'CREDITO'), 'Tarjeta de Crédito');
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA', { tipo_tarjeta: 'CREDITO' }), 'Tarjeta de Crédito');
+    assert.equal(mapearFormaPago('CONTADO', [{ tipo: 'tarjeta', tipo_tarjeta: 'CREDITO' }]), 'Tarjeta de Crédito');
+});
+
+test('Caso E: Pagos mixtos -> No pierde información ni elige arbitrariamente', () => {
+    assert.equal(mapearFormaPago('CONTADO', 'EFECTIVO, TARJETA'), 'Efectivo / Tarjeta');
+    assert.equal(mapearFormaPago('CONTADO', null, [
+        { tipo: 'efectivo', importe: 50 },
+        { tipo: 'tarjeta', tipo_tarjeta: 'DEBITO', importe: 40 }
+    ]), 'Efectivo / Tarjeta de Débito');
+    assert.equal(mapearFormaPago('CONTADO', null, [
+        { tipocontado_key: 'efectivo', importe: 50 },
+        { tipocontado_key: 'tarjeta', tipo_tarjeta: 'CREDITO', importe: 40 }
+    ]), 'Efectivo / Tarjeta de Crédito');
+    assert.equal(mapearFormaPago('CONTADO', null, [
+        { tipocontado_key: 'efectivo' },
+        { tipocontado_key: 'efectivo' }
+    ]), 'Efectivo', 'Pagos repetidos del mismo medio se consolidan');
+});
+
+test('Caso E.1: BANCO del flujo Faregas se imprime como Depósito Bancario', () => {
+    assert.equal(mapearFormaPago('CONTADO', 'BANCO'), 'Depósito Bancario');
+    assert.equal(mapearFormaPago('CONTADO', null, [{
+        tipocontado_key: 'banco',
+        fechdeposito: '2026-10-15',
+        nrooperacionbanco: '12222'
+    }]), 'Depósito Bancario');
+});
+
+test('Caso F: Condición comercial = CRÉDITO -> Forma de Pago = Crédito (no confunde con Tarjeta de Crédito)', () => {
+    assert.equal(mapearFormaPago('CREDITO', 'EFECTIVO'), 'Crédito');
+    assert.equal(mapearFormaPago('CREDITO', 'TARJETA'), 'Crédito');
+    assert.equal(mapearFormaPago('CREDITO', 'TARJETA_CREDITO'), 'Crédito');
+    assert.equal(mapearFormaPago('CREDITO_30', 'TARJETA'), 'Crédito');
+    assert.equal(mapearFormaPago('CREDITO', [{ tipo: 'tarjeta', tipo_tarjeta: 'CREDITO' }]), 'Crédito');
+});
+
+test.after(async () => {
+    const db = require('../../../config/database');
+    if (db && typeof db.end === 'function') {
+        await db.end();
+    }
 });

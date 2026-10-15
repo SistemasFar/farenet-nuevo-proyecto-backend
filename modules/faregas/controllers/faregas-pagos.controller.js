@@ -15,6 +15,8 @@ const responderError = (res, error) => {
         IMPORTE_PAGO_INVALIDO: [400, 'Todos los pagos deben tener un importe mayor a cero.'],
         PAGO_EXCEDE_TOTAL: [409, 'La suma de pagos excede el total de la orden.'],
         DATOS_TARJETA_INCOMPLETOS: [400, 'Complete tarjeta y número de operación.'],
+        MODALIDAD_TARJETA_INVALIDA: [400, 'La modalidad de tarjeta debe ser DÉBITO o CRÉDITO.'],
+        MODALIDAD_TARJETA_REQUERIDA: [400, 'Seleccione si la operación fue con tarjeta de débito o crédito.'],
         TARJETA_NOT_FOUND: [404, 'La tarjeta seleccionada no existe.'],
         CONDICION_PAGO_INVALIDA: [400, 'La condición de pago debe ser CONTADO o CRÉDITO.'],
         FECHA_INICIO_CREDITO_INVALIDA: [400, 'Seleccione una fecha de inicio válida para el crédito.'],

@@ -7,6 +7,7 @@ const readinessService = require('./faregas-nubefact-readiness.service');
 const facturacionSnapshotService = require('./faregas-facturacion-snapshot.service');
 const integrationsConfig = require('../../../config/integrations.config');
 const chipCertificadoService = require('./faregas-chip-certificado.service');
+const clientesService = require('./faregas-clientes.service');
 const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
 const { validarAccesoPlanta } = require('./faregas-auth.service');
 const { esCodigoClasificacionSunatValidoOpcional } = require('./faregas-pagos.rules');
@@ -95,6 +96,7 @@ const respuestaPublica = (row, cuotas = []) => {
         fechaInicioCredito: row.fecha_inicio_credito || null,
         fechaVencimiento: row.fecha_vencimiento || null,
         medioPago: row.medio_pago || null,
+        facturarAlDuenoPrincipal: row.facturar_al_dueno_principal === true,
         cuotas: cuotas.map(cuota => ({
             id: Number(cuota.id),
             numeroCuota: Number(cuota.numero_cuota),
@@ -205,8 +207,9 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
                 certificado_id, tipo_comprobante, tipo_documento_cliente, nro_documento,
                 nombre_razon_social, direccion, email, telefono, moneda_key,
                 base_imponible, igv, importe_total, condicion_pago,
-                fecha_vencimiento, medio_pago, operacion_id, estado, usuario_creacion
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'BORRADOR',$17)
+                fecha_vencimiento, medio_pago, operacion_id,
+                facturar_al_dueno_principal, estado, usuario_creacion
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'BORRADOR',$18)
              ON CONFLICT (certificado_id) DO UPDATE SET
                 tipo_comprobante = EXCLUDED.tipo_comprobante,
                 tipo_documento_cliente = EXCLUDED.tipo_documento_cliente,
@@ -223,6 +226,7 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
                 fecha_vencimiento = EXCLUDED.fecha_vencimiento,
                 medio_pago = EXCLUDED.medio_pago,
                 operacion_id = EXCLUDED.operacion_id,
+                facturar_al_dueno_principal = EXCLUDED.facturar_al_dueno_principal,
                 estado = 'BORRADOR',
                 aceptada_sunat = NULL,
                 sunat_description = NULL,
@@ -250,6 +254,7 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
                 normalizada.fechaVencimiento,
                 medioPagoPersistido,
                 orden.operacion_id || null,
+                normalizada.facturarAlDuenoPrincipal,
                 userContext.username
             ]
         );
@@ -294,35 +299,17 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
             ? normalizada.fechaInicioCredito
             : null;
 
-        // Actualizar contacto del cliente si es el titular principal
-        if (data.usarTitularPrincipalFac === true) {
-            if (normalizada.email || normalizada.telefono) {
-                let setCols = [];
-                let params = [];
-                let idx = 1;
-                
-                if (normalizada.email) {
-                    setCols.push(`correo = COALESCE($${idx++}, correo)`);
-                    params.push(normalizada.email);
-                }
-                if (normalizada.telefono) {
-                    setCols.push(`telefono = COALESCE($${idx++}, telefono)`);
-                    params.push(normalizada.telefono);
-                }
-                
-                if (setCols.length > 0) {
-                    params.push(normalizada.tipoDocumentoCliente);
-                    params.push(normalizada.nroDocumento);
-                    
-                    await client.query(
-                        `UPDATE fg_cliente 
-                         SET ${setCols.join(', ')} 
-                         WHERE tipo_documento = $${idx++} AND nro_documento = $${idx++}`,
-                        params
-                    );
-                }
-            }
-        }
+        // El cliente fiscal queda reutilizable desde la lupa, sea el titular o
+        // un tercero. Se hace dentro de la misma transacción del comprobante:
+        // nunca por tecla y nunca antes de que el conjunto fiscal sea válido.
+        await clientesService.asegurarCliente({
+            tipoDocumento: normalizada.tipoDocumentoCliente,
+            nroDocumento: normalizada.nroDocumento,
+            nombreRazonSocial: normalizada.nombreRazonSocial,
+            direccion: normalizada.direccion,
+            correo: normalizada.email,
+            telefono: normalizada.telefono
+        }, client);
 
         await client.query('COMMIT');
         const cuotasGuardadas = await db.query(

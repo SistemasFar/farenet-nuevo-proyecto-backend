@@ -39,6 +39,8 @@ const normalizarFacturacion = (data = {}) => {
         fechaInicioCredito: limpiarTexto(data.fechaInicioCredito) || null,
         fechaVencimiento: limpiarTexto(data.fechaVencimiento) || null,
         medioPago: limpiarTexto(data.medioPago) || null,
+        facturarAlDuenoPrincipal: data.facturarAlDuenoPrincipal === true
+            || data.usarTitularPrincipalFac === true,
         cuotas: Array.isArray(data.cuotas) ? data.cuotas.map((cuota, index) => ({
             numeroCuota: Number(cuota.numeroCuota || index + 1),
             fechaPago: limpiarTexto(cuota.fechaPago),
@@ -85,6 +87,9 @@ const validarFacturacion = (facturacion) => {
     if (!['CONTADO', 'CREDITO'].includes(facturacion.condicionPago)) {
         errores.push('La condicion de pago debe ser CONTADO o CREDITO.');
     }
+    if (facturacion.tipoComprobante === 'BOLETA' && facturacion.condicionPago === 'CREDITO') {
+        errores.push('Una BOLETA solo puede emitirse con condicion de pago CONTADO.');
+    }
     if (facturacion.medioPago && facturacion.medioPago.length > 250) {
         errores.push('El medio de pago admite hasta 250 caracteres.');
     }
@@ -110,6 +115,18 @@ const validarFacturacion = (facturacion) => {
             numeros.add(cuota.numeroCuota);
             if (!esFechaIsoValida(cuota.fechaPago)) {
                 errores.push('Cada cuota requiere una fecha de pago valida.');
+                break;
+            }
+            if (esFechaIsoValida(cuota.fechaPago)
+                && esFechaIsoValida(facturacion.fechaInicioCredito)
+                && cuota.fechaPago < facturacion.fechaInicioCredito) {
+                errores.push('La fecha de cada cuota debe ser igual o posterior al inicio del credito.');
+                break;
+            }
+            if (esFechaIsoValida(cuota.fechaPago)
+                && esFechaIsoValida(facturacion.fechaVencimiento)
+                && cuota.fechaPago > facturacion.fechaVencimiento) {
+                errores.push('La fecha de cada cuota no puede superar el vencimiento general del credito.');
                 break;
             }
             if (!Number.isFinite(cuota.importe) || cuota.importe <= 0) {

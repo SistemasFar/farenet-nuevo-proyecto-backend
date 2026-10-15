@@ -13,12 +13,16 @@ const normalizarPagos = (pagos = []) => {
     for (const pago of pagos) {
         const tipo = String(pago.tipo || pago.tipoContadoKey || '').trim().toLowerCase();
         const importe = redondear(pago.importe);
+        const modalidadTarjeta = String(pago.modalidadTarjeta || pago.modalidad_tarjeta || '').trim().toUpperCase();
         if (!['efectivo', 'tarjeta', 'banco'].includes(tipo)) throw new Error('TIPO_PAGO_INVALIDO');
         if (!Number.isFinite(importe) || importe <= 0) throw new Error('IMPORTE_PAGO_INVALIDO');
+        if (modalidadTarjeta && !['DEBITO', 'CREDITO'].includes(modalidadTarjeta)) {
+            throw new Error('MODALIDAD_TARJETA_INVALIDA');
+        }
         if (tipo === 'efectivo') {
             efectivo = redondear(efectivo + importe);
         } else {
-            normalizados.push({ ...pago, tipo, importe });
+            normalizados.push({ ...pago, tipo, importe, modalidadTarjeta: modalidadTarjeta || null });
         }
     }
     if (efectivo > 0) normalizados.unshift({ tipo: 'efectivo', importe: efectivo });

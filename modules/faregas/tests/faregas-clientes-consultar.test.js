@@ -110,11 +110,17 @@ test('Caso 2: cliente no existe y token ausente retorna EXTERNO_NO_CONFIGURADO s
 
 test('Caso 3: DNI externo con proveedor mockeado EN EL TEST responde datos normalizados', async () => {
     const buscarOriginal = clientesService.buscarClientePropio;
+    const asegurarOriginal = clientesService.asegurarCliente;
     const getOriginal = axios.get;
     const tokenBackup = process.env.API_DNI_TOKEN;
     try {
         process.env.API_DNI_TOKEN = 'test-token-valido';
         clientesService.buscarClientePropio = async () => null;
+        clientesService.asegurarCliente = async (data) => {
+            assert.equal(data.tipoDocumento, 'DNI');
+            assert.equal(data.nroDocumento, '70261331');
+            return { id: 701, creado: true };
+        };
 
         axios.get = async (url, config) => {
             assert.ok(url.includes('api.decolecta.com/v1/reniec/dni?numero=70261331'));
@@ -138,10 +144,12 @@ test('Caso 3: DNI externo con proveedor mockeado EN EL TEST responde datos norma
         assert.equal(res.data.nombreRazonSocial, 'RODRIGUEZ MENDOZA CARLOS ALBERTO');
         assert.equal(res.data.tipoDocumento, 'DNI');
         assert.equal(res.data.clienteExistente, false);
+        assert.equal(res.data.id, 701);
         assert.equal(res.cliente, res.data);
         assert.equal(res.httpStatus, 200);
     } finally {
         clientesService.buscarClientePropio = buscarOriginal;
+        clientesService.asegurarCliente = asegurarOriginal;
         axios.get = getOriginal;
         if (tokenBackup) process.env.API_DNI_TOKEN = tokenBackup;
         else delete process.env.API_DNI_TOKEN;
@@ -150,11 +158,18 @@ test('Caso 3: DNI externo con proveedor mockeado EN EL TEST responde datos norma
 
 test('Caso 4: RUC externo con proveedor mockeado EN EL TEST responde datos normalizados', async () => {
     const buscarOriginal = clientesService.buscarClientePropio;
+    const asegurarOriginal = clientesService.asegurarCliente;
     const getOriginal = axios.get;
     const tokenBackup = process.env.API_DNI_TOKEN;
     try {
         process.env.API_DNI_TOKEN = 'test-token-valido';
         clientesService.buscarClientePropio = async () => null;
+        clientesService.asegurarCliente = async (data) => {
+            assert.equal(data.tipoDocumento, 'RUC');
+            assert.equal(data.nroDocumento, '20601234567');
+            assert.equal(data.nombreRazonSocial, 'TRANSPORTES LOGISTICOS REALES S.A.C.');
+            return { id: 702, creado: true };
+        };
 
         axios.get = async (url) => {
             assert.ok(url.includes('api.decolecta.com/v1/sunat/ruc?numero=20601234567'));
@@ -174,11 +189,53 @@ test('Caso 4: RUC externo con proveedor mockeado EN EL TEST responde datos norma
         assert.equal(res.data.nombreRazonSocial, 'TRANSPORTES LOGISTICOS REALES S.A.C.');
         assert.equal(res.data.direccion, 'AV. ARGENTINA 456');
         assert.equal(res.data.clienteExistente, false);
+        assert.equal(res.data.id, 702);
     } finally {
         clientesService.buscarClientePropio = buscarOriginal;
+        clientesService.asegurarCliente = asegurarOriginal;
         axios.get = getOriginal;
         if (tokenBackup) process.env.API_DNI_TOKEN = tokenBackup;
         else delete process.env.API_DNI_TOKEN;
+    }
+});
+
+test('cliente manual válido se inserta una sola vez en fg_cliente por tipo y número', async () => {
+    const queryOriginal = db.query;
+    const consultas = [];
+    try {
+        db.query = async (sql, params) => {
+            consultas.push({ sql, params });
+            if (/^\s*SELECT id, tipo_documento/s.test(sql)) return { rows: [] };
+            if (/^\s*INSERT INTO fg_cliente/s.test(sql)) {
+                return { rows: [{
+                    id: 811,
+                    tipo_documento: 'RUC',
+                    nro_documento: '10702613316',
+                    nombre_razon_social: 'MARIEL MARTINEZ',
+                    direccion: 'CALLE VARSOBIA',
+                    correo: 'mariel@correo.pe',
+                    telefono: '999999999'
+                }] };
+            }
+            throw new Error(`SQL inesperado: ${sql}`);
+        };
+
+        const cliente = await clientesService.asegurarCliente({
+            tipoDocumento: ' RUC ',
+            nroDocumento: '10702613316',
+            nombreRazonSocial: 'MARIEL MARTINEZ',
+            direccion: 'CALLE VARSOBIA',
+            correo: 'MARIEL@CORREO.PE',
+            telefono: '999999999'
+        });
+        assert.equal(cliente.id, 811);
+        assert.equal(cliente.creado, true);
+        assert.deepEqual(consultas[0].params, ['RUC', '10702613316']);
+        assert.deepEqual(consultas[1].params, [
+            'RUC', '10702613316', 'MARIEL MARTINEZ', 'CALLE VARSOBIA', '999999999', 'mariel@correo.pe'
+        ]);
+    } finally {
+        db.query = queryOriginal;
     }
 });
 

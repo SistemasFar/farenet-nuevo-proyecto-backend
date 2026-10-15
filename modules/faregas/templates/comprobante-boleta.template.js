@@ -25,6 +25,7 @@ function renderBoletaHtml(data) {
         totales = {},
         descuento = null,
         qrSource = '',
+        logoDataUri = '',
         numeroCertificado = '',
         ordenTrabajo = ''
     } = data;
@@ -129,32 +130,15 @@ function renderBoletaHtml(data) {
             width: 58%;
         }
         .logo-box {
-            display: inline-flex;
-            align-items: center;
-            border: 1.5px solid #083b66;
-            border-radius: 4px;
-            padding: 4px 8px;
+            display: block;
+            width: 270px;
+            max-width: 100%;
             margin-bottom: 6px;
         }
-        .stg-shield {
-            background-color: #083b66;
-            color: #ffffff;
-            font-weight: bold;
-            font-size: 7pt;
-            padding: 4px 6px;
-            clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
-            margin-right: 8px;
-            display: inline-block;
-            text-align: center;
-            width: 24px;
-            height: 24px;
-            line-height: 16px;
-        }
-        .logo-text {
-            color: #083b66;
-            font-weight: 900;
-            font-size: 10.5pt;
-            letter-spacing: -0.2px;
+        .logo-box img {
+            display: block;
+            width: 100%;
+            height: auto;
         }
         .emisor-razon {
             font-weight: bold;
@@ -335,10 +319,7 @@ function renderBoletaHtml(data) {
 
     <div class="top-row">
         <div class="emisor-col">
-            <div class="logo-box">
-                <span class="stg-shield">STG</span>
-                <span class="logo-text">CERTIFICADOR VEHICULAR</span>
-            </div>
+            ${logoDataUri ? `<div class="logo-box"><img src="${logoDataUri}" alt="Certificador Vehicular" /></div>` : ''}
             <div class="emisor-razon">${razonSocialEmisor}</div>
             <div class="emisor-direccion">${direccionEmisor}</div>
             <div class="emisor-contacto">
@@ -418,7 +399,7 @@ function renderBoletaHtml(data) {
             ${descuento && descuento.codigo ? `
                 <div class="descuento-box">
                     <div class="descuento-codigo">${escapeHtml(descuento.codigo)}</div>
-                    <div>${escapeHtml(descuento.descripcion || 'DESCUENTO')}</div>
+                    ${descuento.descripcion ? `<div>${escapeHtml(descuento.descripcion)}</div>` : ''}
                 </div>
             ` : ''}
         </div>

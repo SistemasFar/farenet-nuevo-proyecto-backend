@@ -145,7 +145,7 @@ test('factura a crédito envía vencimiento y cuotas como estructura nativa', ()
             tipo_documento_cliente: 'RUC',
             nro_documento: '20521536463',
             condicion_pago: 'CREDITO',
-            medio_pago: 'CREDITO',
+            medio_pago: null,
             fecha_vencimiento: '2026-11-14'
         }),
         cuotas: [
@@ -156,6 +156,7 @@ test('factura a crédito envía vencimiento y cuotas como estructura nativa', ()
 
     assert.equal(result.fecha_de_vencimiento, '14-11-2026');
     assert.equal(result.condiciones_de_pago, 'CREDITO');
+    assert.equal(result.medio_de_pago, 'credito');
     assert.equal(result.cancelado, false);
     assert.deepEqual(result.venta_al_credito, [
         { cuota: 1, fecha_de_pago: '31-10-2026', importe: 40 },
