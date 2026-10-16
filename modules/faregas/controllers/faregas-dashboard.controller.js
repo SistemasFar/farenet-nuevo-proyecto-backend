@@ -1,12 +1,26 @@
 const dashboardService = require('../services/faregas-dashboard.service');
 const faregasAuthService = require('../services/faregas-auth.service');
 const db = require('../../../config/database');
+const { validarRangoFechasDashboard } = require('../services/faregas-dashboard-fechas.service');
 
 /**
  * Resuelve las plantas autorizadas para el usuario y valida el alcance (GLOBAL vs SEDE)
  */
 async function resolverPlantasAutorizadas(req) {
     const { username, perfil_id, planta_key } = req.user;
+    
+    // Validación de rango de fechas si se envían en la consulta
+    const { desde, hasta } = req.query || {};
+    if (desde || hasta) {
+        const valFechas = validarRangoFechasDashboard(desde || hasta, hasta || desde);
+        if (!valFechas.valido) {
+            const error = new Error(valFechas.mensaje);
+            error.status = 400;
+            error.codigo = valFechas.codigo;
+            error.fechaMaximaPermitida = valFechas.fechaMaximaPermitida;
+            throw error;
+        }
+    }
     
     // 1. Obtener permisos del perfil en base de datos
     const rPerms = await db.query(
@@ -94,42 +108,55 @@ async function resolverPlantasAutorizadas(req) {
     };
 }
 
+function manejarErrorDashboard(res, error, contexto) {
+    console.error(`Error en dashboard.${contexto}:`, error);
+    const status = error.status || 500;
+    const body = {
+        success: false,
+        message: error.message
+    };
+    if (error.codigo) body.codigo = error.codigo;
+    if (error.fechaMaximaPermitida) body.fechaMaximaPermitida = error.fechaMaximaPermitida;
+    return res.status(status).json(body);
+}
+
 exports.obtenerResumen = async (req, res) => {
     try {
         const { plantasAutorizadas, plantasFiltro } = await resolverPlantasAutorizadas(req);
-        const { desde, hasta, tipoCertificado } = req.query;
+        const { desde, hasta, tipoCertificado, productoId } = req.query;
         
         const data = await dashboardService.obtenerResumenDashboard({
             plantasAutorizadas,
             plantasFiltro,
             desde,
             hasta,
-            tipoCertificado
+            tipoCertificado,
+            productoId: productoId ? Number(productoId) : undefined
         });
         
         return res.status(200).json({ success: true, data });
     } catch (error) {
-        console.error('Error en dashboard.obtenerResumen:', error);
-        return res.status(error.status || 500).json({ success: false, message: error.message });
+        return manejarErrorDashboard(res, error, 'obtenerResumen');
     }
 };
 
 exports.obtenerSedes = async (req, res) => {
     try {
         const { plantasAutorizadas, plantasFiltro } = await resolverPlantasAutorizadas(req);
-        const { desde, hasta } = req.query;
+        const { desde, hasta, tipoCertificado, productoId } = req.query;
         
         const plantasAConsultar = plantasFiltro || plantasAutorizadas;
         const data = await dashboardService.obtenerDetalleSedes({
             plantasAutorizadas: plantasAConsultar,
             desde,
-            hasta
+            hasta,
+            tipoCertificado,
+            productoId: productoId ? Number(productoId) : undefined
         });
         
         return res.status(200).json({ success: true, data });
     } catch (error) {
-        console.error('Error en dashboard.obtenerSedes:', error);
-        return res.status(error.status || 500).json({ success: false, message: error.message });
+        return manejarErrorDashboard(res, error, 'obtenerSedes');
     }
 };
 
@@ -152,15 +179,14 @@ exports.obtenerCertificados = async (req, res) => {
         
         return res.status(200).json({ success: true, data });
     } catch (error) {
-        console.error('Error en dashboard.obtenerCertificados:', error);
-        return res.status(error.status || 500).json({ success: false, message: error.message });
+        return manejarErrorDashboard(res, error, 'obtenerCertificados');
     }
 };
 
 exports.obtenerProductos = async (req, res) => {
     try {
         const { plantasAutorizadas, plantasFiltro } = await resolverPlantasAutorizadas(req);
-        const { desde, hasta, pagina, limite } = req.query;
+        const { desde, hasta, pagina, limite, productoId } = req.query;
         
         const data = await dashboardService.obtenerDetalleProductos({
             plantasAutorizadas,
@@ -168,13 +194,13 @@ exports.obtenerProductos = async (req, res) => {
             desde,
             hasta,
             pagina,
-            limite
+            limite,
+            productoId: productoId ? Number(productoId) : undefined
         });
         
         return res.status(200).json({ success: true, data });
     } catch (error) {
-        console.error('Error en dashboard.obtenerProductos:', error);
-        return res.status(error.status || 500).json({ success: false, message: error.message });
+        return manejarErrorDashboard(res, error, 'obtenerProductos');
     }
 };
 
@@ -196,8 +222,7 @@ exports.obtenerComprobantes = async (req, res) => {
         
         return res.status(200).json({ success: true, data });
     } catch (error) {
-        console.error('Error en dashboard.obtenerComprobantes:', error);
-        return res.status(error.status || 500).json({ success: false, message: error.message });
+        return manejarErrorDashboard(res, error, 'obtenerComprobantes');
     }
 };
 
@@ -218,8 +243,7 @@ exports.obtenerPagos = async (req, res) => {
         
         return res.status(200).json({ success: true, data });
     } catch (error) {
-        console.error('Error en dashboard.obtenerPagos:', error);
-        return res.status(error.status || 500).json({ success: false, message: error.message });
+        return manejarErrorDashboard(res, error, 'obtenerPagos');
     }
 };
 
@@ -239,27 +263,26 @@ exports.obtenerDescuentos = async (req, res) => {
         
         return res.status(200).json({ success: true, data });
     } catch (error) {
-        console.error('Error en dashboard.obtenerDescuentos:', error);
-        return res.status(error.status || 500).json({ success: false, message: error.message });
+        return manejarErrorDashboard(res, error, 'obtenerDescuentos');
     }
 };
 
 exports.obtenerUsuarios = async (req, res) => {
     try {
         const { plantasAutorizadas, plantasFiltro } = await resolverPlantasAutorizadas(req);
-        const { desde, hasta } = req.query;
+        const { desde, hasta, productoId } = req.query;
         
         const data = await dashboardService.obtenerDetalleUsuarios({
             plantasAutorizadas,
             plantasFiltro,
             desde,
-            hasta
+            hasta,
+            productoId: productoId ? Number(productoId) : undefined
         });
         
         return res.status(200).json({ success: true, data });
     } catch (error) {
-        console.error('Error en dashboard.obtenerUsuarios:', error);
-        return res.status(error.status || 500).json({ success: false, message: error.message });
+        return manejarErrorDashboard(res, error, 'obtenerUsuarios');
     }
 };
 
@@ -287,7 +310,6 @@ exports.obtenerExportacion = async (req, res) => {
         
         return res.status(200).json({ success: true, data });
     } catch (error) {
-        console.error('Error en dashboard.obtenerExportacion:', error);
-        return res.status(error.status || 500).json({ success: false, message: error.message });
+        return manejarErrorDashboard(res, error, 'obtenerExportacion');
     }
 };

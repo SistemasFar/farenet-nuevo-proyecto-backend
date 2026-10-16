@@ -150,7 +150,12 @@ const crearVentaDirecta = async (payload, userContext) => {
 
     const condicionPago = texto(payload.condicionPago || 'CONTADO').toUpperCase();
     if (!['CONTADO', 'CREDITO'].includes(condicionPago)) throw new Error('CONDICION_PAGO_INVALIDA');
-    if (condicionPago !== 'CONTADO') throw new Error('CONDICION_PAGO_NO_DISPONIBLE');
+    if (condicionPago === 'CREDITO') {
+        const tipoComp = texto(payload.tipoComprobante).toUpperCase();
+        if (tipoComp !== 'FACTURA') {
+            throw new Error('CONDICION_PAGO_NO_DISPONIBLE');
+        }
+    }
 
     const cliente = validarTextoCliente(payload);
     if (!['', 'BOLETA', 'FACTURA'].includes(texto(payload.tipoComprobante).toUpperCase())) {
@@ -228,7 +233,13 @@ const crearVentaDirecta = async (payload, userContext) => {
 
         const totalPagado = redondear(pagos.reduce((total, pago) => total + pago.importe, 0));
         if (totalPagado - importeTotal > 0.009) throw new Error('PAGO_EXCEDE_TOTAL');
-        if (importeTotal - totalPagado > 0.009) throw new Error('PAGO_INCOMPLETO');
+        if (condicionPago === 'CONTADO' && importeTotal - totalPagado > 0.009) throw new Error('PAGO_INCOMPLETO');
+        const saldoPendiente = redondear(Math.max(0, importeTotal - totalPagado));
+        if (condicionPago === 'CREDITO' && saldoPendiente <= 0.009) {
+            const err = new Error('VENTA_CREDITO_SIN_SALDO');
+            err.code = 'VENTA_CREDITO_SIN_SALDO';
+            throw err;
+        }
         for (const pago of pagos) await validarPago(client, pago);
 
         // La venta queda relacionada con el maestro fg_cliente: se reutiliza el
@@ -245,6 +256,7 @@ const crearVentaDirecta = async (payload, userContext) => {
             telefono: payload.telefono
         }, client);
 
+        const estadoOperacion = saldoPendiente > 0.009 ? 'PENDIENTE' : 'PAGADO';
         // El esquema canónico no tiene columna de origen; la relación detalle-chip
         // identifica esta venta sin inventar un tipo o valor no persistido.
         const operacionResult = await client.query(`
@@ -253,7 +265,7 @@ const crearVentaDirecta = async (payload, userContext) => {
                 documento_cliente_snapshot, nombre_cliente_snapshot,
                 direccion_cliente_snapshot, moneda_key, base_imponible, igv,
                 importe_total, estado, usuario_creacion
-            ) VALUES ($1, $2, $3, $4, $5, $6, 'sol', $7, $8, $9, 'PAGADO', $10)
+            ) VALUES ($1, $2, $3, $4, $5, $6, 'sol', $7, $8, $9, $10, $11)
             RETURNING id
         `, [
             plantaKey,
@@ -265,6 +277,7 @@ const crearVentaDirecta = async (payload, userContext) => {
             baseImponible,
             igv,
             importeTotal,
+            estadoOperacion,
             userContext.username
         ]);
         const operacionId = Number(operacionResult.rows[0].id);
@@ -306,14 +319,35 @@ const crearVentaDirecta = async (payload, userContext) => {
             }
         }
 
+        const formaPagoKey = condicionPago === 'CREDITO' ? 'credito' : 'contado';
+        const fechaInicioCredito = condicionPago === 'CREDITO'
+            ? (payload.fechaInicioCredito || payload.fechaVencimiento || null)
+            : null;
+        const fechaVencimientoCredito = condicionPago === 'CREDITO'
+            ? (payload.fechaVencimiento || (payload.cuotas?.length ? payload.cuotas[payload.cuotas.length - 1].fechaPago : null))
+            : null;
+
         const ordenResult = await client.query(`
             INSERT INTO fg_orden_pago (
                 operacion_id, importe_total, baseimponible, igv, importe_pagado,
                 saldo_pendiente, moneda_key, formapago_key, estado,
+                fecha_inicio_credito, fecha_vencimiento_credito,
                 usuariocreacion_username
-            ) VALUES ($1, $2, $3, $4, $5, 0, 'sol', 'contado', 'PAGADO', $6)
+            ) VALUES ($1, $2, $3, $4, $5, $6, 'sol', $7, $8, $9, $10, $11)
             RETURNING id
-        `, [operacionId, importeTotal, baseImponible, igv, totalPagado, userContext.username]);
+        `, [
+            operacionId,
+            importeTotal,
+            baseImponible,
+            igv,
+            totalPagado,
+            saldoPendiente,
+            formaPagoKey,
+            estadoOperacion,
+            fechaInicioCredito,
+            fechaVencimientoCredito,
+            userContext.username
+        ]);
         const ordenPagoId = Number(ordenResult.rows[0].id);
 
         for (const pago of pagos) {

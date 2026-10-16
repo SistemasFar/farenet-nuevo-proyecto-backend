@@ -50,7 +50,7 @@ const permisoConsultarClientes = async (req, res, next) => {
             SELECT 1
             FROM fg_perfil_permiso
             WHERE perfil_clave = $1
-              AND permiso_clave = 'MENU_FACTURACION_COMPROBANTES'
+              AND permiso_clave = 'MENU_FACTURACION_CLIENTES'
             LIMIT 1
         `, [req.user.perfil_id]);
         if (permiso.rowCount === 0) {

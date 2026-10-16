@@ -34,16 +34,18 @@ const construirDatosFacturacionInicial = (payload) => ({
 // preserva la prioridad "dato de la venta > maestro": si el operador escribió
 // un contacto, ese manda; si vino vacío se usa el del maestro ya resuelto,
 // que la fase 1 devolvió, sin volver a consultar fg_cliente.
-const construirDatosFacturacion = (snapshot, tipoComprobante, contacto = {}) => ({
+const construirDatosFacturacion = (snapshot, tipoComprobante, contacto = {}, opciones = {}) => ({
     tipoComprobante: texto(tipoComprobante).toUpperCase(),
     nroDocumento: snapshot.documento_cliente_snapshot,
     nombreRazonSocial: snapshot.nombre_cliente_snapshot,
     direccion: snapshot.direccion_cliente_snapshot,
     email: texto(contacto.email) || null,
     telefono: texto(contacto.telefono) || null,
-    condicionPago: 'CONTADO',
-    medioPago: null,
-    cuotas: []
+    condicionPago: texto(opciones.condicionPago || 'CONTADO').toUpperCase(),
+    fechaInicioCredito: opciones.fechaInicioCredito || null,
+    fechaVencimiento: opciones.fechaVencimiento || null,
+    medioPago: opciones.medioPago || null,
+    cuotas: Array.isArray(opciones.cuotas) ? opciones.cuotas : []
 });
 
 const mensajeExito = (facturacion) => {
@@ -93,10 +95,21 @@ const crearVentaDirectaYEmitir = async (payload, userContext, dependencies = {})
 
     const venta = await ventaService.crearVentaDirecta(payload, userContext);
     const snapshot = await obtenerSnapshotOperacion(database, venta.operacionId);
-    const datosFacturacion = construirDatosFacturacion(snapshot, payload.tipoComprobante, {
-        email: payload.email || venta.cliente?.correo,
-        telefono: payload.telefono || venta.cliente?.telefono
-    });
+    const datosFacturacion = construirDatosFacturacion(
+        snapshot,
+        payload.tipoComprobante,
+        {
+            email: payload.email || venta.cliente?.correo,
+            telefono: payload.telefono || venta.cliente?.telefono
+        },
+        {
+            condicionPago: payload.condicionPago,
+            fechaInicioCredito: payload.fechaInicioCredito,
+            fechaVencimiento: payload.fechaVencimiento,
+            medioPago: payload.medioPago,
+            cuotas: payload.cuotas
+        }
+    );
 
     let facturacionGuardada = null;
     try {

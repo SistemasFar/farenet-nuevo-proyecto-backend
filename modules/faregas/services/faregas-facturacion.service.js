@@ -702,6 +702,18 @@ exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => 
             throw errorNegocio('PAGO_INCOMPLETO', 409);
         }
 
+        const totalCuotasEsperado = Number(orden.saldo_pendiente);
+        if (normalizada.condicionPago === 'CREDITO') {
+            if (totalCuotasEsperado <= 0.009) {
+                throw errorNegocio('VENTA_CREDITO_SIN_SALDO', 409);
+            }
+            if (!validarCuotasContraTotal(normalizada.cuotas, totalCuotasEsperado)) {
+                throw errorNegocio('CUOTAS_NO_COINCIDEN_CON_SALDO', 400, {
+                    saldoPendiente: totalCuotasEsperado
+                });
+            }
+        }
+
         const pagosPersistidos = await client.query(
             `SELECT tipocontado_key FROM fg_pago WHERE orden_pago_id = $1 AND estado = 'CAN'`, [orden.id]
         );
@@ -760,6 +772,14 @@ exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => 
 
         await client.query('DELETE FROM fg_facturacion_intento WHERE facturacion_id = $1', [result.rows[0].id]);
         await client.query('DELETE FROM fg_facturacion_cuota WHERE facturacion_id = $1', [result.rows[0].id]);
+        for (const cuota of normalizada.cuotas) {
+            await client.query(
+                `INSERT INTO fg_facturacion_cuota
+                    (facturacion_id, numero_cuota, fecha_pago, importe, estado)
+                 VALUES ($1,$2,$3,$4,'PENDIENTE')`,
+                [result.rows[0].id, cuota.numeroCuota, cuota.fechaPago, cuota.importe]
+            );
+        }
         await client.query(
             `UPDATE fg_orden_pago SET formapago_key = $2,
                     fecha_inicio_credito = $3, fecha_vencimiento_credito = $4,
@@ -775,8 +795,12 @@ exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => 
         result.rows[0].fecha_inicio_credito = normalizada.condicionPago === 'CREDITO'
             ? normalizada.fechaInicioCredito
             : null;
+        const cuotasPersistidas = await client.query(
+            'SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota',
+            [result.rows[0].id]
+        );
         await client.query('COMMIT');
-        return respuestaPublica(result.rows[0], []);
+        return respuestaPublica(result.rows[0], cuotasPersistidas.rows);
     } catch (error) {
         await client.query('ROLLBACK');
         throw error;
@@ -891,6 +915,19 @@ const reservarEmisionOperacion = async (operacionId, userContext, opciones = {})
         );
         facturacion = updated.rows[0];
 
+        const cuotasResult = await client.query(
+            'SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota',
+            [facturacion.id]
+        );
+        if (facturacion.condicion_pago === 'CREDITO') {
+            const ordenRes = await client.query('SELECT * FROM fg_orden_pago WHERE operacion_id = $1', [operacionId]);
+            if (!ordenRes.rowCount) throw errorNegocio('ORDEN_PAGO_FALTANTE', 409);
+            const orden = ordenRes.rows[0];
+            if (!validarCuotasContraTotal(cuotasResult.rows, orden.saldo_pendiente)) {
+                throw errorNegocio('CUOTAS_NO_COINCIDEN_CON_SALDO', 409);
+            }
+        }
+
         const payload = construirPayloadNubefact({
             facturacion,
             certificado: null,
@@ -898,7 +935,7 @@ const reservarEmisionOperacion = async (operacionId, userContext, opciones = {})
             reservaDescuento: null,
             detalles: detallesNubefact,
             resumenTributario,
-            cuotas: []
+            cuotas: cuotasResult.rows
         });
 
         const intentoResult = await client.query(

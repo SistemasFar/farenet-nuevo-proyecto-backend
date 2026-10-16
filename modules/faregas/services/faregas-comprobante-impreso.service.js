@@ -213,8 +213,8 @@ function mapearItemOperacion(item) {
 
 function validarSnapshotObligatorio(facturacion, payloadFiscal) {
     if (!esDocumentoBaseOperable(facturacion)) throw new Error('COMPROBANTE_NO_OPERABLE');
-    if (String(facturacion.certificado_estado || '').toUpperCase() !== 'EMITIDO'
-        || !String(facturacion.numero_certificado || '').trim()) {
+    if (facturacion.certificado_id && (String(facturacion.certificado_estado || '').toUpperCase() !== 'EMITIDO'
+        || !String(facturacion.numero_certificado || '').trim())) {
         throw new Error('CERTIFICADO_NO_EMITIDO: La representación impresa se genera después de asignar el DG definitivo.');
     }
     const faltantes = [

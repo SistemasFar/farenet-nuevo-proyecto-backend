@@ -3,8 +3,47 @@ const assert = require('node:assert/strict');
 
 const {
     calcularIntervaloFechas,
-    calcularVariacion
+    calcularVariacion,
+    esComprobanteEmitidoExitosamente
 } = require('../services/faregas-dashboard.service');
+
+test('Venta contabilizada: exige comprobante emitido satisfactoriamente', () => {
+    assert.equal(esComprobanteEmitidoExitosamente({
+        estado: 'ACEPTADO',
+        aceptada_sunat: true,
+        entorno_facturador: 'PRODUCCION'
+    }), true, 'Producción cuenta únicamente con aceptación SUNAT');
+
+    assert.equal(esComprobanteEmitidoExitosamente({
+        estado: 'PENDIENTE_SUNAT',
+        aceptada_sunat: false,
+        entorno_facturador: 'DEMO',
+        proveedor: 'NUBEFACT',
+        nro_comprobante: 'BBB1-00000001',
+        serie: 'BBB1',
+        numero: 1,
+        enlace_pdf: 'https://nubefact.com/cpe/demo.pdf'
+    }), true, 'DEMO cuenta cuando NubeFact generó identidad y artefacto');
+
+    assert.equal(esComprobanteEmitidoExitosamente({
+        estado: 'PENDIENTE_SUNAT',
+        entorno_facturador: 'DEMO',
+        proveedor: 'NUBEFACT',
+        nro_comprobante: 'BBB1-00000002',
+        serie: 'BBB1',
+        numero: 2
+    }), false, 'DEMO sin PDF/XML no constituye emisión satisfactoria');
+
+    assert.equal(esComprobanteEmitidoExitosamente({
+        estado: 'ERROR',
+        entorno_facturador: 'DEMO',
+        proveedor: 'NUBEFACT',
+        nro_comprobante: 'BBB1-00000003',
+        serie: 'BBB1',
+        numero: 3,
+        enlace_pdf: 'https://nubefact.com/cpe/error.pdf'
+    }), false, 'Un comprobante en ERROR nunca cuenta como venta');
+});
 
 test('Cálculo de fechas: intervalo semiabierto respeta zona horaria e inicio del día siguiente', () => {
     const { inicioActual, finActual, inicioAnterior, finAnterior } = calcularIntervaloFechas('2026-10-15', '2026-10-15');
@@ -49,11 +88,18 @@ test('CASO 4: Estado vacío devuelve ceros seguros y estructuras vacías sin err
     assert.equal(vacio.kpis.ventaOperativaGenerada.actual, 0);
     assert.equal(vacio.kpis.ventaBruta.actual, 0);
     assert.equal(vacio.kpis.ventaNeta.actual, 0);
+    assert.equal(vacio.kpis.ventaOperativaCertificados.actual, 0);
+    assert.equal(vacio.kpis.ventaBrutaCertificados.actual, 0);
+    assert.equal(vacio.kpis.ventaNetaCertificados.actual, 0);
+    assert.equal(vacio.kpis.ticketPromedioCertificados.actual, 0);
     assert.equal(vacio.kpis.totalCobrado.actual, 0);
     assert.equal(vacio.kpis.saldoPendiente.actual, 0);
+    assert.equal(vacio.kpis.certificadosAnulados.actual, 0);
     assert.deepEqual(vacio.serieDiaria, []);
+    assert.deepEqual(vacio.serieCertificados, []);
     assert.deepEqual(vacio.distribucionCertificados, []);
     assert.deepEqual(vacio.distribucionPagos, []);
+    assert.deepEqual(vacio.alertas, []);
 });
 
 test('CASO 5: Simulación dimensional — Operación con orden, pagos y comprobante no duplica venta', () => {

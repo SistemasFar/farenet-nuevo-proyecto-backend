@@ -424,13 +424,16 @@ const mapDetalleVenta = (row, plantaKey) => ({
     }
 });
 
-const mapFacturacionVenta = (row) => !row || row.facturacion_id == null ? null : {
+const mapFacturacionVenta = (row, cuotas = []) => !row || row.facturacion_id == null ? null : {
     id: Number(row.facturacion_id),
     estado: row.comprobante_estado,
     tipoComprobante: row.tipo_comprobante,
     serie: row.serie,
     numero: row.numero == null ? null : Number(row.numero),
     nroComprobante: row.nro_comprobante,
+    condicionPago: row.condicion_pago || 'CONTADO',
+    fechaVencimiento: row.fecha_vencimiento || null,
+    cuotas,
     sunatResponseCode: row.sunat_responsecode || row.respuesta_proveedor?.codigo || row.respuesta_proveedor?.sunat_responsecode || null,
     sunatDescription: row.sunat_description,
     mensajeRechazo: row.sunat_description || row.intento_error || null,
@@ -491,6 +494,7 @@ exports.obtenerDetalleVenta = async (operacionId, user) => {
         db.query(`
             SELECT f.id AS facturacion_id, f.estado AS comprobante_estado,
                    f.tipo_comprobante, f.serie, f.numero, f.nro_comprobante,
+                   f.condicion_pago, f.fecha_vencimiento,
                    f.sunat_responsecode, f.sunat_description, f.respuesta_proveedor,
                    f.enlace_pdf, f.intentos, f.fecha_ultimo_intento,
                    i.numero_intento AS intento_numero,
@@ -511,6 +515,21 @@ exports.obtenerDetalleVenta = async (operacionId, user) => {
              LIMIT 1
         `, [id])
     ]);
+
+    let cuotas = [];
+    if (facturacionResult.rows[0]?.facturacion_id) {
+        const cuotasRes = await db.query(
+            'SELECT id, numero_cuota, fecha_pago, importe, estado FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota',
+            [facturacionResult.rows[0].facturacion_id]
+        );
+        cuotas = cuotasRes.rows.map(c => ({
+            id: Number(c.id),
+            numeroCuota: Number(c.numero_cuota),
+            fechaPago: c.fecha_pago,
+            importe: Number(c.importe),
+            estado: c.estado
+        }));
+    }
 
     const ordenRow = ordenResult.rows[0] || null;
     const pagos = ordenResult.rows
@@ -543,7 +562,7 @@ exports.obtenerDetalleVenta = async (operacionId, user) => {
             saldoPendiente: Number(ordenRow.saldo_pendiente || 0)
         } : null,
         pagos,
-        facturacion: mapFacturacionVenta(facturacionResult.rows[0] || null)
+        facturacion: mapFacturacionVenta(facturacionResult.rows[0] || null, cuotas)
     };
 };
 

@@ -30,8 +30,11 @@ const verificarAccesoDashboard = async (req, res, next) => {
     }
 };
 
+const { middlewareValidarRangoFechasDashboard } = require('../services/faregas-dashboard-fechas.service');
+
 router.use(authFaregasMiddleware);
 router.use(verificarAccesoDashboard);
+router.use(middlewareValidarRangoFechasDashboard);
 
 router.get('/resumen', controller.obtenerResumen);
 router.get('/sedes', controller.obtenerSedes);

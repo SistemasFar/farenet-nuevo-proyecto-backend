@@ -1,10 +1,76 @@
 const db = require('../../../config/database');
+const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
+const { validarRangoFechasDashboard } = require('./faregas-dashboard-fechas.service');
+
+// Equivalente SQL de esDocumentoBaseOperable. En PRODUCCION exige aceptación
+// SUNAT; en DEMO acepta la generación completa de NubeFact con identidad y
+// artefacto fiscal, aunque el estado permanezca PENDIENTE_SUNAT.
+const SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE = `(
+    (f.estado = 'ACEPTADO' AND f.aceptada_sunat IS TRUE)
+    OR (
+        UPPER(COALESCE(f.entorno_facturador, '')) = 'DEMO'
+        AND UPPER(COALESCE(f.proveedor, '')) = 'NUBEFACT'
+        AND f.estado = 'PENDIENTE_SUNAT'
+        AND NULLIF(BTRIM(f.nro_comprobante), '') IS NOT NULL
+        AND NULLIF(BTRIM(f.serie), '') IS NOT NULL
+        AND f.numero IS NOT NULL
+        AND (
+            NULLIF(BTRIM(f.enlace_pdf), '') IS NOT NULL
+            OR NULLIF(BTRIM(f.enlace_xml), '') IS NOT NULL
+        )
+    )
+)`;
+
+// Clasificación funcional configurada en Catálogo > Tipos de certificado.
+// Primero respeta la categoría del servicio realmente vendido; para registros
+// históricos sin detalle/tarifa conserva una regla de compatibilidad segura.
+function sqlCategoriaCertificado(alias = 'c') {
+    return `COALESCE(
+        (
+            SELECT categoria_operacion.codigo
+            FROM fg_operacion_detalle detalle_categoria
+            JOIN fg_servicio servicio_operacion ON servicio_operacion.id = detalle_categoria.servicio_id
+            JOIN fg_categoria_servicio categoria_operacion ON categoria_operacion.id = servicio_operacion.categoria_id
+            WHERE detalle_categoria.certificado_id = ${alias}.id
+            ORDER BY detalle_categoria.id DESC
+            LIMIT 1
+        ),
+        (
+            SELECT categoria_tarifa.codigo
+            FROM fg_tarifa tarifa_categoria
+            JOIN fg_servicio servicio_tarifa ON servicio_tarifa.id = tarifa_categoria.servicio_id
+            JOIN fg_categoria_servicio categoria_tarifa ON categoria_tarifa.id = servicio_tarifa.categoria_id
+            WHERE tarifa_categoria.planta_key = ${alias}.planta_key
+              AND tarifa_categoria.codigo = ${alias}.tarifa_codigo
+            ORDER BY tarifa_categoria.id DESC
+            LIMIT 1
+        ),
+        CASE
+            WHEN ${alias}.tipo_certificado_clave LIKE 'GLP%' OR ${alias}.tipo_certificado_clave = 'TALLER_GLP' THEN 'GLP'
+            WHEN ${alias}.tipo_certificado_clave LIKE 'GNV%' OR ${alias}.tipo_certificado_clave = 'TALLER_GNV' THEN 'GNV'
+            WHEN ${alias}.tipo_certificado_clave = 'CONFORMIDAD' THEN 'CONFORMIDAD'
+            ELSE 'COMPLEMENTARIOS'
+        END
+    )`;
+}
 
 /**
  * Normaliza fechas respetando la zona horaria America/Lima (-05:00)
  * y genera intervalos semiabiertos: [inicioDelDia, inicioDelDiaSiguiente)
  */
 function calcularIntervaloFechas(desdeStr, hastaStr) {
+    if (desdeStr || hastaStr) {
+        const dVal = desdeStr || hastaStr;
+        const hVal = hastaStr || desdeStr;
+        const checkFechas = validarRangoFechasDashboard(dVal, hVal);
+        if (!checkFechas.valido) {
+            const error = new Error(checkFechas.mensaje);
+            error.status = 400;
+            error.codigo = checkFechas.codigo;
+            error.fechaMaximaPermitida = checkFechas.fechaMaximaPermitida;
+            throw error;
+        }
+    }
     const regexFecha = /^\d{4}-\d{2}-\d{2}$/;
     
     // Si no vienen fechas, por defecto usamos los últimos 30 días
@@ -84,7 +150,7 @@ function calcularVariacion(actual, anterior) {
 /**
  * Resumen consolidado para tarjetas KPI, comparativa de período y series de tiempo
  */
-async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desde, hasta, tipoCertificado }) {
+async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desde, hasta, tipoCertificado, productoId }) {
     if (!plantasAutorizadas || plantasAutorizadas.length === 0) {
         return respuestaVaciaResumen();
     }
@@ -103,17 +169,29 @@ async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desd
     const [
         kpisActual,
         kpisAnterior,
+        kpisCertificadosActual,
+        kpisCertificadosAnterior,
         serieDiaria,
+        serieCertificados,
         distribucionCertificados,
+        distribucionProductos,
         distribucionPagos,
-        alertasInconsistencias
+        alertasInconsistencias,
+        kpisProdActual,
+        kpisProdAnterior
     ] = await Promise.all([
         consultarKpisPeriodo(plantas, inicioActual, finActual, tipoCertificado),
         consultarKpisPeriodo(plantas, inicioAnterior, finAnterior, tipoCertificado),
-        consultarSerieDiaria(plantas, inicioActual, finActual),
+        consultarKpisCertificadosPeriodo(plantas, inicioActual, finActual, tipoCertificado),
+        consultarKpisCertificadosPeriodo(plantas, inicioAnterior, finAnterior, tipoCertificado),
+        consultarSerieDiaria(plantas, inicioActual, finActual, productoId),
+        consultarSerieCertificados(plantas, inicioActual, finActual, tipoCertificado),
         consultarDistribucionCertificados(plantas, inicioActual, finActual),
+        consultarDistribucionProductos(plantas, inicioActual, finActual),
         consultarDistribucionPagos(plantas, inicioActual, finActual),
-        consultarAlertas(plantas, inicioActual, finActual)
+        consultarAlertas(plantas, inicioActual, finActual),
+        productoId ? consultarKpisProductoPeriodo(plantas, inicioActual, finActual, productoId) : Promise.resolve(null),
+        productoId ? consultarKpisProductoPeriodo(plantas, inicioAnterior, finAnterior, productoId) : Promise.resolve(null)
     ]);
 
     return {
@@ -131,7 +209,7 @@ async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desd
                 actual: kpisActual.ventaOperativaGenerada,
                 anterior: kpisAnterior.ventaOperativaGenerada,
                 ...calcularVariacion(kpisActual.ventaOperativaGenerada, kpisAnterior.ventaOperativaGenerada),
-                tooltip: 'Suma de operaciones comerciales en estado PENDIENTE_PAGO, PAGADO y FACTURADO.'
+                tooltip: 'Suma de operaciones que emitieron satisfactoriamente un comprobante: aceptado por SUNAT en producción o generado completamente por NubeFact en DEMO.'
             },
             ventaPagada: {
                 actual: kpisActual.ventaPagada,
@@ -140,16 +218,26 @@ async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desd
                 tooltip: 'Suma de operaciones comerciales en estado PAGADO y FACTURADO.'
             },
             ventaBruta: {
-                actual: kpisActual.ventaBruta,
-                anterior: kpisAnterior.ventaBruta,
-                ...calcularVariacion(kpisActual.ventaBruta, kpisAnterior.ventaBruta),
-                tooltip: 'Importe final de operaciones más el monto de descuentos APLICADOS vinculados.'
+                actual: productoId && kpisProdActual ? kpisProdActual.ventaBruta : kpisActual.ventaBruta,
+                anterior: productoId && kpisProdAnterior ? kpisProdAnterior.ventaBruta : kpisAnterior.ventaBruta,
+                ...calcularVariacion(
+                    productoId && kpisProdActual ? kpisProdActual.ventaBruta : kpisActual.ventaBruta,
+                    productoId && kpisProdAnterior ? kpisProdAnterior.ventaBruta : kpisAnterior.ventaBruta
+                ),
+                tooltip: productoId
+                    ? 'Venta bruta atribuible exclusivamente al producto seleccionado (venta operativa + descuentos proporcionales).'
+                    : 'Importe final de operaciones más el monto de descuentos APLICADOS vinculados.'
             },
             ventaNeta: {
-                actual: kpisActual.ventaNeta,
-                anterior: kpisAnterior.ventaNeta,
-                ...calcularVariacion(kpisActual.ventaNeta, kpisAnterior.ventaNeta),
-                tooltip: 'Venta de operaciones menos notas de crédito aceptadas más notas de débito aceptadas.'
+                actual: productoId && kpisProdActual ? kpisProdActual.ventaNeta : kpisActual.ventaNeta,
+                anterior: productoId && kpisProdAnterior ? kpisProdAnterior.ventaNeta : kpisAnterior.ventaNeta,
+                ...calcularVariacion(
+                    productoId && kpisProdActual ? kpisProdActual.ventaNeta : kpisActual.ventaNeta,
+                    productoId && kpisProdAnterior ? kpisProdAnterior.ventaNeta : kpisAnterior.ventaNeta
+                ),
+                tooltip: productoId
+                    ? 'Venta neta atribuible exclusivamente al producto seleccionado (venta operativa − notas de crédito + notas de débito proporcionales).'
+                    : 'Venta de operaciones menos notas de crédito aceptadas más notas de débito aceptadas.'
             },
             totalCobrado: {
                 actual: kpisActual.totalCobrado,
@@ -170,10 +258,39 @@ async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desd
                 tooltip: 'Número total de operaciones comerciales válidas en el período.'
             },
             ticketPromedio: {
-                actual: kpisActual.ticketPromedio,
-                anterior: kpisAnterior.ticketPromedio,
-                ...calcularVariacion(kpisActual.ticketPromedio, kpisAnterior.ticketPromedio),
-                tooltip: 'Venta operativa dividida entre la cantidad de operaciones.'
+                actual: productoId && kpisProdActual ? kpisProdActual.ticketPromedio : kpisActual.ticketPromedio,
+                anterior: productoId && kpisProdAnterior ? kpisProdAnterior.ticketPromedio : kpisAnterior.ticketPromedio,
+                ...calcularVariacion(
+                    productoId && kpisProdActual ? kpisProdActual.ticketPromedio : kpisActual.ticketPromedio,
+                    productoId && kpisProdAnterior ? kpisProdAnterior.ticketPromedio : kpisAnterior.ticketPromedio
+                ),
+                tooltip: productoId
+                    ? 'Venta operativa del producto dividida entre las operaciones que lo incluyeron.'
+                    : 'Venta operativa dividida entre la cantidad de operaciones.'
+            },
+            ventaOperativaCertificados: {
+                actual: kpisCertificadosActual.ventaOperativa,
+                anterior: kpisCertificadosAnterior.ventaOperativa,
+                ...calcularVariacion(kpisCertificadosActual.ventaOperativa, kpisCertificadosAnterior.ventaOperativa),
+                tooltip: 'Suma exclusiva de las líneas de servicio vinculadas a certificados dentro de operaciones con comprobante emitido correctamente.'
+            },
+            ventaBrutaCertificados: {
+                actual: kpisCertificadosActual.ventaBruta,
+                anterior: kpisCertificadosAnterior.ventaBruta,
+                ...calcularVariacion(kpisCertificadosActual.ventaBruta, kpisCertificadosAnterior.ventaBruta),
+                tooltip: 'Venta operativa de certificados más descuentos aplicados directamente a esos certificados.'
+            },
+            ventaNetaCertificados: {
+                actual: kpisCertificadosActual.ventaNeta,
+                anterior: kpisCertificadosAnterior.ventaNeta,
+                ...calcularVariacion(kpisCertificadosActual.ventaNeta, kpisCertificadosAnterior.ventaNeta),
+                tooltip: 'Venta operativa de certificados menos notas de crédito más notas de débito aceptadas. En comprobantes mixtos, las notas se prorratean según el valor de las líneas de certificado.'
+            },
+            ticketPromedioCertificados: {
+                actual: kpisCertificadosActual.ticketPromedio,
+                anterior: kpisCertificadosAnterior.ticketPromedio,
+                ...calcularVariacion(kpisCertificadosActual.ticketPromedio, kpisCertificadosAnterior.ticketPromedio),
+                tooltip: 'Venta operativa de certificados dividida entre los certificados incluidos en comprobantes emitidos correctamente.'
             },
             certificadosEmitidos: {
                 actual: kpisActual.certificadosEmitidos,
@@ -187,11 +304,22 @@ async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desd
                 ...calcularVariacion(kpisActual.certificadosPendientes, kpisAnterior.certificadosPendientes),
                 tooltip: 'Certificados en estado BORRADOR pendientes de completar o emitir.'
             },
+            certificadosAnulados: {
+                actual: kpisActual.certificadosAnulados,
+                anterior: kpisAnterior.certificadosAnulados,
+                ...calcularVariacion(kpisActual.certificadosAnulados, kpisAnterior.certificadosAnulados),
+                tooltip: 'Certificados registrados en estado ANULADO durante el período.'
+            },
             productosVendidos: {
-                actual: kpisActual.unidadesProductosVendidos,
-                anterior: kpisAnterior.unidadesProductosVendidos,
-                ...calcularVariacion(kpisActual.unidadesProductosVendidos, kpisAnterior.unidadesProductosVendidos),
-                tooltip: 'Unidades vendidas de productos inventariables y chips.'
+                actual: productoId && kpisProdActual ? kpisProdActual.unidadesVendidas : kpisActual.unidadesProductosVendidos,
+                anterior: productoId && kpisProdAnterior ? kpisProdAnterior.unidadesVendidas : kpisAnterior.unidadesProductosVendidos,
+                ...calcularVariacion(
+                    productoId && kpisProdActual ? kpisProdActual.unidadesVendidas : kpisActual.unidadesProductosVendidos,
+                    productoId && kpisProdAnterior ? kpisProdAnterior.unidadesVendidas : kpisAnterior.unidadesProductosVendidos
+                ),
+                tooltip: productoId
+                    ? 'Unidades vendidas del producto seleccionado en el período.'
+                    : 'Unidades vendidas de productos inventariables y chips.'
             },
             montoDescontado: {
                 actual: kpisActual.descuentosAplicados,
@@ -203,13 +331,13 @@ async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desd
                 actual: kpisActual.facturasAceptadas,
                 anterior: kpisAnterior.facturasAceptadas,
                 ...calcularVariacion(kpisActual.facturasAceptadas, kpisAnterior.facturasAceptadas),
-                tooltip: 'Facturas electrónicas aceptadas por SUNAT.'
+                tooltip: 'Facturas emitidas satisfactoriamente: aceptadas por SUNAT en producción o generadas completamente por NubeFact en DEMO.'
             },
             boletasAceptadas: {
                 actual: kpisActual.boletasAceptadas,
                 anterior: kpisAnterior.boletasAceptadas,
                 ...calcularVariacion(kpisActual.boletasAceptadas, kpisAnterior.boletasAceptadas),
-                tooltip: 'Boletas electrónicas aceptadas por SUNAT.'
+                tooltip: 'Boletas emitidas satisfactoriamente: aceptadas por SUNAT en producción o generadas completamente por NubeFact en DEMO.'
             },
             comprobantesRechazadosOError: {
                 actual: kpisActual.comprobantesRechazadosOError,
@@ -219,9 +347,254 @@ async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desd
             }
         },
         serieDiaria,
+        serieCertificados,
         distribucionCertificados,
+        distribucionProductos,
         distribucionPagos,
         alertas: alertasInconsistencias
+    };
+}
+
+/**
+ * Métricas financieras atribuibles únicamente a certificados.
+ *
+ * La operación puede contener productos y certificados a la vez. Por eso no se
+ * usa oc.importe_total: se suman las líneas de servicio que tienen
+ * certificado_id. Los descuentos ya poseen certificado_id obligatorio. Las
+ * notas fiscales pertenecen al comprobante completo; cuando es mixto se les
+ * atribuye la misma proporción que representan las líneas de certificado.
+ */
+async function consultarKpisCertificadosPeriodo(plantas, inicio, fin, tipoCertificado) {
+    const query = `
+        WITH ops AS (
+            SELECT
+                oc.id,
+                COALESCE(oc.importe_total, 0) AS importe_total,
+                f.id AS facturacion_id
+            FROM fg_operacion_comercial oc
+            JOIN LATERAL (
+                SELECT f.id, f.estado, f.aceptada_sunat, f.entorno_facturador,
+                       f.proveedor, f.nro_comprobante, f.serie, f.numero,
+                       f.enlace_pdf, f.enlace_xml
+                FROM fg_facturacion f
+                WHERE f.operacion_id = oc.id
+                  AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+                ORDER BY CASE WHEN f.estado = 'ACEPTADO' THEN 0 ELSE 1 END, f.id DESC
+                LIMIT 1
+            ) f ON TRUE
+            WHERE oc.planta_key = ANY($1::varchar[])
+              AND oc.fecha_creacion >= $2::timestamptz
+              AND oc.fecha_creacion < $3::timestamptz
+        ),
+        lineas_certificado AS (
+            SELECT
+                od.operacion_id,
+                ops.facturacion_id,
+                ops.importe_total AS importe_operacion,
+                COALESCE(SUM(od.importe_total), 0) AS venta_operativa,
+                COUNT(DISTINCT od.certificado_id) AS cantidad_certificados
+            FROM fg_operacion_detalle od
+            JOIN ops ON ops.id = od.operacion_id
+            JOIN fg_certificado c ON c.id = od.certificado_id
+            WHERE od.tipo_item = 'SERVICIO'
+              AND ($4::varchar IS NULL OR ${sqlCategoriaCertificado('c')} = $4::varchar)
+            GROUP BY od.operacion_id, ops.facturacion_id, ops.importe_total
+        ),
+        totales AS (
+            SELECT
+                COALESCE(SUM(venta_operativa), 0) AS venta_operativa,
+                COALESCE(SUM(cantidad_certificados), 0) AS cantidad_certificados
+            FROM lineas_certificado
+        ),
+        certificados_incluidos AS (
+            SELECT DISTINCT od.certificado_id
+            FROM fg_operacion_detalle od
+            JOIN lineas_certificado lc ON lc.operacion_id = od.operacion_id
+            JOIN fg_certificado c ON c.id = od.certificado_id
+            WHERE od.tipo_item = 'SERVICIO'
+              AND ($4::varchar IS NULL OR ${sqlCategoriaCertificado('c')} = $4::varchar)
+        ),
+        descuentos AS (
+            SELECT COALESCE(SUM(dc.importe_descuento), 0) AS total_descuentos
+            FROM fg_descuentocomprobante dc
+            WHERE dc.estado = 'APLICADO'
+              AND dc.certificado_id IN (SELECT certificado_id FROM certificados_incluidos)
+        ),
+        notas_credito AS (
+            SELECT COALESCE(SUM(
+                nc.importe_total * CASE
+                    WHEN lc.importe_operacion > 0 THEN lc.venta_operativa / lc.importe_operacion
+                    ELSE 0
+                END
+            ), 0) AS total_nc
+            FROM lineas_certificado lc
+            JOIN fg_credito nc ON nc.facturacion_id = lc.facturacion_id
+            WHERE nc.estado = 'ACEPTADO'
+        ),
+        notas_debito AS (
+            SELECT COALESCE(SUM(
+                nd.importe_total * CASE
+                    WHEN lc.importe_operacion > 0 THEN lc.venta_operativa / lc.importe_operacion
+                    ELSE 0
+                END
+            ), 0) AS total_nd
+            FROM lineas_certificado lc
+            JOIN fg_debito nd ON nd.facturacion_id = lc.facturacion_id
+            WHERE nd.estado = 'ACEPTADO'
+        )
+        SELECT
+            t.venta_operativa,
+            t.cantidad_certificados,
+            d.total_descuentos,
+            nc.total_nc,
+            nd.total_nd
+        FROM totales t
+        CROSS JOIN descuentos d
+        CROSS JOIN notas_credito nc
+        CROSS JOIN notas_debito nd
+    `;
+
+    const result = await db.query(query, [plantas, inicio, fin, tipoCertificado || null]);
+    const row = result.rows[0] || {};
+    const ventaOperativa = Number(row.venta_operativa || 0);
+    const descuentos = Number(row.total_descuentos || 0);
+    const notasCredito = Number(row.total_nc || 0);
+    const notasDebito = Number(row.total_nd || 0);
+    const cantidadCertificados = Number(row.cantidad_certificados || 0);
+
+    return {
+        ventaOperativa: Number(ventaOperativa.toFixed(2)),
+        ventaBruta: Number((ventaOperativa + descuentos).toFixed(2)),
+        ventaNeta: Number((ventaOperativa - notasCredito + notasDebito).toFixed(2)),
+        ticketPromedio: cantidadCertificados > 0
+            ? Number((ventaOperativa / cantidadCertificados).toFixed(2))
+            : 0
+    };
+}
+
+/**
+ * Métricas financieras atribuibles únicamente a un producto facturación específico.
+ *
+ * Para operaciones mixtas (que contienen certificados u otros productos), se calcula
+ * la venta de la línea del producto sin duplicar el total de la operación comercial.
+ * Los descuentos y notas fiscales asociados a la facturación de la operación se prorratean
+ * según la proporción que representa el producto dentro del importe de la operación.
+ */
+async function consultarKpisProductoPeriodo(plantas, inicio, fin, productoId) {
+    if (!productoId) {
+        return {
+            ventaOperativa: 0,
+            ventaBruta: 0,
+            ventaNeta: 0,
+            unidadesVendidas: 0,
+            ticketPromedio: 0
+        };
+    }
+
+    const query = `
+        WITH ops AS (
+            SELECT
+                oc.id,
+                COALESCE(oc.importe_total, 0) AS importe_total,
+                f.id AS facturacion_id
+            FROM fg_operacion_comercial oc
+            JOIN LATERAL (
+                SELECT f.id, f.estado, f.aceptada_sunat, f.entorno_facturador,
+                       f.proveedor, f.nro_comprobante, f.serie, f.numero,
+                       f.enlace_pdf, f.enlace_xml
+                FROM fg_facturacion f
+                WHERE f.operacion_id = oc.id
+                  AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+                ORDER BY CASE WHEN f.estado = 'ACEPTADO' THEN 0 ELSE 1 END, f.id DESC
+                LIMIT 1
+            ) f ON TRUE
+            WHERE oc.planta_key = ANY($1::varchar[])
+              AND oc.fecha_creacion >= $2::timestamptz
+              AND oc.fecha_creacion < $3::timestamptz
+        ),
+        lineas_producto AS (
+            SELECT
+                od.operacion_id,
+                ops.facturacion_id,
+                ops.importe_total AS importe_operacion,
+                COALESCE(SUM(od.importe_total), 0) AS venta_operativa,
+                COALESCE(SUM(od.cantidad), 0) AS unidades_vendidas
+            FROM fg_operacion_detalle od
+            JOIN ops ON ops.id = od.operacion_id
+            WHERE od.tipo_item = 'PRODUCTO'
+              AND od.producto_facturacion_id = $4::bigint
+            GROUP BY od.operacion_id, ops.facturacion_id, ops.importe_total
+        ),
+        totales AS (
+            SELECT
+                COALESCE(SUM(venta_operativa), 0) AS venta_operativa,
+                COALESCE(SUM(unidades_vendidas), 0) AS unidades_vendidas,
+                COUNT(DISTINCT operacion_id) AS cantidad_operaciones
+            FROM lineas_producto
+        ),
+        descuentos AS (
+            SELECT COALESCE(SUM(
+                dc.importe_descuento * CASE
+                    WHEN lp.importe_operacion > 0 THEN lp.venta_operativa / lp.importe_operacion
+                    ELSE 0
+                END
+            ), 0) AS total_descuentos
+            FROM lineas_producto lp
+            JOIN fg_descuentocomprobante dc ON dc.facturacion_id = lp.facturacion_id
+            WHERE dc.estado = 'APLICADO'
+        ),
+        notas_credito AS (
+            SELECT COALESCE(SUM(
+                nc.importe_total * CASE
+                    WHEN lp.importe_operacion > 0 THEN lp.venta_operativa / lp.importe_operacion
+                    ELSE 0
+                END
+            ), 0) AS total_nc
+            FROM lineas_producto lp
+            JOIN fg_credito nc ON nc.facturacion_id = lp.facturacion_id
+            WHERE nc.estado = 'ACEPTADO'
+        ),
+        notas_debito AS (
+            SELECT COALESCE(SUM(
+                nd.importe_total * CASE
+                    WHEN lp.importe_operacion > 0 THEN lp.venta_operativa / lp.importe_operacion
+                    ELSE 0
+                END
+            ), 0) AS total_nd
+            FROM lineas_producto lp
+            JOIN fg_debito nd ON nd.facturacion_id = lp.facturacion_id
+            WHERE nd.estado = 'ACEPTADO'
+        )
+        SELECT
+            t.venta_operativa,
+            t.unidades_vendidas,
+            t.cantidad_operaciones,
+            d.total_descuentos,
+            nc.total_nc,
+            nd.total_nd
+        FROM totales t
+        CROSS JOIN descuentos d
+        CROSS JOIN notas_credito nc
+        CROSS JOIN notas_debito nd
+    `;
+
+    const result = await db.query(query, [plantas, inicio, fin, productoId]);
+    const row = result.rows[0] || {};
+    const ventaOperativa = Number(row.venta_operativa || 0);
+    const descuentos = Number(row.total_descuentos || 0);
+    const notasCredito = Number(row.total_nc || 0);
+    const notasDebito = Number(row.total_nd || 0);
+    const unidadesVendidas = Number(row.unidades_vendidas || 0);
+    const cantidadOperaciones = Number(row.cantidad_operaciones || 0);
+
+    return {
+        ventaOperativa: Number(ventaOperativa.toFixed(2)),
+        ventaBruta: Number((ventaOperativa + descuentos).toFixed(2)),
+        ventaNeta: Number((ventaOperativa - notasCredito + notasDebito).toFixed(2)),
+        unidadesVendidas,
+        ticketPromedio: cantidadOperaciones > 0
+            ? Number((ventaOperativa / cantidadOperaciones).toFixed(2))
+            : 0
     };
 }
 
@@ -239,10 +612,16 @@ async function consultarKpisPeriodo(plantas, inicio, fin, tipoCertificado) {
                 f.estado AS facturacion_estado,
                 f.tipo_comprobante AS facturacion_tipo
             FROM fg_operacion_comercial oc
-            LEFT JOIN fg_facturacion f ON f.operacion_id = oc.id
+            JOIN LATERAL (
+                SELECT f.id, f.estado, f.tipo_comprobante
+                FROM fg_facturacion f
+                WHERE f.operacion_id = oc.id
+                  AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+                ORDER BY CASE WHEN f.estado = 'ACEPTADO' THEN 0 ELSE 1 END, f.id DESC
+                LIMIT 1
+            ) f ON TRUE
             WHERE oc.planta_key = ANY($1::varchar[])
               AND oc.fecha_creacion >= $2::timestamptz AND oc.fecha_creacion < $3::timestamptz
-              AND oc.estado NOT IN ('BORRADOR', 'ANULADO')
         ),
         ops_totales AS (
             SELECT 
@@ -313,7 +692,7 @@ async function consultarKpisPeriodo(plantas, inicio, fin, tipoCertificado) {
             FROM fg_certificado c
             WHERE c.planta_key = ANY($1::varchar[])
               AND c.fecha_creacion >= $2::timestamptz AND c.fecha_creacion < $3::timestamptz
-              AND ($4::varchar IS NULL OR c.tipo_certificado_clave = $4::varchar)
+              AND ($4::varchar IS NULL OR ${sqlCategoriaCertificado('c')} = $4::varchar)
         ),
         productos AS (
             SELECT 
@@ -322,13 +701,18 @@ async function consultarKpisPeriodo(plantas, inicio, fin, tipoCertificado) {
             JOIN fg_operacion_comercial oc ON oc.id = od.operacion_id
             WHERE oc.planta_key = ANY($1::varchar[])
               AND oc.fecha_creacion >= $2::timestamptz AND oc.fecha_creacion < $3::timestamptz
-              AND oc.estado NOT IN ('BORRADOR', 'ANULADO')
+              AND EXISTS (
+                  SELECT 1
+                  FROM fg_facturacion f
+                  WHERE f.operacion_id = oc.id
+                    AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+              )
               AND od.tipo_item = 'PRODUCTO'
         ),
         facturacion_totales AS (
             SELECT 
-                COUNT(CASE WHEN f.tipo_comprobante = 'FACTURA' AND f.estado = 'ACEPTADO' THEN 1 END) AS facturas_aceptadas,
-                COUNT(CASE WHEN f.tipo_comprobante = 'BOLETA' AND f.estado = 'ACEPTADO' THEN 1 END) AS boletas_aceptadas,
+                COUNT(CASE WHEN f.tipo_comprobante = 'FACTURA' AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE} THEN 1 END) AS facturas_aceptadas,
+                COUNT(CASE WHEN f.tipo_comprobante = 'BOLETA' AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE} THEN 1 END) AS boletas_aceptadas,
                 COUNT(CASE WHEN f.estado IN ('RECHAZADO', 'ERROR') THEN 1 END) AS errores_comprobantes
             FROM fg_facturacion f
             WHERE (
@@ -400,7 +784,34 @@ async function consultarKpisPeriodo(plantas, inicio, fin, tipoCertificado) {
     };
 }
 
-async function consultarSerieDiaria(plantas, inicio, fin) {
+async function consultarSerieDiaria(plantas, inicio, fin, productoId) {
+    if (productoId) {
+        const query = `
+            SELECT 
+                TO_CHAR(oc.fecha_creacion AT TIME ZONE 'America/Lima', 'YYYY-MM-DD') AS fecha,
+                COALESCE(SUM(od.importe_total), 0) AS venta,
+                COUNT(DISTINCT oc.id) AS operaciones
+            FROM fg_operacion_comercial oc
+            JOIN fg_operacion_detalle od ON od.operacion_id = oc.id AND od.tipo_item = 'PRODUCTO' AND od.producto_facturacion_id = $4::bigint
+            WHERE oc.planta_key = ANY($1::varchar[])
+              AND oc.fecha_creacion >= $2::timestamptz AND oc.fecha_creacion < $3::timestamptz
+              AND EXISTS (
+                  SELECT 1
+                  FROM fg_facturacion f
+                  WHERE f.operacion_id = oc.id
+                    AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+              )
+            GROUP BY TO_CHAR(oc.fecha_creacion AT TIME ZONE 'America/Lima', 'YYYY-MM-DD')
+            ORDER BY fecha ASC
+        `;
+        const res = await db.query(query, [plantas, inicio, fin, productoId]);
+        return res.rows.map(r => ({
+            fecha: r.fecha,
+            venta: Number(r.venta),
+            operaciones: Number(r.operaciones)
+        }));
+    }
+
     const query = `
         SELECT 
             TO_CHAR(oc.fecha_creacion AT TIME ZONE 'America/Lima', 'YYYY-MM-DD') AS fecha,
@@ -409,7 +820,12 @@ async function consultarSerieDiaria(plantas, inicio, fin) {
         FROM fg_operacion_comercial oc
         WHERE oc.planta_key = ANY($1::varchar[])
           AND oc.fecha_creacion >= $2::timestamptz AND oc.fecha_creacion < $3::timestamptz
-          AND oc.estado NOT IN ('BORRADOR', 'ANULADO')
+          AND EXISTS (
+              SELECT 1
+              FROM fg_facturacion f
+              WHERE f.operacion_id = oc.id
+                AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+          )
         GROUP BY TO_CHAR(oc.fecha_creacion AT TIME ZONE 'America/Lima', 'YYYY-MM-DD')
         ORDER BY fecha ASC
     `;
@@ -421,27 +837,110 @@ async function consultarSerieDiaria(plantas, inicio, fin) {
     }));
 }
 
-async function consultarDistribucionCertificados(plantas, inicio, fin) {
+async function consultarSerieCertificados(plantas, inicio, fin, tipoCertificado) {
     const query = `
-        SELECT 
-            c.tipo_certificado_clave AS tipo,
-            COUNT(c.id) AS cantidad,
+        SELECT
+            TO_CHAR(c.fecha_creacion AT TIME ZONE 'America/Lima', 'YYYY-MM-DD') AS fecha,
+            COUNT(c.id) AS total,
             COUNT(CASE WHEN c.estado = 'EMITIDO' THEN 1 END) AS emitidos,
-            COUNT(CASE WHEN c.estado = 'BORRADOR' THEN 1 END) AS pendientes,
-            COALESCE(SUM(c.importe_total), 0) AS total_soles
+            COUNT(CASE WHEN c.estado = 'BORRADOR' THEN 1 END) AS borradores,
+            COUNT(CASE WHEN c.estado = 'ANULADO' THEN 1 END) AS anulados
         FROM fg_certificado c
         WHERE c.planta_key = ANY($1::varchar[])
           AND c.fecha_creacion >= $2::timestamptz AND c.fecha_creacion < $3::timestamptz
-        GROUP BY c.tipo_certificado_clave
-        ORDER BY cantidad DESC
+          AND ($4::varchar IS NULL OR ${sqlCategoriaCertificado('c')} = $4::varchar)
+        GROUP BY TO_CHAR(c.fecha_creacion AT TIME ZONE 'America/Lima', 'YYYY-MM-DD')
+        ORDER BY fecha ASC
+    `;
+    const res = await db.query(query, [plantas, inicio, fin, tipoCertificado || null]);
+    return res.rows.map((r) => ({
+        fecha: r.fecha,
+        total: Number(r.total || 0),
+        emitidos: Number(r.emitidos || 0),
+        borradores: Number(r.borradores || 0),
+        anulados: Number(r.anulados || 0)
+    }));
+}
+
+async function consultarDistribucionCertificados(plantas, inicio, fin) {
+    const query = `
+        WITH certificados_clasificados AS (
+            SELECT
+                c.id,
+                c.estado,
+                c.importe_total,
+                ${sqlCategoriaCertificado('c')} AS categoria
+            FROM fg_certificado c
+            WHERE c.planta_key = ANY($1::varchar[])
+              AND c.fecha_creacion >= $2::timestamptz AND c.fecha_creacion < $3::timestamptz
+        )
+        SELECT
+            categoria.codigo AS tipo,
+            COUNT(c.id) AS cantidad,
+            COUNT(CASE WHEN c.estado = 'EMITIDO' THEN 1 END) AS emitidos,
+            COUNT(CASE WHEN c.estado = 'BORRADOR' THEN 1 END) AS pendientes,
+            COUNT(CASE WHEN c.estado = 'ANULADO' THEN 1 END) AS anulados,
+            COALESCE(SUM(c.importe_total), 0) AS total_soles
+        FROM fg_categoria_servicio categoria
+        LEFT JOIN certificados_clasificados c ON c.categoria = categoria.codigo
+        WHERE categoria.activo IS TRUE
+        GROUP BY categoria.codigo, categoria.orden
+        ORDER BY categoria.orden, categoria.codigo
+    `;
+    const res = await db.query(query, [plantas, inicio, fin]);
+    const totalCertificados = res.rows.reduce((total, row) => total + Number(row.cantidad || 0), 0);
+    return res.rows.map(r => {
+        const cantidad = Number(r.cantidad || 0);
+        return {
+            tipo: r.tipo || 'OTROS',
+            cantidad,
+            emitidos: Number(r.emitidos),
+            pendientes: Number(r.pendientes),
+            anulados: Number(r.anulados),
+            porcentaje: totalCertificados > 0
+                ? Number(((cantidad / totalCertificados) * 100).toFixed(1))
+                : 0,
+            totalSoles: Number(r.total_soles)
+        };
+    });
+}
+
+async function consultarDistribucionProductos(plantas, inicio, fin) {
+    const query = `
+        SELECT 
+            od.producto_facturacion_id AS id,
+            COALESCE(od.codigo_sku_snapshot, 'SIN-SKU') AS sku,
+            COALESCE(od.descripcion_snapshot, 'PRODUCTO') AS descripcion,
+            COALESCE(od.unidad_snapshot, 'NIU') AS unidad,
+            SUM(od.cantidad) AS total_unidades,
+            SUM(od.importe_total) AS total_soles,
+            COUNT(DISTINCT oc.id) AS total_operaciones,
+            ROUND(SUM(od.importe_total) / NULLIF(SUM(od.cantidad), 0), 2) AS precio_promedio
+        FROM fg_operacion_detalle od
+        JOIN fg_operacion_comercial oc ON oc.id = od.operacion_id
+        WHERE oc.planta_key = ANY($1::varchar[])
+          AND oc.fecha_creacion >= $2::timestamptz AND oc.fecha_creacion < $3::timestamptz
+          AND EXISTS (
+              SELECT 1
+              FROM fg_facturacion f
+              WHERE f.operacion_id = oc.id
+                AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+          )
+          AND od.tipo_item = 'PRODUCTO'
+          AND od.producto_facturacion_id IS NOT NULL
+        GROUP BY od.producto_facturacion_id, od.codigo_sku_snapshot, od.descripcion_snapshot, od.unidad_snapshot
+        ORDER BY total_soles DESC, total_unidades DESC
     `;
     const res = await db.query(query, [plantas, inicio, fin]);
     return res.rows.map(r => ({
-        tipo: r.tipo || 'OTROS',
-        cantidad: Number(r.cantidad),
-        emitidos: Number(r.emitidos),
-        pendientes: Number(r.pendientes),
-        totalSoles: Number(r.total_soles)
+        id: Number(r.id),
+        sku: r.sku,
+        descripcion: r.descripcion,
+        unidad: r.unidad,
+        unidadesVendidas: Number(r.total_unidades || 0),
+        totalSoles: Number(r.total_soles || 0),
+        operaciones: Number(r.total_operaciones || 0),
+        precioPromedio: Number(r.precio_promedio || 0)
     }));
 }
 
@@ -510,7 +1009,7 @@ async function consultarAlertas(plantas, inicio, fin) {
 /**
  * Detalle comparativo y ranking de sedes autorizadas
  */
-async function obtenerDetalleSedes({ plantasAutorizadas, desde, hasta }) {
+async function obtenerDetalleSedes({ plantasAutorizadas, desde, hasta, tipoCertificado, productoId }) {
     if (!plantasAutorizadas || plantasAutorizadas.length === 0) return [];
     
     const { inicioActual, finActual } = calcularIntervaloFechas(desde, hasta);
@@ -530,10 +1029,49 @@ async function obtenerDetalleSedes({ plantasAutorizadas, desde, hasta }) {
             SELECT 
                 oc.planta_key,
                 COUNT(oc.id) AS cantidad_operaciones,
-                SUM(oc.importe_total) AS venta_operativa
+                SUM(CASE
+                    WHEN $5::bigint IS NOT NULL THEN COALESCE((
+                        SELECT SUM(od.importe_total)
+                        FROM fg_operacion_detalle od
+                        WHERE od.operacion_id = oc.id
+                          AND od.tipo_item = 'PRODUCTO'
+                          AND od.producto_facturacion_id = $5::bigint
+                    ), 0)
+                    WHEN $4::varchar IS NOT NULL THEN COALESCE((
+                        SELECT SUM(od.importe_total)
+                        FROM fg_operacion_detalle od
+                        JOIN fg_certificado certificado_linea ON certificado_linea.id = od.certificado_id
+                        WHERE od.operacion_id = oc.id
+                          AND od.tipo_item = 'SERVICIO'
+                          AND ${sqlCategoriaCertificado('certificado_linea')} = $4::varchar
+                    ), 0)
+                    ELSE oc.importe_total
+                END) AS venta_operativa
             FROM fg_operacion_comercial oc
             WHERE oc.fecha_creacion >= $2::timestamptz AND oc.fecha_creacion < $3::timestamptz
-              AND oc.estado NOT IN ('BORRADOR', 'ANULADO')
+              AND EXISTS (
+                  SELECT 1
+                  FROM fg_facturacion f
+                  WHERE f.operacion_id = oc.id
+                    AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+              )
+              AND (
+                  ($5::bigint IS NULL AND $4::varchar IS NULL)
+                  OR ($5::bigint IS NOT NULL AND EXISTS (
+                      SELECT 1
+                      FROM fg_operacion_detalle od
+                      WHERE od.operacion_id = oc.id
+                        AND od.tipo_item = 'PRODUCTO'
+                        AND od.producto_facturacion_id = $5::bigint
+                  ))
+                  OR ($4::varchar IS NOT NULL AND EXISTS (
+                      SELECT 1
+                      FROM fg_operacion_detalle od
+                      JOIN fg_certificado certificado_operacion ON certificado_operacion.id = od.certificado_id
+                      WHERE od.operacion_id = oc.id
+                        AND ${sqlCategoriaCertificado('certificado_operacion')} = $4::varchar
+                  ))
+              )
             GROUP BY oc.planta_key
         ) ops ON ops.planta_key = p.key
         LEFT JOIN (
@@ -543,36 +1081,98 @@ async function obtenerDetalleSedes({ plantasAutorizadas, desde, hasta }) {
                 COUNT(CASE WHEN c.estado = 'BORRADOR' THEN 1 END) AS pendientes
             FROM fg_certificado c
             WHERE c.fecha_creacion >= $2::timestamptz AND c.fecha_creacion < $3::timestamptz
+              AND $5::bigint IS NULL
+              AND ($4::varchar IS NULL OR ${sqlCategoriaCertificado('c')} = $4::varchar)
             GROUP BY c.planta_key
         ) certs ON certs.planta_key = p.key
         LEFT JOIN (
             SELECT 
                 COALESCE(c.planta_key, oc.planta_key) AS planta_key,
-                SUM(pg.importe) AS total_cobrado
+                SUM(pg.importe * CASE
+                    WHEN $5::bigint IS NOT NULL AND COALESCE(oc.importe_total, 0) > 0 THEN
+                        COALESCE((
+                            SELECT SUM(od.importe_total)
+                            FROM fg_operacion_detalle od
+                            WHERE od.operacion_id = oc.id
+                              AND od.tipo_item = 'PRODUCTO'
+                              AND od.producto_facturacion_id = $5::bigint
+                        ), 0) / oc.importe_total
+                    ELSE 1
+                END) AS total_cobrado
             FROM fg_pago pg
             JOIN fg_orden_pago op ON op.id = pg.orden_pago_id
             LEFT JOIN fg_certificado c ON c.id = op.certificado_id
             LEFT JOIN fg_operacion_comercial oc ON oc.id = op.operacion_id
             WHERE pg.estado = 'CAN'
               AND pg.fechacreacion >= $2::timestamptz AND pg.fechacreacion < $3::timestamptz
+              AND (
+                  ($5::bigint IS NULL AND $4::varchar IS NULL)
+                  OR ($5::bigint IS NOT NULL AND EXISTS (
+                      SELECT 1
+                      FROM fg_operacion_detalle od_pago
+                      WHERE od_pago.operacion_id = oc.id
+                        AND od_pago.tipo_item = 'PRODUCTO'
+                        AND od_pago.producto_facturacion_id = $5::bigint
+                  ))
+                  OR ($4::varchar IS NOT NULL AND (
+                      ${sqlCategoriaCertificado('c')} = $4::varchar
+                      OR EXISTS (
+                          SELECT 1
+                          FROM fg_operacion_detalle od_pago
+                          JOIN fg_certificado certificado_pago ON certificado_pago.id = od_pago.certificado_id
+                          WHERE od_pago.operacion_id = oc.id
+                            AND ${sqlCategoriaCertificado('certificado_pago')} = $4::varchar
+                      )
+                  ))
+              )
             GROUP BY COALESCE(c.planta_key, oc.planta_key)
         ) cobrado ON cobrado.planta_key = p.key
         LEFT JOIN (
             SELECT 
                 COALESCE(c.planta_key, oc.planta_key) AS planta_key,
-                SUM(op.saldo_pendiente) AS saldo_pendiente
+                SUM(op.saldo_pendiente * CASE
+                    WHEN $5::bigint IS NOT NULL AND COALESCE(oc.importe_total, 0) > 0 THEN
+                        COALESCE((
+                            SELECT SUM(od.importe_total)
+                            FROM fg_operacion_detalle od
+                            WHERE od.operacion_id = oc.id
+                              AND od.tipo_item = 'PRODUCTO'
+                              AND od.producto_facturacion_id = $5::bigint
+                        ), 0) / oc.importe_total
+                    ELSE 1
+                END) AS saldo_pendiente
             FROM fg_orden_pago op
             LEFT JOIN fg_certificado c ON c.id = op.certificado_id
             LEFT JOIN fg_operacion_comercial oc ON oc.id = op.operacion_id
             WHERE op.estado <> 'ANULADO' AND op.saldo_pendiente > 0
               AND op.fechacreacion >= $2::timestamptz AND op.fechacreacion < $3::timestamptz
+              AND (
+                  ($5::bigint IS NULL AND $4::varchar IS NULL)
+                  OR ($5::bigint IS NOT NULL AND EXISTS (
+                      SELECT 1
+                      FROM fg_operacion_detalle od_saldo
+                      WHERE od_saldo.operacion_id = oc.id
+                        AND od_saldo.tipo_item = 'PRODUCTO'
+                        AND od_saldo.producto_facturacion_id = $5::bigint
+                  ))
+                  OR ($4::varchar IS NOT NULL AND (
+                      ${sqlCategoriaCertificado('c')} = $4::varchar
+                      OR EXISTS (
+                          SELECT 1
+                          FROM fg_operacion_detalle od_saldo
+                          JOIN fg_certificado certificado_saldo ON certificado_saldo.id = od_saldo.certificado_id
+                          WHERE od_saldo.operacion_id = oc.id
+                            AND ${sqlCategoriaCertificado('certificado_saldo')} = $4::varchar
+                      )
+                  ))
+              )
             GROUP BY COALESCE(c.planta_key, oc.planta_key)
         ) saldos ON saldos.planta_key = p.key
         WHERE p.key = ANY($1::varchar[])
         ORDER BY venta_operativa DESC, cantidad_operaciones DESC
     `;
 
-    const res = await db.query(query, [plantasAutorizadas, inicioActual, finActual]);
+    const res = await db.query(query, [plantasAutorizadas, inicioActual, finActual, tipoCertificado || null, productoId || null]);
     return res.rows.map(r => {
         const ops = Number(r.cantidad_operaciones);
         const venta = Number(r.venta_operativa);
@@ -611,7 +1211,7 @@ async function obtenerDetalleCertificados({ plantasAutorizadas, plantasFiltro, d
     }
     if (tipoCertificado) {
         params.push(tipoCertificado);
-        whereExtra += ` AND c.tipo_certificado_clave = $${params.length}`;
+        whereExtra += ` AND ${sqlCategoriaCertificado('c')} = $${params.length}`;
     }
     if (usuario) {
         params.push(usuario);
@@ -680,7 +1280,7 @@ async function obtenerDetalleCertificados({ plantasAutorizadas, plantasFiltro, d
 /**
  * Detalle de ventas de productos inventariables y chips
  */
-async function obtenerDetalleProductos({ plantasAutorizadas, plantasFiltro, desde, hasta, pagina = 1, limite = 20 }) {
+async function obtenerDetalleProductos({ plantasAutorizadas, plantasFiltro, desde, hasta, pagina = 1, limite = 20, productoId }) {
     const plantas = (plantasFiltro && plantasFiltro.length > 0)
         ? plantasFiltro.filter(p => plantasAutorizadas.includes(p))
         : plantasAutorizadas;
@@ -689,8 +1289,16 @@ async function obtenerDetalleProductos({ plantasAutorizadas, plantasFiltro, desd
     const { inicioActual, finActual } = calcularIntervaloFechas(desde, hasta);
     const offset = (Math.max(Number(pagina), 1) - 1) * Number(limite);
 
+    const params = [plantas, inicioActual, finActual];
+    let whereProducto = '';
+    if (productoId) {
+        params.push(productoId);
+        whereProducto = ` AND od.producto_facturacion_id = $${params.length}::bigint`;
+    }
+
     const query = `
         SELECT 
+            od.producto_facturacion_id AS id,
             COALESCE(od.codigo_sku_snapshot, 'SIN-SKU') AS sku,
             COALESCE(od.descripcion_snapshot, 'PRODUCTO') AS descripcion,
             COALESCE(od.unidad_snapshot, 'NIU') AS unidad,
@@ -702,18 +1310,26 @@ async function obtenerDetalleProductos({ plantasAutorizadas, plantasFiltro, desd
         JOIN fg_operacion_comercial oc ON oc.id = od.operacion_id
         WHERE oc.planta_key = ANY($1::varchar[])
           AND oc.fecha_creacion >= $2::timestamptz AND oc.fecha_creacion < $3::timestamptz
-          AND oc.estado NOT IN ('BORRADOR', 'ANULADO')
+          AND EXISTS (
+              SELECT 1
+              FROM fg_facturacion f
+              WHERE f.operacion_id = oc.id
+                AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+          )
           AND od.tipo_item = 'PRODUCTO'
-        GROUP BY od.codigo_sku_snapshot, od.descripcion_snapshot, od.unidad_snapshot
+          AND od.producto_facturacion_id IS NOT NULL
+          ${whereProducto}
+        GROUP BY od.producto_facturacion_id, od.codigo_sku_snapshot, od.descripcion_snapshot, od.unidad_snapshot
         ORDER BY total_soles DESC, total_unidades DESC
     `;
 
-    const allRes = await db.query(query, [plantas, inicioActual, finActual]);
+    const allRes = await db.query(query, params);
     const total = allRes.rows.length;
     const paginados = allRes.rows.slice(offset, offset + Number(limite));
 
     return {
         items: paginados.map(r => ({
+            id: Number(r.id),
             sku: r.sku,
             descripcion: r.descripcion,
             unidad: r.unidad,
@@ -783,11 +1399,22 @@ async function obtenerDetalleComprobantes({ plantasAutorizadas, plantasFiltro, d
             f.importe_total,
             f.fecha_documento,
             f.fecha_creacion,
+            COALESCE(cuotas.cantidad, 0) AS cuotas_cantidad,
+            COALESCE(cuotas.importe_programado, 0) AS cuotas_importe_programado,
+            cuotas.proximo_vencimiento,
             COALESCE(f.planta_key, oc.planta_key) AS planta_key,
             p.nombre AS planta_nombre
         FROM fg_facturacion f
         LEFT JOIN fg_operacion_comercial oc ON oc.id = f.operacion_id
         LEFT JOIN fg_planta p ON p.key = COALESCE(f.planta_key, oc.planta_key)
+        LEFT JOIN LATERAL (
+            SELECT
+                COUNT(*) AS cantidad,
+                SUM(fc.importe) AS importe_programado,
+                MIN(fc.fecha_pago) FILTER (WHERE fc.estado = 'PENDIENTE') AS proximo_vencimiento
+            FROM fg_facturacion_cuota fc
+            WHERE fc.facturacion_id = f.id
+        ) cuotas ON TRUE
         WHERE (
             f.planta_key = ANY($1::varchar[])
             OR EXISTS (SELECT 1 FROM fg_operacion_comercial oc2 WHERE oc2.id = f.operacion_id AND oc2.planta_key = ANY($1::varchar[]))
@@ -818,6 +1445,9 @@ async function obtenerDetalleComprobantes({ plantasAutorizadas, plantasFiltro, d
             importeTotal: Number(r.importe_total || 0),
             fechaDocumento: r.fecha_documento,
             fechaCreacion: r.fecha_creacion,
+            cuotasCantidad: Number(r.cuotas_cantidad || 0),
+            cuotasImporteProgramado: Number(r.cuotas_importe_programado || 0),
+            proximoVencimiento: r.proximo_vencimiento,
             plantaKey: r.planta_key,
             plantaNombre: r.planta_nombre || r.planta_key
         })),
@@ -1006,7 +1636,7 @@ async function obtenerDetalleDescuentos({ plantasAutorizadas, plantasFiltro, des
 /**
  * Detalle de rendimiento por usuario / cajero
  */
-async function obtenerDetalleUsuarios({ plantasAutorizadas, plantasFiltro, desde, hasta }) {
+async function obtenerDetalleUsuarios({ plantasAutorizadas, plantasFiltro, desde, hasta, productoId }) {
     const plantas = (plantasFiltro && plantasFiltro.length > 0)
         ? plantasFiltro.filter(p => plantasAutorizadas.includes(p))
         : plantasAutorizadas;
@@ -1019,22 +1649,35 @@ async function obtenerDetalleUsuarios({ plantasAutorizadas, plantasFiltro, desde
             oc.usuario_creacion AS username,
             COALESCE(TRIM(CONCAT(p.nombres, ' ', p.apellidos)), p.nombrerazonsocial, oc.usuario_creacion) AS nombre,
             COUNT(DISTINCT oc.id) AS total_operaciones,
-            COALESCE(SUM(DISTINCT oc.importe_total), 0) AS total_vendido,
-            COUNT(DISTINCT od.certificado_id) FILTER (WHERE od.tipo_item = 'SERVICIO' AND od.certificado_id IS NOT NULL) AS certificados_generados,
-            COALESCE(SUM(od.cantidad) FILTER (WHERE od.tipo_item = 'PRODUCTO'), 0) AS productos_vendidos,
+            COALESCE(SUM(
+                CASE 
+                    WHEN $4::bigint IS NOT NULL THEN od.importe_total
+                    ELSE oc.importe_total
+                END
+            ), 0) AS total_vendido,
+            CASE 
+                WHEN $4::bigint IS NOT NULL THEN 0
+                ELSE COUNT(DISTINCT od.certificado_id) FILTER (WHERE od.tipo_item = 'SERVICIO' AND od.certificado_id IS NOT NULL)
+            END AS certificados_generados,
+            COALESCE(SUM(od.cantidad) FILTER (WHERE od.tipo_item = 'PRODUCTO' AND ($4::bigint IS NULL OR od.producto_facturacion_id = $4::bigint)), 0) AS productos_vendidos,
             MAX(oc.fecha_creacion) AS ultima_operacion
         FROM fg_operacion_comercial oc
-        LEFT JOIN fg_operacion_detalle od ON od.operacion_id = oc.id
+        ${productoId ? `JOIN fg_operacion_detalle od ON od.operacion_id = oc.id AND od.tipo_item = 'PRODUCTO' AND od.producto_facturacion_id = $4::bigint` : `LEFT JOIN fg_operacion_detalle od ON od.operacion_id = oc.id`}
         LEFT JOIN fg_usuario u ON u.username = oc.usuario_creacion
         LEFT JOIN persona p ON p.nrodocumentoidentidad = u.persona_nrodocumentoidentidad
         WHERE oc.planta_key = ANY($1::varchar[])
           AND oc.fecha_creacion >= $2::timestamptz AND oc.fecha_creacion < $3::timestamptz
-          AND oc.estado NOT IN ('BORRADOR', 'ANULADO')
+          AND EXISTS (
+              SELECT 1
+              FROM fg_facturacion f
+              WHERE f.operacion_id = oc.id
+                AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+          )
         GROUP BY oc.usuario_creacion, p.nombres, p.apellidos, p.nombrerazonsocial
         ORDER BY total_vendido DESC, total_operaciones DESC
     `;
 
-    const res = await db.query(query, [plantas, inicioActual, finActual]);
+    const res = await db.query(query, [plantas, inicioActual, finActual, productoId || null]);
     return res.rows.map(r => {
         const ops = Number(r.total_operaciones);
         const venta = Number(r.total_vendido);
@@ -1103,8 +1746,13 @@ function respuestaVaciaResumen() {
             saldoPendiente: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
             cantidadOperaciones: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
             ticketPromedio: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
+            ventaOperativaCertificados: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
+            ventaBrutaCertificados: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
+            ventaNetaCertificados: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
+            ticketPromedioCertificados: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
             certificadosEmitidos: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
             certificadosPendientes: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
+            certificadosAnulados: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
             productosVendidos: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
             montoDescontado: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
             facturasAceptadas: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
@@ -1112,7 +1760,9 @@ function respuestaVaciaResumen() {
             comprobantesRechazadosOError: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' }
         },
         serieDiaria: [],
+        serieCertificados: [],
         distribucionCertificados: [],
+        distribucionProductos: [],
         distribucionPagos: [],
         alertas: []
     };
@@ -1121,6 +1771,7 @@ function respuestaVaciaResumen() {
 module.exports = {
     calcularIntervaloFechas,
     calcularVariacion,
+    esComprobanteEmitidoExitosamente: esDocumentoBaseOperable,
     obtenerResumenDashboard,
     obtenerDetalleSedes,
     obtenerDetalleCertificados,

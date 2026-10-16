@@ -1,6 +1,6 @@
+const calculoTributario = require('./faregas-calculo-tributario.service');
+const { redondear, aCentavos, deCentavos } = calculoTributario;
 const limpiarTexto = (value) => String(value ?? '').trim();
-
-const redondear = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 
 const esRucValido = (value) => {
     const ruc = limpiarTexto(value);
@@ -41,6 +41,20 @@ const normalizarFacturacion = (data = {}) => {
         medioPago: limpiarTexto(data.medioPago) || null,
         facturarAlDuenoPrincipal: data.facturarAlDuenoPrincipal === true
             || data.usarTitularPrincipalFac === true,
+        // Soporte estructurado para Detracción SPOT y Operaciones Gratuitas
+        esDetraccion: Boolean(data.esDetraccion || data.detraccion === true || data.sujetoDetraccion === true),
+        detraccionTipo: limpiarTexto(data.detraccionTipo || data.detraccion_tipo || data.codigoSpot) || null,
+        detraccionPorcentaje: (data.detraccionPorcentaje !== undefined && data.detraccionPorcentaje !== null && data.detraccionPorcentaje !== '')
+            ? redondear(data.detraccionPorcentaje)
+            : null,
+        detraccionTotal: (data.detraccionTotal !== undefined && data.detraccionTotal !== null && data.detraccionTotal !== '')
+            ? redondear(data.detraccionTotal)
+            : null,
+        detraccionMedioPago: limpiarTexto(data.detraccionMedioPago || data.detraccion_medio_pago || '001') || '001',
+        detraccionCuentaBanco: limpiarTexto(data.detraccionCuentaBanco || data.detraccion_cuenta_banco || '') || null,
+        tipoOperacion: limpiarTexto(data.tipoOperacion || (Boolean(data.esDetraccion || data.detraccion) ? 'OPERACION_SUJETA_DETRACCION' : (Boolean(data.esGratuito) ? 'TRANSFERENCIA_GRATUITA' : 'VENTA_INTERNA'))),
+        esGratuito: Boolean(data.esGratuito || data.es_gratuito),
+        totalGratuito: redondear(data.totalGratuito || data.total_gratuito || 0),
         cuotas: Array.isArray(data.cuotas) ? data.cuotas.map((cuota, index) => ({
             numeroCuota: Number(cuota.numeroCuota || index + 1),
             fechaPago: limpiarTexto(cuota.fechaPago),
@@ -137,6 +151,33 @@ const validarFacturacion = (facturacion) => {
     } else if (facturacion.cuotas.length > 0) {
         errores.push('Una venta al contado no debe incluir cuotas.');
     }
+
+    if (facturacion.esDetraccion) {
+        if (facturacion.tipoComprobante !== 'FACTURA') {
+            errores.push('Las operaciones sujetas a detraccion SPOT solo aplican a FACTURA.');
+        }
+        if (!facturacion.detraccionTipo) {
+            errores.push('Una operacion con detraccion requiere el codigo de bien o servicio SPOT SUNAT (Catalogo 54).');
+        } else if (!calculoTributario.CATALOGO_DETRACCION_SPOT[facturacion.detraccionTipo]) {
+            errores.push(`El codigo SPOT '${facturacion.detraccionTipo}' no existe o no esta vigente en el Catalogo 54 de SUNAT.`);
+        }
+        if (facturacion.detraccionPorcentaje !== null && (facturacion.detraccionPorcentaje <= 0 || facturacion.detraccionPorcentaje > 100)) {
+            errores.push('El porcentaje de detraccion debe ser mayor a 0 y menor o igual a 100.');
+        }
+        if (facturacion.detraccionCuentaBanco && !calculoTributario.esCuentaBancoNacionValida(facturacion.detraccionCuentaBanco)) {
+            errores.push(`La cuenta corriente '${facturacion.detraccionCuentaBanco}' no tiene un formato valido de 11 digitos del Banco de la Nacion.`);
+        }
+    }
+
+    if (facturacion.esGratuito) {
+        if (facturacion.condicionPago !== 'CONTADO') {
+            errores.push('Una operacion a titulo gratuito solo admite condicion de pago CONTADO.');
+        }
+        if (facturacion.cuotas.length > 0) {
+            errores.push('Una operacion a titulo gratuito no admite cuotas de credito.');
+        }
+    }
+
     return errores;
 };
 
@@ -158,9 +199,15 @@ const validarFacturacionNubefact = (facturacion) => {
     return errores;
 };
 
-const validarCuotasContraTotal = (cuotas, total) => {
-    const suma = redondear((cuotas || []).reduce((acumulado, cuota) => acumulado + Number(cuota.importe || 0), 0));
-    return Math.abs(suma - redondear(total)) <= 0.009;
+const validarCuotasContraTotal = (cuotas, total, detraccion = null) => {
+    const tieneDetraccion = Boolean(detraccion && (detraccion.aplica || detraccion.es_detraccion));
+    const montoEsperado = tieneDetraccion
+        ? redondear(detraccion.montoNetoPendiente ?? (redondear(total) - redondear(detraccion.montoDetraccion ?? detraccion.detraccion_total ?? 0)))
+        : redondear(total);
+
+    const sumaCentavos = (cuotas || []).reduce((acumulado, cuota) => acumulado + aCentavos(cuota.importe || 0), 0);
+    const esperadoCentavos = aCentavos(montoEsperado);
+    return Math.abs(sumaCentavos - esperadoCentavos) === 0;
 };
 
 const derivarMedioPago = (pagos = []) => {
@@ -191,5 +238,6 @@ module.exports = {
     validarCuotasContraTotal,
     derivarMedioPago,
     esFechaIsoValida,
-    redondear
+    redondear,
+    calculoTributario
 };

@@ -15,7 +15,10 @@ const crearVenta = async (payload, userContext) => {
         condicionPago, // CONTADO o CREDITO
         medioPago, // EFECTIVO, YAPE, etc (legacy o unico)
         pagosAgregados = [], // [{ tipo, importe, tarjetaKey, nroOperacion, digitosTarjeta, entidadFinancieraKey, cuentaCorrienteKey, fechaDeposito }]
-        chips // array de string (números de chip)
+        chips, // array de string (números de chip)
+        cuotas: cuotasPayload = [],
+        fechaVencimiento,
+        fechaInicioCredito
     } = payload;
 
     if (!chips || chips.length === 0) {
@@ -143,10 +146,23 @@ const crearVenta = async (payload, userContext) => {
             );
         }
 
-        // Si es a credito y no pasaron cuotas, creamos una cuota automática (adaptación simple para Venta)
-        const cuotas = [];
+        // Si es a credito, procesar cuotas y persistirlas
+        const saldoPendiente = Math.round(((importeTotal - totalPagado) + Number.EPSILON) * 100) / 100;
+        let cuotas = [];
         if (condicionPago === 'CREDITO') {
-            cuotas.push({ numero_cuota: 1, fecha_pago: new Date().toISOString(), importe: importeTotal - totalPagado });
+            if (Array.isArray(cuotasPayload) && cuotasPayload.length > 0) {
+                cuotas = cuotasPayload.map((c, idx) => ({
+                    numero_cuota: Number(c.numero_cuota || c.numeroCuota || idx + 1),
+                    fecha_pago: c.fecha_pago || c.fechaPago,
+                    importe: Number(c.importe)
+                }));
+            } else {
+                cuotas = [{
+                    numero_cuota: 1,
+                    fecha_pago: fechaVencimiento || new Date().toISOString().slice(0, 10),
+                    importe: saldoPendiente
+                }];
+            }
         }
 
         // 7. Facturacion
@@ -163,6 +179,10 @@ const crearVenta = async (payload, userContext) => {
         let numeroCorrelativo = Number(resSerie.rows[0].numero_actual) + 1;
         await client.query(`UPDATE fg_talonario_serie SET numero_actual = $1 WHERE id = $2`, [numeroCorrelativo, resSerie.rows[0].id]);
 
+        const fechaVencimientoFiscal = fechaVencimiento
+            || (cuotas.length ? cuotas[cuotas.length - 1].fecha_pago : null)
+            || new Date().toISOString().slice(0, 10);
+
         const facturacionResult = await client.query(
             `INSERT INTO fg_facturacion (
                 venta_id, tipo_comprobante, tipo_documento_cliente, nro_documento,
@@ -170,12 +190,13 @@ const crearVenta = async (payload, userContext) => {
                 base_imponible, igv, importe_total, condicion_pago,
                 fecha_vencimiento, medio_pago, estado, usuario_creacion,
                 serie, numero, serie_comprobante_id, entorno_facturador
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,CURRENT_DATE,$14,'PENDIENTE_SUNAT',$15,$16,$17,$18,$19)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'PENDIENTE_SUNAT',$16,$17,$18,$19,$20)
             RETURNING *`,
             [
                 ventaId, tipoComprobante, tipoDocumentoCliente, nroDocumento,
                 nombreRazonSocial, direccion, email, telefono, 'PEN',
                 baseImponible, igv, importeTotal, condicionPago,
+                fechaVencimientoFiscal,
                 formapago_key, userContext.username,
                 serie, numeroCorrelativo, resSerie.rows[0].id, process.env.NUBEFACT_ENTORNO || 'DEMO'
             ]
@@ -183,6 +204,17 @@ const crearVenta = async (payload, userContext) => {
         const facturacionId = facturacionResult.rows[0].id;
         const nroComprobante = `${serie}-${String(numeroCorrelativo).padStart(8, '0')}`;
         await client.query(`UPDATE fg_facturacion SET nro_comprobante = $1 WHERE id = $2`, [nroComprobante, facturacionId]);
+
+        if (condicionPago === 'CREDITO') {
+            for (const cuota of cuotas) {
+                await client.query(
+                    `INSERT INTO fg_facturacion_cuota
+                        (facturacion_id, numero_cuota, fecha_pago, importe, estado)
+                     VALUES ($1, $2, $3, $4, 'PENDIENTE')`,
+                    [facturacionId, cuota.numero_cuota, cuota.fecha_pago, cuota.importe]
+                );
+            }
+        }
 
         // Enviar a Nubefact
         const facturacionObj = facturacionResult.rows[0];
