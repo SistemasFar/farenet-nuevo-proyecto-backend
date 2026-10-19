@@ -13,7 +13,7 @@ const facturacionBase = (overrides = {}) => ({
     id: 91,
     tipo_comprobante: 'FACTURA',
     tipo_documento_cliente: 'RUC',
-    nro_documento: '20600444531',
+    nro_documento: '20521536463',
     nombre_razon_social: 'EMPRESA PRUEBA S.A.C.',
     direccion: 'AV. PRINCIPAL 123',
     email: 'contacto@prueba.pe',
