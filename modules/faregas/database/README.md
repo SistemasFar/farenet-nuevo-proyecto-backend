@@ -7,8 +7,9 @@ contenga los catálogos legacy requeridos: `moneda`, `formapago`,
 `cuentacorriente`, `entidadfinanciera`, `tarjeta`, `tipocontado` y `persona`.
 
 El archivo consolidado crea 61 tablas funcionales FAREGAS con sus secuencias,
-claves, restricciones, índices, comentarios, función y trigger. No incluye
-datos transaccionales ni configuraciones de empresas, sedes o credenciales.
+claves, restricciones, índices, comentarios, función y trigger. También
+registra de forma idempotente la cuenta bancaria operativa exclusiva de
+FAREGAS; no incluye datos transaccionales, sedes ni credenciales.
 
 ## Historial
 

@@ -13,6 +13,11 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
     const fechaImp = formatDateLong(cert.fecha_emision);
     const vigenciaHastaFmt = formatDateShort(glp.vigencia_hasta);
 
+    const formatoDosDigitos = (valor) => {
+        const entero = formatNumberWithoutTrailingZeros(valor, '');
+        return /^\d+$/.test(entero) ? entero.padStart(2, '0') : entero;
+    };
+
     const propietarioNombre = titulares.length > 0
         ? titulares.map(t => t.nombre_razon_social).join(' / ')
         : (cert.cliente_nombre || '-');
@@ -278,7 +283,7 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val" style="background-color: transparent;">${escapeHtml(veh.marca || '-')}</td>
             <td class="num">12</td>
             <td>N° ejes / N° ruedas</td>
-            <td class="val" style="background-color: transparent;">${escapeHtml(formatNumberWithoutTrailingZeros(veh.ejes))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.ruedas))}</td>
+            <td class="val" style="background-color: transparent;">${escapeHtml(formatoDosDigitos(veh.ejes))} / ${escapeHtml(formatoDosDigitos(veh.ruedas))}</td>
         </tr>
         <tr>
             <td class="num">5</td>
@@ -286,7 +291,7 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val" style="background-color: transparent;">${escapeHtml(veh.modelo || '-')}</td>
             <td class="num">13</td>
             <td>N° Asientos / Pasajeros</td>
-            <td class="val" style="background-color: transparent;">${escapeHtml(formatNumberWithoutTrailingZeros(veh.asientos))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.pasajeros))}</td>
+            <td class="val" style="background-color: transparent;">${escapeHtml(formatoDosDigitos(veh.asientos))} / ${escapeHtml(formatoDosDigitos(veh.pasajeros))}</td>
         </tr>
         <tr>
             <td class="num">6</td>

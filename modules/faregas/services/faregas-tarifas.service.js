@@ -33,6 +33,12 @@ const construirCatalogo = (sede, rows) => {
             precioReferencia: row.producto_precio_referencia,
             precioUnitario: row.producto_precio_unitario
         });
+
+        const codigoComercial = (row.producto_sku || '').trim()
+            || (row.servicio_codigo || '').trim()
+            || (row.tarifa_codigo || '').trim()
+            || null;
+
         if (!categorias.has(row.categoria_codigo)) {
             categorias.set(row.categoria_codigo, {
                 codigo: row.categoria_codigo,
@@ -44,7 +50,10 @@ const construirCatalogo = (sede, rows) => {
 
         categorias.get(row.categoria_codigo).servicios.push({
             id: Number(row.servicio_id),
-            codigo: row.servicio_codigo,
+            codigo: codigoComercial || row.servicio_codigo,
+            codigoServicio: codigoComercial || row.servicio_codigo,
+            codigoComercial: codigoComercial || row.servicio_codigo,
+            servicio_codigo_interno: row.servicio_codigo,
             nombre: row.servicio_nombre,
             orden: Number(row.servicio_orden),
             tipo_flujo: row.tipo_flujo,
@@ -55,6 +64,7 @@ const construirCatalogo = (sede, rows) => {
             tarifa: {
                 id: Number(row.tarifa_id),
                 codigo: row.tarifa_codigo,
+                codigoSku: (row.producto_sku || '').trim() || null,
                 precio: precioComercial,
                 productoFacturacionId: row.producto_facturacion_id ? Number(row.producto_facturacion_id) : null,
                 requiereChip: row.requiere_chip === true,
@@ -103,6 +113,7 @@ exports.obtenerCatalogoPorPlanta = async (plantaKey, queryable = db) => {
             t.codigo AS tarifa_codigo,
             t.precio AS precio_tarifa,
             t.producto_facturacion_id,
+            pf.codigo_sku AS producto_sku,
             pf.precio_referencia AS producto_precio_referencia,
             pf.precio_unitario AS producto_precio_unitario,
             pf.requiere_chip,

@@ -32,7 +32,7 @@ const respond = (res, error) => {
         DATOS_TARJETA_INCOMPLETOS: 'Complete la tarjeta y el número de operación.',
         TARJETA_NOT_FOUND: 'La tarjeta seleccionada no existe.',
         DATOS_BANCO_INCOMPLETOS: 'Complete los datos bancarios del pago.',
-        CUENTA_BANCARIA_INVALIDA: 'La cuenta bancaria no pertenece a la entidad seleccionada.',
+        CUENTA_BANCARIA_INVALIDA: 'Use únicamente la cuenta bancaria autorizada de FAREGAS.',
         PLANTA_REQUERIDA: 'No tiene una sede seleccionada.',
         OPERACION_NOT_FOUND: 'La operación de venta no existe.',
         OPERACION_ID_INVALIDO: 'El identificador de la operación no es válido.',

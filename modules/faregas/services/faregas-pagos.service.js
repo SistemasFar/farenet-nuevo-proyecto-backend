@@ -2,6 +2,7 @@ const db = require('../../../config/database');
 const faregasAuthService = require('./faregas-auth.service');
 const tarifasService = require('./faregas-tarifas.service');
 const descuentosService = require('./faregas-descuentos.service');
+const { validarCuentaFaregas } = require('./faregas-cuenta-bancaria.service');
 const {
     redondear,
     obtenerTarifaConfigurada,
@@ -172,11 +173,7 @@ const validarReferenciaPago = async (client, pago) => {
         if (!pago.entidadFinancieraKey || !pago.cuentaCorrienteKey || !pago.nroOperacion || !pago.fechaDeposito) {
             throw new Error('DATOS_BANCO_INCOMPLETOS');
         }
-        const cuenta = await client.query(
-            'SELECT 1 FROM cuentacorriente WHERE key = $1 AND entidadfinanciera_key = $2',
-            [pago.cuentaCorrienteKey, pago.entidadFinancieraKey]
-        );
-        if (cuenta.rowCount === 0) throw new Error('CUENTA_BANCARIA_INVALIDA');
+        await validarCuentaFaregas(client, pago.cuentaCorrienteKey, pago.entidadFinancieraKey);
         const fechaDeposito = new Date(`${String(pago.fechaDeposito).slice(0, 10)}T00:00:00`);
         if (Number.isNaN(fechaDeposito.getTime())) throw new Error('FECHA_DEPOSITO_INVALIDA');
         const hoy = new Date();

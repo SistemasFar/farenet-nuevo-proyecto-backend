@@ -58,7 +58,11 @@ const responderError = (res, error) => {
         NUBEFACT_RECHAZADO: 'Nubefact o SUNAT rechazaron el comprobante.',
         REINTENTO_CORRELATIVO_INVALIDO: 'La facturación rechazada no tiene serie y número para reintentar sin reservar otro correlativo.',
         OPERACION_NOT_FOUND: 'La operación no existe.',
-        NUBEFACT_ERROR: 'No se pudo confirmar la emision del comprobante con Nubefact.'
+        NUBEFACT_ERROR: 'No se pudo confirmar la emision del comprobante con Nubefact.',
+        PDF_NUBEFACT_NO_DISPONIBLE: 'El PDF oficial de NubeFact no está disponible.',
+        ENLACE_NUBEFACT_INVALIDO: 'El enlace guardado del PDF de NubeFact no es válido.',
+        DESCARGA_NUBEFACT_FALLIDA: 'No se pudo descargar el PDF desde NubeFact.',
+        PDF_NUBEFACT_INVALIDO: 'NubeFact no devolvió un archivo PDF válido.'
     };
     if (status >= 500) console.error('[FAREGAS FACTURACION]', error);
     return res.status(status).json({
@@ -158,6 +162,7 @@ exports.reintentarPorOperacion = async (req, res) => {
 };
 
 const comprobanteImpresoService = require('../services/faregas-comprobante-impreso.service');
+const descargaNubefactService = require('../services/faregas-descarga-nubefact.service');
 const db = require('../../../config/database');
 const { validarAccesoPlanta } = require('../services/faregas-auth.service');
 
@@ -195,7 +200,7 @@ const autorizarFacturacion = async (facturacionId, user) => {
 
 const obtenerFacturacionAutorizadaPorCertificado = async (certificadoId, user) => {
     const result = await db.query(
-        `SELECT f.id
+        `SELECT f.id, f.enlace_pdf, f.tipo_comprobante, f.serie, f.numero
          FROM fg_facturacion f
          JOIN fg_certificado c ON c.id = f.certificado_id
          WHERE f.certificado_id = $1`,
@@ -207,16 +212,35 @@ const obtenerFacturacionAutorizadaPorCertificado = async (certificadoId, user) =
         throw error;
     }
     await autorizarFacturacion(result.rows[0].id, user);
-    return result.rows[0].id;
+    return result.rows[0];
 };
 
 exports.descargarPdfFaregas = async (req, res) => {
     try {
-        const facturacionId = await obtenerFacturacionAutorizadaPorCertificado(req.params.id, req.user);
-        const result = await comprobanteImpresoService.generarPdf(facturacionId);
+        const facturacion = await obtenerFacturacionAutorizadaPorCertificado(req.params.id, req.user);
+        const result = await comprobanteImpresoService.generarPdf(facturacion.id);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="${result.filename}"`);
         return res.sendFile(result.pdfPath);
+    } catch (error) {
+        return responderError(res, error);
+    }
+};
+
+exports.descargarPdfNubefact = async (req, res) => {
+    try {
+        const facturacion = await obtenerFacturacionAutorizadaPorCertificado(req.params.id, req.user);
+        if (!facturacion.enlace_pdf) {
+            const error = new Error('PDF_NUBEFACT_NO_DISPONIBLE');
+            error.code = 'PDF_NUBEFACT_NO_DISPONIBLE';
+            error.statusCode = 404;
+            throw error;
+        }
+        const pdf = await descargaNubefactService.descargarPdfNubefact(facturacion.enlace_pdf);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${descargaNubefactService.nombreArchivoNubefact(facturacion)}"`);
+        res.setHeader('Cache-Control', 'private, no-store');
+        return res.send(pdf);
     } catch (error) {
         return responderError(res, error);
     }
@@ -237,8 +261,8 @@ exports.descargarPdfFaregasPorFacturacionId = async (req, res) => {
 
 exports.obtenerHtmlFaregas = async (req, res) => {
     try {
-        const facturacionId = await obtenerFacturacionAutorizadaPorCertificado(req.params.id, req.user);
-        const html = await comprobanteImpresoService.generarHtml(facturacionId);
+        const facturacion = await obtenerFacturacionAutorizadaPorCertificado(req.params.id, req.user);
+        const html = await comprobanteImpresoService.generarHtml(facturacion.id);
         if (req.query.format === 'json') {
             return res.json({ ok: true, html });
         }
@@ -253,8 +277,8 @@ exports.obtenerHtmlFaregas = async (req, res) => {
 
 exports.regenerarPdfFaregas = async (req, res) => {
     try {
-        const facturacionId = await obtenerFacturacionAutorizadaPorCertificado(req.params.id, req.user);
-        const result = await comprobanteImpresoService.regenerarRepresentacion(facturacionId);
+        const facturacion = await obtenerFacturacionAutorizadaPorCertificado(req.params.id, req.user);
+        const result = await comprobanteImpresoService.regenerarRepresentacion(facturacion.id);
         return res.json({ ok: true, data: result });
     } catch (error) {
         return responderError(res, error);

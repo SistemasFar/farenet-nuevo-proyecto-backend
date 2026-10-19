@@ -14,6 +14,11 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
     const verifs = data.verificaciones || [];
     const titulares = data.titulares || [];
 
+    const formatoDosDigitos = (valor) => {
+        const entero = formatNumberWithoutTrailingZeros(valor, '');
+        return /^\d+$/.test(entero) ? entero.padStart(2, '0') : entero;
+    };
+
     const numCertificado = cert.numero_certificado || NUMERO_CERTIFICADO_PENDIENTE;
 
     const fechaImp = formatDateLong(cert.fecha_emision);
@@ -61,12 +66,15 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
         if (modRaw.toUpperCase() === 'Q') modRaw = '';
         let modStr = escapeHtml(modRaw);
         if (c.componente === 'CILINDRO' && (c.capacidad_litros || c.anio_fabricacion)) {
-            // El formato oficial GLP anual imprime capacidad/año. El mes se
-            // conserva en los datos históricos, pero no pertenece a esta celda.
+            // El período se conserva en columnas separadas, pero se presenta
+            // con la convención del certificado: MM-AAAA. Los históricos que
+            // sólo tienen año siguen mostrando AAAA.
             const capacidad = formatNumberWithoutTrailingZeros(c.capacidad_litros, '');
             const cap = capacidad ? `${capacidad} LTS` : '';
-            const anio = c.anio_fabricacion ? String(c.anio_fabricacion) : '';
-            const extra = [cap, anio].filter(Boolean).join(' / ');
+            const periodo = c.anio_fabricacion
+                ? `${c.mes_fabricacion ? String(c.mes_fabricacion).padStart(2, '0') + '-' : ''}${c.anio_fabricacion}`
+                : '';
+            const extra = [cap, periodo].filter(Boolean).join(' / ');
             if (extra) modStr = extra;
         }
         const item = c.componente === 'CILINDRO' ? '1' : c.componente === 'REGULADOR' ? 'Q' : String(i + 1);
@@ -284,7 +292,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val">${escapeHtml(veh.categoria || '-')}</td>
             <td class="num">11</td>
             <td>Combustible</td>
-            <td class="val">BI COMBUSTIBLE GLP</td>
+            <td class="val">${escapeHtml(veh.combustible || 'BI-COMBUSTIBLE GLP')}</td>
         </tr>
         <tr>
             <td class="num">4</td>
@@ -292,7 +300,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val">${escapeHtml(veh.marca || '-')}</td>
             <td class="num">12</td>
             <td>N° ejes / N° ruedas</td>
-            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.ejes))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.ruedas))}</td>
+            <td class="val">${escapeHtml(formatoDosDigitos(veh.ejes))} / ${escapeHtml(formatoDosDigitos(veh.ruedas))}</td>
         </tr>
         <tr>
             <td class="num">5</td>
@@ -300,7 +308,7 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val">${escapeHtml(veh.modelo || '-')}</td>
             <td class="num">13</td>
             <td>N° Asientos / Pasajeros</td>
-            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.asientos))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.pasajeros))}</td>
+            <td class="val">${escapeHtml(formatoDosDigitos(veh.asientos))} / ${escapeHtml(formatoDosDigitos(veh.pasajeros))}</td>
         </tr>
         <tr>
             <td class="num">6</td>

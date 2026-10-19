@@ -60,12 +60,13 @@ test('GLP Inicial: template genera HTML con todos los campos en orden y no muest
   assert.match($('table.comp-table').text(), /REG-CORP/);
 });
 
-test('GLP Anual: template muestra BI COMBUSTIBLE GLP fijo y expediente técnico de certificado', () => {
+test('GLP Anual: template muestra el combustible seleccionado y expediente técnico de certificado', () => {
   const data = {
     cabecera: { numero_certificado: 'GLP-ANUAL-002', fecha_emision: '2026-10-12', cliente_nombre: 'MARIA LOPEZ' },
     vehiculo: {
       placa: 'XYZ789', categoria: 'M1', marca: 'NISSAN', modelo: 'SENTRA', version: 'ADVANCE',
       ano_fabricacion: '2019', serie: 'SER123456', motor: 'MOT888', cilindros: '4.000', cilindrada: '1600.000',
+      combustible: 'GLP',
       ejes: '2', ruedas: '4', asientos: '5', pasajeros: '4',
       longitud: '4.300', ancho: '1.750', altura: '1.500', peso_neto: '1301.000', peso_bruto: '1450.000', carga_util: '149.000'
     },
@@ -90,18 +91,19 @@ test('GLP Anual: template muestra BI COMBUSTIBLE GLP fijo y expediente técnico 
   const $ = cheerio.load(html);
 
   assert.match(html, /CERTIFICADO DE INSPECCION DEL VEHICULO A GLP/);
-  assert.match(html, /BI COMBUSTIBLE GLP/);
+  assert.match(html, /<td class="val">GLP<\/td>/);
   assert.match(html, /GLP-ANUAL-002/);
   assert.equal($('table.comp-table tbody tr').length, 2);
   const tablaVehiculo = $('table.data-table').text();
   assert.match(tablaVehiculo, /4\s*\/\s*1600/);
+  assert.match(tablaVehiculo, /02\s*\/\s*04/);
+  assert.match(tablaVehiculo, /05\s*\/\s*04/);
   assert.match(tablaVehiculo, /4\.3\s*\/\s*1\.75\s*\/\s*1\.5/);
   assert.match(tablaVehiculo, /1301/);
   assert.match(tablaVehiculo, /1450/);
   assert.match(tablaVehiculo, /149/);
   assert.doesNotMatch(tablaVehiculo, /(?:1301|1450|149|1600)\.000/);
-  assert.match($('table.comp-table tbody tr').first().text(), /45 LTS\s*\/\s*2019/);
-  assert.doesNotMatch($('table.comp-table').text(), /01-2019/);
+  assert.match($('table.comp-table tbody tr').first().text(), /45 LTS\s*\/\s*01-2019/);
   assert.equal($('table.comp-table tbody tr').first().find('td').first().text().trim(), '1');
   assert.equal($('table.comp-table tbody tr').eq(1).find('td').first().text().trim(), 'Q');
 });

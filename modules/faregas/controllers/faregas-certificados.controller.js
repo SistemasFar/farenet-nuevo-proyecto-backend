@@ -3,6 +3,7 @@ const rangosService = require('../services/faregas-correlativos-rangos.service')
 const sedeRangosService = require('../services/faregas-correlativos-sede.service');
 const db = require('../../../config/database');
 const auditoriaService = require('../services/faregas-auditoria.service');
+const certificadoPdfService = require('../services/faregas-certificado-pdf.service');
 
 const auditarCertificado = (req, detalle) => auditoriaService.registrarEventoCertificado(
     auditoriaService.contextoRequest(req, {
@@ -377,6 +378,13 @@ exports.guardarVehiculoBorrador = async (req, res) => {
         if (e.message === 'PLANTA_NO_AUTORIZADA') return res.status(403).json({ ok: false, message: 'No tiene acceso a la planta de este certificado.' });
         if (e.message === 'CERTIFICADO_NO_EDITABLE') return res.status(409).json({ ok: false, message: 'El certificado ya no se encuentra en estado BORRADOR.' });
         if (e.message === 'DATOS_PREVIOS_NO_EDITABLES') return res.status(409).json({ ok: false, message: 'Los datos técnicos ya no se pueden modificar porque la facturación del certificado ya fue iniciada.' });
+        if (e.message === 'GLP_INICIAL_COMBUSTIBLE_INVALIDO' || e.code === 'GLP_INICIAL_COMBUSTIBLE_INVALIDO') {
+            return res.status(400).json({
+                ok: false,
+                code: 'GLP_INICIAL_COMBUSTIBLE_INVALIDO',
+                message: 'Para GLP INICIAL solo se aceptan GASOLINA o DIESEL como combustible original.'
+            });
+        }
         
         console.error(e);
         res.status(500).json({ ok: false, message: 'Error interno del servidor' });
@@ -406,6 +414,13 @@ exports.confirmarVehiculoBorrador = async (req, res) => {
         if (e.message === 'DATOS_PREVIOS_NO_EDITABLES') return res.status(409).json({ ok: false, message: 'Los datos técnicos ya no se pueden modificar porque la facturación del certificado ya fue iniciada.' });
         if (e.message === 'ANIO_MODELO_MAYOR_QUE_FABRICACION') return res.status(400).json({ ok: false, message: 'El Año Modelo no puede ser mayor que el Año de Fabricación.' });
         if (e.message === 'VEHICULO_MAESTRO_INCOMPLETO') return res.status(400).json({ ok: false, message: 'Complete y valide los datos técnicos obligatorios antes de confirmar el maestro vehicular.' });
+        if (e.message === 'GLP_INICIAL_COMBUSTIBLE_INVALIDO' || e.code === 'GLP_INICIAL_COMBUSTIBLE_INVALIDO') {
+            return res.status(400).json({
+                ok: false,
+                code: 'GLP_INICIAL_COMBUSTIBLE_INVALIDO',
+                message: 'Para GLP INICIAL solo se aceptan GASOLINA o DIESEL como combustible original.'
+            });
+        }
 
         console.error(e);
         res.status(500).json({ ok: false, message: 'Error interno del servidor' });
@@ -674,6 +689,14 @@ exports.guardarGLP = async (req, res) => {
                 message: 'El combustible original debe ser diferente a BI-COMBUSTIBLE GLP, que es el resultado de la conversión.'
             });
         }
+        if (error.code === 'GLP_INICIAL_COMBUSTIBLE_INVALIDO' || error.message === 'GLP_INICIAL_COMBUSTIBLE_INVALIDO') {
+            return res.status(400).json({
+                ok: false,
+                code: 'GLP_INICIAL_COMBUSTIBLE_INVALIDO',
+                codigo: 'GLP_INICIAL_COMBUSTIBLE_INVALIDO',
+                message: 'Para GLP INICIAL solo se aceptan GASOLINA o DIESEL como combustible original.'
+            });
+        }
         res.status(400).json({ ok: false, message: error.message });
     }
 };
@@ -842,6 +865,47 @@ exports.obtenerPrevisualizacion = async (req, res) => {
             return res.status(403).json({ ok: false, message: 'No autorizado o no encontrado' });
         }
         res.status(500).json({ ok: false, message: error.message });
+    }
+};
+
+exports.descargarPdfCertificado = async (req, res) => {
+    let pdfTemporal = null;
+    try {
+        const id = Number(req.params.id);
+        const borrador = await service.obtenerBorradorCompleto(id, req.user);
+        if (borrador.estado !== 'EMITIDO') {
+            const error = new Error('CERTIFICADO_NO_EMITIDO');
+            error.statusCode = 409;
+            throw error;
+        }
+        const preview = await service.obtenerPrevisualizacion(id, req.user);
+        pdfTemporal = await certificadoPdfService.generarPdfTemporal({
+            html: preview?.html,
+            certificadoId: id,
+            numeroCertificado: borrador.numeroCertificado || borrador.numero_certificado
+        });
+        await auditarCertificado(req, {
+            certificado_id: id,
+            evento: 'CERTIFICADO_PDF_DESCARGADO',
+            mensaje: 'Se descargó el PDF del certificado emitido.'
+        });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${pdfTemporal.filename}"`);
+        res.setHeader('Cache-Control', 'private, no-store');
+        return res.sendFile(pdfTemporal.pdfPath, (error) => {
+            pdfTemporal?.limpiar();
+            if (error) console.error('[FAREGAS_CERTIFICADO_PDF_SEND]', error.message);
+        });
+    } catch (error) {
+        pdfTemporal?.limpiar();
+        if (error.message === 'CERTIFICADO_NOT_FOUND' || error.message === 'PLANTA_NO_AUTORIZADA') {
+            return res.status(403).json({ ok: false, message: 'No autorizado o no encontrado' });
+        }
+        if (error.message === 'CERTIFICADO_NO_EMITIDO' || error.message === 'CERTIFICADO_SIN_CONTENIDO') {
+            return res.status(409).json({ ok: false, codigo: error.message, message: 'El certificado emitido no está disponible para descargar.' });
+        }
+        console.error('[FAREGAS_CERTIFICADO_PDF]', error);
+        return res.status(500).json({ ok: false, message: 'No se pudo generar el PDF del certificado.' });
     }
 };
 

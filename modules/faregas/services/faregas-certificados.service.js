@@ -1238,15 +1238,44 @@ exports.guardarVehiculoBorrador = async (
             }
         }
 
-        let combustible = data.combustible || null;
+        const rCertGlpInfo = await client.query(`
+            SELECT c.tipo_certificado_clave,
+                   COALESCE(g.modalidad, s.modalidad) AS glp_modalidad
+            FROM fg_certificado c
+            LEFT JOIN fg_tarifa ta ON ta.codigo = c.tarifa_codigo AND ta.planta_key = c.planta_key
+            LEFT JOIN fg_servicio s ON s.id = ta.servicio_id
+            LEFT JOIN fg_certificado_glp g ON g.certificado_id = c.id
+            WHERE c.id = $1
+        `, [id]);
+        const certGlpInfo = rCertGlpInfo.rows[0] || {};
+        const esGlpInicial = certGlpInfo.tipo_certificado_clave === 'GLP_ANUAL'
+            && String(certGlpInfo.glp_modalidad || '').trim().toUpperCase() === 'INICIAL';
+
+        const tieneCombustible = data.combustible !== undefined
+            && data.combustible !== null
+            && String(data.combustible).trim() !== '';
+        const combustibleNormalizado = tieneCombustible
+            ? String(data.combustible).trim().toUpperCase()
+            : null;
+
+        if (esGlpInicial) {
+            if (tieneCombustible && !['GASOLINA', 'DIESEL'].includes(combustibleNormalizado)) {
+                const error = new Error('GLP_INICIAL_COMBUSTIBLE_INVALIDO');
+                error.code = 'GLP_INICIAL_COMBUSTIBLE_INVALIDO';
+                error.status = 400;
+                throw error;
+            }
+            if (sincronizarMaestro && (!combustibleNormalizado || !['GASOLINA', 'DIESEL'].includes(combustibleNormalizado))) {
+                const error = new Error('GLP_INICIAL_COMBUSTIBLE_INVALIDO');
+                error.code = 'GLP_INICIAL_COMBUSTIBLE_INVALIDO';
+                error.status = 400;
+                throw error;
+            }
+        }
+
+        let combustible = tieneCombustible ? combustibleNormalizado : (data.combustible || null);
         if (!combustible) {
-            const rCertGlpInfo = await client.query(`
-                SELECT c.tipo_certificado_clave, g.modalidad as glp_modalidad
-                FROM fg_certificado c
-                LEFT JOIN fg_certificado_glp g ON g.certificado_id = c.id
-                WHERE c.id = $1
-            `, [id]);
-            if (rCertGlpInfo.rows[0]?.tipo_certificado_clave === 'GLP_ANUAL' && rCertGlpInfo.rows[0]?.glp_modalidad === 'ANUAL') {
+            if (certGlpInfo.tipo_certificado_clave === 'GLP_ANUAL' && String(certGlpInfo.glp_modalidad || '').trim().toUpperCase() === 'ANUAL') {
                 combustible = 'BI COMBUSTIBLE GLP';
             }
         }
@@ -1786,10 +1815,18 @@ exports.guardarGLP = async (id, data, userContext) => {
                 LIMIT 1
             `, [id]);
             const vehiculoOriginal = rVehiculoOriginal.rows[0] || {};
+            const combOriginalNorm = String(vehiculoOriginal.combustible || '').trim().toUpperCase();
 
             if (combustiblesGlpSonEquivalentes(vehiculoOriginal.combustible, data.combustiblePosterior)) {
                 const error = new Error('GLP_COMBUSTIBLE_SIN_CAMBIO');
                 error.code = 'GLP_COMBUSTIBLE_SIN_CAMBIO';
+                throw error;
+            }
+
+            if (combOriginalNorm && !['GASOLINA', 'DIESEL'].includes(combOriginalNorm)) {
+                const error = new Error('GLP_INICIAL_COMBUSTIBLE_INVALIDO');
+                error.code = 'GLP_INICIAL_COMBUSTIBLE_INVALIDO';
+                error.status = 400;
                 throw error;
             }
         }
@@ -2012,6 +2049,7 @@ exports.validarEmision = async (id, userContext) => {
     const rCert = await db.query(`
         SELECT c.*, t.clave AS tipo_clave,
                s.tipo_flujo AS servicio_tipo_flujo,
+               s.modalidad AS servicio_modalidad,
                f.motor AS formato_motor,
                f.es_protegido AS formato_es_protegido,
                fv.id AS formato_version_resuelta_id,
@@ -2101,7 +2139,9 @@ exports.validarEmision = async (id, userContext) => {
             ]);
         } else if (!esFormularioDinamico && cert.tipo_clave === 'GLP_ANUAL') {
             const rGlpMod = await db.query('SELECT modalidad FROM fg_certificado_glp WHERE certificado_id = $1', [id]);
-            const esAnual = rGlpMod.rowCount > 0 && rGlpMod.rows[0].modalidad === 'ANUAL';
+            const modalidadGlp = (rGlpMod.rows[0]?.modalidad || cert.servicio_modalidad || '').trim().toUpperCase();
+            const esAnual = modalidadGlp === 'ANUAL';
+            const esInicial = modalidadGlp === 'INICIAL';
             const camposRequeridos = [
                 'categoria', 'marca', 'modelo', 'version', 'anio_fabricacion', 'numero_motor',
                 'numero_cilindros', 'cilindrada', 'numero_ejes', 'numero_ruedas',
@@ -2114,6 +2154,13 @@ exports.validarEmision = async (id, userContext) => {
                 veh.combustible = 'BI COMBUSTIBLE GLP';
             }
             checkCampos(camposRequeridos);
+
+            if (esInicial) {
+                const combNorm = String(veh.combustible || '').trim().toUpperCase();
+                if (!combNorm || !['GASOLINA', 'DIESEL'].includes(combNorm)) {
+                    pushError('vehiculo', 'combustible', 'GLP_INICIAL_COMBUSTIBLE_INVALIDO', 'Para GLP INICIAL el combustible original debe ser GASOLINA o DIESEL.');
+                }
+            }
         } else if (!esFormularioDinamico && cert.tipo_clave === 'CONFORMIDAD') {
             checkCampos([
                 'clase', 'categoria', 'modelo', 'marca', 'numero_motor', 'color', 'carroceria',

@@ -35,6 +35,9 @@ router.use('/config', configRoutes);
 const descuentosRoutes = require('./faregas-descuentos.routes');
 router.use('/descuentos', descuentosRoutes);
 
+const pagosRoutes = require('./faregas-pagos.routes');
+router.use('/pagos', pagosRoutes);
+
 const chipsRoutes = require('./faregas-chips.routes');
 router.use('/chips', chipsRoutes);
 

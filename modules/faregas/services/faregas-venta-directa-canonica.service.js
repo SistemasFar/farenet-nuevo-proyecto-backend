@@ -11,6 +11,7 @@ const {
     validarProductoFiscalChip
 } = require('./faregas-chips-fiscal.rules');
 const inventarioCantidadService = require('./faregas-inventario-cantidad.service');
+const { validarCuentaFaregas } = require('./faregas-cuenta-bancaria.service');
 
 const texto = (value) => String(value ?? '').trim();
 
@@ -80,11 +81,7 @@ const validarPago = async (client, pago) => {
         if (!pago.entidadFinancieraKey || !pago.cuentaCorrienteKey || !pago.nroOperacion || !pago.fechaDeposito) {
             throw new Error('DATOS_BANCO_INCOMPLETOS');
         }
-        const cuenta = await client.query(
-            'SELECT 1 FROM cuentacorriente WHERE key = $1 AND entidadfinanciera_key = $2',
-            [pago.cuentaCorrienteKey, pago.entidadFinancieraKey]
-        );
-        if (!cuenta.rowCount) throw new Error('CUENTA_BANCARIA_INVALIDA');
+        await validarCuentaFaregas(client, pago.cuentaCorrienteKey, pago.entidadFinancieraKey);
 
         const fechaDeposito = new Date(`${String(pago.fechaDeposito).slice(0, 10)}T00:00:00`);
         if (Number.isNaN(fechaDeposito.getTime())) throw new Error('FECHA_DEPOSITO_INVALIDA');
@@ -439,5 +436,5 @@ const crearVentaDirecta = async (payload, userContext) => {
 
 module.exports = {
     crearVentaDirecta,
-    _private: Object.freeze({ obtenerConfiguracionProducto, calcularBaseIgv, construirDetalleChip })
+    _private: Object.freeze({ obtenerConfiguracionProducto, calcularBaseIgv, construirDetalleChip, validarPago })
 };

@@ -1,5 +1,6 @@
 const pagosService = require('../services/faregas-pagos.service');
 const auditoriaService = require('../services/faregas-auditoria.service');
+const cuentaBancariaService = require('../services/faregas-cuenta-bancaria.service');
 
 const responderError = (res, error) => {
     const errores = {
@@ -25,7 +26,8 @@ const responderError = (res, error) => {
         OPERACION_CUPONIDAD_INVALIDA: [400, 'La operación Cuponidad debe tener exactamente 10 caracteres.'],
         OPERACION_BILLETERA_INVALIDA: [400, 'La operación Yape/Plin debe tener entre 4 y 10 dígitos.'],
         DATOS_BANCO_INCOMPLETOS: [400, 'Complete banco, cuenta, operación y fecha de depósito.'],
-        CUENTA_BANCARIA_INVALIDA: [400, 'La cuenta no pertenece a la entidad financiera seleccionada.'],
+        CUENTA_BANCARIA_INVALIDA: [400, 'Use únicamente la cuenta bancaria autorizada de FAREGAS.'],
+        CUENTA_FAREGAS_NO_CONFIGURADA: [503, 'La cuenta bancaria de FAREGAS no está configurada.'],
         FECHA_DEPOSITO_INVALIDA: [400, 'La fecha de depósito no es válida.'],
         FECHA_DEPOSITO_FUTURA: [400, 'La fecha de depósito no puede ser posterior a hoy.'],
         PRODUCTO_FISCAL_CHIP_INVALIDO: [409, 'El producto fiscal configurado para el chip está incompleto. Seleccione un producto activo con unidad NIU o ZZ y afectación IGV 10.'],
@@ -33,6 +35,15 @@ const responderError = (res, error) => {
     const [status, message] = errores[error.message] || [500, ('Error interno al procesar los pagos: ' + (error.message || error.toString()))];
     if (status === 500) console.error('Error FAREGAS pagos:', error);
     return res.status(status).json({ ok: false, message, code: error.message, codigo: error.message, detalles: error.detalles || null });
+};
+
+exports.obtenerMaestros = async (_req, res) => {
+    try {
+        const data = await cuentaBancariaService.obtenerMaestrosPago();
+        return res.status(200).json({ status: 'success', data });
+    } catch (error) {
+        return responderError(res, error);
+    }
 };
 
 exports.obtenerPorOperacion = async (req, res) => {

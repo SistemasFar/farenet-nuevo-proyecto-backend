@@ -165,6 +165,7 @@ router.post('/borradores/:id/facturacion/notas/:tipo/:notaId/emitir', documentos
 router.post('/borradores/:id/facturacion/anulaciones', documentosElectronicosController.generarAnulacion);
 router.post('/borradores/:id/facturacion/anulaciones/:anulacionId/consultar', documentosElectronicosController.consultarAnulacion);
 router.get('/borradores/:id/facturacion/pdf', facturacionController.descargarPdfFaregas);
+router.get('/borradores/:id/facturacion/pdf-nubefact', facturacionController.descargarPdfNubefact);
 router.get('/borradores/:id/facturacion/html', facturacionController.obtenerHtmlFaregas);
 router.post('/borradores/:id/facturacion/regenerar-pdf', facturacionController.regenerarPdfFaregas);
 router.get('/facturacion/:facturacionId/pdf', facturacionController.descargarPdfFaregasPorFacturacionId);
@@ -177,6 +178,7 @@ router.post('/facturacion/:facturacionId/regenerar-pdf', facturacionController.r
 // módulo Facturación. Un perfil sin MENU_FACTURACION_SERIES debe poder seguir
 // emitiendo sus certificados igual que antes de dividir los permisos.
 router.get('/borradores/:id/previsualizacion', controller.obtenerPrevisualizacion);
+router.get('/borradores/:id/certificado/pdf', controller.descargarPdfCertificado);
 router.get('/borradores/:id/validar-emision', controller.validarEmision);
 router.post('/borradores/:id/emitir', controller.emitir);
 

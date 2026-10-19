@@ -85,7 +85,7 @@ const obtenerMaestrosPago = async (req, res) => {
             db.query('SELECT key, nombre FROM formapago ORDER BY nombre ASC'),
             db.query('SELECT key, nombre FROM tarjeta ORDER BY nombre ASC'),
             db.query('SELECT key, nombre FROM entidadfinanciera ORDER BY nombre ASC'),
-            db.query('SELECT key, nroctacorriente AS nombre, entidadfinanciera_key FROM cuentacorriente ORDER BY nroctacorriente ASC')
+            db.query("SELECT key, nroctacorriente AS nombre, entidadfinanciera_key FROM cuentacorriente WHERE empresa_key IS DISTINCT FROM 'FAREGAS' ORDER BY nroctacorriente ASC")
         ]);
 
         return res.status(200).json({

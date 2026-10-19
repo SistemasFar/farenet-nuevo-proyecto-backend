@@ -1,8 +1,8 @@
 -- ============================================================================
 -- FAREGAS - ESQUEMA CONSOLIDADO
 -- Generado desde el esquema operativo verificado el 2026-10-19.
--- Contiene solamente estructura: 61 tablas funcionales, secuencias, claves,
--- restricciones, indices, comentarios, funcion y trigger. No copia datos.
+-- Contiene 61 tablas funcionales, secuencias, claves, restricciones, indices,
+-- comentarios, funcion, trigger y la unica cuenta bancaria operativa FAREGAS.
 --
 -- Prerrequisito: el esquema legacy Farenet debe existir porque FAREGAS conserva
 -- claves foraneas hacia moneda, formapago, cuentacorriente, entidadfinanciera,
@@ -32,6 +32,33 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
+
+
+-- Cuenta bancaria exclusiva de FAREGAS. Se guarda en el catalogo legacy para
+-- conservar la FK de fg_pago, pero empresa_key permite excluirla de FARENET.
+-- Cuenta: 0100020564. CCI informativo: 011-397-000100020564-79.
+-- El UPSERT hace segura la reinstalacion de esta configuracion maestra.
+INSERT INTO public.cuentacorriente (
+    key,
+    nroctacorriente,
+    entidadfinanciera_key,
+    moneda_key,
+    enable,
+    empresa_key
+) VALUES (
+    'FG_BBVA_00020564',
+    '0011-0397-0100020564',
+    '6',
+    'sol',
+    TRUE,
+    'FAREGAS'
+)
+ON CONFLICT (key) DO UPDATE SET
+    nroctacorriente = EXCLUDED.nroctacorriente,
+    entidadfinanciera_key = EXCLUDED.entidadfinanciera_key,
+    moneda_key = EXCLUDED.moneda_key,
+    enable = EXCLUDED.enable,
+    empresa_key = EXCLUDED.empresa_key;
 
 
 -- Funcion requerida por el trigger inmutable del inventario por cantidad.

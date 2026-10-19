@@ -13,6 +13,8 @@ require.cache[databasePath] = {
 
 const pagosService = require('../services/faregas-pagos.service');
 const facturacionRules = require('../services/faregas-facturacion.rules');
+const cuentaBancariaService = require('../services/faregas-cuenta-bancaria.service');
+const ventaDirectaService = require('../services/faregas-venta-directa-canonica.service');
 
 test('tarjeta nueva no requiere ni valida últimos cuatro dígitos', async () => {
     const client = {
@@ -36,6 +38,47 @@ test('tarjeta física exige modalidad débito o crédito', async () => {
     await assert.rejects(() => pagosService._private.validarReferenciaPago(client, {
         tipo: 'tarjeta', tarjetaKey: 'visa', nroOperacion: 'OP-123', importe: 50
     }), /MODALIDAD_TARJETA_REQUERIDA/);
+});
+
+test('FAREGAS acepta únicamente su cuenta BBVA autorizada en certificados y ventas directas', async () => {
+    const consultas = [];
+    const client = {
+        query: async (sql, params) => {
+            consultas.push({ sql, params });
+            return { rowCount: 1, rows: [{ '?column?': 1 }] };
+        }
+    };
+    const pago = {
+        tipo: 'banco',
+        entidadFinancieraKey: cuentaBancariaService.CUENTA_FAREGAS.entidadFinancieraKey,
+        cuentaCorrienteKey: cuentaBancariaService.CUENTA_FAREGAS.key,
+        nroOperacion: 'OP-FAREGAS-1',
+        fechaDeposito: '2026-10-19',
+        importe: 80
+    };
+
+    await assert.doesNotReject(() => pagosService._private.validarReferenciaPago(client, pago));
+    await assert.doesNotReject(() => ventaDirectaService._private.validarPago(client, pago));
+    assert.equal(consultas.length, 2);
+    assert.deepEqual(consultas[0].params, [
+        'FG_BBVA_00020564', '6', '0011-0397-0100020564', 'FAREGAS'
+    ]);
+
+    await assert.rejects(() => pagosService._private.validarReferenciaPago(client, {
+        ...pago,
+        cuentaCorrienteKey: '93'
+    }), /CUENTA_BANCARIA_INVALIDA/);
+});
+
+test('el SQL consolidado registra la cuenta FAREGAS sin convertirla en cuenta FARENET', () => {
+    const sql = fs.readFileSync(path.join(
+        __dirname,
+        '../database/migrations/0001_faregas_schema.sql'
+    ), 'utf8');
+    assert.match(sql, /FG_BBVA_00020564/);
+    assert.match(sql, /0011-0397-0100020564/);
+    assert.match(sql, /011-397-000100020564-79|empresa_key[\s\S]*FAREGAS/i);
+    assert.match(sql, /ON CONFLICT \(key\) DO UPDATE/i);
 });
 
 test('boleta a crédito es rechazada por la regla de negocio', () => {

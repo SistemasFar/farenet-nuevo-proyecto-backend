@@ -130,6 +130,7 @@ test('la previsualización sin correlativo muestra estado pendiente y no reutili
 
 test('la emisión GLP ANUAL consume un solo correlativo y sincroniza certificado y expediente', async () => {
     const originalConnect = db.connect;
+    const originalQuery = db.query;
     const originalValidarEmision = certificados.validarEmision;
     const originalValidarAcceso = authService.validarAccesoCertificado;
     const originalConsumirNumero = sedeRangos.consumirNumero;
@@ -137,6 +138,7 @@ test('la emisión GLP ANUAL consume un solo correlativo y sincroniza certificado
     let expedientePersistido = null;
     let certificadoPersistido = null;
 
+    db.query = async () => ({ rowCount: 0, rows: [] });
     db.connect = async () => ({
         async query(sql, params = []) {
             const texto = String(sql);
@@ -186,6 +188,7 @@ test('la emisión GLP ANUAL consume un solo correlativo y sincroniza certificado
         assert.equal(certificadoPersistido, 'DG-41-000151');
     } finally {
         db.connect = originalConnect;
+        db.query = originalQuery;
         certificados.validarEmision = originalValidarEmision;
         authService.validarAccesoCertificado = originalValidarAcceso;
         sedeRangos.consumirNumero = originalConsumirNumero;
