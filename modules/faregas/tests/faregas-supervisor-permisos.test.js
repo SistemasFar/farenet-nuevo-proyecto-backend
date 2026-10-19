@@ -6,7 +6,7 @@ const test = require('node:test');
 const backendRoot = path.join(__dirname, '..');
 const migrationPath = path.join(
     backendRoot,
-    'database/migrations/20261019_faregas_supervisor_permisos_operativos.sql'
+    'database/migrations_history/20261019_faregas_supervisor_permisos_operativos.sql'
 );
 
 const obtenerPermisosSupervisor = () => {

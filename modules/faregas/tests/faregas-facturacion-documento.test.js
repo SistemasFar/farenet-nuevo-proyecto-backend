@@ -41,7 +41,7 @@ test('Carné de Extranjería no se transforma silenciosamente en DNI para Nubefa
 test('la migración amplía fg_facturacion sin reescribir el histórico', () => {
     const sql = fs.readFileSync(path.join(
         __dirname,
-        '../database/migrations/20261013_faregas_facturacion_tipo_documento.sql'
+        '../database/migrations_history/20261013_faregas_facturacion_tipo_documento.sql'
     ), 'utf8');
 
     assert.match(sql, /tipo_documento_cliente TYPE VARCHAR\(20\)/i);

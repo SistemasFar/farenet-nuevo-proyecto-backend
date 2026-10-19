@@ -9,7 +9,7 @@ const workspaceRoot = path.join(backendRoot, '..', '..', '..');
 test('Clientes tiene un permiso de Facturación independiente y compatible', () => {
     const migration = fs.readFileSync(path.join(
         backendRoot,
-        'database/migrations/20261016_faregas_permiso_facturacion_clientes.sql'
+        'database/migrations_history/20261016_faregas_permiso_facturacion_clientes.sql'
     ), 'utf8');
     const route = fs.readFileSync(path.join(backendRoot, 'routes/faregas-clientes.routes.js'), 'utf8');
     const facturacion = fs.readFileSync(path.join(

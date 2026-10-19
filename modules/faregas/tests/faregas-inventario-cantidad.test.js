@@ -107,7 +107,7 @@ test('la salida por venta se vincula al detalle y no inventa serial', async () =
 });
 
 test('la migración no inventa stock inicial y vincula 0130/0132 sólo a SURCO', () => {
-    const migration = fs.readFileSync(path.join(__dirname, '../database/migrations/20261007_faregas_inventario_cantidad_hojas.sql'), 'utf8');
+    const migration = fs.readFileSync(path.join(__dirname, '../database/migrations_history/20261007_faregas_inventario_cantidad_hojas.sql'), 'utf8');
     assert.match(migration, /'HOJA_GLP'.*'CANTIDAD'/s);
     assert.match(migration, /codigo_sku = '0130'/);
     assert.match(migration, /codigo_sku = '0132'/);

@@ -52,7 +52,7 @@ test('boleta a crédito es rechazada por la regla de negocio', () => {
 test('migración conserva marca y agrega modalidad nullable al pago', () => {
     const sql = fs.readFileSync(path.join(
         __dirname,
-        '../database/migrations/20261015_faregas_pago_modalidad_tarjeta.sql'
+        '../database/migrations_history/20261015_faregas_pago_modalidad_tarjeta.sql'
     ), 'utf8');
     assert.match(sql, /ADD COLUMN IF NOT EXISTS modalidad_tarjeta/i);
     assert.match(sql, /modalidad_tarjeta IS NULL/i);
@@ -94,7 +94,7 @@ test('facturación valida el mismo período sin cambiar la lógica de cuotas', (
 test('migración agrega período a la orden sin eliminar el histórico de tarjeta', () => {
     const sql = fs.readFileSync(path.join(
         __dirname,
-        '../database/migrations/20261014_faregas_periodo_credito_orden.sql'
+        '../database/migrations_history/20261014_faregas_periodo_credito_orden.sql'
     ), 'utf8');
     assert.match(sql, /fecha_inicio_credito date/i);
     assert.match(sql, /fecha_vencimiento_credito date/i);
@@ -131,7 +131,7 @@ test('las cuotas de crédito deben permanecer dentro del período', () => {
 test('migración persiste la decisión explícita del dueño sin inferir históricos', () => {
     const sql = fs.readFileSync(path.join(
         __dirname,
-        '../database/migrations/20261015_faregas_facturacion_dueno_principal.sql'
+        '../database/migrations_history/20261015_faregas_facturacion_dueno_principal.sql'
     ), 'utf8');
     assert.match(sql, /ADD COLUMN IF NOT EXISTS facturar_al_dueno_principal boolean/i);
     assert.doesNotMatch(sql, /DEFAULT\s+TRUE/i);

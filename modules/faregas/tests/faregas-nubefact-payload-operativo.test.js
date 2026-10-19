@@ -204,7 +204,7 @@ test('la matriz documenta qué puede representarse de forma nativa', () => {
 test('la migración sólo amplía facturación y no reescribe comprobantes históricos', () => {
     const sql = fs.readFileSync(path.join(
         __dirname,
-        '../database/migrations/20261014_faregas_facturacion_snapshot_operativo.sql'
+        '../database/migrations_history/20261014_faregas_facturacion_snapshot_operativo.sql'
     ), 'utf8');
 
     assert.match(sql, /ALTER TABLE fg_facturacion/i);

@@ -7,12 +7,12 @@ const { obtenerCatalogoVariables } = require('../services/faregas-formatos.varia
 
 const migrationPath = path.join(
   __dirname,
-  '../database/migrations/20261007_faregas_formato_inspeccion_taller_base.sql'
+  '../database/migrations_history/20261007_faregas_formato_inspeccion_taller_base.sql'
 );
 const migration = fs.readFileSync(migrationPath, 'utf8');
 const layoutMigration = fs.readFileSync(path.join(
   __dirname,
-  '../database/migrations/20261007_faregas_taller_layout_referencia.sql'
+  '../database/migrations_history/20261007_faregas_taller_layout_referencia.sql'
 ), 'utf8');
 
 test('registra el sistema de combustible como variable del formato', () => {
