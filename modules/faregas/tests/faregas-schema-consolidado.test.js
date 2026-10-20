@@ -18,8 +18,9 @@ test('el esquema consolidado crea todas las tablas funcionales sin parches de co
         (match) => match[1]
     );
 
-    assert.equal(tables.length, 61);
-    assert.equal(new Set(tables).size, 61);
+    assert.equal(tables.length, 62);
+    assert.equal(new Set(tables).size, 62);
+    assert.ok(tables.includes('fg_certificado_duplicado'));
     assert.doesNotMatch(schema, /\bADD\s+COLUMN\b/i);
     assert.doesNotMatch(schema, /fg_descuentodetalle_backup_20260826_reglas_compartidas/i);
 });

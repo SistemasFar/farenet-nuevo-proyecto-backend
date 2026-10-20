@@ -22,6 +22,10 @@ router.use('/auditoria', auditoriaRoutes);
 const certificadosRoutes = require('./faregas-certificados.routes');
 router.use('/certificados', certificadosRoutes);
 
+// Duplicados pagados de certificados emitidos (flujo aislado del certificado original)
+const duplicadosRoutes = require('./faregas-duplicados.routes');
+router.use('/duplicados', duplicadosRoutes);
+
 // MÃ³dulo de clientes y autocompletado vehicular (Fase 2)
 const clientesRoutes = require('./faregas-clientes.routes');
 router.use('/clientes', clientesRoutes);
