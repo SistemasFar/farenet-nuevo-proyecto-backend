@@ -1,4 +1,4 @@
-const { escapeHtml, formatDateLong, formatDateShort, formatNumberWithoutTrailingZeros, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
+const { escapeHtml, formatDateLong, formatDateShort, formatNumberWithoutTrailingZeros, formatCountTwoDigits, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
 
 function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
     const cert = data.cabecera || {};
@@ -52,6 +52,31 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
     const domFiscal = cert.domicilio_fiscal || '-';
     const telfCert = cert.telefono_certificadora || '-';
     const lugarEmision = cert.lugar_emision || '-';
+
+    // Observaciones del inspector (campo opcional).
+    // Si contiene texto válido, se muestra "OBSERVACIONES: <texto>".
+    // Si viene vacío, null, undefined o texto marcador ("NINGUNA", "N/A", "SIN OBSERVACIONES"),
+    // se renderiza "OBSERVACIONES:" seguido de 2 líneas punteadas para conservar el formato
+    // original del documento, sin imprimir null, undefined, N/A o NINGUNA.
+    const rawObservaciones = (gnv && gnv.observaciones) || (cert && cert.observaciones) || '';
+    let cleanObservaciones = typeof rawObservaciones === 'string'
+        ? rawObservaciones.trim().slice(0, 250)
+        : '';
+    if (['NULL', 'UNDEFINED', 'N/A', 'NA', 'SIN OBSERVACIONES', 'NINGUNA', 'NINGUNO', '-', 'VACÍO', 'VACIO', 'NONE'].includes(cleanObservaciones.toUpperCase())) {
+        cleanObservaciones = '';
+    }
+
+    const obsContentHtml = cleanObservaciones
+        ? `<strong>OBSERVACIONES:</strong> ${escapeHtml(cleanObservaciones).replace(/(?:\r\n|\r|\n)/g, '<br>')}`
+        : `<div class="obs-header-line">
+            <span class="obs-label"><strong>OBSERVACIONES:</strong></span>
+            <div class="obs-dots-container">
+                <svg width="100%" height="8" style="display:block;"><line x1="0" y1="6" x2="100%" y2="6" stroke="#000" stroke-width="1.2" stroke-dasharray="1 3.5" stroke-linecap="round"/></svg>
+            </div>
+        </div>
+        <div class="obs-dots-full">
+            <svg width="100%" height="8" style="display:block;"><line x1="0" y1="6" x2="100%" y2="6" stroke="#000" stroke-width="1.2" stroke-dasharray="1 3.5" stroke-linecap="round"/></svg>
+        </div>`;
 
     return `<!DOCTYPE html>
 <html lang="es">
@@ -180,6 +205,25 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
         .obs-sec {
             margin-top: 10px;
             font-size: 10px;
+            line-height: 1.35;
+            text-align: justify;
+        }
+        .obs-header-line {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+        }
+        .obs-label {
+            white-space: nowrap;
+        }
+        .obs-dots-container {
+            flex: 1;
+            height: 8px;
+        }
+        .obs-dots-full {
+            width: 100%;
+            height: 8px;
+            margin-top: 4px;
         }
         .footer-date {
             margin-top: 20px;
@@ -234,7 +278,7 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val">${escapeHtml(veh.marca || '-')}</td>
             <td class="num">11</td>
             <td class="label">N° ejes / N° ruedas</td>
-            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.ejes))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.ruedas))}</td>
+            <td class="val">${escapeHtml(formatCountTwoDigits(veh.ejes))} / ${escapeHtml(formatCountTwoDigits(veh.ruedas))}</td>
         </tr>
         <tr>
             <td class="num">4</td>
@@ -242,7 +286,7 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
             <td class="val">${escapeHtml(veh.modelo || '-')}</td>
             <td class="num">12</td>
             <td class="label">N° Asientos / Pasajeros</td>
-            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.asientos))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.pasajeros))}</td>
+            <td class="val">${escapeHtml(formatCountTwoDigits(veh.asientos))} / ${escapeHtml(formatCountTwoDigits(veh.pasajeros))}</td>
         </tr>
         <tr>
             <td class="num">5</td>
@@ -287,7 +331,7 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
     </div>
 
     <div class="obs-sec">
-        <strong>OBSERVACIONES:</strong> ${escapeHtml(cert.observaciones || '……………………………………………………………………………………………………………………….')}
+        ${obsContentHtml}
     </div>
 
     <div class="footer-date">

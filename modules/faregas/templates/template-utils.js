@@ -61,11 +61,19 @@ function formatNumeroCertificado(value, fallback = '') {
     return formatNumberWithoutTrailingZeros(value, fallback);
 }
 
+/** Presenta conteos técnicos con la nomenclatura de dos dígitos del certificado. */
+function formatCountTwoDigits(value, fallback = '-') {
+    const integer = formatNumberWithoutTrailingZeros(value, '');
+    if (!integer) return fallback;
+    return /^\d+$/.test(integer) ? integer.padStart(2, '0') : integer;
+}
+
 module.exports = {
     NUMERO_CERTIFICADO_PENDIENTE,
     escapeHtml,
     formatDateLong,
     formatDateShort,
     formatNumberWithoutTrailingZeros,
-    formatNumeroCertificado
+    formatNumeroCertificado,
+    formatCountTwoDigits
 };

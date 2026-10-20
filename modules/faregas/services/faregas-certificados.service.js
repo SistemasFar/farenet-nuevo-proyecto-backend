@@ -1240,16 +1240,19 @@ exports.guardarVehiculoBorrador = async (
 
         const rCertGlpInfo = await client.query(`
             SELECT c.tipo_certificado_clave,
-                   COALESCE(g.modalidad, s.modalidad) AS glp_modalidad
+                   COALESCE(g.modalidad, gv.modalidad, s.modalidad) AS glp_modalidad
             FROM fg_certificado c
             LEFT JOIN fg_tarifa ta ON ta.codigo = c.tarifa_codigo AND ta.planta_key = c.planta_key
             LEFT JOIN fg_servicio s ON s.id = ta.servicio_id
             LEFT JOIN fg_certificado_glp g ON g.certificado_id = c.id
+            LEFT JOIN fg_certificado_gnv gv ON gv.certificado_id = c.id
             WHERE c.id = $1
         `, [id]);
         const certGlpInfo = rCertGlpInfo.rows[0] || {};
         const esGlpInicial = certGlpInfo.tipo_certificado_clave === 'GLP_ANUAL'
             && String(certGlpInfo.glp_modalidad || '').trim().toUpperCase() === 'INICIAL';
+        const esGnvAnual = certGlpInfo.tipo_certificado_clave === 'GNV_ANUAL'
+            && String(certGlpInfo.glp_modalidad || '').trim().toUpperCase() === 'ANUAL';
 
         const tieneCombustible = data.combustible !== undefined
             && data.combustible !== null
@@ -1274,6 +1277,16 @@ exports.guardarVehiculoBorrador = async (
         }
 
         let combustible = tieneCombustible ? combustibleNormalizado : (data.combustible || null);
+        if (esGnvAnual) {
+            const combustibleGnv = String(combustible || '')
+                .trim()
+                .toUpperCase()
+                .replace(/\s*-\s*/g, '-')
+                .replace(/\s+/g, ' ');
+            combustible = combustibleGnv === 'GNV'
+                ? 'GNV'
+                : 'BI-COMBUSTIBLE GNV';
+        }
         if (!combustible) {
             if (certGlpInfo.tipo_certificado_clave === 'GLP_ANUAL' && String(certGlpInfo.glp_modalidad || '').trim().toUpperCase() === 'ANUAL') {
                 combustible = 'BI COMBUSTIBLE GLP';
@@ -1643,9 +1656,13 @@ exports.guardarGNV = async (id, data, userContext) => {
         // 250 caracteres que el formulario. Cadena vacía o ausente se guarda
         // como NULL (sin observación). No se toca ningún otro dato GNV.
         const LIMITE_OBSERVACIONES_GNV = 250;
-        const observacionesGnv = typeof data.observaciones === 'string'
-            ? data.observaciones.trim().slice(0, LIMITE_OBSERVACIONES_GNV) || null
-            : null;
+        let observacionesGnv = null;
+        if (typeof data.observaciones === 'string') {
+            const trimmed = data.observaciones.trim();
+            observacionesGnv = trimmed ? trimmed.slice(0, LIMITE_OBSERVACIONES_GNV) : null;
+        }
+
+        const tieneObservacionesExplicitas = data.observaciones !== undefined;
 
         const qUpd = `
             INSERT INTO fg_certificado_gnv (
@@ -1664,7 +1681,7 @@ exports.guardarGNV = async (id, data, userContext) => {
                 numero_chip = EXCLUDED.numero_chip,
                 combustible_posterior = COALESCE(EXCLUDED.combustible_posterior, fg_certificado_gnv.combustible_posterior),
                 peso_neto_posterior = COALESCE(EXCLUDED.peso_neto_posterior, fg_certificado_gnv.peso_neto_posterior),
-                observaciones = COALESCE(EXCLUDED.observaciones, fg_certificado_gnv.observaciones)
+                observaciones = CASE WHEN $14::boolean THEN EXCLUDED.observaciones ELSE fg_certificado_gnv.observaciones END
         `;
         
         await client.query(qUpd, [
@@ -1680,8 +1697,13 @@ exports.guardarGNV = async (id, data, userContext) => {
             numeroChip,
             data.combustiblePosterior || null,
             data.pesoNetoPosterior || null,
-            observacionesGnv
+            observacionesGnv,
+            tieneObservacionesExplicitas
         ]);
+
+        if (tieneObservacionesExplicitas) {
+            await client.query('UPDATE fg_certificado SET observaciones = $1 WHERE id = $2', [observacionesGnv, id]);
+        }
 
         await client.query('COMMIT');
         return true;
@@ -2299,10 +2321,22 @@ exports.validarEmision = async (id, userContext) => {
         } else {
             const g = rGnv.rows[0];
             if (!g.taller_autorizado_id) pushError('gnv', 'taller_autorizado_id', 'CAMPO_REQUERIDO', 'Taller autorizado requerido');
-            if (g.modalidad === 'ANUAL' && !g.vigencia_hasta) pushError('gnv', 'vigencia_hasta', 'CAMPO_REQUERIDO', 'Vigencia requerida');
+            if (g.modalidad === 'ANUAL' && !g.vigencia_hasta) {
+                pushError('gnv', 'vigencia_hasta', 'CAMPO_REQUERIDO', 'Vigencia requerida');
+            } else if (g.modalidad === 'ANUAL' && g.vigencia_hasta) {
+                const vigenciaStr = (g.vigencia_hasta instanceof Date ? g.vigencia_hasta.toISOString().slice(0, 10) : String(g.vigencia_hasta)).slice(0, 10);
+                const hoyPeru = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+                if (vigenciaStr < hoyPeru) {
+                    pushError('gnv', 'vigencia_hasta', 'FECHA_VENCIDA', 'La fecha de vigencia no puede ser anterior a la fecha actual.');
+                }
+            }
             // Modalidad requerida
             if (!g.modalidad || !['INICIAL', 'ANUAL'].includes(g.modalidad)) {
                 pushError('gnv', 'modalidad', 'CAMPO_REQUERIDO', 'Modalidad GNV requerida (INICIAL o ANUAL)');
+            }
+
+            if (g.observaciones && g.observaciones.length > 250) {
+                pushError('gnv', 'observaciones', 'LONGITUD_EXCEDIDA', 'Las observaciones no pueden superar los 250 caracteres.');
             }
 
             if (g.modalidad === 'ANUAL') {
@@ -2363,7 +2397,15 @@ exports.validarEmision = async (id, userContext) => {
             const g = rGlp.rows[0];
             modalidadGlp = String(g.modalidad || '').trim().toUpperCase();
             if (!g.taller_autorizado_id) pushError('glp', 'taller_autorizado_id', 'CAMPO_REQUERIDO', 'Taller autorizado requerido');
-            if (!g.vigencia_hasta) pushError('glp', 'vigencia_hasta', 'CAMPO_REQUERIDO', 'Vigencia requerida');
+            if (!g.vigencia_hasta) {
+                pushError('glp', 'vigencia_hasta', 'CAMPO_REQUERIDO', 'Vigencia requerida');
+            } else if (g.vigencia_hasta) {
+                const vigenciaStr = (g.vigencia_hasta instanceof Date ? g.vigencia_hasta.toISOString().slice(0, 10) : String(g.vigencia_hasta)).slice(0, 10);
+                const hoyPeru = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+                if (vigenciaStr < hoyPeru) {
+                    pushError('glp', 'vigencia_hasta', 'FECHA_VENCIDA', 'La fecha de vigencia no puede ser anterior a la fecha actual.');
+                }
+            }
             if (requiereExpedienteTecnicoGlp(g.modalidad) && !g.expediente_tecnico) {
                 pushError('glp', 'expediente_tecnico', 'CAMPO_REQUERIDO', 'Expediente técnico requerido');
             }

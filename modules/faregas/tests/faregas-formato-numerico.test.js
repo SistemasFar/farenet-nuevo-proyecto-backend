@@ -168,6 +168,8 @@ test('GNV Inicial y Anual: eliminan ceros decimales en mediciones de vehículo y
 
   const htmlGnvIni = generateGnvInicialHtml(dataGnv, { modo: 'PREVIEW' });
   assert.match(htmlGnvIni, /4 \/ 1600/);
+  assert.match(htmlGnvIni, /02 \/ 04/);
+  assert.match(htmlGnvIni, /05 \/ 04/);
   assert.match(htmlGnvIni, /4\.2 \/ 1\.7 \/ 1\.5/);
   assert.match(htmlGnvIni, /1200/);
   assert.match(htmlGnvIni, /1600/);
@@ -177,6 +179,8 @@ test('GNV Inicial y Anual: eliminan ceros decimales en mediciones de vehículo y
 
   const htmlGnvAnual = generateGnvAnualHtml(dataGnv, { modo: 'PREVIEW' });
   assert.match(htmlGnvAnual, /4 \/ 1600/);
+  assert.match(htmlGnvAnual, /02 \/ 04/);
+  assert.match(htmlGnvAnual, /05 \/ 04/);
   assert.match(htmlGnvAnual, /4\.2 \/ 1\.7 \/ 1\.5/);
   assert.doesNotMatch(htmlGnvAnual, /1600\.000/);
 });
@@ -209,6 +213,9 @@ test('Conformidad: elimina ceros decimales en mediciones numéricas', () => {
   assert.match(html, />1800</);
   assert.match(html, />450</);
   assert.match(html, /2000 \/ 4/);
+  assert.match(html, />02</);
+  assert.match(html, /05 \/ 04/);
+  assert.match(html, />04</);
   assert.doesNotMatch(html, /1350\.000/);
   assert.doesNotMatch(html, /4\.500/);
 });

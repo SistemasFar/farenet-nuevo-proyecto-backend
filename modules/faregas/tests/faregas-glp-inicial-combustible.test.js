@@ -249,6 +249,60 @@ test('GLP ANUAL: guardarVehiculoBorrador no impone restricción exclusiva de GAS
     }
 });
 
+test('GNV ANUAL: conserva la opción GNV para vehículos que usan sólo GNV', async () => {
+    const originalConnect = db.connect;
+    const originalValidarPlanta = authService.validarAccesoPlanta;
+    let vehiculoParams = null;
+
+    db.connect = async () => setupMockDb({
+        tipoCertificadoClave: 'GNV_ANUAL',
+        modalidad: 'ANUAL',
+        onVehiculoInsert: (params) => { vehiculoParams = params; }
+    });
+    authService.validarAccesoPlanta = async () => true;
+
+    try {
+        await certificados.guardarVehiculoBorrador(900, {
+            placa: 'GNV-100',
+            combustible: 'GNV',
+            marca: 'CAMION'
+        }, { username: 'test', perfil_id: 1 });
+
+        assert.ok(vehiculoParams, 'Debe haber guardado el vehículo GNV');
+        assert.equal(vehiculoParams[12], 'GNV');
+    } finally {
+        db.connect = originalConnect;
+        authService.validarAccesoPlanta = originalValidarPlanta;
+    }
+});
+
+test('GNV ANUAL: reemplaza un combustible heredado por BI-COMBUSTIBLE GNV', async () => {
+    const originalConnect = db.connect;
+    const originalValidarPlanta = authService.validarAccesoPlanta;
+    let vehiculoParams = null;
+
+    db.connect = async () => setupMockDb({
+        tipoCertificadoClave: 'GNV_ANUAL',
+        modalidad: 'ANUAL',
+        onVehiculoInsert: (params) => { vehiculoParams = params; }
+    });
+    authService.validarAccesoPlanta = async () => true;
+
+    try {
+        await certificados.guardarVehiculoBorrador(900, {
+            placa: 'GNV-200',
+            combustible: 'DIESEL',
+            marca: 'CAMION'
+        }, { username: 'test', perfil_id: 1 });
+
+        assert.ok(vehiculoParams, 'Debe haber guardado el vehículo GNV');
+        assert.equal(vehiculoParams[12], 'BI-COMBUSTIBLE GNV');
+    } finally {
+        db.connect = originalConnect;
+        authService.validarAccesoPlanta = originalValidarPlanta;
+    }
+});
+
 test('GLP INICIAL: validarEmision rechaza un borrador antiguo con combustible inválido (ej. GLP o GNV)', async () => {
     const originalConnect = db.connect;
     const originalValidarPlanta = authService.validarAccesoPlanta;

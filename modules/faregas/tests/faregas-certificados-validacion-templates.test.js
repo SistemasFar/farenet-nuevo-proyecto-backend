@@ -177,6 +177,9 @@ test('GNV Anual: template no muestra propietario, sí muestra las 8 verificacion
   const $ = cheerio.load(html);
 
   assert.match(html, /CERTIFICADO DE INSPECCION ANUAL DEL VEHICULO A GNV/);
+  assert.match(html, /BI-COMBUSTIBLE GNV/);
+  assert.match(html, /02 \/ 04/);
+  assert.match(html, /05 \/ 04/);
   assert.equal($('table.data-table').first().find('tr').first().find('td.label').first().text().trim(), 'Placa de Rodaje');
   assert.doesNotMatch($('table.data-table').first().text(), /Propietario/i);
 

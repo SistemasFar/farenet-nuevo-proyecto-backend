@@ -1,4 +1,4 @@
-const { escapeHtml, formatDateLong, formatDateShort, formatNumberWithoutTrailingZeros, formatNumeroCertificado, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
+const { escapeHtml, formatDateLong, formatDateShort, formatNumberWithoutTrailingZeros, formatCountTwoDigits, formatNumeroCertificado, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
 
 function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
     const cert = data.cabecera || {};
@@ -30,7 +30,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
     let cleanObservaciones = typeof rawObservaciones === 'string'
         ? rawObservaciones.trim().slice(0, 250)
         : '';
-    if (['NULL', 'UNDEFINED', '-', 'VACÍO', 'VACIO'].includes(cleanObservaciones.toUpperCase())) {
+    if (['NULL', 'UNDEFINED', 'N/A', 'NA', 'SIN OBSERVACIONES', 'NINGUNA', 'NINGUNO', '-', 'VACÍO', 'VACIO', 'NONE'].includes(cleanObservaciones.toUpperCase())) {
         cleanObservaciones = '';
     }
     const observacionHtml = cleanObservaciones
@@ -248,7 +248,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                     <td class="val">${escapeHtml(veh.marca || '-')}</td>
                     <td class="num">11</td>
                     <td class="label">N° ejes / N° ruedas</td>
-                    <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.ejes))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.ruedas))}</td>
+                    <td class="val">${escapeHtml(formatCountTwoDigits(veh.ejes))} / ${escapeHtml(formatCountTwoDigits(veh.ruedas))}</td>
                 </tr>
                 <tr>
                     <td class="num">4</td>
@@ -256,7 +256,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                     <td class="val">${escapeHtml(veh.modelo || '-')}</td>
                     <td class="num">12</td>
                     <td class="label">N° Asientos / Pasajeros</td>
-                    <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.asientos))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.pasajeros))}</td>
+                    <td class="val">${escapeHtml(formatCountTwoDigits(veh.asientos))} / ${escapeHtml(formatCountTwoDigits(veh.pasajeros))}</td>
                 </tr>
                 <tr>
                     <td class="num">5</td>

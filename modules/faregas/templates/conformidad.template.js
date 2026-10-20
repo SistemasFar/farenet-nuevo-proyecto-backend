@@ -1,4 +1,4 @@
-const { escapeHtml, formatDateLong, formatNumberWithoutTrailingZeros, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
+const { escapeHtml, formatDateLong, formatNumberWithoutTrailingZeros, formatCountTwoDigits, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
 
 function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
     const variablesDinamicas = options.variablesDinamicas === true;
@@ -303,13 +303,13 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             <td>Potencia (kw / rpm)</td>
             <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.potencia))}</td>
             <td>Nº Ejes</td>
-            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.ejes))}</td>
+            <td class="val">${escapeHtml(formatCountTwoDigits(veh.ejes))}</td>
         </tr>
         <tr>
             <td>Asientos / Pasajeros</td>
-            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.asientos))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.pasajeros))}</td>
+            <td class="val">${escapeHtml(formatCountTwoDigits(veh.asientos))} / ${escapeHtml(formatCountTwoDigits(veh.pasajeros))}</td>
             <td>Nº Ruedas</td>
-            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.ruedas))}</td>
+            <td class="val">${escapeHtml(formatCountTwoDigits(veh.ruedas))}</td>
         </tr>
         <tr>
             <td>Cilindrada (cc) / Cilindros</td>
