@@ -17,7 +17,10 @@ const {
     formatDateLong,
     formatNumberWithoutTrailingZeros,
     formatTechnicalNumberExpression,
-    formatCountTwoDigits
+    formatCountTwoDigits,
+    formatearFechaExpedicionTaller,
+    formatearFechaProximaInspeccionTaller,
+    parsearFechaPeru
 } = require('../templates/template-utils');
 const { extraerVariablesHtml } = require('./faregas-formatos-html');
 const { obtenerCatalogoVariables } = require('./faregas-formatos.variables');
@@ -127,25 +130,27 @@ const validarVariablesFormatoDinamico = (cert, pushError) => {
         ? extraerVariablesHtml(configFormato.html || '')
         : [];
     const isEmpresaActiva = (cert.formato_datos_snapshot || {})['__incluir_empresa'] === 'true';
-    const variablesRequeridas = [...new Set([...variablesConfiguradas, ...variablesHtml]
+    const catalogo = new Map(obtenerCatalogoVariables(configFormato).map((v) => [v.key, v]));
+    const variablesAValidar = [...new Set([...variablesConfiguradas, ...variablesHtml]
         .map((key) => String(key || '').trim())
         .filter((key) => CLAVE_VARIABLE_FORMATO.test(key)))]
-        .filter((key) => !esVariableFormatoAutomatica(key) && key !== 'inspeccion.observaciones');
+        .filter((key) => !esVariableFormatoAutomatica(key));
 
-    const catalogo = new Map(obtenerCatalogoVariables(configFormato).map((v) => [v.key, v]));
-    
-    variablesRequeridas.forEach((key) => {
+    variablesAValidar.forEach((key) => {
         const metadata = catalogo.get(key) || {};
         
         if (metadata.optionalGroup && metadata.optionalGroup.toLowerCase() === 'empresa' && !isEmpresaActiva) {
             return;
         }
 
+        const esOpcional = metadata.requerido === false || key === 'inspeccion.observaciones' || key === 'taller.telefono';
         const valorRaw = valorAnidado(cert.formato_datos_snapshot || {}, key);
         const valor = valorRaw === null || valorRaw === undefined ? '' : String(valorRaw).trim();
 
         if (!valor) {
-            pushError('formato', key, 'CAMPO_REQUERIDO', `Complete ${key}`);
+            if (!esOpcional) {
+                pushError('formato', key, 'CAMPO_REQUERIDO', `Complete ${key}`);
+            }
         } else {
             if (metadata.minLength && valor.length < metadata.minLength) {
                 pushError('formato', key, 'LONGITUD_INVALIDA', `${metadata.label}: mínimo ${metadata.minLength} caracteres`);
@@ -930,13 +935,15 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
         .filter((key) => !esVariableFormatoAutomatica(key))
         .map((key) => {
             const variable = catalogoPorClave.get(key) || {};
+            const esOpcional = variable.requerido === false || key === 'inspeccion.observaciones' || key === 'taller.telefono';
+            const label = key === 'taller.telefono' ? 'TELÉFONO (OPCIONAL)' : (variable.label || key.split('.').pop().replaceAll('_', ' '));
             return {
                 key,
-                label: variable.label || key.split('.').pop().replaceAll('_', ' '),
+                label,
                 grupo: variable.grupo || 'Datos del certificado',
                 optionalGroup: variable.optionalGroup,
                 tipo: variable.tipo === 'date' ? 'date' : 'text',
-                requerido: key !== 'inspeccion.observaciones',
+                requerido: !esOpcional,
                 minLength: variable.minLength,
                 maxLength: variable.maxLength,
                 pattern: variable.pattern,
@@ -1239,7 +1246,7 @@ exports.guardarVehiculoBorrador = async (
         if (sincronizarMaestro) {
             const anioFabricacion = String(data.anioFabricacion ?? '').trim();
             const anioModelo = String(data.anioModelo ?? '').trim();
-            if (anioFabricacion && anioModelo && Number(anioModelo) > Number(anioFabricacion)) {
+            if (anioFabricacion && anioModelo && !/^\*+$/.test(anioFabricacion) && !/^\*+$/.test(anioModelo) && Number(anioModelo) > Number(anioFabricacion)) {
                 throw new Error('ANIO_MODELO_MAYOR_QUE_FABRICACION');
             }
         }
@@ -2003,7 +2010,12 @@ exports.guardarConformidad = async (id, data, userContext) => {
             throw err;
         }
 
-        if (data.usoOriginalVehiculo && data.usoOriginalVehiculo.length > 200) {
+        let usoOriginalVehiculo = data.usoOriginalVehiculo || null;
+        if (usoOriginalVehiculo && String(usoOriginalVehiculo).trim().toUpperCase() === 'MERCANCIAS') {
+            usoOriginalVehiculo = 'MERCANCÍAS';
+        }
+
+        if (usoOriginalVehiculo && usoOriginalVehiculo.length > 200) {
             const err = new Error('El uso original del vehículo no puede superar los 200 caracteres.');
             err.status = 400;
             throw err;
@@ -2032,7 +2044,7 @@ exports.guardarConformidad = async (id, data, userContext) => {
             data.caracteristicaRegistrable || null,
             data.motivo || null,
             data.descripcion || null,
-            data.usoOriginalVehiculo || null,
+            usoOriginalVehiculo,
             data.marcaModificacion || false,
             data.marcaMontaje || false,
             data.marcaFabricacion || false
@@ -2468,9 +2480,12 @@ exports.validarEmision = async (id, userContext) => {
                 pushError('conformidad', 'tipo_conformidad', 'TIPO_INVALIDO', 'Tipo de conformidad inválido');
             }
             if (!c.caracteristica_registrable) pushError('conformidad', 'caracteristica_registrable', 'CAMPO_REQUERIDO', 'Característica registrable requerida');
+            const usoOriginal = String(c.uso_original_vehiculo || '').trim().toUpperCase() === 'MERCANCIAS'
+                ? 'MERCANCÍAS'
+                : String(c.uso_original_vehiculo || '').trim().toUpperCase();
             if (!c.uso_original_vehiculo) {
                 pushError('conformidad', 'uso_original_vehiculo', 'CAMPO_REQUERIDO', 'Uso original requerido');
-            } else if (!['PERSONAS', 'MERCANCÍAS'].includes(String(c.uso_original_vehiculo).trim().toUpperCase())) {
+            } else if (!['PERSONAS', 'MERCANCÍAS'].includes(usoOriginal)) {
                 pushError(
                     'conformidad',
                     'uso_original_vehiculo',
@@ -2789,6 +2804,7 @@ const buildFormatoData = (borrador, extras = {}) => {
     const titulares = Array.isArray(borrador.titulares) ? borrador.titulares : [];
     const tipoConformidad = String(conf.tipo_conformidad || '').toUpperCase();
     const fechaDocumento = formatDateLong(borrador.fechaEmision || new Date().toISOString().slice(0, 10));
+    const fechaExpedicionTexto = formatearFechaExpedicionTaller(borrador.fechaEmision || new Date());
     const propietarioNombre = titulares.length > 0
         ? titulares.map((titular) => titular.nombre_razon_social || titular.nombreRazonSocial || '').filter(Boolean).join(' / ')
         : (cli.nombreRazonSocial || '-');
@@ -2894,6 +2910,32 @@ const buildFormatoData = (borrador, extras = {}) => {
     // El número definitivo siempre proviene del certificado, nunca de un
     // snapshot de formato que pudiera contener un valor provisional antiguo.
     datos.certificado.numero = numeroCertificadoVisible;
+
+    // Reglas de presentación para certificación de inspección de taller GNV / formatos dinámicos
+    const esTaller = borrador.servicio?.tipoFlujo === 'TALLER_INSPECCION' || borrador.servicio_tipo_flujo === 'TALLER_INSPECCION';
+    if (esTaller) {
+        // Corrección 1: Fecha de expedición completa dinámica "DD del mes de [mes] del YYYY"
+        datos.certificado.fecha_emision = fechaExpedicionTexto;
+        if (!datos.documento) datos.documento = {};
+        datos.documento.fecha_dia = fechaExpedicionTexto;
+
+        // Corrección 2: Próxima inspección anual como DD/MM/AAAA sin alterar el valor guardado
+        const proxRaw = datos.inspeccion?.fecha_proxima_inspeccion ?? datos['inspeccion.fecha_proxima_inspeccion'];
+        if (proxRaw) {
+            const proxFormateada = formatearFechaProximaInspeccionTaller(proxRaw);
+            if (proxFormateada) {
+                if (!datos.inspeccion) datos.inspeccion = {};
+                datos.inspeccion.fecha_proxima_inspeccion = proxFormateada;
+            }
+        }
+
+        // Corrección 4: Dos guiones ASCII '--' cuando no hay teléfono
+        const telRaw = datos.taller?.telefono ?? datos['taller.telefono'];
+        const telLimpio = String(telRaw || '').trim();
+        const telVisual = telLimpio || '--';
+        if (!datos.taller) datos.taller = {};
+        datos.taller.telefono = telVisual;
+    }
 
     // Un snapshot antiguo no puede reintroducir la dirección particular ni
     // los ceros de escala que PostgreSQL devuelve para NUMERIC. Esta

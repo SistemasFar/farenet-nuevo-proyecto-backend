@@ -56,7 +56,7 @@ const PLANTILLA_FAREGAS_HTML = `<!DOCTYPE html>
     <div class="seccion-final">
       <strong>OBSERVACIONES:</strong> <span data-faregas-var="inspeccion.observaciones" data-faregas-label="Observaciones" data-faregas-fallback="" data-faregas-source="FORM">{{inspeccion.observaciones}}</span><br><br>
       Fecha de la próxima inspección anual: <strong><span data-faregas-var="inspeccion.fecha_proxima_inspeccion" data-faregas-label="Fecha Próxima Inspección" data-faregas-fallback="" data-faregas-source="FORM">{{inspeccion.fecha_proxima_inspeccion}}</span></strong>.<br><br>
-      Se expide el presente certificado en la ciudad de Lima, <span data-faregas-var="certificado.fecha_emision" data-faregas-label="Fecha de Emisión" data-faregas-fallback="" data-faregas-source="FORM">{{certificado.fecha_emision}}</span>
+      Se expide el presente certificado en la ciudad de Lima, <span data-faregas-var="certificado.fecha_emision" data-faregas-label="Fecha de Emisión" data-faregas-fallback="" data-faregas-source="FORM">{{certificado.fecha_emision}}</span>...
     </div>
   </div>
 </body>

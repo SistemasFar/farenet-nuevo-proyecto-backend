@@ -6,6 +6,11 @@ const { renderFacturaHtml } = require('../templates/comprobante-factura.template
 const { generarPdfDesdeHtml } = require('./faregas-pdf-generator.service');
 const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
 const { obtenerIdentidadCorporativaFaregas } = require('./faregas-representacion-corporativa.service');
+const {
+    resolverNombreMedioPago,
+    agruparDesglosePagos,
+    derivarMedioPago
+} = require('./faregas-facturacion.rules');
 
 const COMPROBANTES_STORAGE_PATH = process.env.FAREGAS_COMPROBANTES_STORAGE_PATH
     || path.join(__dirname, '../../../uploads/comprobantes');
@@ -32,62 +37,107 @@ function normalizarMedioItem(item, opciones = {}) {
     if (typeof item === 'string') {
         const raw = item.trim().toUpperCase();
         if (!raw) return '';
-        if (raw === 'EFECTIVO') return 'Efectivo';
-        if (raw === 'TARJETA_DEBITO' || raw === 'DEBITO' || raw === 'TARJETA DEBITO' || raw === 'TARJETA DÉBITO') return 'Tarjeta de Débito';
-        if (raw === 'TARJETA_CREDITO' || raw === 'CREDITO_TARJETA' || raw === 'TARJETA CREDITO' || raw === 'TARJETA CRÉDITO') return 'Tarjeta de Crédito';
-        if (raw === 'TRANSFERENCIA') return 'Transferencia';
-        if (raw === 'DEPOSITO' || raw === 'DEPÓSITO' || raw === 'BANCO') return 'Depósito Bancario';
-        if (raw === 'YAPE' || raw === 'PLIN') return 'Billetera Digital';
-        if (raw === 'CUPONIDAD') return 'Cuponidad';
-        if (raw === 'TARJETA') {
-            const subtipo = String(opciones.tipoTarjeta || opciones.tipo_tarjeta || opciones.subtipo || '').toUpperCase();
-            if (subtipo.includes('CREDIT') || subtipo.includes('CRÉDIT')) return 'Tarjeta de Crédito';
-            if (subtipo.includes('DEBIT') || subtipo.includes('DÉBIT')) return 'Tarjeta de Débito';
-            return 'Tarjeta';
-        }
+        if (raw === 'YAPE') return 'YAPE';
+        if (raw === 'PLIN') return 'PLIN';
+        if (raw.includes('VISA')) return 'TARJETA VISA';
+        if (raw.includes('MASTER')) return 'TARJETA MASTERCARD';
+        if (raw === 'CUPONIDAD') return 'CUPONIDAD';
+        if (raw === 'PAGO WEB' || raw === 'PAGO_WEB') return 'PAGO WEB';
+        if (raw === 'EFECTIVO') return 'EFECTIVO';
+        if (raw.includes('TRANSFER')) return 'TRANSFERENCIA BANCARIA';
+        if (raw.includes('DEPOSI')) return 'DEPÓSITO BANCARIO';
         if (raw === 'BANCO') {
             const subtipo = String(opciones.tipoBanco || opciones.tipo_banco || opciones.subtipo || '').toUpperCase();
-            if (subtipo === 'TRANSFERENCIA') return 'Transferencia';
-            return 'Depósito Bancario';
+            if (subtipo.includes('DEPOSI')) return 'DEPÓSITO BANCARIO';
+            return 'TRANSFERENCIA BANCARIA';
         }
-        return item.charAt(0).toUpperCase() + item.slice(1).toLowerCase();
+        if (raw === 'TARJETA_DEBITO' || raw === 'DEBITO' || raw === 'TARJETA DEBITO' || raw === 'TARJETA DÉBITO') return 'TARJETA DÉBITO';
+        if (raw === 'TARJETA_CREDITO' || raw === 'CREDITO_TARJETA' || raw === 'TARJETA CREDITO' || raw === 'TARJETA CRÉDITO') return 'TARJETA CRÉDITO';
+        if (raw === 'TARJETA') {
+            const subtipo = String(opciones.tipoTarjeta || opciones.tipo_tarjeta || opciones.subtipo || '').toUpperCase();
+            if (subtipo.includes('CREDIT') || subtipo.includes('CRÉDIT')) return 'TARJETA CRÉDITO';
+            if (subtipo.includes('DEBIT') || subtipo.includes('DÉBIT')) return 'TARJETA DÉBITO';
+            return 'TARJETA';
+        }
+        if (raw === 'BILLETERA DIGITAL' || raw === 'BILLETERA_DIGITAL') return 'Billetera Digital';
+        return raw;
     }
 
-    const tipo = String(item.tipo || item.tipocontado_key || item.medio_pago || item.medio || '').toUpperCase();
-    const subtipo = String(item.tipo_tarjeta || item.tipoTarjeta || item.subtipo || opciones.tipoTarjeta || opciones.tipo_tarjeta || '').toUpperCase();
-    const tarjetaNombre = String(item.tarjeta_nombre || item.tarjetaNombre || item.nombre || '').toUpperCase();
-    const tipoBanco = String(item.tipo_banco || item.tipoBanco || opciones.tipoBanco || opciones.tipo_banco || '').toUpperCase();
+    const res = resolverNombreMedioPago(item);
+    if (res) return res;
 
-    if (tipo === 'EFECTIVO') {
-        return 'Efectivo';
+    return 'EFECTIVO';
+}
+
+function parseDetallePagosDesdeTexto(texto) {
+    if (!texto || typeof texto !== 'string') return [];
+    const limpio = texto.replace(/^MIXTO:\s*/i, '').trim();
+    if (!limpio) return [];
+
+    const partes = limpio.split(/[,·]+/).map(p => p.trim()).filter(Boolean);
+    const detalle = [];
+    for (const parte of partes) {
+        const match = parte.match(/^(.+?)\s+S\/\s*([0-9.]+)$/i);
+        if (match) {
+            detalle.push({
+                medio: match[1].trim().toUpperCase(),
+                importe: Number(match[2])
+            });
+        } else {
+            detalle.push({
+                medio: parte.trim().toUpperCase(),
+                importe: 0
+            });
+        }
+    }
+    return detalle;
+}
+
+function resolverFormaPagoYDetalle(f, qPagosRows = []) {
+    const esCredito = String(f?.condicion_pago || '').toUpperCase().startsWith('CREDITO');
+
+    if (esCredito) {
+        return {
+            formaPago: 'Crédito',
+            detallePagos: []
+        };
     }
 
-    if (tipo === 'TARJETA' || tarjetaNombre) {
-        if (tarjetaNombre.includes('YAPE') || tarjetaNombre.includes('PLIN')) {
-            return 'Billetera Digital';
+    if (Array.isArray(qPagosRows) && qPagosRows.length > 0) {
+        const desglose = agruparDesglosePagos(qPagosRows);
+        if (desglose.length > 1) {
+            return {
+                formaPago: 'MIXTO',
+                detallePagos: desglose.map(d => ({ medio: d.medio, importe: d.importe }))
+            };
         }
-        if (tarjetaNombre.includes('CUPONIDAD')) {
-            return 'Cuponidad';
+        if (desglose.length === 1) {
+            return {
+                formaPago: desglose[0].medio,
+                detallePagos: []
+            };
         }
-        if (subtipo.includes('CREDIT') || subtipo.includes('CRÉDIT')) {
-            return 'Tarjeta de Crédito';
-        }
-        if (subtipo.includes('DEBIT') || subtipo.includes('DÉBIT')) {
-            return 'Tarjeta de Débito';
-        }
-        return 'Tarjeta';
     }
 
-    if (tipo === 'BANCO') {
-        if (tipoBanco === 'TRANSFERENCIA' || subtipo === 'TRANSFERENCIA') return 'Transferencia';
-        if (tipoBanco === 'DEPOSITO' || subtipo === 'DEPOSITO' || item.fechdeposito) return 'Depósito Bancario';
-        return 'Depósito Bancario';
+    const mp = String(f?.medio_pago || '').trim();
+    if (mp.toUpperCase().startsWith('MIXTO:')) {
+        return {
+            formaPago: 'MIXTO',
+            detallePagos: parseDetallePagosDesdeTexto(mp)
+        };
     }
 
-    if (tipo.includes('TRANSFER')) return 'Transferencia';
-    if (tipo.includes('DEPOSI')) return 'Depósito Bancario';
+    if (mp) {
+        return {
+            formaPago: normalizarMedioItem(mp),
+            detallePagos: []
+        };
+    }
 
-    return 'Efectivo';
+    return {
+        formaPago: 'EFECTIVO',
+        detallePagos: []
+    };
 }
 
 function mapearFormaPago(condicionPago, medioPago, pagosOpciones = null) {
@@ -110,32 +160,38 @@ function mapearFormaPago(condicionPago, medioPago, pagosOpciones = null) {
     if (Array.isArray(medioPago)) {
         pagosArray = medioPago;
     } else if (medioPago && typeof medioPago === 'object') {
-        return normalizarMedioItem(medioPago, opciones) || 'Efectivo';
+        return normalizarMedioItem(medioPago, opciones) || 'EFECTIVO';
     }
 
     if (pagosArray.length > 0) {
+        const desglose = agruparDesglosePagos(pagosArray);
+        if (desglose.length > 1) {
+            return 'MIXTO';
+        }
+        if (desglose.length === 1) {
+            return desglose[0].medio;
+        }
         const metodos = [];
         for (const p of pagosArray) {
             const m = normalizarMedioItem(p, opciones);
             if (m && !metodos.includes(m)) metodos.push(m);
         }
-        if (metodos.length > 0) return metodos.join(' / ');
+        if (metodos.length > 1) return 'MIXTO';
+        if (metodos.length === 1) return metodos[0];
     }
 
     const mp = String(medioPago || '').trim();
-    if (!mp) return 'Efectivo';
+    if (!mp) return 'EFECTIVO';
 
-    if (mp.includes(',') || mp.includes('/')) {
-        const tokens = mp.split(/[,/]+/).map(t => t.trim()).filter(Boolean);
-        const metodos = [];
-        for (const token of tokens) {
-            const m = normalizarMedioItem(token, opciones);
-            if (m && !metodos.includes(m)) metodos.push(m);
-        }
-        if (metodos.length > 0) return metodos.join(' / ');
+    if (mp.toUpperCase().startsWith('MIXTO:')) {
+        return 'MIXTO';
     }
 
-    return normalizarMedioItem(mp, opciones) || 'Efectivo';
+    if (mp.includes(',') || mp.includes('/')) {
+        return 'MIXTO';
+    }
+
+    return normalizarMedioItem(mp, opciones) || 'EFECTIVO';
 }
 
 const moneda = valor => Number(valor || 0).toFixed(2);
@@ -297,6 +353,7 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
 
     const qPagos = await db.query(
         `SELECT p.tipocontado_key, p.tarjeta_key, p.modalidad_tarjeta AS tipo_tarjeta,
+                p.importe,
                 p.digitotarjeta, p.nrooperaciontarjeta,
                 p.entidadfinanciera_key, p.fechdeposito, p.nrooperacionbanco,
                 t.nombre AS tarjeta_nombre,
@@ -319,11 +376,9 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
         [facturacionId]
     );
 
-    const esFactura = String(f.tipo_comprobante || '').toUpperCase() === 'FACTURA';
-    const esCredito = esFactura && String(f.condicion_pago || '').toUpperCase() === 'CREDITO';
-    const formaPagoImpresa = esFactura
-        ? (esCredito ? 'Crédito' : 'Contado')
-        : mapearFormaPago('CONTADO', f.medio_pago, qPagos.rows);
+    const resolucionPago = resolverFormaPagoYDetalle(f, qPagos.rows);
+    const formaPagoImpresa = resolucionPago.formaPago;
+    const detallePagos = resolucionPago.detallePagos;
     const identidadCorporativa = await obtenerIdentidadCorporativaFaregas(db);
 
     const viewModel = {
@@ -342,6 +397,7 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
             fechaDocumento: formatearFechaPeruana(f.fecha_documento),
             fechaVencimiento: formatearFechaPeruana(f.fecha_vencimiento || f.fecha_documento),
             formaPago: formaPagoImpresa,
+            detallePagos: detallePagos,
             moneda: 'Soles'
         },
         cliente: {
@@ -421,6 +477,9 @@ async function regenerarRepresentacion(facturacionId) {
 
 module.exports = {
     formatearFechaPeruana,
+    normalizarMedioItem,
+    parseDetallePagosDesdeTexto,
+    resolverFormaPagoYDetalle,
     mapearFormaPago,
     validarConsistenciaFiscal,
     obtenerDatosComprobanteImpreso,

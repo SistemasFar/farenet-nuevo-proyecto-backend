@@ -30,7 +30,7 @@ async function resolverPlantasAutorizadas(req) {
     const permisos = rPerms.rows.map(r => r.permiso_clave);
     
     const esSupervisor = perfil_id === 'SUPERVISOR';
-    const tieneGlobal = permisos.includes('DASHBOARD_GLOBAL') || perfil_id === 'SISTEMAS';
+    const tieneGlobal = permisos.includes('DASHBOARD_GLOBAL') || perfil_id === 'SISTEMAS' || esSupervisor;
     const tieneSede = permisos.includes('DASHBOARD_SEDE') || tieneGlobal || esSupervisor;
     
     if (!tieneGlobal && !tieneSede) {

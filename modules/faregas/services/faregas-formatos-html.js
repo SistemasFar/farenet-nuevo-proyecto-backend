@@ -59,6 +59,44 @@ const normalizarHtmlEditor = (html = '') => {
         }
     });
 
+    // Corrección para plantillas de Taller donde la fecha de expedición quedó mapeada a documento.fecha_dia
+    $('span[data-faregas-var="documento.fecha_dia"]').each((_index, element) => {
+        const slot = $(element);
+        const parentText = slot.parent().text() || '';
+        if (parentText.includes('Se expide el presente certificado')) {
+            slot.attr('data-faregas-var', 'certificado.fecha_emision');
+            slot.attr('data-faregas-label', 'Fecha de Emisión');
+        }
+    });
+
+    // Asegurar punto final en la fecha de expedición si no lo tuviera
+    $('span[data-faregas-var="certificado.fecha_emision"]').each((_index, element) => {
+        const slot = $(element);
+        const parentText = slot.parent().text() || '';
+        if (parentText.includes('Se expide el presente certificado')) {
+            const nextNode = slot[0]?.nextSibling;
+            const nextText = (nextNode && nextNode.nodeValue) ? nextNode.nodeValue : '';
+            if (!nextText.trim().startsWith('.')) {
+                if (!slot.text().trim().endsWith('.')) {
+                    slot.after('.');
+                }
+            }
+        }
+    });
+
+    // Asegurar punto final en fecha de próxima inspección anual
+    $('span[data-faregas-var="inspeccion.fecha_proxima_inspeccion"]').each((_index, element) => {
+        const slot = $(element);
+        const parent = slot.parent();
+        const nextNode = parent[0]?.nextSibling;
+        const nextText = (nextNode && nextNode.nodeValue) ? nextNode.nodeValue : '';
+        if (!nextText.trim().startsWith('.')) {
+            if (!slot.text().trim().endsWith('.')) {
+                parent.after('.');
+            }
+        }
+    });
+
     return $.html();
 };
 

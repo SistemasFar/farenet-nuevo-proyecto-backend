@@ -45,6 +45,12 @@ function renderFacturaHtml(data) {
     const fechaDocumento = escapeHtml(comprobante.fechaDocumento || '');
     const fechaVencimiento = escapeHtml(comprobante.fechaVencimiento || fechaDocumento);
     const formaPago = escapeHtml(comprobante.formaPago || 'Contado');
+    const detallePagos = Array.isArray(comprobante.detallePagos) ? comprobante.detallePagos : [];
+    const detallePagosHtml = detallePagos.length > 0 ? `
+            <div class="detalle-pagos-bloque" style="margin-top: 3px; margin-bottom: 3px; font-size: 7pt; line-height: 1.35;">
+                <div style="font-weight: bold;">DETALLE DE PAGOS:</div>
+                ${detallePagos.map(dp => `<div style="padding-left: 2px;">- ${escapeHtml(dp.medio)}: S/ ${Number(dp.importe || 0).toFixed(2)}</div>`).join('')}
+            </div>` : '';
     const moneda = escapeHtml(comprobante.moneda || 'Soles');
 
     const clienteNombre = escapeHtml(cliente.nombre || cliente.razonSocial || '');
@@ -368,6 +374,7 @@ function renderFacturaHtml(data) {
             <div><span class="info-label-right">Fecha Vencimiento:</span> ${fechaVencimiento}</div>
             <div><span class="info-label-right">Moneda:</span> ${moneda}</div>
             <div><span class="info-label-right">Forma de Pago:</span> ${formaPago}</div>
+            ${detallePagosHtml}
             ${numeroCertificado ? `<div><span class="info-label-right">Numero Certificado:</span> ${numeroCertificado}</div>` : ''}
             ${ordenTrabajo ? `<div><span class="info-label-right">Orden Trabajo:</span> ${ordenTrabajo}</div>` : ''}
         </div>

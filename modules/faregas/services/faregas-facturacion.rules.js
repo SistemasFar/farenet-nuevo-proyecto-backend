@@ -210,14 +210,107 @@ const validarCuotasContraTotal = (cuotas, total, detraccion = null) => {
     return Math.abs(sumaCentavos - esperadoCentavos) === 0;
 };
 
+const resolverNombreMedioPago = (pago) => {
+    if (!pago) return null;
+
+    if (typeof pago === 'string') {
+        const raw = limpiarTexto(pago).toUpperCase();
+        if (!raw) return null;
+        if (raw === 'YAPE') return 'YAPE';
+        if (raw === 'PLIN') return 'PLIN';
+        if (raw.includes('VISA')) return 'TARJETA VISA';
+        if (raw.includes('MASTER')) return 'TARJETA MASTERCARD';
+        if (raw === 'CUPONIDAD') return 'CUPONIDAD';
+        if (raw === 'PAGO WEB' || raw === 'PAGO_WEB') return 'PAGO WEB';
+        if (raw === 'EFECTIVO') return 'EFECTIVO';
+        if (raw.includes('TRANSFER')) return 'TRANSFERENCIA BANCARIA';
+        if (raw.includes('DEPOSI')) return 'DEPÓSITO BANCARIO';
+        if (raw === 'BANCO') return 'TRANSFERENCIA BANCARIA';
+        if (raw.includes('DEBIT')) return 'TARJETA DÉBITO';
+        if (raw.includes('CREDIT')) return 'TARJETA CRÉDITO';
+        if (raw === 'TARJETA') return 'TARJETA';
+        return raw;
+    }
+
+    const tarjetaNombre = limpiarTexto(pago.tarjeta_nombre || pago.tarjetaNombre || pago.nombre).toUpperCase();
+    const tarjetaKey = limpiarTexto(pago.tarjeta_key || pago.tarjetaKey);
+    const tipoContado = limpiarTexto(pago.tipocontado_key || pago.tipoContadoKey || pago.tipo).toLowerCase();
+    const modalidad = limpiarTexto(pago.modalidad_tarjeta || pago.modalidadTarjeta || pago.tipo_tarjeta || pago.tipoTarjeta).toUpperCase();
+    const subtipo = limpiarTexto(pago.subtipo || pago.tipo_banco || pago.tipoBanco).toUpperCase();
+
+    // 1. Selector de marca o medio de tarjeta (YAPE, PLIN, VISA, MASTERCARD, etc.)
+    if (tarjetaNombre.includes('YAPE') || tarjetaKey === '7') return 'YAPE';
+    if (tarjetaNombre.includes('PLIN') || tarjetaKey === '8') return 'PLIN';
+    if (tarjetaNombre.includes('VISA') || tarjetaKey === '3') return 'TARJETA VISA';
+    if (tarjetaNombre.includes('MASTERCARD') || tarjetaKey === '4') return 'TARJETA MASTERCARD';
+    if (tarjetaNombre.includes('CUPONIDAD') || tarjetaKey === '5') return 'CUPONIDAD';
+    if (tarjetaNombre.includes('PAGO WEB') || tarjetaNombre.includes('PAGO_WEB') || tarjetaKey === '6') return 'PAGO WEB';
+    if (tarjetaNombre) return `TARJETA ${tarjetaNombre}`;
+
+    // 2. Tipo de contado (efectivo, banco, tarjeta sin marca específica)
+    if (tipoContado === 'efectivo') return 'EFECTIVO';
+    if (tipoContado === 'banco') {
+        if (subtipo === 'DEPOSITO' || pago.fechdeposito) return 'DEPÓSITO BANCARIO';
+        return 'TRANSFERENCIA BANCARIA';
+    }
+    if (tipoContado === 'tarjeta') {
+        if (modalidad === 'DEBITO' || modalidad.includes('DEBIT')) return 'TARJETA DÉBITO';
+        if (modalidad === 'CREDITO' || modalidad.includes('CREDIT')) return 'TARJETA CRÉDITO';
+        return 'TARJETA';
+    }
+
+    // 3. Fallback a campos medio_pago o medio
+    const fallback = limpiarTexto(pago.medio_pago || pago.medio);
+    if (fallback) {
+        return resolverNombreMedioPago(fallback);
+    }
+
+    return null;
+};
+
+const agruparDesglosePagos = (pagos = []) => {
+    if (!Array.isArray(pagos) || pagos.length === 0) return [];
+
+    const mapa = new Map();
+    for (const pago of pagos) {
+        const medio = resolverNombreMedioPago(pago);
+        if (!medio) continue;
+        const importe = Number(pago?.importe || pago?.monto || 0);
+        if (mapa.has(medio)) {
+            const existente = mapa.get(medio);
+            existente.importe = redondear(existente.importe + importe);
+            existente.cantidad += 1;
+        } else {
+            mapa.set(medio, {
+                medio,
+                importe: redondear(importe),
+                cantidad: 1
+            });
+        }
+    }
+    return Array.from(mapa.values());
+};
+
 const derivarMedioPago = (pagos = []) => {
-    const orden = ['EFECTIVO', 'TARJETA', 'BANCO'];
-    const registrados = new Set(
-        pagos
-            .map(pago => limpiarTexto(pago?.tipocontado_key ?? pago?.tipo).toUpperCase())
-            .filter(tipo => orden.includes(tipo))
-    );
-    return orden.filter(tipo => registrados.has(tipo)).join(', ') || null;
+    if (!Array.isArray(pagos) || pagos.length === 0) return null;
+
+    const desglose = agruparDesglosePagos(pagos);
+    if (desglose.length === 0) return null;
+
+    if (desglose.length === 1) {
+        return desglose[0].medio;
+    }
+
+    // Pagos mixtos (más de 1 medio distinto)
+    const tieneImportes = desglose.some(d => d.importe > 0);
+    if (tieneImportes) {
+        const detalle = desglose
+            .map(d => `${d.medio} S/ ${Number(d.importe).toFixed(2)}`)
+            .join(', ');
+        return `MIXTO: ${detalle}`;
+    }
+
+    return `MIXTO: ${desglose.map(d => d.medio).join(', ')}`;
 };
 
 const validarSerieNubefact = (serie, tipoComprobante) => {
@@ -236,6 +329,8 @@ module.exports = {
     validarFacturacionNubefact,
     validarSerieNubefact,
     validarCuotasContraTotal,
+    resolverNombreMedioPago,
+    agruparDesglosePagos,
     derivarMedioPago,
     esFechaIsoValida,
     redondear,

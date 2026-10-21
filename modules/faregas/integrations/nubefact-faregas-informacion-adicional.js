@@ -56,6 +56,11 @@ const construirInformacionAdicional = ({
         lineas.push(`REFERENCIA FAREGAS: BORRADOR ${certificado.id}`);
     }
 
+    if (texto(facturacion?.medio_pago).startsWith('MIXTO:')) {
+        const detalleMixto = texto(facturacion.medio_pago).replace(/^MIXTO:\s*/, '').replace(/,\s*/g, ' · ');
+        lineas.push(`DETALLE DE PAGOS: ${detalleMixto}`);
+    }
+
     return {
         texto: lineas.join('\n'),
         lineas,

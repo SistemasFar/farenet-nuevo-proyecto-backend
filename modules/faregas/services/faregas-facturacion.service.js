@@ -178,9 +178,13 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
         if (certificado.estado !== 'BORRADOR') throw errorNegocio('CERTIFICADO_NO_EDITABLE', 409);
         const orden = await obtenerOrdenFacturable(client, certificadoId, normalizada.condicionPago);
         const pagosPersistidos = await client.query(
-            `SELECT tipocontado_key
-             FROM fg_pago
-             WHERE orden_pago_id = $1 AND estado = 'CAN'`,
+            `SELECT p.tipocontado_key, p.tarjeta_key, p.modalidad_tarjeta, p.importe,
+                    t.nombre AS tarjeta_nombre, ef.nombre AS entidad_nombre
+             FROM fg_pago p
+             LEFT JOIN tarjeta t ON t.key = p.tarjeta_key
+             LEFT JOIN entidadfinanciera ef ON ef.key = p.entidadfinanciera_key
+             WHERE p.orden_pago_id = $1 AND p.estado = 'CAN'
+             ORDER BY p.id ASC`,
             [orden.id]
         );
         const medioPagoPersistido = derivarMedioPago(pagosPersistidos.rows);
@@ -715,7 +719,14 @@ exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => 
         }
 
         const pagosPersistidos = await client.query(
-            `SELECT tipocontado_key FROM fg_pago WHERE orden_pago_id = $1 AND estado = 'CAN'`, [orden.id]
+            `SELECT p.tipocontado_key, p.tarjeta_key, p.modalidad_tarjeta, p.importe,
+                    t.nombre AS tarjeta_nombre, ef.nombre AS entidad_nombre
+             FROM fg_pago p
+             LEFT JOIN tarjeta t ON t.key = p.tarjeta_key
+             LEFT JOIN entidadfinanciera ef ON ef.key = p.entidadfinanciera_key
+             WHERE p.orden_pago_id = $1 AND p.estado = 'CAN'
+             ORDER BY p.id ASC`,
+            [orden.id]
         );
         const medioPagoPersistido = derivarMedioPago(pagosPersistidos.rows);
 

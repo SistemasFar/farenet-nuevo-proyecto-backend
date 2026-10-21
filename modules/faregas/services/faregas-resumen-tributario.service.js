@@ -5,16 +5,13 @@ const nubefactConfigService = require('./faregas-nubefact-config.service');
 const tarifasService = require('./faregas-tarifas.service');
 const { esUnidadTributariaAdmitida } = require('./faregas-producto-fiscal.rules');
 const { esCodigoClasificacionSunatValidoOpcional } = require('./faregas-pagos.rules');
+const { derivarMedioPago } = require('./faregas-facturacion.rules');
 
 const redondear = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 const texto = (value) => String(value ?? '').trim();
 const mayusculas = (value) => texto(value).toUpperCase();
 
-const mediosPago = (rows = []) => [...new Set(rows
-    .map(row => mayusculas(row.medio_pago || row.tipocontado_key))
-    .filter(Boolean))]
-    .sort()
-    .join(', ');
+const mediosPago = (rows = []) => derivarMedioPago(rows) || '';
 
 const agregarSi = (lista, condicion, mensaje) => {
     if (condicion && !lista.includes(mensaje)) lista.push(mensaje);
@@ -422,12 +419,14 @@ const obtenerDescuento = async (certificadoId, queryable) => {
 const obtenerPagos = async (ordenPagoId, queryable) => {
     if (!ordenPagoId) return [];
     const result = await queryable.query(`
-        SELECT DISTINCT tipocontado_key AS medio_pago
-        FROM fg_pago
-        WHERE orden_pago_id = $1
-          AND estado = 'CAN'
-          AND tipocontado_key IS NOT NULL
-        ORDER BY tipocontado_key
+        SELECT p.tipocontado_key, p.tarjeta_key, p.modalidad_tarjeta, p.importe,
+               t.nombre AS tarjeta_nombre, ef.nombre AS entidad_nombre
+        FROM fg_pago p
+        LEFT JOIN tarjeta t ON t.key = p.tarjeta_key
+        LEFT JOIN entidadfinanciera ef ON ef.key = p.entidadfinanciera_key
+        WHERE p.orden_pago_id = $1
+          AND p.estado = 'CAN'
+        ORDER BY p.id ASC
     `, [ordenPagoId]);
     return result.rows;
 };

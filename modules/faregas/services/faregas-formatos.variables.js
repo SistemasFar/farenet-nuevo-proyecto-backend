@@ -51,10 +51,11 @@
   },
   {
     key: 'taller.telefono',
-    label: 'Teléfono',
+    label: 'TELÉFONO (OPCIONAL)',
     grupo: 'Taller',
     tipo: 'text',
     demo: '999888777',
+    requerido: false,
     minLength: 7,
     maxLength: 9,
     pattern: '^\\d{7,9}$',

@@ -80,6 +80,55 @@ function formatCountTwoDigits(value, fallback = '-') {
     return /^\d+$/.test(integer) ? integer.padStart(2, '0') : integer;
 }
 
+function parsearFechaPeru(input) {
+    if (!input) return null;
+    if (typeof input === 'string') {
+        const str = input.trim();
+        const mIso = /^(\d{4})-(\d{2})-(\d{2})/.exec(str);
+        if (mIso) {
+            return { anio: mIso[1], mes: mIso[2], dia: mIso[3] };
+        }
+        const mSlash = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(str);
+        if (mSlash) {
+            return {
+                anio: mSlash[3],
+                mes: mSlash[2].padStart(2, '0'),
+                dia: mSlash[1].padStart(2, '0')
+            };
+        }
+    }
+    const d = new Date(input);
+    if (isNaN(d.getTime())) return null;
+    const parts = new Intl.DateTimeFormat('es-PE', {
+        timeZone: 'America/Lima',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).formatToParts(d);
+    const partMap = {};
+    parts.forEach((p) => { partMap[p.type] = p.value; });
+    return { anio: partMap.year, mes: partMap.month, dia: partMap.day };
+}
+
+const MESES_ESPANOL = [
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'setiembre', 'octubre', 'noviembre', 'diciembre'
+];
+
+function formatearFechaExpedicionTaller(input) {
+    const p = parsearFechaPeru(input);
+    if (!p) return '';
+    const mesIndex = parseInt(p.mes, 10) - 1;
+    const mesNombre = MESES_ESPANOL[mesIndex] || '';
+    return `${p.dia} del mes de ${mesNombre} del ${p.anio}`;
+}
+
+function formatearFechaProximaInspeccionTaller(input) {
+    const p = parsearFechaPeru(input);
+    if (!p) return '';
+    return `${p.dia}/${p.mes}/${p.anio}`;
+}
+
 module.exports = {
     NUMERO_CERTIFICADO_PENDIENTE,
     escapeHtml,
@@ -88,5 +137,8 @@ module.exports = {
     formatNumberWithoutTrailingZeros,
     formatTechnicalNumberExpression,
     formatNumeroCertificado,
-    formatCountTwoDigits
+    formatCountTwoDigits,
+    parsearFechaPeru,
+    formatearFechaExpedicionTaller,
+    formatearFechaProximaInspeccionTaller
 };

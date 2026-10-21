@@ -146,9 +146,9 @@ test('A. Boleta al contado contiene bloques de sede, cliente, vehículo y certif
 });
 
 test('B. Boleta con tarjeta conserva forma de pago Tarjeta de Débito', () => {
-    assert.equal(mapearFormaPago('CONTADO', 'TARJETA_DEBITO'), 'Tarjeta de Débito');
-    assert.equal(mapearFormaPago('CONTADO', 'TARJETA_CREDITO'), 'Tarjeta de Crédito');
-    assert.equal(mapearFormaPago('CONTADO', 'EFECTIVO'), 'Efectivo');
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA_DEBITO'), 'TARJETA DÉBITO');
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA_CREDITO'), 'TARJETA CRÉDITO');
+    assert.equal(mapearFormaPago('CONTADO', 'EFECTIVO'), 'EFECTIVO');
 
     const data = {
         emisor: { ruc: '20521536463', puntoVenta: 'SURQUILLO' },
@@ -363,49 +363,49 @@ test('Caso A: Orden de Trabajo = Placa del vehículo en Boleta y Factura', () =>
 });
 
 test('Caso B: Pago EFECTIVO -> Forma de Pago = Efectivo', () => {
-    assert.equal(mapearFormaPago('CONTADO', 'EFECTIVO'), 'Efectivo');
-    assert.equal(mapearFormaPago('CONTADO', [{ tipo: 'efectivo' }]), 'Efectivo');
-    assert.equal(mapearFormaPago('CONTADO', null, [{ tipocontado_key: 'efectivo' }]), 'Efectivo');
+    assert.equal(mapearFormaPago('CONTADO', 'EFECTIVO'), 'EFECTIVO');
+    assert.equal(mapearFormaPago('CONTADO', [{ tipo: 'efectivo' }]), 'EFECTIVO');
+    assert.equal(mapearFormaPago('CONTADO', null, [{ tipocontado_key: 'efectivo' }]), 'EFECTIVO');
 });
 
 test('Caso C: Pago TARJETA con tipo DÉBITO -> Forma de Pago = Tarjeta de Débito', () => {
-    assert.equal(mapearFormaPago('CONTADO', 'TARJETA_DEBITO'), 'Tarjeta de Débito');
-    assert.equal(mapearFormaPago('CONTADO', 'TARJETA', 'DEBITO'), 'Tarjeta de Débito');
-    assert.equal(mapearFormaPago('CONTADO', 'TARJETA', { tipo_tarjeta: 'DEBITO' }), 'Tarjeta de Débito');
-    assert.equal(mapearFormaPago('CONTADO', [{ tipo: 'tarjeta', tipo_tarjeta: 'DEBITO' }]), 'Tarjeta de Débito');
-    assert.equal(mapearFormaPago('CONTADO', 'TARJETA'), 'Tarjeta', 'Una tarjeta histórica sin modalidad no debe inventarse como débito');
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA_DEBITO'), 'TARJETA DÉBITO');
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA', 'DEBITO'), 'TARJETA DÉBITO');
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA', { tipo_tarjeta: 'DEBITO' }), 'TARJETA DÉBITO');
+    assert.equal(mapearFormaPago('CONTADO', [{ tipo: 'tarjeta', tipo_tarjeta: 'DEBITO' }]), 'TARJETA DÉBITO');
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA'), 'TARJETA', 'Una tarjeta histórica sin modalidad no debe inventarse como débito');
 });
 
 test('Caso D: Pago TARJETA con tipo CRÉDITO -> Forma de Pago = Tarjeta de Crédito', () => {
-    assert.equal(mapearFormaPago('CONTADO', 'TARJETA_CREDITO'), 'Tarjeta de Crédito');
-    assert.equal(mapearFormaPago('CONTADO', 'TARJETA', 'CREDITO'), 'Tarjeta de Crédito');
-    assert.equal(mapearFormaPago('CONTADO', 'TARJETA', { tipo_tarjeta: 'CREDITO' }), 'Tarjeta de Crédito');
-    assert.equal(mapearFormaPago('CONTADO', [{ tipo: 'tarjeta', tipo_tarjeta: 'CREDITO' }]), 'Tarjeta de Crédito');
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA_CREDITO'), 'TARJETA CRÉDITO');
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA', 'CREDITO'), 'TARJETA CRÉDITO');
+    assert.equal(mapearFormaPago('CONTADO', 'TARJETA', { tipo_tarjeta: 'CREDITO' }), 'TARJETA CRÉDITO');
+    assert.equal(mapearFormaPago('CONTADO', [{ tipo: 'tarjeta', tipo_tarjeta: 'CREDITO' }]), 'TARJETA CRÉDITO');
 });
 
 test('Caso E: Pagos mixtos -> No pierde información ni elige arbitrariamente', () => {
-    assert.equal(mapearFormaPago('CONTADO', 'EFECTIVO, TARJETA'), 'Efectivo / Tarjeta');
+    assert.equal(mapearFormaPago('CONTADO', 'EFECTIVO, TARJETA'), 'MIXTO');
     assert.equal(mapearFormaPago('CONTADO', null, [
         { tipo: 'efectivo', importe: 50 },
         { tipo: 'tarjeta', tipo_tarjeta: 'DEBITO', importe: 40 }
-    ]), 'Efectivo / Tarjeta de Débito');
+    ]), 'MIXTO');
     assert.equal(mapearFormaPago('CONTADO', null, [
         { tipocontado_key: 'efectivo', importe: 50 },
         { tipocontado_key: 'tarjeta', tipo_tarjeta: 'CREDITO', importe: 40 }
-    ]), 'Efectivo / Tarjeta de Crédito');
+    ]), 'MIXTO');
     assert.equal(mapearFormaPago('CONTADO', null, [
         { tipocontado_key: 'efectivo' },
         { tipocontado_key: 'efectivo' }
-    ]), 'Efectivo', 'Pagos repetidos del mismo medio se consolidan');
+    ]), 'EFECTIVO', 'Pagos repetidos del mismo medio se consolidan');
 });
 
-test('Caso E.1: BANCO del flujo Faregas se imprime como Depósito Bancario', () => {
-    assert.equal(mapearFormaPago('CONTADO', 'BANCO'), 'Depósito Bancario');
+test('Caso E.1: BANCO del flujo Faregas se imprime como Transferencia Bancaria o Depósito', () => {
+    assert.equal(mapearFormaPago('CONTADO', 'BANCO'), 'TRANSFERENCIA BANCARIA');
     assert.equal(mapearFormaPago('CONTADO', null, [{
         tipocontado_key: 'banco',
         fechdeposito: '2026-10-15',
         nrooperacionbanco: '12222'
-    }]), 'Depósito Bancario');
+    }]), 'DEPÓSITO BANCARIO');
 });
 
 test('Caso F: Condición comercial = CRÉDITO -> Forma de Pago = Crédito (no confunde con Tarjeta de Crédito)', () => {
