@@ -12,7 +12,13 @@ const sedeRangos = require('./faregas-correlativos-sede.service');
 const chipCertificadoService = require('./faregas-chip-certificado.service');
 const vehiculosService = require('./faregas-vehiculos.service');
 const { normalizarNumeroChip, esNumeroChipCertificadoValido } = require('./faregas-chips.rules');
-const { NUMERO_CERTIFICADO_PENDIENTE, formatDateLong } = require('../templates/template-utils');
+const {
+    NUMERO_CERTIFICADO_PENDIENTE,
+    formatDateLong,
+    formatNumberWithoutTrailingZeros,
+    formatTechnicalNumberExpression,
+    formatCountTwoDigits
+} = require('../templates/template-utils');
 const { extraerVariablesHtml } = require('./faregas-formatos-html');
 const { obtenerCatalogoVariables } = require('./faregas-formatos.variables');
 
@@ -1352,7 +1358,9 @@ exports.guardarVehiculoBorrador = async (
             data.color || null,
             data.carroceria || null,
             data.numeroCilindros || null,
-            data.cilindrada || null,
+            data.cilindrada === null || data.cilindrada === undefined || String(data.cilindrada).trim() === ''
+                ? null
+                : data.cilindrada,
             data.numeroEjes || null,
             data.numeroRuedas || null,
             data.numeroAsientos || null,
@@ -2206,9 +2214,6 @@ exports.validarEmision = async (id, userContext) => {
                 if (!t.nro_documento) pushError('titular', 'nro_documento', 'CAMPO_REQUERIDO', 'Nro documento requerido');
                 if (!t.nombre_razon_social) pushError('titular', 'nombre_razon_social', 'CAMPO_REQUERIDO', 'Nombre requerido');
                 
-                if (cert.tipo_clave === 'CONFORMIDAD' && !t.direccion) {
-                    pushError('titular', 'direccion', 'CAMPO_REQUERIDO', 'Dirección requerida para titular de conformidad');
-                }
             });
         }
     }
@@ -2459,9 +2464,20 @@ exports.validarEmision = async (id, userContext) => {
         } else {
             const c = rConf.rows[0];
             const validTipos = ['MODIFICACION', 'MONTAJE', 'FABRICACION'];
-            if (!validTipos.includes(c.tipo_conformidad)) pushError('conformidad', 'tipo_conformidad', 'TIPO_INVALIDO', 'Tipo de conformidad inválido');
+            if (c.tipo_conformidad && !validTipos.includes(c.tipo_conformidad)) {
+                pushError('conformidad', 'tipo_conformidad', 'TIPO_INVALIDO', 'Tipo de conformidad inválido');
+            }
             if (!c.caracteristica_registrable) pushError('conformidad', 'caracteristica_registrable', 'CAMPO_REQUERIDO', 'Característica registrable requerida');
-            if (!c.uso_original_vehiculo) pushError('conformidad', 'uso_original_vehiculo', 'CAMPO_REQUERIDO', 'Uso original requerido');
+            if (!c.uso_original_vehiculo) {
+                pushError('conformidad', 'uso_original_vehiculo', 'CAMPO_REQUERIDO', 'Uso original requerido');
+            } else if (!['PERSONAS', 'MERCANCÍAS'].includes(String(c.uso_original_vehiculo).trim().toUpperCase())) {
+                pushError(
+                    'conformidad',
+                    'uso_original_vehiculo',
+                    'USO_ORIGINAL_INVALIDO',
+                    'Seleccione PERSONAS o MERCANCÍAS. El valor histórico se conserva, pero no puede utilizarse en una nueva emisión.'
+                );
+            }
         }
     }
 
@@ -2771,13 +2787,20 @@ const buildFormatoData = (borrador, extras = {}) => {
     const veh = paraPlantilla(borrador.vehiculo || {});
     const conf = extras.conformidad || {};
     const titulares = Array.isArray(borrador.titulares) ? borrador.titulares : [];
-    const tipoConformidad = String(conf.tipo_conformidad || 'MODIFICACION').toUpperCase();
+    const tipoConformidad = String(conf.tipo_conformidad || '').toUpperCase();
     const fechaDocumento = formatDateLong(borrador.fechaEmision || new Date().toISOString().slice(0, 10));
     const propietarioNombre = titulares.length > 0
         ? titulares.map((titular) => titular.nombre_razon_social || titular.nombreRazonSocial || '').filter(Boolean).join(' / ')
         : (cli.nombreRazonSocial || '-');
-    const propietarioDireccion = titulares[0]?.direccion || '-';
-    const valorOficial = (valor, alternativa = '-') => valor || alternativa;
+    const esConformidad = borrador.tipo?.clave === 'CONFORMIDAD';
+    const propietarioDireccion = esConformidad
+        ? 'LIMA'
+        : (titulares[0]?.direccion || '-');
+    const valorOficial = (valor, alternativa = '-') => (
+        valor === null || valor === undefined || String(valor).trim() === ''
+            ? alternativa
+            : valor
+    );
     const numeroCertificadoVisible = borrador.numeroCertificado
         || (borrador.estado === 'EMITIDO' ? '' : NUMERO_CERTIFICADO_PENDIENTE);
     const datos = combinarObjetos({
@@ -2794,7 +2817,7 @@ const buildFormatoData = (borrador, extras = {}) => {
         },
         taller: {
             nombre: borrador.entidadCertificadoraNombre || '',
-            direccion: borrador.lugarEmision || '',
+            direccion: esConformidad ? 'LIMA' : (borrador.lugarEmision || ''),
             telefono: borrador.telefonoCertificadora || '',
             representante_legal: '',
             numero_autorizacion: borrador.resolucionDirectoral || ''
@@ -2865,12 +2888,33 @@ const buildFormatoData = (borrador, extras = {}) => {
             caracteristica_registrable: conf.caracteristica_registrable
                 ? String(conf.caracteristica_registrable).toUpperCase()
                 : '-',
-            uso_original_vehiculo: conf.uso_original_vehiculo || 'PERSONAS'
+            uso_original_vehiculo: conf.uso_original_vehiculo || '-'
         }
     }, borrador.formatoDatosSnapshot || {});
     // El número definitivo siempre proviene del certificado, nunca de un
     // snapshot de formato que pudiera contener un valor provisional antiguo.
     datos.certificado.numero = numeroCertificadoVisible;
+
+    // Un snapshot antiguo no puede reintroducir la dirección particular ni
+    // los ceros de escala que PostgreSQL devuelve para NUMERIC. Esta
+    // presentación se aplica sólo al modelo de Conformidad y no altera DB.
+    if (esConformidad) {
+        datos.taller.direccion = 'LIMA';
+        datos.titular.direccion = 'LIMA';
+        datos.vehiculo.altura = formatNumberWithoutTrailingZeros(datos.vehiculo.altura);
+        datos.vehiculo.ancho = formatNumberWithoutTrailingZeros(datos.vehiculo.ancho);
+        datos.vehiculo.longitud = formatNumberWithoutTrailingZeros(datos.vehiculo.longitud);
+        datos.vehiculo.peso_bruto = formatNumberWithoutTrailingZeros(datos.vehiculo.peso_bruto);
+        datos.vehiculo.peso_neto = formatNumberWithoutTrailingZeros(datos.vehiculo.peso_neto);
+        datos.vehiculo.carga_util = formatNumberWithoutTrailingZeros(datos.vehiculo.carga_util);
+        datos.vehiculo.cilindrada = formatNumberWithoutTrailingZeros(datos.vehiculo.cilindrada);
+        datos.vehiculo.potencia = formatTechnicalNumberExpression(datos.vehiculo.potencia);
+        datos.vehiculo.ejes = formatCountTwoDigits(datos.vehiculo.ejes);
+        datos.vehiculo.ruedas = formatCountTwoDigits(datos.vehiculo.ruedas);
+        datos.vehiculo.asientos = formatCountTwoDigits(datos.vehiculo.asientos);
+        datos.vehiculo.pasajeros = formatCountTwoDigits(datos.vehiculo.pasajeros);
+        datos.vehiculo.cilindros = formatCountTwoDigits(datos.vehiculo.cilindros);
+    }
 
     // HTML usa objetos anidados. DOCX heredado puede usar la clave completa;
     // mantenemos ambos accesos sin duplicar información persistida.

@@ -39,6 +39,7 @@ router.use(middlewareValidarRangoFechasDashboard);
 router.get('/resumen', controller.obtenerResumen);
 router.get('/sedes', controller.obtenerSedes);
 router.get('/detalle/certificados', controller.obtenerCertificados);
+router.get('/detalle/duplicados', controller.obtenerDuplicados);
 router.get('/detalle/productos', controller.obtenerProductos);
 router.get('/detalle/comprobantes', controller.obtenerComprobantes);
 router.get('/detalle/pagos', controller.obtenerPagos);

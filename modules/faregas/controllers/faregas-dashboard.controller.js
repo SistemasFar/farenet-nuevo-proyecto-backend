@@ -29,8 +29,9 @@ async function resolverPlantasAutorizadas(req) {
     );
     const permisos = rPerms.rows.map(r => r.permiso_clave);
     
+    const esSupervisor = perfil_id === 'SUPERVISOR';
     const tieneGlobal = permisos.includes('DASHBOARD_GLOBAL') || perfil_id === 'SISTEMAS';
-    const tieneSede = permisos.includes('DASHBOARD_SEDE') || tieneGlobal;
+    const tieneSede = permisos.includes('DASHBOARD_SEDE') || tieneGlobal || esSupervisor;
     
     if (!tieneGlobal && !tieneSede) {
         const error = new Error('No tiene permisos para acceder al Dashboard.');
@@ -43,12 +44,12 @@ async function resolverPlantasAutorizadas(req) {
     const keysAutorizadas = plantasAsignadas.map(p => p.key);
     
     // 3. Evaluar el alcance solicitado (query param: alcance=GLOBAL|SEDE, plantaKey, plantas)
-    const alcanceSolicitado = (req.query.alcance || 'GLOBAL').toUpperCase();
+    const alcanceSolicitado = (req.query.alcance || (tieneGlobal ? 'GLOBAL' : 'SEDE')).toUpperCase();
     const plantaSolicitada = req.query.plantaKey;
     const plantasSolicitadasRaw = req.query.plantas;
     
     // Si no tiene permiso global pero pide GLOBAL -> 403
-    if (!tieneGlobal && alcanceSolicitado === 'GLOBAL') {
+    if (!tieneGlobal && alcanceSolicitado === 'GLOBAL' && req.query.alcance && req.query.alcance.toUpperCase() === 'GLOBAL') {
         const error = new Error('No tiene permiso DASHBOARD_GLOBAL para consultar alcance global.');
         error.status = 403;
         throw error;
@@ -123,7 +124,7 @@ function manejarErrorDashboard(res, error, contexto) {
 exports.obtenerResumen = async (req, res) => {
     try {
         const { plantasAutorizadas, plantasFiltro } = await resolverPlantasAutorizadas(req);
-        const { desde, hasta, tipoCertificado, productoId } = req.query;
+        const { desde, hasta, tipoCertificado, tipoDuplicado, productoId } = req.query;
         
         const data = await dashboardService.obtenerResumenDashboard({
             plantasAutorizadas,
@@ -131,6 +132,7 @@ exports.obtenerResumen = async (req, res) => {
             desde,
             hasta,
             tipoCertificado,
+            tipoDuplicado,
             productoId: productoId ? Number(productoId) : undefined
         });
         
@@ -143,7 +145,7 @@ exports.obtenerResumen = async (req, res) => {
 exports.obtenerSedes = async (req, res) => {
     try {
         const { plantasAutorizadas, plantasFiltro } = await resolverPlantasAutorizadas(req);
-        const { desde, hasta, tipoCertificado, productoId } = req.query;
+        const { desde, hasta, tipoCertificado, tipoDuplicado, productoId } = req.query;
         
         const plantasAConsultar = plantasFiltro || plantasAutorizadas;
         const data = await dashboardService.obtenerDetalleSedes({
@@ -151,6 +153,7 @@ exports.obtenerSedes = async (req, res) => {
             desde,
             hasta,
             tipoCertificado,
+            tipoDuplicado,
             productoId: productoId ? Number(productoId) : undefined
         });
         
@@ -180,6 +183,28 @@ exports.obtenerCertificados = async (req, res) => {
         return res.status(200).json({ success: true, data });
     } catch (error) {
         return manejarErrorDashboard(res, error, 'obtenerCertificados');
+    }
+};
+
+exports.obtenerDuplicados = async (req, res) => {
+    try {
+        const { plantasAutorizadas, plantasFiltro } = await resolverPlantasAutorizadas(req);
+        const { desde, hasta, pagina, limite, tipoCertificado, tipoDuplicado } = req.query;
+
+        const data = await dashboardService.obtenerDetalleDuplicados({
+            plantasAutorizadas,
+            plantasFiltro,
+            desde,
+            hasta,
+            pagina,
+            limite,
+            tipoCertificado,
+            tipoDuplicado
+        });
+
+        return res.status(200).json({ success: true, data });
+    } catch (error) {
+        return manejarErrorDashboard(res, error, 'obtenerDuplicados');
     }
 };
 
@@ -289,14 +314,15 @@ exports.obtenerUsuarios = async (req, res) => {
 exports.obtenerExportacion = async (req, res) => {
     try {
         const { plantasAutorizadas, plantasFiltro } = await resolverPlantasAutorizadas(req);
-        const { desde, hasta } = req.query;
+        const { desde, hasta, tipoCertificado, tipoDuplicado } = req.query;
         
         // Verificar permiso explícito de exportación
         const rPerms = await db.query(
             'SELECT 1 FROM fg_perfil_permiso WHERE perfil_clave = $1 AND permiso_clave = \'DASHBOARD_EXPORTAR\'',
             [req.user.perfil_id]
         );
-        if (rPerms.rowCount === 0 && req.user.perfil_id !== 'SISTEMAS') {
+        const puedeExportar = rPerms.rowCount > 0 || req.user.perfil_id === 'SISTEMAS' || req.user.perfil_id === 'SUPERVISOR';
+        if (!puedeExportar) {
             return res.status(403).json({ success: false, message: 'No tiene permiso para exportar reportes del Dashboard.' });
         }
         
@@ -305,6 +331,8 @@ exports.obtenerExportacion = async (req, res) => {
             plantasFiltro,
             desde,
             hasta,
+            tipoCertificado,
+            tipoDuplicado,
             username: req.user.username
         });
         

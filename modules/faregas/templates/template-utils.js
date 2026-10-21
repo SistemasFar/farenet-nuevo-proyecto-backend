@@ -57,6 +57,18 @@ function formatNumberWithoutTrailingZeros(value, fallback = '-') {
         : normalized;
 }
 
+/**
+ * Elimina ceros finales únicamente de los segmentos decimales contenidos en
+ * una expresión técnica. Conserva literalmente separadores como @, / y -.
+ * Ejemplo: "41.00@5500" -> "41@5500".
+ */
+function formatTechnicalNumberExpression(value, fallback = '-') {
+    if (value === null || value === undefined || String(value).trim() === '') return fallback;
+    return String(value).trim().replace(/-?\d+[.,]\d+/g, (segmento) => (
+        formatNumberWithoutTrailingZeros(segmento, segmento)
+    ));
+}
+
 function formatNumeroCertificado(value, fallback = '') {
     return formatNumberWithoutTrailingZeros(value, fallback);
 }
@@ -74,6 +86,7 @@ module.exports = {
     formatDateLong,
     formatDateShort,
     formatNumberWithoutTrailingZeros,
+    formatTechnicalNumberExpression,
     formatNumeroCertificado,
     formatCountTwoDigits
 };

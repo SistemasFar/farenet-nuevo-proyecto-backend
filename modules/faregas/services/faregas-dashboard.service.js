@@ -54,6 +54,40 @@ function sqlCategoriaCertificado(alias = 'c') {
     )`;
 }
 
+function sqlCategoriaDuplicado(alias = 'd') {
+    return `CASE
+        WHEN UPPER(${alias}.tipo_certificado_clave) LIKE 'GLP%' THEN 'GLP'
+        WHEN UPPER(${alias}.tipo_certificado_clave) LIKE 'GNV%' THEN 'GNV'
+        WHEN UPPER(${alias}.tipo_certificado_clave) = 'CONFORMIDAD' THEN 'CONFORMIDAD'
+        ELSE 'COMPLEMENTARIOS'
+    END`;
+}
+
+function normalizarTipoDuplicado(valor) {
+    const tipo = String(valor || '').trim().toUpperCase();
+    if (!tipo || tipo === 'TODOS') return null;
+    const permitidos = new Set(['GLP', 'GNV', 'CONFORMIDAD', 'COMPLEMENTARIOS']);
+    if (!permitidos.has(tipo)) {
+        const error = new Error(`Tipo de duplicado no válido: ${tipo}`);
+        error.status = 400;
+        error.codigo = 'TIPO_DUPLICADO_INVALIDO';
+        throw error;
+    }
+    return tipo;
+}
+
+function resolverTipoDuplicado(tipoCertificado, tipoDuplicado) {
+    const general = normalizarTipoDuplicado(tipoCertificado);
+    const especifico = normalizarTipoDuplicado(tipoDuplicado);
+    if (general && especifico && general !== especifico) {
+        const error = new Error('El tipo general y el tipo específico de duplicado son incompatibles.');
+        error.status = 400;
+        error.codigo = 'FILTROS_TIPO_DUPLICADO_INCOMPATIBLES';
+        throw error;
+    }
+    return especifico || general;
+}
+
 /**
  * Normaliza fechas respetando la zona horaria America/Lima (-05:00)
  * y genera intervalos semiabiertos: [inicioDelDia, inicioDelDiaSiguiente)
@@ -150,7 +184,7 @@ function calcularVariacion(actual, anterior) {
 /**
  * Resumen consolidado para tarjetas KPI, comparativa de período y series de tiempo
  */
-async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desde, hasta, tipoCertificado, productoId }) {
+async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desde, hasta, tipoCertificado, tipoDuplicado, productoId }) {
     if (!plantasAutorizadas || plantasAutorizadas.length === 0) {
         return respuestaVaciaResumen();
     }
@@ -164,6 +198,7 @@ async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desd
     }
     
     const { inicioActual, finActual, inicioAnterior, finAnterior, desde: dVal, hasta: hVal } = calcularIntervaloFechas(desde, hasta);
+    const tipoDuplicadoAplicado = resolverTipoDuplicado(tipoCertificado, tipoDuplicado);
 
     // 1. Métricas período actual
     const [
@@ -178,7 +213,11 @@ async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desd
         distribucionPagos,
         alertasInconsistencias,
         kpisProdActual,
-        kpisProdAnterior
+        kpisProdAnterior,
+        kpisDuplicadosActual,
+        kpisDuplicadosAnterior,
+        serieDuplicados,
+        distribucionDuplicados
     ] = await Promise.all([
         consultarKpisPeriodo(plantas, inicioActual, finActual, tipoCertificado),
         consultarKpisPeriodo(plantas, inicioAnterior, finAnterior, tipoCertificado),
@@ -191,7 +230,11 @@ async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desd
         consultarDistribucionPagos(plantas, inicioActual, finActual),
         consultarAlertas(plantas, inicioActual, finActual),
         productoId ? consultarKpisProductoPeriodo(plantas, inicioActual, finActual, productoId) : Promise.resolve(null),
-        productoId ? consultarKpisProductoPeriodo(plantas, inicioAnterior, finAnterior, productoId) : Promise.resolve(null)
+        productoId ? consultarKpisProductoPeriodo(plantas, inicioAnterior, finAnterior, productoId) : Promise.resolve(null),
+        consultarKpisDuplicadosPeriodo(plantas, inicioActual, finActual, tipoDuplicadoAplicado),
+        consultarKpisDuplicadosPeriodo(plantas, inicioAnterior, finAnterior, tipoDuplicadoAplicado),
+        consultarSerieDuplicados(plantas, inicioActual, finActual, tipoDuplicadoAplicado),
+        consultarDistribucionDuplicados(plantas, inicioActual, finActual, tipoDuplicadoAplicado)
     ]);
 
     return {
@@ -310,6 +353,36 @@ async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desd
                 ...calcularVariacion(kpisActual.certificadosAnulados, kpisAnterior.certificadosAnulados),
                 tooltip: 'Certificados registrados en estado ANULADO durante el período.'
             },
+            duplicadosEmitidos: {
+                actual: kpisDuplicadosActual.duplicadosEmitidos,
+                anterior: kpisDuplicadosAnterior.duplicadosEmitidos,
+                ...calcularVariacion(kpisDuplicadosActual.duplicadosEmitidos, kpisDuplicadosAnterior.duplicadosEmitidos),
+                tooltip: 'Duplicados en estado DISPONIBLE con comprobante operable, contados por su fecha real de disponibilidad. No incrementan los certificados originales emitidos.'
+            },
+            ventaDuplicados: {
+                actual: kpisDuplicadosActual.venta,
+                anterior: kpisDuplicadosAnterior.venta,
+                ...calcularVariacion(kpisDuplicadosActual.venta, kpisDuplicadosAnterior.venta),
+                tooltip: 'Importe almacenado en las operaciones comerciales de duplicado que tienen un comprobante emitido correctamente. Ya forma parte de la venta operativa global.'
+            },
+            totalCobradoDuplicados: {
+                actual: kpisDuplicadosActual.totalCobrado,
+                anterior: kpisDuplicadosAnterior.totalCobrado,
+                ...calcularVariacion(kpisDuplicadosActual.totalCobrado, kpisDuplicadosAnterior.totalCobrado),
+                tooltip: 'Suma de pagos CAN asociados a operaciones de duplicado. Los pagos mixtos se suman, pero no multiplican la cantidad de duplicados.'
+            },
+            saldoPendienteDuplicados: {
+                actual: kpisDuplicadosActual.saldoPendiente,
+                anterior: kpisDuplicadosAnterior.saldoPendiente,
+                ...calcularVariacion(kpisDuplicadosActual.saldoPendiente, kpisDuplicadosAnterior.saldoPendiente),
+                tooltip: 'Saldo almacenado en órdenes de pago no anuladas correspondientes a operaciones de duplicado.'
+            },
+            ticketPromedioDuplicados: {
+                actual: kpisDuplicadosActual.ticketPromedio,
+                anterior: kpisDuplicadosAnterior.ticketPromedio,
+                ...calcularVariacion(kpisDuplicadosActual.ticketPromedio, kpisDuplicadosAnterior.ticketPromedio),
+                tooltip: 'Venta de duplicados dividida entre las operaciones de duplicado incluidas en esa venta.'
+            },
             productosVendidos: {
                 actual: productoId && kpisProdActual ? kpisProdActual.unidadesVendidas : kpisActual.unidadesProductosVendidos,
                 anterior: productoId && kpisProdAnterior ? kpisProdAnterior.unidadesVendidas : kpisAnterior.unidadesProductosVendidos,
@@ -348,7 +421,9 @@ async function obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desd
         },
         serieDiaria,
         serieCertificados,
+        serieDuplicados,
         distribucionCertificados,
+        distribucionDuplicados,
         distribucionProductos,
         distribucionPagos,
         alertas: alertasInconsistencias
@@ -598,6 +673,140 @@ async function consultarKpisProductoPeriodo(plantas, inicio, fin, productoId) {
     };
 }
 
+/**
+ * Desglose financiero de duplicados. Cada agregado conserva la misma fecha de
+ * negocio que su KPI global: operación para venta, pago para cobrado y orden
+ * para saldo. La cantidad emitida usa fecha_disponible, que es la emisión real
+ * del duplicado.
+ */
+async function consultarKpisDuplicadosPeriodo(plantas, inicio, fin, tipoDuplicado) {
+    const query = `
+        WITH duplicados_base AS (
+            SELECT d.id, d.operacion_id, d.estado, d.fecha_disponible
+            FROM fg_certificado_duplicado d
+            WHERE d.planta_key = ANY($1::varchar[])
+              AND ($4::varchar IS NULL OR ${sqlCategoriaDuplicado('d')} = $4::varchar)
+        ),
+        emitidos AS (
+            SELECT COUNT(db.id) AS cantidad
+            FROM duplicados_base db
+            JOIN fg_facturacion f ON f.operacion_id = db.operacion_id
+            WHERE db.estado = 'DISPONIBLE'
+              AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+              AND db.fecha_disponible >= $2::timestamptz
+              AND db.fecha_disponible < $3::timestamptz
+        ),
+        ventas AS (
+            SELECT COALESCE(SUM(oc.importe_total), 0) AS total,
+                   COUNT(db.id) AS cantidad
+            FROM duplicados_base db
+            JOIN fg_operacion_comercial oc ON oc.id = db.operacion_id
+            JOIN fg_facturacion f ON f.operacion_id = oc.id
+            WHERE db.estado = 'DISPONIBLE'
+              AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+              AND oc.fecha_creacion >= $2::timestamptz
+              AND oc.fecha_creacion < $3::timestamptz
+        ),
+        cobros AS (
+            SELECT COALESCE(SUM(p.importe), 0) AS total
+            FROM duplicados_base db
+            JOIN fg_orden_pago op ON op.operacion_id = db.operacion_id
+            JOIN fg_pago p ON p.orden_pago_id = op.id
+            WHERE p.estado = 'CAN'
+              AND p.fechacreacion >= $2::timestamptz
+              AND p.fechacreacion < $3::timestamptz
+        ),
+        saldos AS (
+            SELECT COALESCE(SUM(op.saldo_pendiente), 0) AS total
+            FROM duplicados_base db
+            JOIN fg_orden_pago op ON op.operacion_id = db.operacion_id
+            WHERE op.estado <> 'ANULADO'
+              AND op.saldo_pendiente > 0
+              AND op.fechacreacion >= $2::timestamptz
+              AND op.fechacreacion < $3::timestamptz
+        )
+        SELECT e.cantidad AS duplicados_emitidos,
+               v.total AS venta,
+               v.cantidad AS cantidad_venta,
+               c.total AS total_cobrado,
+               s.total AS saldo_pendiente
+        FROM emitidos e
+        CROSS JOIN ventas v
+        CROSS JOIN cobros c
+        CROSS JOIN saldos s
+    `;
+    const result = await db.query(query, [plantas, inicio, fin, tipoDuplicado || null]);
+    const row = result.rows[0] || {};
+    const venta = Number(row.venta || 0);
+    const cantidadVenta = Number(row.cantidad_venta || 0);
+    return {
+        duplicadosEmitidos: Number(row.duplicados_emitidos || 0),
+        venta: Number(venta.toFixed(2)),
+        totalCobrado: Number(Number(row.total_cobrado || 0).toFixed(2)),
+        saldoPendiente: Number(Number(row.saldo_pendiente || 0).toFixed(2)),
+        ticketPromedio: cantidadVenta > 0 ? Number((venta / cantidadVenta).toFixed(2)) : 0
+    };
+}
+
+async function consultarSerieDuplicados(plantas, inicio, fin, tipoDuplicado) {
+    const query = `
+        SELECT TO_CHAR(d.fecha_disponible AT TIME ZONE 'America/Lima', 'YYYY-MM-DD') AS fecha,
+               COUNT(d.id) AS emitidos
+        FROM fg_certificado_duplicado d
+        JOIN fg_facturacion f ON f.operacion_id = d.operacion_id
+        WHERE d.planta_key = ANY($1::varchar[])
+          AND d.estado = 'DISPONIBLE'
+          AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+          AND d.fecha_disponible >= $2::timestamptz
+          AND d.fecha_disponible < $3::timestamptz
+          AND ($4::varchar IS NULL OR ${sqlCategoriaDuplicado('d')} = $4::varchar)
+        GROUP BY TO_CHAR(d.fecha_disponible AT TIME ZONE 'America/Lima', 'YYYY-MM-DD')
+        ORDER BY fecha ASC
+    `;
+    const result = await db.query(query, [plantas, inicio, fin, tipoDuplicado || null]);
+    return result.rows.map((row) => ({
+        fecha: row.fecha,
+        emitidos: Number(row.emitidos || 0)
+    }));
+}
+
+async function consultarDistribucionDuplicados(plantas, inicio, fin, tipoDuplicado) {
+    const query = `
+        WITH categorias(tipo, orden) AS (
+            VALUES ('GLP'::varchar, 1), ('GNV'::varchar, 2),
+                   ('CONFORMIDAD'::varchar, 3), ('COMPLEMENTARIOS'::varchar, 4)
+        ),
+        emitidos AS (
+            SELECT ${sqlCategoriaDuplicado('d')} AS tipo,
+                   COUNT(d.id) AS cantidad
+            FROM fg_certificado_duplicado d
+            JOIN fg_facturacion f ON f.operacion_id = d.operacion_id
+            WHERE d.planta_key = ANY($1::varchar[])
+              AND d.estado = 'DISPONIBLE'
+              AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+              AND d.fecha_disponible >= $2::timestamptz
+              AND d.fecha_disponible < $3::timestamptz
+              AND ($4::varchar IS NULL OR ${sqlCategoriaDuplicado('d')} = $4::varchar)
+            GROUP BY ${sqlCategoriaDuplicado('d')}
+        )
+        SELECT c.tipo, COALESCE(e.cantidad, 0) AS cantidad
+        FROM categorias c
+        LEFT JOIN emitidos e ON e.tipo = c.tipo
+        WHERE $4::varchar IS NULL OR c.tipo = $4::varchar
+        ORDER BY c.orden
+    `;
+    const result = await db.query(query, [plantas, inicio, fin, tipoDuplicado || null]);
+    const total = result.rows.reduce((sum, row) => sum + Number(row.cantidad || 0), 0);
+    return result.rows.map((row) => {
+        const cantidad = Number(row.cantidad || 0);
+        return {
+            tipo: row.tipo,
+            cantidad,
+            porcentaje: total > 0 ? Number(((cantidad / total) * 100).toFixed(1)) : 0
+        };
+    });
+}
+
 async function consultarKpisPeriodo(plantas, inicio, fin, tipoCertificado) {
     // Consulta usando CTE independientes para garantizar que ninguna tabla multiplique a otra
     const query = `
@@ -708,6 +917,7 @@ async function consultarKpisPeriodo(plantas, inicio, fin, tipoCertificado) {
                     AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
               )
               AND od.tipo_item = 'PRODUCTO'
+              AND od.producto_facturacion_id IS NOT NULL
         ),
         facturacion_totales AS (
             SELECT 
@@ -1009,10 +1219,11 @@ async function consultarAlertas(plantas, inicio, fin) {
 /**
  * Detalle comparativo y ranking de sedes autorizadas
  */
-async function obtenerDetalleSedes({ plantasAutorizadas, desde, hasta, tipoCertificado, productoId }) {
+async function obtenerDetalleSedes({ plantasAutorizadas, desde, hasta, tipoCertificado, tipoDuplicado, productoId }) {
     if (!plantasAutorizadas || plantasAutorizadas.length === 0) return [];
     
     const { inicioActual, finActual } = calcularIntervaloFechas(desde, hasta);
+    const tipoDuplicadoAplicado = resolverTipoDuplicado(tipoCertificado, tipoDuplicado);
 
     const query = `
         SELECT 
@@ -1023,7 +1234,12 @@ async function obtenerDetalleSedes({ plantasAutorizadas, desde, hasta, tipoCerti
             COALESCE(certs.emitidos, 0) AS certificados_emitidos,
             COALESCE(certs.pendientes, 0) AS certificados_pendientes,
             COALESCE(cobrado.total_cobrado, 0) AS total_cobrado,
-            COALESCE(saldos.saldo_pendiente, 0) AS saldo_pendiente
+            COALESCE(saldos.saldo_pendiente, 0) AS saldo_pendiente,
+            COALESCE(duplicados_emitidos.cantidad, 0) AS duplicados_emitidos,
+            COALESCE(ventas_duplicados.cantidad, 0) AS cantidad_venta_duplicados,
+            COALESCE(ventas_duplicados.total, 0) AS venta_duplicados,
+            COALESCE(cobros_duplicados.total, 0) AS cobrado_duplicados,
+            COALESCE(saldos_duplicados.total, 0) AS saldo_duplicados
         FROM fg_planta p
         LEFT JOIN (
             SELECT 
@@ -1168,14 +1384,70 @@ async function obtenerDetalleSedes({ plantasAutorizadas, desde, hasta, tipoCerti
               )
             GROUP BY COALESCE(c.planta_key, oc.planta_key)
         ) saldos ON saldos.planta_key = p.key
+        LEFT JOIN (
+            SELECT d.planta_key, COUNT(d.id) AS cantidad
+            FROM fg_certificado_duplicado d
+            JOIN fg_facturacion f ON f.operacion_id = d.operacion_id
+            WHERE d.estado = 'DISPONIBLE'
+              AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+              AND d.fecha_disponible >= $2::timestamptz
+              AND d.fecha_disponible < $3::timestamptz
+              AND ($6::varchar IS NULL OR ${sqlCategoriaDuplicado('d')} = $6::varchar)
+            GROUP BY d.planta_key
+        ) duplicados_emitidos ON duplicados_emitidos.planta_key = p.key
+        LEFT JOIN (
+            SELECT d.planta_key,
+                   COUNT(d.id) AS cantidad,
+                   COALESCE(SUM(oc.importe_total), 0) AS total
+            FROM fg_certificado_duplicado d
+            JOIN fg_operacion_comercial oc ON oc.id = d.operacion_id
+            JOIN fg_facturacion f ON f.operacion_id = d.operacion_id
+            WHERE d.estado = 'DISPONIBLE'
+              AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+              AND oc.fecha_creacion >= $2::timestamptz
+              AND oc.fecha_creacion < $3::timestamptz
+              AND ($6::varchar IS NULL OR ${sqlCategoriaDuplicado('d')} = $6::varchar)
+            GROUP BY d.planta_key
+        ) ventas_duplicados ON ventas_duplicados.planta_key = p.key
+        LEFT JOIN (
+            SELECT d.planta_key, COALESCE(SUM(pg.importe), 0) AS total
+            FROM fg_certificado_duplicado d
+            JOIN fg_orden_pago op ON op.operacion_id = d.operacion_id
+            JOIN fg_pago pg ON pg.orden_pago_id = op.id
+            WHERE pg.estado = 'CAN'
+              AND pg.fechacreacion >= $2::timestamptz
+              AND pg.fechacreacion < $3::timestamptz
+              AND ($6::varchar IS NULL OR ${sqlCategoriaDuplicado('d')} = $6::varchar)
+            GROUP BY d.planta_key
+        ) cobros_duplicados ON cobros_duplicados.planta_key = p.key
+        LEFT JOIN (
+            SELECT d.planta_key, COALESCE(SUM(op.saldo_pendiente), 0) AS total
+            FROM fg_certificado_duplicado d
+            JOIN fg_orden_pago op ON op.operacion_id = d.operacion_id
+            WHERE op.estado <> 'ANULADO'
+              AND op.saldo_pendiente > 0
+              AND op.fechacreacion >= $2::timestamptz
+              AND op.fechacreacion < $3::timestamptz
+              AND ($6::varchar IS NULL OR ${sqlCategoriaDuplicado('d')} = $6::varchar)
+            GROUP BY d.planta_key
+        ) saldos_duplicados ON saldos_duplicados.planta_key = p.key
         WHERE p.key = ANY($1::varchar[])
         ORDER BY venta_operativa DESC, cantidad_operaciones DESC
     `;
 
-    const res = await db.query(query, [plantasAutorizadas, inicioActual, finActual, tipoCertificado || null, productoId || null]);
+    const res = await db.query(query, [
+        plantasAutorizadas,
+        inicioActual,
+        finActual,
+        tipoCertificado || null,
+        productoId || null,
+        tipoDuplicadoAplicado
+    ]);
     return res.rows.map(r => {
         const ops = Number(r.cantidad_operaciones);
         const venta = Number(r.venta_operativa);
+        const cantidadVentaDuplicados = Number(r.cantidad_venta_duplicados);
+        const ventaDuplicados = Number(r.venta_duplicados);
         return {
             plantaKey: r.planta_key,
             plantaNombre: r.planta_nombre,
@@ -1185,7 +1457,14 @@ async function obtenerDetalleSedes({ plantasAutorizadas, desde, hasta, tipoCerti
             certificadosPendientes: Number(r.certificados_pendientes),
             totalCobrado: Number(r.total_cobrado),
             saldoPendiente: Number(r.saldo_pendiente),
-            ticketPromedio: ops > 0 ? Number((venta / ops).toFixed(2)) : 0
+            ticketPromedio: ops > 0 ? Number((venta / ops).toFixed(2)) : 0,
+            duplicadosEmitidos: Number(r.duplicados_emitidos),
+            ventaDuplicados,
+            totalCobradoDuplicados: Number(r.cobrado_duplicados),
+            saldoPendienteDuplicados: Number(r.saldo_duplicados),
+            ticketPromedioDuplicados: cantidadVentaDuplicados > 0
+                ? Number((ventaDuplicados / cantidadVentaDuplicados).toFixed(2))
+                : 0
         };
     });
 }
@@ -1274,6 +1553,124 @@ async function obtenerDetalleCertificados({ plantasAutorizadas, plantasFiltro, d
         total,
         pagina: Number(pagina),
         limite: Number(limite)
+    };
+}
+
+/**
+ * Detalle paginado de duplicados emitidos. El ordinal se calcula por
+ * certificado original sin alterar su número, fecha ni contenido técnico.
+ */
+async function obtenerDetalleDuplicados({
+    plantasAutorizadas,
+    plantasFiltro,
+    desde,
+    hasta,
+    pagina = 1,
+    limite = 20,
+    tipoCertificado,
+    tipoDuplicado
+}) {
+    const plantas = (plantasFiltro && plantasFiltro.length > 0)
+        ? plantasFiltro.filter(p => plantasAutorizadas.includes(p))
+        : plantasAutorizadas;
+    const paginaAplicada = Math.max(Number.parseInt(pagina, 10) || 1, 1);
+    const limiteAplicado = Math.min(Math.max(Number.parseInt(limite, 10) || 20, 1), 100);
+    if (!plantas || plantas.length === 0) {
+        return { items: [], total: 0, pagina: paginaAplicada, limite: limiteAplicado };
+    }
+
+    const { inicioActual, finActual } = calcularIntervaloFechas(desde, hasta);
+    const tipoDuplicadoAplicado = resolverTipoDuplicado(tipoCertificado, tipoDuplicado);
+    const offset = (paginaAplicada - 1) * limiteAplicado;
+
+    const query = `
+        WITH duplicados_con_ordinal AS (
+            SELECT d.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY d.certificado_original_id
+                       ORDER BY d.fecha_disponible ASC, d.id ASC
+                   ) AS numero_duplicado
+            FROM fg_certificado_duplicado d
+            WHERE d.estado = 'DISPONIBLE'
+              AND d.planta_key = ANY($1::varchar[])
+        ),
+        detalle AS (
+            SELECT d.id,
+                   d.certificado_original_id,
+                   d.operacion_id,
+                   COALESCE(d.facturacion_id, f.id) AS facturacion_id,
+                   d.planta_key,
+                   p.nombre AS planta_nombre,
+                   d.placa,
+                   d.tipo_certificado_clave,
+                   d.modalidad,
+                   d.numero_certificado_snapshot,
+                   d.tipo_nombre_snapshot,
+                   d.fecha_emision_snapshot,
+                   d.fecha_disponible,
+                   d.estado,
+                   d.solicitado_por,
+                   d.numero_duplicado,
+                   ${sqlCategoriaDuplicado('d')} AS tipo_dashboard,
+                   oc.importe_total,
+                   f.tipo_comprobante,
+                   f.nro_comprobante,
+                   f.estado AS facturacion_estado,
+                   f.fecha_documento
+            FROM duplicados_con_ordinal d
+            JOIN fg_operacion_comercial oc ON oc.id = d.operacion_id
+            JOIN fg_facturacion f ON f.operacion_id = d.operacion_id
+            LEFT JOIN fg_planta p ON p.key = d.planta_key
+            WHERE d.planta_key = ANY($1::varchar[])
+              AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
+              AND d.fecha_disponible >= $2::timestamptz
+              AND d.fecha_disponible < $3::timestamptz
+              AND ($4::varchar IS NULL OR ${sqlCategoriaDuplicado('d')} = $4::varchar)
+        )
+        SELECT detalle.*, COUNT(*) OVER() AS total_registros
+        FROM detalle
+        ORDER BY fecha_disponible DESC, id DESC
+        LIMIT $5 OFFSET $6
+    `;
+
+    const result = await db.query(query, [
+        plantas,
+        inicioActual,
+        finActual,
+        tipoDuplicadoAplicado,
+        limiteAplicado,
+        offset
+    ]);
+    const total = Number(result.rows[0]?.total_registros || 0);
+
+    return {
+        items: result.rows.map(row => ({
+            id: Number(row.id),
+            certificadoOriginalId: Number(row.certificado_original_id),
+            operacionId: Number(row.operacion_id),
+            facturacionId: Number(row.facturacion_id),
+            plantaKey: row.planta_key,
+            plantaNombre: row.planta_nombre || row.planta_key,
+            placa: row.placa,
+            tipoCertificadoClave: row.tipo_certificado_clave,
+            tipoCertificado: row.tipo_dashboard,
+            tipoNombre: row.tipo_nombre_snapshot,
+            modalidad: row.modalidad,
+            numeroCertificadoOriginal: row.numero_certificado_snapshot,
+            fechaCertificadoOriginal: row.fecha_emision_snapshot,
+            fechaEmisionDuplicado: row.fecha_disponible,
+            numeroDuplicado: Number(row.numero_duplicado),
+            importe: Number(row.importe_total || 0),
+            tipoComprobante: row.tipo_comprobante,
+            numeroComprobante: row.nro_comprobante,
+            fechaComprobante: row.fecha_documento,
+            estado: row.estado,
+            estadoFacturacion: row.facturacion_estado,
+            solicitadoPor: row.solicitado_por
+        })),
+        total,
+        pagina: paginaAplicada,
+        limite: limiteAplicado
     };
 }
 
@@ -1659,7 +2056,11 @@ async function obtenerDetalleUsuarios({ plantasAutorizadas, plantasFiltro, desde
                 WHEN $4::bigint IS NOT NULL THEN 0
                 ELSE COUNT(DISTINCT od.certificado_id) FILTER (WHERE od.tipo_item = 'SERVICIO' AND od.certificado_id IS NOT NULL)
             END AS certificados_generados,
-            COALESCE(SUM(od.cantidad) FILTER (WHERE od.tipo_item = 'PRODUCTO' AND ($4::bigint IS NULL OR od.producto_facturacion_id = $4::bigint)), 0) AS productos_vendidos,
+            COALESCE(SUM(od.cantidad) FILTER (
+                WHERE od.tipo_item = 'PRODUCTO'
+                  AND od.producto_facturacion_id IS NOT NULL
+                  AND ($4::bigint IS NULL OR od.producto_facturacion_id = $4::bigint)
+            ), 0) AS productos_vendidos,
             MAX(oc.fecha_creacion) AS ultima_operacion
         FROM fg_operacion_comercial oc
         ${productoId ? `JOIN fg_operacion_detalle od ON od.operacion_id = oc.id AND od.tipo_item = 'PRODUCTO' AND od.producto_facturacion_id = $4::bigint` : `LEFT JOIN fg_operacion_detalle od ON od.operacion_id = oc.id`}
@@ -1698,15 +2099,16 @@ async function obtenerDetalleUsuarios({ plantasAutorizadas, plantasFiltro, desde
  * Consulta de datos completa estructurada para exportación Excel
  * Limita el conjunto a 5,000 registros por hoja para no saturar memoria
  */
-async function obtenerDatosExportacion({ plantasAutorizadas, plantasFiltro, desde, hasta, username }) {
+async function obtenerDatosExportacion({ plantasAutorizadas, plantasFiltro, desde, hasta, tipoCertificado, tipoDuplicado, username }) {
     const plantas = (plantasFiltro && plantasFiltro.length > 0)
         ? plantasFiltro.filter(p => plantasAutorizadas.includes(p))
         : plantasAutorizadas;
     if (plantas.length === 0) return null;
 
-    const resumen = await obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desde, hasta });
-    const sedes = await obtenerDetalleSedes({ plantasAutorizadas: plantas, desde, hasta });
-    const certs = await obtenerDetalleCertificados({ plantasAutorizadas: plantas, desde, hasta, pagina: 1, limite: 5000 });
+    const resumen = await obtenerResumenDashboard({ plantasAutorizadas, plantasFiltro, desde, hasta, tipoCertificado, tipoDuplicado });
+    const sedes = await obtenerDetalleSedes({ plantasAutorizadas: plantas, desde, hasta, tipoCertificado, tipoDuplicado });
+    const certs = await obtenerDetalleCertificados({ plantasAutorizadas: plantas, desde, hasta, pagina: 1, limite: 5000, tipoCertificado });
+    const duplicados = await obtenerDetalleDuplicados({ plantasAutorizadas: plantas, desde, hasta, pagina: 1, limite: 5000, tipoCertificado, tipoDuplicado });
     const prods = await obtenerDetalleProductos({ plantasAutorizadas: plantas, desde, hasta, pagina: 1, limite: 5000 });
     const comprobantes = await obtenerDetalleComprobantes({ plantasAutorizadas: plantas, desde, hasta, pagina: 1, limite: 5000 });
     const pagos = await obtenerDetallePagos({ plantasAutorizadas: plantas, desde, hasta, pagina: 1, limite: 5000 });
@@ -1724,6 +2126,7 @@ async function obtenerDatosExportacion({ plantasAutorizadas, plantasFiltro, desd
             resumen,
             sedes,
             certificados: certs.items,
+            duplicados: duplicados.items,
             ventasProductos: prods.items,
             comprobantes: comprobantes.items,
             pagos: pagos.items,
@@ -1757,11 +2160,18 @@ function respuestaVaciaResumen() {
             montoDescontado: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
             facturasAceptadas: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
             boletasAceptadas: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
-            comprobantesRechazadosOError: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' }
+            comprobantesRechazadosOError: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
+            duplicadosEmitidos: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
+            ventaDuplicados: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
+            totalCobradoDuplicados: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
+            saldoPendienteDuplicados: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' },
+            ticketPromedioDuplicados: { actual: 0, anterior: 0, delta: 0, porcentaje: 0, tooltip: '' }
         },
         serieDiaria: [],
         serieCertificados: [],
+        serieDuplicados: [],
         distribucionCertificados: [],
+        distribucionDuplicados: [],
         distribucionProductos: [],
         distribucionPagos: [],
         alertas: []
@@ -1775,10 +2185,16 @@ module.exports = {
     obtenerResumenDashboard,
     obtenerDetalleSedes,
     obtenerDetalleCertificados,
+    obtenerDetalleDuplicados,
     obtenerDetalleProductos,
     obtenerDetalleComprobantes,
     obtenerDetallePagos,
     obtenerDetalleDescuentos,
     obtenerDetalleUsuarios,
-    obtenerDatosExportacion
+    obtenerDatosExportacion,
+    _private: {
+        normalizarTipoDuplicado,
+        resolverTipoDuplicado,
+        sqlCategoriaDuplicado
+    }
 };

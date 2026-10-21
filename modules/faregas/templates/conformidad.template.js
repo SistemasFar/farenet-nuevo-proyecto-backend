@@ -1,4 +1,11 @@
-const { escapeHtml, formatDateLong, formatNumberWithoutTrailingZeros, formatCountTwoDigits, NUMERO_CERTIFICADO_PENDIENTE } = require('./template-utils');
+const {
+    escapeHtml,
+    formatDateLong,
+    formatNumberWithoutTrailingZeros,
+    formatTechnicalNumberExpression,
+    formatCountTwoDigits,
+    NUMERO_CERTIFICADO_PENDIENTE
+} = require('./template-utils');
 
 function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
     const variablesDinamicas = options.variablesDinamicas === true;
@@ -20,13 +27,11 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         ? titulares.map(t => t.nombre_razon_social).join(' / ')
         : (cert.cliente_nombre || '-');
 
-    const propietarioDireccion = variablesDinamicas
-        ? '{{titular.direccion}}'
-        : titulares.length > 0
-        ? (titulares[0].direccion || '-')
-        : '-';
+    // Regla documental exclusiva de Conformidad. No usa ni modifica la
+    // dirección particular del titular ni la dirección fiscal de facturación.
+    const propietarioDireccion = 'LIMA';
 
-    const tipoConf = (conf.tipo_conformidad || 'MODIFICACION').toUpperCase();
+    const tipoConf = String(conf.tipo_conformidad || '').toUpperCase();
 
     const caracRegText = variablesDinamicas
         ? '{{conformidad.caracteristica_registrable}}'
@@ -255,7 +260,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             <td style="width: 140px;">Categoría</td>
             <td class="val">${escapeHtml(veh.categoria || '-')}</td>
             <td style="width: 140px;">Altura (metros)</td>
-            <td class="val">${escapeHtml(veh.altura || '-')}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.altura))}</td>
         </tr>
         <tr>
             <td>Modelo</td>
@@ -301,7 +306,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         </tr>
         <tr>
             <td>Potencia (kw / rpm)</td>
-            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.potencia))}</td>
+            <td class="val">${escapeHtml(formatTechnicalNumberExpression(veh.potencia))}</td>
             <td>Nº Ejes</td>
             <td class="val">${escapeHtml(formatCountTwoDigits(veh.ejes))}</td>
         </tr>
@@ -313,7 +318,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         </tr>
         <tr>
             <td>Cilindrada (cc) / Cilindros</td>
-            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.cilindrada))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.cilindros))}</td>
+            <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.cilindrada))} / ${escapeHtml(formatCountTwoDigits(veh.cilindros))}</td>
             <td>Versión</td>
             <td class="val">${escapeHtml(veh.version || '-')}</td>
         </tr>
@@ -340,7 +345,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         En cumplimiento del D.S N°058-2003-MTC y modificatorias se procede a entregar el presente certificado de conformidad de la modificación, montaje o fabricación efectuada, El vehículo cumple los requisitos técnicos exigidos para el SNTT, no afecta negativamente su seguridad ni el medio ambiente.
     </div>
     <div class="legal-p">
-        El vehículo originalmente diseñado y construido para transporte de <strong>${escapeHtml(conf.uso_original_vehiculo || 'PERSONAS')}</strong>.
+        El vehículo originalmente diseñado y construido para transporte de <strong>${escapeHtml(conf.uso_original_vehiculo || '-')}</strong>.
     </div>
 
     <div class="footer-date">

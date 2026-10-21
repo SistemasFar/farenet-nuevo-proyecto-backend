@@ -95,9 +95,16 @@ test('CASO 4: Estado vacío devuelve ceros seguros y estructuras vacías sin err
     assert.equal(vacio.kpis.totalCobrado.actual, 0);
     assert.equal(vacio.kpis.saldoPendiente.actual, 0);
     assert.equal(vacio.kpis.certificadosAnulados.actual, 0);
+    assert.equal(vacio.kpis.duplicadosEmitidos.actual, 0);
+    assert.equal(vacio.kpis.ventaDuplicados.actual, 0);
+    assert.equal(vacio.kpis.totalCobradoDuplicados.actual, 0);
+    assert.equal(vacio.kpis.saldoPendienteDuplicados.actual, 0);
+    assert.equal(vacio.kpis.ticketPromedioDuplicados.actual, 0);
     assert.deepEqual(vacio.serieDiaria, []);
     assert.deepEqual(vacio.serieCertificados, []);
+    assert.deepEqual(vacio.serieDuplicados, []);
     assert.deepEqual(vacio.distribucionCertificados, []);
+    assert.deepEqual(vacio.distribucionDuplicados, []);
     assert.deepEqual(vacio.distribucionPagos, []);
     assert.deepEqual(vacio.alertas, []);
 });

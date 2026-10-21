@@ -200,7 +200,8 @@ test('Conformidad: elimina ceros decimales en mediciones numéricas', () => {
       ruedas: '4.000',
       asientos: '5.000',
       pasajeros: '4.000',
-      potencia: '110.000',
+      altura: '2.800',
+      potencia: '41.00@5500',
     },
     conformidad: {},
     titulares: [],
@@ -212,7 +213,9 @@ test('Conformidad: elimina ceros decimales en mediciones numéricas', () => {
   assert.match(html, />1350</);
   assert.match(html, />1800</);
   assert.match(html, />450</);
-  assert.match(html, /2000 \/ 4/);
+  assert.match(html, /2000 \/ 04/);
+  assert.match(html, />2\.8</);
+  assert.match(html, />41@5500</);
   assert.match(html, />02</);
   assert.match(html, /05 \/ 04/);
   assert.match(html, />04</);

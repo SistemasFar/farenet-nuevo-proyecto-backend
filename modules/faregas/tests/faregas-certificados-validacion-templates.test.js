@@ -194,19 +194,20 @@ test('Conformidad: motor HTML_DINAMICO formato 114 usa tipo_conformidad, caracte
   const datosDinamicos = {
     certificado: { numero: 'CONF-001' },
     documento: { clase_preview: '', fecha_dia: '12', fecha_mes: 'OCTUBRE', fecha_anio: '2026' },
-    titular: { nombre: 'CONSTRUCTORA PRUEBA S.A.C.', direccion: 'AV. FAREGAS 500' },
+    titular: { nombre: 'CONSTRUCTORA PRUEBA S.A.C.', direccion: 'NO DEBE IMPRIMIRSE' },
+    taller: { direccion: 'LIMA' },
     vehiculo: {
       placa: 'CON123', clase: 'N2', categoria: 'N2', modelo: 'CANTER', marca: 'MITSUBISHI',
-      serie_chasis: 'CANTER-SER-1', vin: 'CANTER-VIN-1', motor: 'CANTER-MOT-1', color: 'BLANCO',
-      carroceria: 'FURGON', combustible: 'DIESEL', potencia: '110 / 2800', asientos: '3', pasajeros: '2',
-      cilindrada: '2977', cilindros: '4', longitud: '5.90', altura: '2.80', ancho: '2.05',
+      serie_chasis: 'CANTER-SER-1', vin: 'KMHCT41BAGU99****', motor: 'CANTER-MOT/1', color: 'BLANCO',
+      carroceria: 'FURGON', combustible: 'DIESEL', potencia: '75 kW @ 4500 RPM', asientos: '3', pasajeros: '2',
+      cilindrada: '0.8', cilindros: '04', longitud: '5.9', altura: '2.8', ancho: '2.05',
       peso_bruto: '5500', peso_neto: '2800', carga_util: '2700', anio_fabricacion: '2022',
       anio_modelo: '2022', formula_rodante: '4x2', ejes: '2', ruedas: '6', version: '4.9T'
     },
     conformidad: {
       clase_modificacion: 'active', clase_montaje: '', clase_fabricacion: '',
       marca_modificacion: 'X', marca_montaje: '', marca_fabricacion: '',
-      caracteristica_registrable: 'CAMBIO DE CARROCERÍA A FURGÓN ISOTÉRMICO',
+      caracteristica_registrable: 'RECTIFICACIÓN DE COLOR / MODELO-1',
       uso_original_vehiculo: 'MERCANCÍAS'
     }
   };
@@ -216,8 +217,12 @@ test('Conformidad: motor HTML_DINAMICO formato 114 usa tipo_conformidad, caracte
 
   assert.match(html, /CERTIFICADO DE CONFORMIDAD/);
   assert.match(html, /CONSTRUCTORA PRUEBA S\.A\.C\./);
-  assert.match(html, /AV\. FAREGAS 500/);
-  assert.match(html, /CAMBIO DE CARROCERÍA A FURGÓN ISOTÉRMICO/);
+  assert.match(html, /Dirección:\s*<strong>LIMA<\/strong>/);
+  assert.doesNotMatch(html, /NO DEBE IMPRIMIRSE/);
+  assert.match(html, /RECTIFICACIÓN DE COLOR \/ MODELO-1/);
+  assert.match(html, /CANTER-MOT\/1/);
+  assert.match(html, /75 kW @ 4500 RPM/);
+  assert.match(html, /KMHCT41BAGU99\*\*\*\*/);
   assert.match(html, /MERCANCÍAS/);
   assert.equal($('td.active').text().trim(), 'MODIFICACION');
 
