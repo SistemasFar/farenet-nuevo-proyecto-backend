@@ -5397,7 +5397,7 @@ CREATE INDEX idx_fg_certificado_duplicado_estado
 
 CREATE UNIQUE INDEX uq_fg_certificado_duplicado_pendiente_usuario
     ON public.fg_certificado_duplicado (certificado_original_id, solicitado_por)
-    WHERE ((estado)::text = ANY ((ARRAY['PENDIENTE_PAGO'::character varying, 'PENDIENTE_COMPROBANTE'::character varying])::text[]));
+    WHERE ((estado)::text = 'PENDIENTE_PAGO'::text);
 
 
 --

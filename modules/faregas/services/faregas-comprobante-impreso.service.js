@@ -140,6 +140,17 @@ function resolverFormaPagoYDetalle(f, qPagosRows = []) {
     };
 }
 
+function construirCuotasImpresas(facturacion, cuotas = []) {
+    const esCredito = String(facturacion?.condicion_pago || '').toUpperCase().startsWith('CREDITO');
+    if (!esCredito) return [];
+
+    return cuotas.map(cuota => ({
+        numero: String(cuota.numero_cuota).padStart(3, '0'),
+        fecha: formatearFechaPeruana(cuota.fecha_pago),
+        importe: Number(cuota.importe || 0)
+    }));
+}
+
 function mapearFormaPago(condicionPago, medioPago, pagosOpciones = null) {
     const cp = String(condicionPago || '').toUpperCase();
     if (cp === 'CREDITO' || cp.startsWith('CREDITO')) {
@@ -425,11 +436,7 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
             total: f.importe_total
         },
         descuento: descuentoData,
-        cuotas: esCredito ? qCuotas.rows.map(cuota => ({
-            numero: String(cuota.numero_cuota).padStart(3, '0'),
-            fecha: formatearFechaPeruana(cuota.fecha_pago),
-            importe: Number(cuota.importe || 0)
-        })) : [],
+        cuotas: construirCuotasImpresas(f, qCuotas.rows),
         numeroCertificado: f.numero_certificado,
         ordenTrabajo: f.veh_placa || f.operacion_placa || '',
         qrSource: f.cadena_qr || '',
@@ -480,6 +487,7 @@ module.exports = {
     normalizarMedioItem,
     parseDetallePagosDesdeTexto,
     resolverFormaPagoYDetalle,
+    construirCuotasImpresas,
     mapearFormaPago,
     validarConsistenciaFiscal,
     obtenerDatosComprobanteImpreso,

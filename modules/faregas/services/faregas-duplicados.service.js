@@ -202,7 +202,8 @@ const obtenerDuplicadoAutorizado = async (duplicadoId, userContext, queryable = 
                o.estado AS operacion_estado, o.importe_total,
                f.id AS facturacion_id_real, f.estado AS facturacion_estado,
                f.aceptada_sunat, f.entorno_facturador, f.nro_comprobante,
-               f.tipo_comprobante, f.enlace_pdf, f.enlace_xml, f.enlace_pdf_faregas,
+               f.tipo_comprobante, f.serie, f.numero,
+               f.enlace_pdf, f.enlace_xml, f.enlace_pdf_faregas,
                CASE
                    WHEN d.estado = 'DISPONIBLE' THEN (
                        SELECT COUNT(*)::int
@@ -350,7 +351,7 @@ exports.crearSolicitud = async (certificadoId, userContext) => {
             FROM fg_certificado_duplicado d
             WHERE d.certificado_original_id = $1
               AND d.solicitado_por = $2
-              AND d.estado IN ('PENDIENTE_PAGO', 'PENDIENTE_COMPROBANTE')
+              AND d.estado = 'PENDIENTE_PAGO'
             ORDER BY d.id DESC LIMIT 1 FOR UPDATE
         `, [certificadoId, userContext.username]);
         if (existente.rowCount) {
@@ -412,7 +413,7 @@ exports.crearSolicitud = async (certificadoId, userContext) => {
             const existente = await db.query(`
                 SELECT id FROM fg_certificado_duplicado
                 WHERE certificado_original_id=$1 AND solicitado_por=$2
-                  AND estado IN ('PENDIENTE_PAGO','PENDIENTE_COMPROBANTE')
+                  AND estado = 'PENDIENTE_PAGO'
                 ORDER BY id DESC LIMIT 1
             `, [certificadoId, userContext.username]);
             if (existente.rowCount) {
@@ -605,7 +606,13 @@ exports.obtenerFacturacionParaDescarga = async (duplicadoId, userContext) => {
     if (!duplicado.facturacion_id_real || !facturacionOperable(duplicado)) {
         throw errorNegocio('COMPROBANTE_NO_DISPONIBLE', 409);
     }
-    return { facturacionId: Number(duplicado.facturacion_id_real) };
+    return {
+        id: Number(duplicado.facturacion_id_real),
+        enlacePdf: duplicado.enlace_pdf || null,
+        tipoComprobante: duplicado.tipo_comprobante || null,
+        serie: duplicado.serie || null,
+        numero: duplicado.numero || null
+    };
 };
 
 exports._private = {

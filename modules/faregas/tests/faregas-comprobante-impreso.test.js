@@ -7,7 +7,8 @@ const { renderFacturaHtml } = require('../templates/comprobante-factura.template
 const {
     validarConsistenciaFiscal,
     mapearFormaPago,
-    formatearFechaPeruana
+    formatearFechaPeruana,
+    construirCuotasImpresas
 } = require('../services/faregas-comprobante-impreso.service');
 const {
     DIRECCION_HISTORICA_FAREGAS,
@@ -265,6 +266,15 @@ test('D. Factura a crédito incluye fecha de vencimiento y forma de pago Crédit
     assert.match(html, /Fecha:<\/strong> 31\/10\/2026/);
     assert.match(html, /Monto:<\/strong> S\/ 80\.00/);
     assert.match(html, /Cuota:<\/strong> 002/);
+});
+
+test('comprobante de duplicado construye cuotas sin depender de una variable fuera de alcance', () => {
+    const cuotas = [{ numero_cuota: 1, fecha_pago: '2026-10-31', importe: '50.00' }];
+
+    assert.deepEqual(construirCuotasImpresas({ condicion_pago: 'CONTADO' }, cuotas), []);
+    assert.deepEqual(construirCuotasImpresas({ condicion_pago: 'CREDITO' }, cuotas), [
+        { numero: '001', fecha: '31/10/2026', importe: 50 }
+    ]);
 });
 
 test('E. Comprobante con descuento reproduce el bloque de código y resumen', () => {

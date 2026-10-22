@@ -87,7 +87,7 @@ const camposRequeridosComponenteGlp = (modalidad, componente) => {
 
 const formatearNumeroCertificado = ({ tipoFlujo, tipoCodigo, anchoCorrelativo, numero }) => {
     const esInspeccionTaller = String(tipoFlujo || '').trim().toUpperCase() === 'TALLER_INSPECCION';
-    const prefijo = esInspeccionTaller ? '22' : String(tipoCodigo || '').trim();
+    const prefijo = String(tipoCodigo || '').trim();
     const anchoConfigurado = Number(anchoCorrelativo);
     const ancho = esInspeccionTaller ? Math.max(7, anchoConfigurado || 0) : anchoConfigurado;
     if (!prefijo || !Number.isInteger(ancho) || ancho <= 0) return '';
@@ -612,6 +612,8 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             OR COALESCE(v.placa, '') ILIKE $${indiceBusqueda}
             OR COALESCE(tit.nro_documento, '') ILIKE $${indiceBusqueda}
             OR COALESCE(tit.nombre_razon_social, '') ILIKE $${indiceBusqueda}
+            OR COALESCE(f.nro_documento, '') ILIKE $${indiceBusqueda}
+            OR COALESCE(f.nombre_razon_social, '') ILIKE $${indiceBusqueda}
         )`);
     }
     if (fechaDesde && fechaHasta) {
@@ -631,6 +633,7 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
         FROM fg_certificado c
         LEFT JOIN fg_certificado_vehiculo v ON v.certificado_id = c.id
         LEFT JOIN fg_certificado_titular tit ON tit.certificado_id = c.id AND tit.orden = 1
+        LEFT JOIN fg_facturacion f ON f.certificado_id = c.id
         WHERE ${filtroWhere}`;
     const resTotal = await db.query(qTotal, parametrosBase);
     const total = parseInt(resTotal.rows[0].count);
@@ -651,6 +654,12 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             v.placa,
             tit.nro_documento AS "clienteDocumento",
             tit.nombre_razon_social AS "clienteNombre",
+            tit.tipo_documento AS "propietarioTipoDocumento",
+            tit.nro_documento AS "propietarioDocumento",
+            tit.nombre_razon_social AS "propietarioNombre",
+            f.tipo_documento_cliente AS "facturacionTipoDocumento",
+            f.nro_documento AS "facturacionDocumento",
+            f.nombre_razon_social AS "facturacionNombre",
             t.clave AS "tipoCertificadoClave",
             s.modalidad,
             COALESCE(s.nombre, t.nombre) AS "conceptoVehicular",

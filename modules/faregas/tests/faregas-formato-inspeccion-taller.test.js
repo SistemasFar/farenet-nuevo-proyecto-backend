@@ -112,11 +112,17 @@ test('el título de Taller se forma con combustible y modalidad', () => {
   );
 });
 
-test('la inspección de taller usa el prefijo documental 22 y siete dígitos', () => {
+test('la inspección de taller conserva el prefijo GLP 41 o GNV 22 y usa siete dígitos', () => {
   const certificados = require('../services/faregas-certificados.service');
   assert.equal(certificados._private.formatearNumeroCertificado({
     tipoFlujo: 'TALLER_INSPECCION',
-    tipoCodigo: '27',
+    tipoCodigo: '41',
+    anchoCorrelativo: 5,
+    numero: 13393
+  }), 'DG-41-0013393');
+  assert.equal(certificados._private.formatearNumeroCertificado({
+    tipoFlujo: 'TALLER_INSPECCION',
+    tipoCodigo: '22',
     anchoCorrelativo: 5,
     numero: 13393
   }), 'DG-22-0013393');

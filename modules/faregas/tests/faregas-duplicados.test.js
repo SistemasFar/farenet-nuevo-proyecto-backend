@@ -12,6 +12,7 @@ require.cache[databasePath] = {
 };
 
 const duplicadosService = require('../services/faregas-duplicados.service');
+const duplicadosController = require('../controllers/faregas-duplicados.controller');
 const { agregarMarcaDuplicado } = require('../services/faregas-duplicado-pdf.service');
 
 test('duplicado conserva el HTML y agrega una sola marca de fondo', () => {
@@ -31,6 +32,31 @@ test('busqueda normaliza placa y acepta TODOS o una modalidad GLP/GNV', () => {
     assert.deepEqual(reglas.normalizarTipoFiltro('GLP:INICIAL'), { clave: 'GLP', modalidad: 'INICIAL' });
     assert.deepEqual(reglas.normalizarTipoFiltro('GNV:ANUAL'), { clave: 'GNV', modalidad: 'ANUAL' });
     assert.throws(() => reglas.normalizarTipoFiltro('CONFORMIDAD:ANUAL'), /TIPO_CERTIFICADO_INVALIDO/);
+});
+
+test('rechazo de NubeFact muestra el motivo real y no un mensaje genérico', () => {
+    let respuesta = null;
+    const res = {
+        status(statusCode) {
+            assert.equal(statusCode, 422);
+            return this;
+        },
+        json(payload) {
+            respuesta = payload;
+            return payload;
+        }
+    };
+    const error = new Error('NUBEFACT_RECHAZADO');
+    error.code = 'NUBEFACT_RECHAZADO';
+    error.statusCode = 422;
+    error.detalles = {
+        motivo: 'No puedes enviar mas de 50 documentos en una cuenta DEMO.'
+    };
+
+    duplicadosController._private.responderError(res, error);
+
+    assert.equal(respuesta.codigo, 'NUBEFACT_RECHAZADO');
+    assert.equal(respuesta.message, 'No puedes enviar mas de 50 documentos en una cuenta DEMO.');
 });
 
 test('regla comercial fija el duplicado en S/ 50 y sólo habilita comprobantes operables', () => {
@@ -132,14 +158,16 @@ test('esquema consolidado contiene tabla, restricciones e indices del duplicado'
     assert.match(sql, /html_original_snapshot text NOT NULL/);
     assert.match(sql, /fk_fg_certificado_duplicado_certificado/);
     assert.match(sql, /uq_fg_certificado_duplicado_pendiente_usuario/);
+    assert.match(sql, /WHERE \(\(estado\)::text = 'PENDIENTE_PAGO'::text\)/);
+    assert.doesNotMatch(sql, /uq_fg_certificado_duplicado_pendiente_usuario[\s\S]{0,300}PENDIENTE_COMPROBANTE/);
 });
 
-test('solicitud nueva busca unicamente estados pendientes y permite multiples duplicados completados', () => {
+test('solicitud nueva sólo reutiliza un cobro no iniciado y permite duplicados pagados ilimitados', () => {
     const fuente = fs.readFileSync(path.join(__dirname, '../services/faregas-duplicados.service.js'), 'utf8');
     assert.match(fuente, /estado=\$3::varchar/);
     assert.match(fuente, /CASE WHEN \$3::varchar='DISPONIBLE'/);
-    assert.match(fuente, /AND d\.estado IN \('PENDIENTE_PAGO', 'PENDIENTE_COMPROBANTE'\)/);
-    assert.doesNotMatch(fuente, /AND d\.estado IN \('PENDIENTE_PAGO', 'PENDIENTE_COMPROBANTE', 'DISPONIBLE'\)/);
+    assert.match(fuente, /AND d\.estado = 'PENDIENTE_PAGO'/);
+    assert.doesNotMatch(fuente, /AND d\.estado IN \('PENDIENTE_PAGO', 'PENDIENTE_COMPROBANTE'\)/);
 });
 
 test('candidatos incluye conteo de duplicados emitidos anteriormente', async () => {
@@ -573,4 +601,42 @@ test('obtenerDuplicadoAutorizado recupera los pagos registrados de la operacion'
     assert.equal(duplicado.pagos[0].importe, 20);
     assert.equal(duplicado.pagos[1].tipo, 'TARJETA');
     assert.equal(duplicado.pagos[1].importe, 30);
+});
+
+test('descarga del comprobante de duplicado expone únicamente el PDF oficial de NubeFact', async () => {
+    const dbMock = require('../../../config/database');
+    const authService = require('../services/faregas-auth.service');
+
+    dbMock.query = async (sql) => {
+        if (sql.includes('SELECT d.*, c.numero_certificado')) {
+            return {
+                rowCount: 1,
+                rows: [{
+                    id: '1', certificado_original_id: '608', operacion_id: '991',
+                    planta_key: '98', estado: 'DISPONIBLE', operacion_estado: 'PAGADO',
+                    facturacion_id_real: '701', facturacion_estado: 'ACEPTADO', aceptada_sunat: true,
+                    tipo_comprobante: 'BOLETA', serie: 'BBB1', numero: 188,
+                    enlace_pdf: 'https://www.nubefact.com/cpe/BBB1-188.pdf'
+                }]
+            };
+        }
+        if (sql.includes('FROM fg_orden_pago o') && sql.includes('JOIN fg_pago p')) {
+            return { rowCount: 0, rows: [] };
+        }
+        return { rowCount: 0, rows: [] };
+    };
+    authService.validarAccesoPlanta = async () => true;
+
+    const facturacion = await duplicadosService.obtenerFacturacionParaDescarga(1, {
+        username: 'OPERADOR', perfil_id: 1, planta_key: '98'
+    });
+
+    assert.deepEqual(facturacion, {
+        id: 701,
+        enlacePdf: 'https://www.nubefact.com/cpe/BBB1-188.pdf',
+        tipoComprobante: 'BOLETA',
+        serie: 'BBB1',
+        numero: 188
+    });
+    assert.equal(Object.hasOwn(facturacion, 'enlacePdfFaregas'), false);
 });

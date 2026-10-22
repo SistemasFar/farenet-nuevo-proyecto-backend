@@ -1,7 +1,6 @@
-const fs = require('fs');
 const duplicadosService = require('../services/faregas-duplicados.service');
 const certificadoPdfService = require('../services/faregas-certificado-pdf.service');
-const comprobanteImpresoService = require('../services/faregas-comprobante-impreso.service');
+const descargaNubefactService = require('../services/faregas-descarga-nubefact.service');
 
 const MENSAJES = {
     PLACA_INVALIDA: 'Ingrese una placa válida.',
@@ -16,6 +15,7 @@ const MENSAJES = {
     DUPLICADO_ANULADO: 'La solicitud de duplicado está anulada.',
     DUPLICADO_NO_DISPONIBLE: 'El duplicado estará disponible después de emitir correctamente el comprobante.',
     COMPROBANTE_NO_DISPONIBLE: 'El comprobante del duplicado aún no está disponible.',
+    PDF_NUBEFACT_NO_DISPONIBLE: 'El PDF oficial de NubeFact aún no está disponible.',
     DUPLICADO_SOLO_CONTADO: 'El duplicado sólo admite pago al contado.',
     PRECIO_DUPLICADO_INVALIDO: 'El precio configurado del duplicado no es válido.',
     DATOS_FACTURACION_INVALIDOS: 'Revise los datos requeridos para el comprobante.',
@@ -37,10 +37,14 @@ const responderError = (res, error) => {
     const detalleFacturacion = codigo === 'DATOS_FACTURACION_INVALIDOS' && Array.isArray(error.detalles)
         ? error.detalles.join(' ')
         : null;
+    const motivoNubefact = ['NUBEFACT_RECHAZADO', 'NUBEFACT_ERROR'].includes(codigo)
+        && typeof error.detalles?.motivo === 'string'
+        ? error.detalles.motivo.trim()
+        : null;
     return res.status(status).json({
         ok: false,
         codigo,
-        message: detalleFacturacion || MENSAJES[codigo] || error.message || 'No se pudo procesar el duplicado.',
+        message: detalleFacturacion || motivoNubefact || MENSAJES[codigo] || error.message || 'No se pudo procesar el duplicado.',
         detalles: error.detalles || undefined
     });
 };
@@ -116,17 +120,18 @@ exports.descargarPdf = async (req, res) => {
 
 exports.descargarComprobante = async (req, res) => {
     try {
-        const { facturacionId } = await duplicadosService.obtenerFacturacionParaDescarga(req.params.id, req.user);
-        const documento = await comprobanteImpresoService.generarPdf(facturacionId);
-        if (!fs.existsSync(documento.pdfPath)) {
-            const error = new Error('COMPROBANTE_NO_DISPONIBLE');
+        const facturacion = await duplicadosService.obtenerFacturacionParaDescarga(req.params.id, req.user);
+        if (!facturacion.enlacePdf) {
+            const error = new Error('PDF_NUBEFACT_NO_DISPONIBLE');
+            error.code = 'PDF_NUBEFACT_NO_DISPONIBLE';
             error.statusCode = 404;
             throw error;
         }
+        const pdf = await descargaNubefactService.descargarPdfNubefact(facturacion.enlacePdf);
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="${documento.filename}"`);
+        res.setHeader('Content-Disposition', `attachment; filename="${descargaNubefactService.nombreArchivoNubefact(facturacion)}"`);
         res.setHeader('Cache-Control', 'private, no-store');
-        return res.sendFile(documento.pdfPath);
+        return res.send(pdf);
     } catch (error) { return responderError(res, error); }
 };
 
