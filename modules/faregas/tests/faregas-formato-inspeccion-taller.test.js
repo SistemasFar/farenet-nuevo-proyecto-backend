@@ -456,3 +456,35 @@ test('20. Regresión Conformidad: la plantilla de Conformidad conserva su format
   assert.ok(html.includes('CERTIFICADO DE CONFORMIDAD DE MODIFICACIÓN') || html.includes('CONFORMIDAD'));
   assert.ok(html.includes('CONF01'));
 });
+
+test('21. Validación Nombre del Taller: normaliza espacios y acepta nombres válidos', () => {
+  const certificados = require('../services/faregas-certificados.service');
+  const validar = certificados._private.validarNombreTaller;
+  assert.equal(validar('   CHARING   S.A.C.   '), 'CHARING S.A.C.');
+  assert.equal(validar('TALLER GNV & GLP - LIMA S.A.'), 'TALLER GNV & GLP - LIMA S.A.');
+  assert.equal(validar('AUTO-GAS (PERU) S.R.L.'), 'AUTO-GAS (PERU) S.R.L.');
+});
+
+test('22. Validación Nombre del Taller: rechaza caracteres prohibidos o longitud excesiva', () => {
+  const certificados = require('../services/faregas-certificados.service');
+  const validar = certificados._private.validarNombreTaller;
+  assert.throws(() => validar('TALLER <SCRIPT>ALERT(1)</SCRIPT>'), /NOMBRE_TALLER_INVALIDO/);
+  assert.throws(() => validar('TALLER $100%'), /NOMBRE_TALLER_INVALIDO/);
+  assert.throws(() => validar('A'.repeat(201)), /NOMBRE_TALLER_INVALIDO/);
+});
+
+test('23. Borradores incompletos: autosave permite nombre vacío pero avance/emisión lo exige', () => {
+  const certificados = require('../services/faregas-certificados.service');
+  const validar = certificados._private.validarNombreTaller;
+  // Autosave / borrador parcial permite vacío devolviendo null
+  assert.equal(validar('', { permitirVacio: true }), null);
+  assert.equal(validar('   ', { permitirVacio: true }), null);
+  assert.equal(validar(null, { permitirVacio: true }), null);
+  assert.equal(validar(undefined, { permitirVacio: true }), null);
+
+  // Avance de paso / emisión obligatoria exige nombre
+  assert.throws(() => validar('', { permitirVacio: false }), /NOMBRE_TALLER_REQUERIDO/);
+  assert.throws(() => validar('   ', { permitirVacio: false }), /NOMBRE_TALLER_REQUERIDO/);
+  assert.throws(() => validar(null), /NOMBRE_TALLER_REQUERIDO/);
+});
+

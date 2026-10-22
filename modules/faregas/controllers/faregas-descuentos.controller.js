@@ -28,6 +28,11 @@ const MENSAJES = {
     VIGENCIA_CODIGO_FUERA_DE_CAMPANA: 'La vigencia personalizada debe estar dentro de la campaña.',
     DESCUENTO_NO_ENCONTRADO: 'La campaña o descuento no existe.',
     DESCUENTO_BLOQUEADO: 'La campaña tiene dependencias que no se pueden eliminar.',
+    CONVENIO_GRATUIDAD_PROTEGIDO: 'Este convenio está protegido porque autoriza operaciones gratuitas de certificados de taller. No puede eliminarse ni desactivarse.',
+    CONVENIO_GRATUIDAD_NO_ELIMINABLE: 'Este convenio está protegido porque autoriza operaciones gratuitas de certificados de taller. No puede eliminarse.',
+    CODIGO_GRATUIDAD_PROTEGIDO: 'El código DESCUENTO_TALLER está protegido y no puede modificarse ni desactivarse.',
+    GRATUIDAD_TALLER_CONFIGURACION_INVALIDA: 'La autorización DESCUENTO_TALLER debe cubrir exactamente el valor completo del servicio configurado.',
+    OPERACION_CERO_REQUIERE_AUTORIZACION_GRATUITA: 'Un descuento comercial ordinario no puede dejar la operación en S/ 0.00. Use una autorización de gratuidad configurada.',
     AMBIENTE_PRODUCCION: 'La limpieza de campañas sólo está disponible en ambiente DEMO o desarrollo.'
 };
 
@@ -74,6 +79,11 @@ exports.aplicarDescuentoBorrador = async (req, res, next) => {
             entidad: 'fg_descuentocomprobante',
             mensaje: 'Se aplicó un descuento al borrador.',
             datos: {
+                codigoAutorizacion: resultado?.codigo || null,
+                descuentoId: resultado?.descuentoId || null,
+                sede: resultado?.plantaKey || req.user?.planta_key || null,
+                autorizaGratuidad: Boolean(resultado?.autorizaGratuidad),
+                importeReferencial: resultado?.tarifaOriginal || null,
                 tipoCalculo: resultado?.tipoCalculo || resultado?.tipo_calculo || null,
                 importeDescuento: resultado?.importeDescuento || resultado?.importe_descuento || null
             }

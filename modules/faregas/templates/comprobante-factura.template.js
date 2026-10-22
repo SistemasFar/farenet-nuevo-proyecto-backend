@@ -21,6 +21,9 @@ function renderFacturaHtml(data) {
         comprobante = {},
         cliente = {},
         vehiculo = {},
+        taller = {},
+        esTaller = false,
+        esOperacionGratuita = false,
         items = [],
         totales = {},
         descuento = null,
@@ -64,6 +67,7 @@ function renderFacturaHtml(data) {
     const tipoVehiculo = escapeHtml(vehiculo.tipo || vehiculo.clase || '');
     const motor = escapeHtml(vehiculo.motor || '');
     const modelo = escapeHtml(vehiculo.modelo || '');
+    const tallerNombre = escapeHtml(taller.nombre || '');
 
     const montoTotal = Number(totales.total || 0);
     const textoImporte = numeroALetras(montoTotal, moneda);
@@ -74,10 +78,10 @@ function renderFacturaHtml(data) {
         const cant = Number(item.cantidad || 1).toFixed(2);
         const unidad = escapeHtml(item.unidad || 'NIU');
         const desc = escapeHtml(item.descripcion || '');
-        const valRef = formatMoney(item.valorReferencial || item.precioUnitario || 0);
-        const precUnit = formatMoney(item.precioUnitario || 0);
-        const valUnit = formatMoney(item.valorUnitario || (Number(item.precioUnitario || 0) / 1.18));
-        const valVenta = formatMoney(item.total || item.valorVenta || (Number(cant) * Number(precUnit)));
+        const valRef = formatMoney(item.valorReferencial || (esOperacionGratuita ? totales.gratuita : item.precioUnitario) || 0);
+        const precUnit = formatMoney(esOperacionGratuita ? 0 : (item.precioUnitario || 0));
+        const valUnit = formatMoney(esOperacionGratuita ? 0 : (item.valorUnitario || (Number(item.precioUnitario || 0) / 1.18)));
+        const valVenta = formatMoney(esOperacionGratuita ? 0 : (item.total || item.valorVenta || (Number(cant) * Number(precUnit))));
 
         return `
             <tr>
@@ -301,6 +305,44 @@ function renderFacturaHtml(data) {
         .descuento-codigo {
             font-weight: bold;
         }
+        .bloque-tributario-leyenda {
+            border: 1px solid #083b66;
+            background-color: #f4f8fb;
+            border-radius: 4px;
+            padding: 6px 8px;
+            width: 100%;
+            max-width: 320px;
+            font-size: 7pt;
+            line-height: 1.35;
+            margin-top: 2px;
+        }
+        .bloque-tributario-titulo {
+            font-size: 6.8pt;
+            font-weight: bold;
+            color: #083b66;
+            letter-spacing: 0.3px;
+            margin-bottom: 2px;
+            border-bottom: 1px solid #d0e0ec;
+            padding-bottom: 2px;
+        }
+        .bloque-tributario-codigo {
+            font-size: 6.8pt;
+            color: #222222;
+            margin-bottom: 2px;
+        }
+        .bloque-tributario-texto {
+            font-size: 7pt;
+            font-weight: bold;
+            color: #000000;
+            margin-bottom: 3px;
+        }
+        .bloque-tributario-datos {
+            font-size: 6.8pt;
+            color: #333333;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
         .bottom-right {
             width: 38%;
         }
@@ -332,6 +374,11 @@ function renderFacturaHtml(data) {
             font-size: 6.5pt;
             color: #666666;
             line-height: 1.35;
+        }
+        .leyenda-gratuita {
+            margin: 4px 0 8px 0;
+            font-size: 7.5pt;
+            font-weight: bold;
         }
         .qr-container {
             margin-bottom: 6px;
@@ -382,7 +429,7 @@ function renderFacturaHtml(data) {
 
     ${cuotasHtml ? `<div class="cuotas-box">${cuotasHtml}</div>` : ''}
 
-    <div class="vehiculo-box">
+    ${esTaller ? `<div class="vehiculo-box"><table class="vehiculo-table"><tr><td class="v-label">Taller</td><td class="v-value" colspan="3">${tallerNombre || '—'}</td></tr></table></div>` : `<div class="vehiculo-box">
         <table class="vehiculo-table">
             <tr>
                 <td class="v-label">Placa</td>
@@ -403,7 +450,7 @@ function renderFacturaHtml(data) {
                 <td class="v-value"></td>
             </tr>
         </table>
-    </div>
+    </div>`}
 
     <table class="items-table">
         <thead>
@@ -423,15 +470,27 @@ function renderFacturaHtml(data) {
     </table>
 
     <div class="son-letras">${textoImporte}</div>
+    ${esOperacionGratuita ? '<div class="leyenda-gratuita">1002 - TRANSFERENCIA GRATUITA DE UN BIEN Y/O SERVICIO PRESTADO GRATUITAMENTE</div>' : ''}
 
     <div class="bottom-row">
         <div class="bottom-left">
-            ${descuento && descuento.codigo ? `
+            ${esOperacionGratuita ? `
+                <div class="bloque-tributario-leyenda">
+                    <div class="bloque-tributario-titulo">INFORMACIÓN TRIBUTARIA (CATÁLOGO N.º 15 SUNAT)</div>
+                    <div class="bloque-tributario-codigo">CÓDIGO SUNAT: <strong>1002</strong></div>
+                    <div class="bloque-tributario-texto">1002 - TRANSFERENCIA GRATUITA DE UN BIEN Y/O SERVICIO PRESTADO GRATUITAMENTE</div>
+                    <div class="bloque-tributario-datos">
+                        <span><strong>VALOR REF.:</strong> S/ ${formatMoney(totales.gratuita || 0)}</span>
+                        <span><strong>PRECIO COBRADO:</strong> S/ 0.00</span>
+                        <span><strong>TOTAL EXIGIBLE:</strong> S/ 0.00</span>
+                    </div>
+                </div>
+            ` : (descuento && descuento.codigo ? `
                 <div class="descuento-box">
                     <div class="descuento-codigo">${escapeHtml(descuento.codigo)}</div>
                     ${descuento.descripcion ? `<div>${escapeHtml(descuento.descripcion)}</div>` : ''}
                 </div>
-            ` : ''}
+            ` : '')}
         </div>
         <div class="bottom-right">
             <table class="totales-table">

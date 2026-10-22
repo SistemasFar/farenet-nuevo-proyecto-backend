@@ -1,3 +1,4 @@
+const { esCodigoGratuidadTaller, esFlujoTaller } = require('../services/faregas-gratuidad-taller.policy');
 const texto = value => String(value ?? '').trim();
 
 const puntoVenta = facturacion => {
@@ -16,7 +17,10 @@ const construirInformacionAdicional = ({
     facturacion,
     certificado = {},
     vehiculo = {},
-    detalles = []
+    detalles = [],
+    tipoFlujo = '',
+    tallerNombre = '',
+    gratuidadAutorizada = false
 }) => {
     const lineas = [];
     const sede = puntoVenta(facturacion);
@@ -30,14 +34,19 @@ const construirInformacionAdicional = ({
         lineas.push(`TELÉFONO DEL CLIENTE: ${texto(facturacion.telefono)}`);
     }
 
-    const datosVehiculo = [
-        texto(vehiculo.placa) && `PLACA ${texto(vehiculo.placa)}`,
-        texto(vehiculo.clase || vehiculo.categoria) && `TIPO ${texto(vehiculo.clase || vehiculo.categoria)}`,
-        texto(vehiculo.marca) && `MARCA ${texto(vehiculo.marca)}`,
-        texto(vehiculo.modelo) && `MODELO ${texto(vehiculo.modelo)}`,
-        texto(vehiculo.numero_motor) && `MOTOR ${texto(vehiculo.numero_motor)}`
-    ].filter(Boolean);
-    if (datosVehiculo.length > 0) lineas.push(`VEHÍCULO: ${datosVehiculo.join(' · ')}`);
+    const esTaller = texto(tipoFlujo).toUpperCase() === 'TALLER_INSPECCION' || esFlujoTaller(tipoFlujo);
+    if (esTaller) {
+        if (texto(tallerNombre)) lineas.push(`TALLER: ${texto(tallerNombre)}`);
+    } else {
+        const datosVehiculo = [
+            texto(vehiculo.placa) && `PLACA ${texto(vehiculo.placa)}`,
+            texto(vehiculo.clase || vehiculo.categoria) && `TIPO ${texto(vehiculo.clase || vehiculo.categoria)}`,
+            texto(vehiculo.marca) && `MARCA ${texto(vehiculo.marca)}`,
+            texto(vehiculo.modelo) && `MODELO ${texto(vehiculo.modelo)}`,
+            texto(vehiculo.numero_motor) && `MOTOR ${texto(vehiculo.numero_motor)}`
+        ].filter(Boolean);
+        if (datosVehiculo.length > 0) lineas.push(`VEHÍCULO: ${datosVehiculo.join(' · ')}`);
+    }
 
     const detallePrincipal = detalles[0] || {};
     const servicio = [
@@ -46,8 +55,10 @@ const construirInformacionAdicional = ({
     ].filter(Boolean).join(' - ');
     if (servicio) lineas.push(`SERVICIO: ${servicio}`);
 
-    if (texto(facturacion?.codigo_descuento_snapshot)) {
-        lineas.push(`CÓDIGO DE DESCUENTO: ${texto(facturacion.codigo_descuento_snapshot)}`);
+    const codigoDescuento = texto(facturacion?.codigo_descuento_snapshot);
+    const esGratuito = Boolean(gratuidadAutorizada) || (esTaller && esCodigoGratuidadTaller(codigoDescuento));
+    if (codigoDescuento && !esGratuito) {
+        lineas.push(`CÓDIGO DE DESCUENTO: ${codigoDescuento}`);
     }
 
     if (texto(certificado.numero_certificado)) {
@@ -74,6 +85,7 @@ const MATRIZ_INFORMACION_PDF = Object.freeze({
     condicionPago: 'NATIVO',
     cuotasCredito: 'NATIVO',
     placa: 'NATIVO',
+    taller: 'INFORMACION_ADICIONAL',
     items: 'NATIVO',
     totales: 'NATIVO',
     puntoVenta: 'INFORMACION_ADICIONAL',

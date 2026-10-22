@@ -60,6 +60,20 @@ const tituloCertificadoDinamico = ({ tipoFlujo, tipoCertificadoClave, modalidad,
         : fallback
 );
 
+const normalizarNombreTaller = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+
+const validarNombreTaller = (value, { permitirVacio = false } = {}) => {
+    const nombre = normalizarNombreTaller(value);
+    if (!nombre) {
+        if (permitirVacio) return null;
+        throw new Error('NOMBRE_TALLER_REQUERIDO');
+    }
+    if (nombre.length > 200 || !/^[\p{L}\p{N}\s.,'&()\-\/]+$/u.test(nombre)) {
+        throw new Error('NOMBRE_TALLER_INVALIDO');
+    }
+    return nombre;
+};
+
 const requiereExpedienteTecnicoGlp = (modalidad) => false;
 
 const camposRequeridosComponenteGlp = (modalidad, componente) => {
@@ -725,7 +739,7 @@ exports.crearBorrador = async (data, userContext) => {
     // data: tarifaCodigo, clienteId, observaciones
     // userContext: username, perfil_id, planta_key
     
-    const { tarifaCodigo, clienteId, observaciones, placa, categoria } = data;
+    const { tarifaCodigo, clienteId, observaciones, placa, categoria, tallerNombre } = data;
     const { username, planta_key } = userContext;
 
     if (!tarifaCodigo) {
@@ -738,6 +752,8 @@ exports.crearBorrador = async (data, userContext) => {
     );
 
     const tipoCertificadoClave = tarifa.tipo_certificado_clave;
+    const esInspeccionTaller = tarifa.tipo_flujo === 'TALLER_INSPECCION';
+    const nombreTallerNormalizado = esInspeccionTaller ? validarNombreTaller(tallerNombre, { permitirVacio: true }) : '';
 
     if (observaciones && observaciones.length > 250 && tipoCertificadoClave && tipoCertificadoClave.startsWith('GNV')) {
         const err = new Error('Las observaciones no pueden superar los 250 caracteres.');
@@ -814,12 +830,23 @@ exports.crearBorrador = async (data, userContext) => {
             productoChipId, productoFacturacionChipId, precioChip, importeTotal
         ]);
         const borrador = res.rows[0];
-        await client.query(`
-            INSERT INTO fg_certificado_vehiculo (certificado_id, placa, categoria)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (certificado_id) DO UPDATE
-            SET placa = EXCLUDED.placa, categoria = EXCLUDED.categoria
-        `, [borrador.id, placa || null, categoria || null]);
+        if (esInspeccionTaller) {
+            await client.query(`
+                UPDATE fg_certificado
+                SET formato_datos_snapshot = jsonb_set(
+                    COALESCE(formato_datos_snapshot, '{}'::jsonb),
+                    '{taller,nombre}', to_jsonb($2::text), TRUE
+                )
+                WHERE id = $1
+            `, [borrador.id, nombreTallerNormalizado]);
+        } else {
+            await client.query(`
+                INSERT INTO fg_certificado_vehiculo (certificado_id, placa, categoria)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (certificado_id) DO UPDATE
+                SET placa = EXCLUDED.placa, categoria = EXCLUDED.categoria
+            `, [borrador.id, placa || null, categoria || null]);
+        }
         await client.query('COMMIT');
         return borrador;
     } catch (error) {
@@ -1064,10 +1091,12 @@ exports.actualizarPasoBorrador = async (id, pasoActual, userContext) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        const result = await client.query(
-            'SELECT estado, planta_key, paso_actual FROM fg_certificado WHERE id = $1 FOR UPDATE',
-            [id]
-        );
+        const result = await client.query(`
+            SELECT estado, planta_key, paso_actual, formato_datos_snapshot,
+                   (SELECT s.tipo_flujo FROM fg_tarifa ta JOIN fg_servicio s ON s.id = ta.servicio_id WHERE ta.codigo = c.tarifa_codigo AND ta.planta_key = c.planta_key LIMIT 1) AS tipo_flujo
+            FROM fg_certificado c
+            WHERE c.id = $1 FOR UPDATE OF c
+        `, [id]);
         if (result.rowCount === 0) throw new Error('CERTIFICADO_NOT_FOUND');
         const certificado = result.rows[0];
         await validarAccesoCertificado(userContext.username, userContext.perfil_id, certificado.planta_key);
@@ -1075,6 +1104,10 @@ exports.actualizarPasoBorrador = async (id, pasoActual, userContext) => {
 
         const actual = PASOS_BORRADOR.indexOf(certificado.paso_actual || 'DATOS_INICIALES');
         if (destino > actual + 1) throw new Error('TRANSICION_PASO_INVALIDA');
+        if (destino > actual && destino > 0 && certificado.tipo_flujo === 'TALLER_INSPECCION') {
+            const nombreTaller = certificado.formato_datos_snapshot?.taller?.nombre;
+            validarNombreTaller(nombreTaller, { permitirVacio: false });
+        }
         // Volver a revisar una pantalla no reduce el progreso persistido.
         const pasoPersistido = destino > actual ? pasoDestino : certificado.paso_actual;
         await client.query(`
@@ -2162,63 +2195,65 @@ exports.validarEmision = async (id, userContext) => {
     }
 
     // Vehículo base
-    const rVeh = await db.query('SELECT * FROM fg_certificado_vehiculo WHERE certificado_id = $1', [id]);
-    const veh = rVeh.rows[0];
-    if (!veh) {
-        pushError('vehiculo', 'general', 'SECCION_FALTANTE', 'Falta el snapshot de vehículo');
-    } else {
-        if (!veh.placa) pushError('vehiculo', 'placa', 'CAMPO_REQUERIDO', 'Placa requerida');
-        
-        const checkCampos = (campos) => {
-            campos.forEach(c => {
-                if (veh[c] === null || veh[c] === undefined || veh[c] === '') {
-                    pushError('vehiculo', c, 'CAMPO_REQUERIDO', `Campo vehiculo requerido: ${c}`);
-                }
-            });
-        };
+    if (!esFormularioDinamico) {
+        const rVeh = await db.query('SELECT * FROM fg_certificado_vehiculo WHERE certificado_id = $1', [id]);
+        const veh = rVeh.rows[0];
+        if (!veh) {
+            pushError('vehiculo', 'general', 'SECCION_FALTANTE', 'Falta el snapshot de vehículo');
+        } else {
+            if (!veh.placa) pushError('vehiculo', 'placa', 'CAMPO_REQUERIDO', 'Placa requerida');
 
-        if (!esFormularioDinamico && !veh.vin && !veh.serie_chasis) {
-            pushError('vehiculo', 'vin', 'CAMPO_REQUERIDO', 'Se requiere VIN o Serie de Chasis');
-        }
+            const checkCampos = (campos) => {
+                campos.forEach(c => {
+                    if (veh[c] === null || veh[c] === undefined || veh[c] === '') {
+                        pushError('vehiculo', c, 'CAMPO_REQUERIDO', `Campo vehiculo requerido: ${c}`);
+                    }
+                });
+            };
 
-        if (!esFormularioDinamico && cert.tipo_clave === 'GNV_ANUAL') {
-            checkCampos([
-                'categoria', 'marca', 'modelo', 'version', 'anio_fabricacion', 'numero_motor',
-                'numero_cilindros', 'cilindrada', 'combustible', 'numero_ejes', 'numero_ruedas',
-                'numero_asientos', 'numero_pasajeros', 'longitud', 'ancho', 'alto', 'color',
-                'peso_neto', 'peso_bruto'
-            ]);
-        } else if (!esFormularioDinamico && cert.tipo_clave === 'GLP_ANUAL') {
-            const rGlpMod = await db.query('SELECT modalidad FROM fg_certificado_glp WHERE certificado_id = $1', [id]);
-            const modalidadGlp = (rGlpMod.rows[0]?.modalidad || cert.servicio_modalidad || '').trim().toUpperCase();
-            const esAnual = modalidadGlp === 'ANUAL';
-            const esInicial = modalidadGlp === 'INICIAL';
-            const camposRequeridos = [
-                'categoria', 'marca', 'modelo', 'version', 'anio_fabricacion', 'numero_motor',
-                'numero_cilindros', 'cilindrada', 'numero_ejes', 'numero_ruedas',
-                'numero_asientos', 'numero_pasajeros', 'longitud', 'ancho', 'alto', 
-                'peso_neto', 'peso_bruto', 'carga_util'
-            ];
-            if (!esAnual) {
-                camposRequeridos.push('combustible');
-            } else if (!veh.combustible) {
-                veh.combustible = 'BI COMBUSTIBLE GLP';
+            if (!veh.vin && !veh.serie_chasis) {
+                pushError('vehiculo', 'vin', 'CAMPO_REQUERIDO', 'Se requiere VIN o Serie de Chasis');
             }
-            checkCampos(camposRequeridos);
 
-            if (esInicial) {
-                const combNorm = String(veh.combustible || '').trim().toUpperCase();
-                if (!combNorm || !['GASOLINA', 'DIESEL'].includes(combNorm)) {
-                    pushError('vehiculo', 'combustible', 'GLP_INICIAL_COMBUSTIBLE_INVALIDO', 'Para GLP INICIAL el combustible original debe ser GASOLINA o DIESEL.');
+            if (cert.tipo_clave === 'GNV_ANUAL') {
+                checkCampos([
+                    'categoria', 'marca', 'modelo', 'version', 'anio_fabricacion', 'numero_motor',
+                    'numero_cilindros', 'cilindrada', 'combustible', 'numero_ejes', 'numero_ruedas',
+                    'numero_asientos', 'numero_pasajeros', 'longitud', 'ancho', 'alto', 'color',
+                    'peso_neto', 'peso_bruto'
+                ]);
+            } else if (cert.tipo_clave === 'GLP_ANUAL') {
+                const rGlpMod = await db.query('SELECT modalidad FROM fg_certificado_glp WHERE certificado_id = $1', [id]);
+                const modalidadGlp = (rGlpMod.rows[0]?.modalidad || cert.servicio_modalidad || '').trim().toUpperCase();
+                const esAnual = modalidadGlp === 'ANUAL';
+                const esInicial = modalidadGlp === 'INICIAL';
+                const camposRequeridos = [
+                    'categoria', 'marca', 'modelo', 'version', 'anio_fabricacion', 'numero_motor',
+                    'numero_cilindros', 'cilindrada', 'numero_ejes', 'numero_ruedas',
+                    'numero_asientos', 'numero_pasajeros', 'longitud', 'ancho', 'alto',
+                    'peso_neto', 'peso_bruto', 'carga_util'
+                ];
+                if (!esAnual) {
+                    camposRequeridos.push('combustible');
+                } else if (!veh.combustible) {
+                    veh.combustible = 'BI COMBUSTIBLE GLP';
                 }
+                checkCampos(camposRequeridos);
+
+                if (esInicial) {
+                    const combNorm = String(veh.combustible || '').trim().toUpperCase();
+                    if (!combNorm || !['GASOLINA', 'DIESEL'].includes(combNorm)) {
+                        pushError('vehiculo', 'combustible', 'GLP_INICIAL_COMBUSTIBLE_INVALIDO', 'Para GLP INICIAL el combustible original debe ser GASOLINA o DIESEL.');
+                    }
+                }
+            } else if (cert.tipo_clave === 'CONFORMIDAD') {
+                checkCampos([
+                    'clase', 'categoria', 'modelo', 'marca', 'numero_motor', 'color', 'carroceria',
+                    'combustible', 'longitud', 'ancho', 'alto', 'peso_bruto', 'peso_neto', 'carga_util',
+                    'anio_fabricacion', 'anio_modelo', 'formula_rodante', 'potencia', 'numero_ejes',
+                    'numero_ruedas', 'numero_asientos', 'numero_pasajeros', 'cilindrada', 'numero_cilindros', 'version'
+                ]);
             }
-        } else if (!esFormularioDinamico && cert.tipo_clave === 'CONFORMIDAD') {
-            checkCampos([
-                'clase', 'categoria', 'modelo', 'marca', 'numero_motor', 'color', 'carroceria',
-                'combustible', 'longitud', 'ancho', 'alto', 'peso_bruto', 'peso_neto', 'carga_util',
-                'anio_fabricacion', 'anio_modelo', 'formula_rodante', 'potencia', 'numero_ejes',
-                'numero_ruedas', 'numero_asientos', 'numero_pasajeros', 'cilindrada', 'numero_cilindros', 'version'
-            ]);
         }
     }
 
@@ -3035,11 +3070,14 @@ exports.guardarTaller = async (id, payload, user) => {
     if (payload.valores && typeof payload.valores === 'object' && !Array.isArray(payload.valores)) {
         Object.entries(payload.valores).forEach(([clave, valor]) => {
             if (!CLAVE_VARIABLE_FORMATO.test(clave) || ['__proto__', 'prototype', 'constructor'].some((parte) => clave.split('.').includes(parte))) return;
-            asignarValorAnidado(snapshot, clave, valor === '' || valor === undefined ? null : valor);
+            const valorPersistido = clave === 'taller.nombre'
+                ? validarNombreTaller(valor, { permitirVacio: true })
+                : (valor === '' || valor === undefined ? null : valor);
+            asignarValorAnidado(snapshot, clave, valorPersistido);
         });
     } else {
         snapshot.taller = {
-            nombre: payload.nombre || null,
+            nombre: payload.nombre === undefined ? (snapshot.taller?.nombre || null) : validarNombreTaller(payload.nombre, { permitirVacio: true }),
             direccion: payload.direccion || null,
             telefono: payload.telefono || null,
             ciudad: payload.ciudad || null,
@@ -3084,6 +3122,8 @@ exports._private = Object.freeze({
     resolverTallerGnvPorPlanta,
     combustiblesGnvSonEquivalentes,
     combustiblesGlpSonEquivalentes,
+    validarNombreTaller,
+    normalizarNombreTaller,
     pesosGnvSonIguales,
     requiereExpedienteTecnicoGlp,
     camposRequeridosComponenteGlp

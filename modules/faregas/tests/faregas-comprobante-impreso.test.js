@@ -378,6 +378,39 @@ test('Caso B: Pago EFECTIVO -> Forma de Pago = Efectivo', () => {
     assert.equal(mapearFormaPago('CONTADO', null, [{ tipocontado_key: 'efectivo' }]), 'EFECTIVO');
 });
 
+test('comprobante gratuito de taller replica el contenido económico del modelo histórico sin inventar vehículo ni pago', () => {
+    const data = {
+        emisor: { ruc: '20521536463', razonSocial: 'SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.', puntoVenta: 'SURCO' },
+        comprobante: { tipo: 'BOLETA', serie: 'BBB1', numero: 213, fechaDocumento: '22/10/2026', moneda: 'Soles', formaPago: 'Contado' },
+        cliente: { nombre: 'CLIENTE DE PRUEBA', tipoDoc: 'DNI', nroDoc: '74045612' },
+        vehiculo: {},
+        taller: { nombre: 'CHARING S.A.C.' },
+        esTaller: true,
+        esOperacionGratuita: true,
+        items: [{
+            cantidad: 1,
+            unidad: 'NIU',
+            descripcion: 'CERTIFICADO ANUAL DE INSPECCIÓN DE TALLER GLP',
+            valorReferencial: 350,
+            precioUnitario: 0,
+            valorUnitario: 0,
+            total: 0
+        }],
+        totales: { gravada: 0, gratuita: 350, descuento: 0, exonerada: 0, inafecta: 0, igv: 0, total: 0 },
+        descuento: { codigo: 'DESCUENTO_TALLER', descripcion: 'AUTORIZACIÓN DE OPERACIÓN GRATUITA' }
+    };
+
+    const html = renderBoletaHtml(data);
+    assert.match(html, /Taller<\/td><td class="v-value" colspan="3">CHARING S\.A\.C\./);
+    assert.match(html, /1002 - TRANSFERENCIA GRATUITA DE UN BIEN Y\/O SERVICIO PRESTADO GRATUITAMENTE/);
+    assert.match(html, /<td class="col-num">350\.00<\/td>\s*<td class="col-num">0\.00<\/td>\s*<td class="col-num">0\.00<\/td>\s*<td class="col-num">0\.00<\/td>/);
+    assert.match(html, /Op\. Gratuita<\/td>\s*<td class="t-num">S\/ 350\.00<\/td>/);
+    assert.match(html, /Descuentos<\/td>\s*<td class="t-num">S\/ 0\.00<\/td>/);
+    assert.match(html, /Importe Total<\/strong><\/td>\s*<td class="t-num"><strong>S\/ 0\.00/);
+    assert.match(html, /CERO CON 00\/100 SOLES/i);
+    assert.doesNotMatch(html, />Placa<|Marca Vehículo|Motor Vehículo|Orden Trabajo|EFECTIVO/);
+});
+
 test('Caso C: Pago TARJETA con tipo DÉBITO -> Forma de Pago = Tarjeta de Débito', () => {
     assert.equal(mapearFormaPago('CONTADO', 'TARJETA_DEBITO'), 'TARJETA DÉBITO');
     assert.equal(mapearFormaPago('CONTADO', 'TARJETA', 'DEBITO'), 'TARJETA DÉBITO');

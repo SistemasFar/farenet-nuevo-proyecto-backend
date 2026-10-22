@@ -6,6 +6,7 @@ const { renderFacturaHtml } = require('../templates/comprobante-factura.template
 const { generarPdfDesdeHtml } = require('./faregas-pdf-generator.service');
 const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
 const { obtenerIdentidadCorporativaFaregas } = require('./faregas-representacion-corporativa.service');
+const { esCodigoGratuidadTaller, esFlujoTaller } = require('./faregas-gratuidad-taller.policy');
 const {
     resolverNombreMedioPago,
     agruparDesglosePagos,
@@ -93,7 +94,13 @@ function parseDetallePagosDesdeTexto(texto) {
     return detalle;
 }
 
-function resolverFormaPagoYDetalle(f, qPagosRows = []) {
+function resolverFormaPagoYDetalle(f, qPagosRows = [], opciones = {}) {
+    if (opciones.esOperacionGratuita) {
+        return {
+            formaPago: 'Contado',
+            detallePagos: []
+        };
+    }
     const esCredito = String(f?.condicion_pago || '').toUpperCase().startsWith('CREDITO');
 
     if (esCredito) {
@@ -251,30 +258,31 @@ function payloadComoObjeto(value) {
     }
 }
 
-function mapearItemPayload(item) {
+function mapearItemPayload(item, esOperacionGratuita = false) {
     const cantidad = Number(item.cantidad || 1);
     const total = Number(item.total || 0);
     const subtotal = Number(item.subtotal || 0);
+    const valorReferencial = Number(item.precio_unitario || item.valor_unitario || 0);
     return {
         cantidad,
         unidad: item.unidad_de_medida || 'NIU',
         descripcion: item.descripcion || '',
-        valorReferencial: Number(item.precio_unitario || 0),
-        precioUnitario: cantidad > 0 ? total / cantidad : 0,
-        valorUnitario: cantidad > 0 ? subtotal / cantidad : 0,
-        total
+        valorReferencial,
+        precioUnitario: esOperacionGratuita ? 0 : (cantidad > 0 ? total / cantidad : 0),
+        valorUnitario: esOperacionGratuita ? 0 : (cantidad > 0 ? subtotal / cantidad : 0),
+        total: esOperacionGratuita ? 0 : total
     };
 }
 
-function mapearItemOperacion(item) {
+function mapearItemOperacion(item, esOperacionGratuita = false) {
     return {
         cantidad: Number(item.cantidad || 1),
         unidad: item.unidad_snapshot || 'NIU',
         descripcion: item.descripcion_snapshot || '',
         valorReferencial: Number(item.precio_unitario || 0),
-        precioUnitario: Number(item.precio_unitario || 0),
-        valorUnitario: Number(item.valor_unitario || 0),
-        total: Number(item.importe_total || 0)
+        precioUnitario: esOperacionGratuita ? 0 : Number(item.precio_unitario || 0),
+        valorUnitario: esOperacionGratuita ? 0 : Number(item.valor_unitario || 0),
+        total: esOperacionGratuita ? 0 : Number(item.importe_total || 0)
     };
 }
 
@@ -301,11 +309,15 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
     const qFact = await db.query(
         `SELECT f.*,
                 c.numero_certificado, c.estado AS certificado_estado,
+                c.formato_datos_snapshot,
+                s.tipo_flujo AS servicio_tipo_flujo,
                 v.placa AS veh_placa, v.marca AS veh_marca, v.modelo AS veh_modelo,
                 v.clase AS veh_clase, v.numero_motor AS veh_motor,
                 opc.placa AS operacion_placa
          FROM fg_facturacion f
          LEFT JOIN fg_certificado c ON c.id = f.certificado_id
+         LEFT JOIN fg_tarifa tf ON tf.planta_key = c.planta_key AND tf.codigo = c.tarifa_codigo
+         LEFT JOIN fg_servicio s ON s.id = tf.servicio_id
          LEFT JOIN fg_certificado_vehiculo v ON v.certificado_id = f.certificado_id
          LEFT JOIN fg_operacion_comercial opc ON opc.id = f.operacion_id
          WHERE f.id = $1`,
@@ -317,16 +329,31 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
     const qIntento = await db.query(
         `SELECT solicitud
          FROM fg_facturacion_intento
-         WHERE facturacion_id = $1 AND solicitud IS NOT NULL
+         WHERE facturacion_id = $1
+           AND solicitud IS NOT NULL
+           AND (solicitud->>'operacion' = 'generar_comprobante' OR solicitud->'items' IS NOT NULL)
          ORDER BY numero_intento DESC
          LIMIT 1`,
         [facturacionId]
     );
-    const payloadFiscal = payloadComoObjeto(qIntento.rows[0]?.solicitud);
+    let solicitudCruda = qIntento.rows[0]?.solicitud;
+    if (!solicitudCruda) {
+        const qFallback = await db.query(
+            `SELECT solicitud
+             FROM fg_facturacion_intento
+             WHERE facturacion_id = $1 AND solicitud IS NOT NULL
+             ORDER BY numero_intento DESC
+             LIMIT 1`,
+            [facturacionId]
+        );
+        solicitudCruda = qFallback.rows[0]?.solicitud;
+    }
+    const payloadFiscal = payloadComoObjeto(solicitudCruda);
     validarSnapshotObligatorio(f, payloadFiscal);
 
-    let items = Array.isArray(payloadFiscal.items) ? payloadFiscal.items.map(mapearItemPayload) : [];
-    if (items.length === 0) {
+    let itemsCrudos = Array.isArray(payloadFiscal.items) ? payloadFiscal.items : [];
+    let itemsDesdePayload = itemsCrudos.length > 0;
+    if (itemsCrudos.length === 0) {
         const qOperacion = await db.query(
             `SELECT cantidad, unidad_snapshot, descripcion_snapshot, valor_unitario,
                     precio_unitario, base_imponible, igv, importe_total
@@ -336,9 +363,10 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
              ORDER BY orden ASC, id ASC`,
             [f.operacion_id || null, f.certificado_id]
         );
-        items = qOperacion.rows.map(mapearItemOperacion);
+        itemsCrudos = qOperacion.rows;
+        itemsDesdePayload = false;
     }
-    if (items.length === 0) throw new Error('DETALLE_FACTURACION_NO_DISPONIBLE');
+    if (itemsCrudos.length === 0) throw new Error('DETALLE_FACTURACION_NO_DISPONIBLE');
 
     const qDescuento = await db.query(
         `SELECT dc.importe_descuento,
@@ -356,10 +384,20 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
     f.descuento_fiscal_snapshot = descuentoFiscal;
     const codigoDescuento = String(qDescuento.rows[0]?.codigo_real || f.codigo_descuento_snapshot || '').trim();
     const nombreDescuento = String(qDescuento.rows[0]?.nombre_real || '').trim();
+    const esTaller = esFlujoTaller(f.servicio_tipo_flujo);
+    const esOperacionGratuita = esTaller
+        && esCodigoGratuidadTaller(codigoDescuento)
+        && Number(payloadFiscal.total_gratuita || 0) > 0
+        && Number(payloadFiscal.total || 0) === 0;
+    const items = itemsCrudos.map(item => itemsDesdePayload
+        ? mapearItemPayload(item, esOperacionGratuita)
+        : mapearItemOperacion(item, esOperacionGratuita));
     const descuentoData = codigoDescuento ? {
         codigo: codigoDescuento,
-        descripcion: nombreDescuento,
-        monto: Number(qDescuento.rows[0]?.importe_descuento || descuentoFiscal)
+        descripcion: esOperacionGratuita
+            ? `AUTORIZACIÓN DE OPERACIÓN GRATUITA${nombreDescuento ? ` · ${nombreDescuento}` : ''}`
+            : nombreDescuento,
+        monto: esOperacionGratuita ? 0 : Number(qDescuento.rows[0]?.importe_descuento || descuentoFiscal)
     } : null;
 
     const qPagos = await db.query(
@@ -387,7 +425,7 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
         [facturacionId]
     );
 
-    const resolucionPago = resolverFormaPagoYDetalle(f, qPagos.rows);
+    const resolucionPago = resolverFormaPagoYDetalle(f, qPagos.rows, { esOperacionGratuita });
     const formaPagoImpresa = resolucionPago.formaPago;
     const detallePagos = resolucionPago.detallePagos;
     const identidadCorporativa = await obtenerIdentidadCorporativaFaregas(db);
@@ -419,26 +457,31 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
             telefono: f.telefono || ''
         },
         vehiculo: {
-            placa: f.veh_placa || f.operacion_placa || '',
-            marca: f.veh_marca || '',
-            modelo: f.veh_modelo || '',
-            tipo: f.veh_clase || '',
-            motor: f.veh_motor || ''
+            placa: esTaller ? '' : (f.veh_placa || f.operacion_placa || ''),
+            marca: esTaller ? '' : (f.veh_marca || ''),
+            modelo: esTaller ? '' : (f.veh_modelo || ''),
+            tipo: esTaller ? '' : (f.veh_clase || ''),
+            motor: esTaller ? '' : (f.veh_motor || '')
         },
+        taller: {
+            nombre: esTaller ? String(f.formato_datos_snapshot?.taller?.nombre || '').trim() : ''
+        },
+        esTaller,
+        esOperacionGratuita,
         items,
         totales: {
             gravada: f.base_imponible,
             inafecta: Number(payloadFiscal.total_inafecta || 0),
             exonerada: Number(payloadFiscal.total_exonerada || 0),
             gratuita: Number(payloadFiscal.total_gratuita || 0),
-            descuento: descuentoFiscal,
+            descuento: esOperacionGratuita ? 0 : descuentoFiscal,
             igv: f.igv,
             total: f.importe_total
         },
         descuento: descuentoData,
         cuotas: construirCuotasImpresas(f, qCuotas.rows),
         numeroCertificado: f.numero_certificado,
-        ordenTrabajo: f.veh_placa || f.operacion_placa || '',
+        ordenTrabajo: esTaller ? '' : (f.veh_placa || f.operacion_placa || ''),
         qrSource: f.cadena_qr || '',
         logoDataUri: LOGO_CERTIFICADOR_DATA_URI
     };

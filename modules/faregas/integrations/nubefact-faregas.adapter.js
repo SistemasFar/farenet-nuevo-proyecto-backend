@@ -1,5 +1,6 @@
 const config = require('../../../config/integrations.config');
 const { construirInformacionAdicional } = require('./nubefact-faregas-informacion-adicional');
+const { esGratuidadTallerAutorizada, esFlujoTaller } = require('../services/faregas-gratuidad-taller.policy');
 
 const dosDecimales = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
@@ -174,8 +175,15 @@ const construirPayloadNubefact = ({
 }) => {
     const certificadoData = certificado || {};
     const vehiculoData = vehiculo || {};
+    const tipoFlujo = certificadoData.servicio_tipo_flujo || resumenTributario?.servicio?.tipoFlujo || '';
+    const tallerNombre = certificadoData.formato_datos_snapshot?.taller?.nombre
+        || resumenTributario?.taller?.nombre
+        || '';
+    const esTaller = esFlujoTaller(tipoFlujo);
     const descripcion = certificadoData.tipo_certificado_clave
-        ? `CERTIFICACION VEHICULAR ${certificadoData.tipo_certificado_clave} - PLACA ${vehiculoData.placa || ''}`
+        ? (esTaller
+            ? `CERTIFICACION DE TALLER ${certificadoData.tipo_certificado_clave} - TALLER ${tallerNombre}`
+            : `CERTIFICACION VEHICULAR ${certificadoData.tipo_certificado_clave} - PLACA ${vehiculoData.placa || ''}`)
         : `OPERACION COMERCIAL FAREGAS ${facturacion.operacion_id || facturacion.id}`;
     const tipoComprobante = facturacion.tipo_comprobante === 'FACTURA' ? 1 : 2;
     const tipoDocumento = facturacion.tipo_documento_cliente === 'RUC' ? 6 : 1;
@@ -194,14 +202,20 @@ const construirPayloadNubefact = ({
         baseDescuento = descuentoTotal / 1.18;
     }
 
-    const lineasGratuitas = detalles.filter(esLineaGratuitaPorDescuentoCompleto);
+    const gratuidadAutorizada = esGratuidadTallerAutorizada({
+        reserva: reservaDescuento || resumenTributario?.descuento,
+        tipoFlujo
+    });
+    const lineasGratuitas = gratuidadAutorizada
+        ? detalles.filter(esLineaGratuitaPorDescuentoCompleto)
+        : [];
     const totalGratuita = dosDecimales(lineasGratuitas.reduce(
         (total, item) => total + Number(item.precio_unitario || 0) * Number(item.cantidad || 1),
         0
     ));
     const descuentoOneroso = dosDecimales(Math.max(0, descuentoTotal - totalGratuita));
     const items = detalles.length > 0
-        ? detalles.map(item => esLineaGratuitaPorDescuentoCompleto(item)
+        ? detalles.map(item => gratuidadAutorizada && esLineaGratuitaPorDescuentoCompleto(item)
             ? construirItemGratuito(item)
             : construirItem(item))
         : [construirItem({
@@ -226,7 +240,10 @@ const construirPayloadNubefact = ({
         facturacion,
         certificado: certificadoData,
         vehiculo: vehiculoData,
-        detalles
+        detalles,
+        tipoFlujo,
+        tallerNombre,
+        gratuidadAutorizada
     });
 
     return {
@@ -274,14 +291,24 @@ const construirPayloadNubefact = ({
         codigo_unico: facturacion.codigo_unico || crearCodigoUnico(facturacion.id),
         condiciones_de_pago: credito ? 'CREDITO' : 'CONTADO',
         forma_de_pago: credito ? 'Credito' : 'Contado',
-        medio_de_pago: credito
+        medio_de_pago: gratuidadAutorizada
+            ? ''
+            : credito
             ? 'credito'
             : (String(facturacion.medio_pago || '').toLowerCase() === 'credito' ? '' : (facturacion.medio_pago || '')),
         cancelado: !credito,
-        placa_vehiculo: vehiculoData.placa || '',
+        placa_vehiculo: esTaller ? '' : (vehiculoData.placa || ''),
         orden_compra_servicio: '',
         formato_de_pdf: '',
         items,
+        leyendas: (gratuidadAutorizada || totalGratuita > 0)
+            ? [
+                {
+                    codigo: '1002',
+                    valor: 'TRANSFERENCIA GRATUITA DE UN BIEN Y/O SERVICIO PRESTADO GRATUITAMENTE'
+                }
+            ]
+            : [],
         venta_al_credito: credito
             ? cuotas.map(cuota => ({
                 cuota: Number(cuota.numero_cuota),

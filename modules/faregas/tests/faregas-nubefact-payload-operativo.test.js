@@ -76,13 +76,80 @@ const resumen = (overrides = {}) => ({
     }
 });
 
-const payload = ({ facturacion = facturacionBase(), detalles = [detalle()], cuotas = [], resumenTributario = resumen() } = {}) => construirPayloadNubefact({
+const payload = ({ facturacion = facturacionBase(), certificadoData = certificado, vehiculoData = vehiculo, reservaDescuento = null, detalles = [detalle()], cuotas = [], resumenTributario = resumen() } = {}) => construirPayloadNubefact({
     facturacion,
-    certificado,
-    vehiculo,
+    certificado: certificadoData,
+    vehiculo: vehiculoData,
+    reservaDescuento,
     detalles,
     cuotas,
     resumenTributario
+});
+
+test('DESCUENTO_TALLER convierte únicamente el servicio de taller autorizado en operación gratuita', () => {
+    const result = payload({
+        facturacion: facturacionBase({
+            medio_pago: 'EFECTIVO',
+            codigo_descuento_snapshot: 'DESCUENTO_TALLER',
+            base_imponible: 0,
+            igv: 0,
+            importe_total: 0
+        }),
+        certificadoData: {
+            ...certificado,
+            servicio_tipo_flujo: 'TALLER_INSPECCION',
+            formato_datos_snapshot: { taller: { nombre: 'CHARING S.A.C.' } }
+        },
+        vehiculoData: { placa: 'ABC123', marca: 'NO DEBE SALIR' },
+        reservaDescuento: { codigo_autorizacion: 'DESCUENTO_TALLER' },
+        detalles: [detalle({
+            codigo_sku_snapshot: '0422',
+            descripcion_snapshot: 'CERTIFICADO ANUAL DE INSPECCIÓN DE TALLER GLP',
+            valor_unitario: 296.61,
+            precio_unitario: 350,
+            descuento: 296.61,
+            base_imponible: 0,
+            igv: 0,
+            importe_total: 0
+        })],
+        resumenTributario: resumen({
+            totales: { precioAntesDescuento: 350, descuento: 0, baseImponible: 0, igv: 0, total: 0 }
+        })
+    });
+
+    assert.equal(result.total_descuento, 0);
+    assert.equal(result.total_gratuita, 350);
+    assert.equal(result.total_gravada, 0);
+    assert.equal(result.total_igv, 0);
+    assert.equal(result.total, 0);
+    assert.equal(result.items[0].tipo_de_igv, 6);
+    assert.equal(result.items[0].precio_unitario, 350);
+    assert.equal(result.placa_vehiculo, '');
+    assert.equal(result.medio_de_pago, '');
+    assert.match(result.observaciones, /TALLER: CHARING S\.A\.C\./);
+    assert.doesNotMatch(result.observaciones, /VEHÍCULO|ABC123|NO DEBE SALIR/);
+});
+
+test('un descuento comercial ordinario del 100 % no se reclasifica automáticamente como gratuidad', () => {
+    const result = payload({
+        facturacion: facturacionBase({ base_imponible: 0, igv: 0, importe_total: 0 }),
+        reservaDescuento: { codigo_autorizacion: 'PROMO_100' },
+        detalles: [detalle({
+            precio_unitario: 350,
+            valor_unitario: 296.61,
+            descuento: 296.61,
+            base_imponible: 0,
+            igv: 0,
+            importe_total: 0
+        })],
+        resumenTributario: resumen({
+            totales: { precioAntesDescuento: 350, descuento: 350, baseImponible: 0, igv: 0, total: 0 }
+        })
+    });
+
+    assert.equal(result.total_gratuita, 0);
+    assert.equal(result.total_descuento, 350);
+    assert.equal(result.items[0].tipo_de_igv, 1);
 });
 
 test('boleta al contado usa campos nativos y no inventa OT ni número de certificado', () => {

@@ -272,6 +272,8 @@ exports.crearBorrador = async (req, res) => {
         if (e.message === 'TIPO_INACTIVO') return res.status(400).json({ ok: false, message: 'El tipo de certificado está inactivo' });
         if (e.message === 'CLIENTE_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El cliente indicado no existe' });
         if (e.message === 'CLIENTE_INACTIVO') return res.status(400).json({ ok: false, message: 'El cliente está inactivo' });
+        if (e.message === 'NOMBRE_TALLER_REQUERIDO') return res.status(400).json({ ok: false, codigo: e.message, message: 'El nombre del taller es obligatorio.' });
+        if (e.message === 'NOMBRE_TALLER_INVALIDO') return res.status(400).json({ ok: false, codigo: e.message, message: 'Ingrese un nombre de taller válido.' });
         if (e.code === 'GNV_NO_HABILITADO_EN_SEDE' || e.message === 'GNV_NO_HABILITADO_EN_SEDE') return res.status(409).json({
             ok: false,
             codigo: 'GNV_NO_HABILITADO_EN_SEDE',

@@ -44,9 +44,14 @@ exports.evaluarDatosFacturacion = evaluarDatosFacturacion;
 
 const obtenerCertificado = async (client, id, userContext, bloquear = false) => {
     const result = await client.query(
-        `SELECT c.*, t.clave AS tipo_clave
+        `SELECT c.*, t.clave AS tipo_clave,
+                s.tipo_flujo AS servicio_tipo_flujo
          FROM fg_certificado c
          JOIN fg_tipo_certificado t ON t.clave = c.tipo_certificado_clave
+         LEFT JOIN fg_tarifa tf
+           ON tf.planta_key = c.planta_key
+          AND tf.codigo = c.tarifa_codigo
+         LEFT JOIN fg_servicio s ON s.id = tf.servicio_id
          WHERE c.id = $1${bloquear ? ' FOR UPDATE OF c' : ''}`,
         [id]
     );
@@ -414,14 +419,19 @@ const reservarEmision = async (certificadoId, userContext) => {
             'SELECT * FROM fg_certificado_vehiculo WHERE certificado_id = $1',
             [certificadoId]
         );
-        if (vehiculoResult.rowCount === 0) throw errorNegocio('VEHICULO_FALTANTE', 409);
+        const esInspeccionTaller = String(certificado.servicio_tipo_flujo || '').toUpperCase() === 'TALLER_INSPECCION';
+        if (!esInspeccionTaller && vehiculoResult.rowCount === 0) throw errorNegocio('VEHICULO_FALTANTE', 409);
 
         const detallesNubefact = resumenTributarioService.construirDetallesNubefact(resumenTributario);
 
         // INTEGRACION DESCUENTOS
         const reservaResult = await client.query(
-            `SELECT * FROM fg_descuentocomprobante
-             WHERE facturacion_id = $1 AND estado = 'APLICADO'`,
+            `SELECT cmp.*, dc.codigo AS codigo_autorizacion,
+                    d.tipo AS descuento_tipo, d.activo AS descuento_activo
+             FROM fg_descuentocomprobante cmp
+             JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id
+             JOIN fg_descuento d ON d.id = dc.descuento_id
+             WHERE cmp.facturacion_id = $1 AND cmp.estado = 'APLICADO'`,
             [facturacion.id]
         );
         const totalEsperadoConChip = Number(reservaResult.rows[0]?.importe_final || 0)
@@ -482,7 +492,7 @@ const reservarEmision = async (certificadoId, userContext) => {
         const payload = construirPayloadNubefact({
             facturacion,
             certificado,
-            vehiculo: vehiculoResult.rows[0],
+            vehiculo: vehiculoResult.rows[0] || {},
             reservaDescuento: reservaResult.rowCount > 0 ? reservaResult.rows[0] : null,
             detalles: detallesNubefact,
             resumenTributario,

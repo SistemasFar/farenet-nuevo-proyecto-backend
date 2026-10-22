@@ -5,6 +5,19 @@ const tarifasService = require('./faregas-tarifas.service');
 const configService = require('./faregas-config.service');
 const auditoriaService = require('./faregas-auditoria.service');
 const descuentosImpactoService = require('./faregas-descuentos-impacto.service');
+const {
+    CODIGO_AUTORIZACION_GRATUIDAD_TALLER,
+    esCodigoGratuidadTaller,
+    esFlujoTaller,
+    consultarConvenioProtegido,
+    consultarCodigoProtegido
+} = require('./faregas-gratuidad-taller.policy');
+
+// Los certificados técnicos y las inspecciones de taller son servicios
+// comerciales válidos para campañas. Se comparte la misma lista entre el
+// catálogo administrativo y la validación al guardar para que un servicio
+// visible nunca sea rechazado después.
+const FLUJOS_DESCONTABLES = Object.freeze(['CERTIFICACION', 'TALLER_INSPECCION']);
 
 const errorNegocio = (codigo, statusCode = 400, detalles) => {
     const error = new Error(codigo);
@@ -37,8 +50,12 @@ const calcularImporteFinal = (precio, tipoCalculo, valor) => {
 
 const obtenerCertificado = async (client, certificadoId, userContext) => {
     const result = await client.query(
-        `SELECT id, estado, planta_key, tipo_certificado_clave, tarifa_codigo 
-         FROM fg_certificado WHERE id = $1`,
+        `SELECT c.id, c.estado, c.planta_key, c.tipo_certificado_clave, c.tarifa_codigo,
+                s.tipo_flujo AS servicio_tipo_flujo
+         FROM fg_certificado c
+         LEFT JOIN fg_tarifa t ON t.planta_key = c.planta_key AND t.codigo = c.tarifa_codigo
+         LEFT JOIN fg_servicio s ON s.id = t.servicio_id
+         WHERE c.id = $1`,
         [certificadoId]
     );
     if (result.rowCount === 0) throw errorNegocio('CERTIFICADO_NOT_FOUND', 404);
@@ -182,6 +199,16 @@ const consultarDescuentoCore = async (client, codigo, certificadoId, userContext
     }
 
     const importeFinal = tarifaOriginal - importeDescuento;
+    const esAutorizacionGratuita = esCodigoGratuidadTaller(ds.codigo);
+    if (esAutorizacionGratuita && !esFlujoTaller(certificado.servicio_tipo_flujo)) {
+        throw errorNegocio('DESCUENTO_NO_APLICA_SERVICIO', 422);
+    }
+    if (esAutorizacionGratuita && Math.abs(importeFinal) > 0.01) {
+        throw errorNegocio('GRATUIDAD_TALLER_CONFIGURACION_INVALIDA', 409);
+    }
+    if (!esAutorizacionGratuita && Math.abs(importeFinal) <= 0.01) {
+        throw errorNegocio('OPERACION_CERO_REQUIERE_AUTORIZACION_GRATUITA', 409);
+    }
 
     // 6. Validar que no haya otra reserva de OTRO codigo en el mismo certificado
     const sqlRes = `
@@ -210,6 +237,7 @@ const consultarDescuentoCore = async (client, codigo, certificadoId, userContext
         importeFinal,
         fechaFin: ds.dc_fin || ds.d_fin,
         usosDisponibles: Math.max(0, usosDisponibles),
+        autorizaGratuidad: esAutorizacionGratuita,
         certificado
     };
 };
@@ -283,7 +311,7 @@ exports.aplicarDescuentoBorrador = async (certificadoId, codigo, userContext) =>
         }
 
         await client.query('COMMIT');
-        
+        calculo.plantaKey = calculo.certificado?.planta_key || null;
         delete calculo.certificado;
         return calculo;
     } catch (error) {
@@ -511,11 +539,16 @@ exports.listarDescuentos = async (filtros = {}) => {
                 WHERE dc_total.descuento_id=d.id) AS total_codigos,
                COALESCE((SELECT SUM(dc_usos.usos_realizados)
                          FROM fg_descuentocliente dc_usos
-                         WHERE dc_usos.descuento_id=d.id), 0) AS usos_realizados
+                          WHERE dc_usos.descuento_id=d.id), 0) AS usos_realizados,
+               EXISTS (
+                   SELECT 1 FROM fg_descuentocliente dc_protegido
+                   WHERE dc_protegido.descuento_id = d.id
+                     AND UPPER(BTRIM(dc_protegido.codigo)) = $${params.length + 1}
+               ) AS protegido
         FROM fg_descuento d
         ${where}
         ORDER BY d.activo DESC, d.fecha_fin DESC, d.nombre
-    `, params);
+    `, [...params, CODIGO_AUTORIZACION_GRATUIDAD_TALLER]);
     return result.rows;
 };
 
@@ -536,8 +569,8 @@ exports.obtenerMaestrosAdministracion = async () => {
                   JOIN fg_categoria_servicio c ON c.id=s.categoria_id
                   LEFT JOIN fg_producto_facturacion pf ON pf.id=t.producto_facturacion_id
                   WHERE p.activo=TRUE AND t.activo=TRUE AND s.activo=TRUE AND c.activo=TRUE
-                    AND s.tipo_flujo='CERTIFICACION'
-                  ORDER BY p.nombre, c.orden, s.orden, s.nombre`),
+                    AND s.tipo_flujo = ANY($1::varchar[])
+                  ORDER BY p.nombre, c.orden, s.orden, s.nombre`, [FLUJOS_DESCONTABLES]),
         db.query(`SELECT id, username, nombre
                   FROM fg_ejecutivo
                   WHERE activo=TRUE
@@ -615,6 +648,9 @@ exports.cambiarEstadoDescuento = async (id, activo, userContext) => {
         const check = await client.query('SELECT * FROM fg_descuento WHERE id=$1', [id]);
         if (!check.rowCount) throw errorNegocio('DESCUENTO_NOT_FOUND', 404);
         const anterior = check.rows[0];
+        if (!Boolean(activo) && await consultarConvenioProtegido(client, id, true)) {
+            throw errorNegocio('CONVENIO_GRATUIDAD_PROTEGIDO', 409);
+        }
 
         await client.query(`UPDATE fg_descuento SET activo=$2, usuario_modificacion=$3,
             fecha_modificacion=CURRENT_TIMESTAMP WHERE id=$1`, [id, Boolean(activo), userContext.username]);
@@ -656,6 +692,9 @@ exports.eliminarDescuento = async (id, userContext, ipDireccion = null) => {
             'SELECT * FROM fg_descuento WHERE id=$1 FOR UPDATE', [descuentoId]
         );
         if (!check.rowCount) throw errorNegocio('DESCUENTO_NO_ENCONTRADO', 404);
+        if (await consultarConvenioProtegido(client, descuentoId, true)) {
+            throw errorNegocio('CONVENIO_GRATUIDAD_NO_ELIMINABLE', 409);
+        }
 
         const impacto = await descuentosImpactoService.calcularImpactoEnTransaccion(
             client, descuentoId, check.rows[0]
@@ -970,7 +1009,11 @@ const guardarReglasCampana = async (client, descuentoId, reglas, username) => {
             LEFT JOIN fg_producto_facturacion pf ON pf.id=t.producto_facturacion_id
             WHERE t.planta_key=$1 AND t.servicio_id=$2 AND t.activo=TRUE
               AND p.activo=TRUE AND s.activo=TRUE AND c.activo=TRUE
-              AND s.tipo_flujo='CERTIFICACION'`, [regla.plantaKey, regla.servicioId]);
+              AND s.tipo_flujo = ANY($3::varchar[])`, [
+            regla.plantaKey,
+            regla.servicioId,
+            FLUJOS_DESCONTABLES
+        ]);
         if (!referencia.rowCount) throw errorNegocio('REFERENCIA_DESCUENTO_INVALIDA', 400);
 
         const tarifa = resolverPrecioServicio(referencia.rows[0]);
@@ -1061,6 +1104,9 @@ exports.actualizarCodigoCliente = async (codigoId, data, userContext) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+        if (await consultarCodigoProtegido(client, codigoId, true)) {
+            throw errorNegocio('CODIGO_GRATUIDAD_PROTEGIDO', 409);
+        }
         const actual = await client.query(`SELECT dc.descuento_id, dc.usos_realizados,
                                                   d.fecha_inicio, d.fecha_fin
             FROM fg_descuentocliente dc
@@ -1095,6 +1141,9 @@ exports.actualizarCodigoCliente = async (codigoId, data, userContext) => {
 };
 
 exports.cambiarEstadoCodigo = async (id, activo, userContext) => {
+    if (!Boolean(activo) && await consultarCodigoProtegido(db, id, false)) {
+        throw errorNegocio('CODIGO_GRATUIDAD_PROTEGIDO', 409);
+    }
     const result = await db.query(`UPDATE fg_descuentocliente
         SET activo=$2, usuario_modificacion=$3, fecha_modificacion=CURRENT_TIMESTAMP
         WHERE id=$1 RETURNING id`, [id, Boolean(activo), userContext.username]);
@@ -1103,6 +1152,7 @@ exports.cambiarEstadoCodigo = async (id, activo, userContext) => {
 };
 
 exports._private = {
+    FLUJOS_DESCONTABLES,
     errorNegocio,
     resolverPrecioServicio,
     mapearServicioAdministracion,

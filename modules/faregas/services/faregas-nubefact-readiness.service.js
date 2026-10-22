@@ -320,7 +320,7 @@ const obtenerPruebasAmbiente = async (queryable, plantaKey, entorno) => {
     };
 };
 
-const construirChecksCertificado = ({ resumen, integracion }) => {
+const construirChecksCertificado = ({ resumen, integracion, certificadoId = null }) => {
     const checks = [];
     const agregar = (codigo, condicion, mensajeOk, mensajeError, detalles = null) => {
         checks.push(check(codigo, condicion ? 'OK' : 'BLOQUEO', condicion ? mensajeOk : mensajeError, detalles));
@@ -334,17 +334,66 @@ const construirChecksCertificado = ({ resumen, integracion }) => {
         && precioAntesDescuento > 0
         && descuento > 0
         && Math.abs(precioAntesDescuento - descuento) <= 0.01;
-    const totalAdmitido = total > 0 || totalCeroPorDescuentoCompleto;
+    const totalGratuito = Number(resumen?.totales?.gratuita ?? resumen?.descuento?.importeReferencialGratuito ?? 0);
+    const esGratuidadAutorizada = Boolean(resumen?.descuento?.autorizacionGratuita || totalGratuito > 0);
+    const totalCeroPorGratuidad = total === 0
+        && esGratuidadAutorizada
+        && precioAntesDescuento > 0
+        && totalGratuito > 0
+        && Math.abs(precioAntesDescuento - totalGratuito) <= 0.01;
+    const totalAdmitido = total > 0 || totalCeroPorDescuentoCompleto || totalCeroPorGratuidad;
+
+    const calculosConsistentes = totalAdmitido
+        && Number.isFinite(baseImponible)
+        && Number.isFinite(igv)
+        && Math.abs(baseImponible + igv - total) <= 0.01;
+
+    if (!calculosConsistentes) {
+        const certId = certificadoId || resumen?.certificado?.id || null;
+        const opId = resumen?.operacion?.id || null;
+        const diferencia = Math.abs(baseImponible + igv - total);
+        console.warn('[FAREGAS][READINESS] Inconsistencia en totales tributarios:', {
+            codigoInterno: 'CALCULOS_TRIBUTARIOS_INCONSISTENTES',
+            etapa: 'PREFLIGHT_READINESS',
+            operacionId: opId,
+            certificadoId: certId,
+            tipoTratamiento: esGratuidadAutorizada ? 'GRATUIDAD' : (descuento > 0 ? 'DESCUENTO_COMERCIAL' : 'VENTA_REGULAR'),
+            camposMonetarios: {
+                total,
+                baseImponible,
+                igv,
+                precioAntesDescuento,
+                descuento,
+                totalGratuito,
+                sumaBaseIgv: Number((baseImponible + igv).toFixed(2))
+            },
+            diferenciaDetectada: Number(diferencia.toFixed(2)),
+            motivo: !totalAdmitido ? 'TOTAL_CERO_NO_ADMITIDO' : 'SUMA_BASE_IGV_NO_COINCIDE_CON_TOTAL'
+        });
+    }
 
     agregar('CLIENTE', Boolean(resumen?.cliente?.numeroDocumento && resumen?.cliente?.nombreRazonSocial),
         'Los datos fiscales del cliente están completos.', 'Faltan datos fiscales del cliente.');
     agregar('CATALOGO_FISCAL', resumen?.items?.length > 0 && resumen.items.every(item => item.productoFacturacionId),
         'La tarifa tiene producto fiscal vinculado.', 'La tarifa no tiene producto fiscal vinculado.');
-    agregar('CALCULOS', totalAdmitido
-        && Number.isFinite(baseImponible)
-        && Number.isFinite(igv)
-        && Math.abs(baseImponible + igv - total) <= 0.01,
-    'Los totales tributarios son consistentes.', 'Los totales tributarios no son consistentes.');
+    agregar('CALCULOS', calculosConsistentes,
+        'Los totales tributarios son consistentes.', 'Los totales tributarios no son consistentes.',
+        calculosConsistentes ? null : {
+            codigoInterno: 'CALCULOS_TRIBUTARIOS_INCONSISTENTES',
+            etapa: 'PREFLIGHT_READINESS',
+            operacionId: resumen?.operacion?.id || null,
+            certificadoId: certificadoId || resumen?.certificado?.id || null,
+            tipoTratamiento: esGratuidadAutorizada ? 'GRATUIDAD' : (descuento > 0 ? 'DESCUENTO_COMERCIAL' : 'VENTA_REGULAR'),
+            camposMonetarios: {
+                total,
+                baseImponible,
+                igv,
+                precioAntesDescuento,
+                descuento,
+                totalGratuito
+            },
+            diferenciaDetectada: Number(Math.abs(baseImponible + igv - total).toFixed(2))
+        });
     agregar('SERIE', Boolean(resumen?.comprobante?.serie),
         'Existe una serie prevista.', 'No existe una serie tributaria prevista.');
     agregar('EMPRESA_EMISORA', Boolean(resumen?.emisor?.ruc && resumen?.emisor?.razonSocial),
@@ -381,7 +430,7 @@ exports.evaluarCertificado = async (certificadoId, queryable = db) => {
     const resumen = await resumenTributarioService.obtenerResumenTributario(certificadoId, queryable);
     const integracion = await nubefactConfigService.obtenerEstadoParaPlanta(resumen.sede.key, queryable);
     return {
-        ...construirChecksCertificado({ resumen, integracion }),
+        ...construirChecksCertificado({ resumen, integracion, certificadoId }),
         certificadoId,
         evaluadoEn: new Date().toISOString(),
         resumen

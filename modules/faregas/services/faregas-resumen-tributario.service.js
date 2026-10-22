@@ -6,6 +6,7 @@ const tarifasService = require('./faregas-tarifas.service');
 const { esUnidadTributariaAdmitida } = require('./faregas-producto-fiscal.rules');
 const { esCodigoClasificacionSunatValidoOpcional } = require('./faregas-pagos.rules');
 const { derivarMedioPago } = require('./faregas-facturacion.rules');
+const { esGratuidadTallerAutorizada } = require('./faregas-gratuidad-taller.policy');
 
 const redondear = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 const texto = (value) => String(value ?? '').trim();
@@ -37,6 +38,12 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
         && precioLista > 0
         && importeDescuento > 0
         && Math.abs(precioLista - importeDescuento) <= 0.01;
+    const gratuidadTallerAutorizada = totalCeroPorDescuentoCompleto
+        && esGratuidadTallerAutorizada({
+            reserva: descuento,
+            tipoFlujo: contexto.servicio_tipo_flujo
+        });
+    const descuentoComercial = gratuidadTallerAutorizada ? 0 : importeDescuento;
     const cantidad = Number(detalle?.cantidad || 1);
     // Una operación ya creada debe conservar exactamente la definición fiscal
     // con la que se cotizó, aunque el maestro del producto cambie después.
@@ -70,7 +77,7 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
     agregarSi(errores, !seriePrevista, `No existe una serie productiva de ${esFactura ? 'factura' : 'boleta'} para la sede.`);
     agregarSi(
         errores,
-        !Number.isFinite(total) || total < 0 || (total === 0 && !totalCeroPorDescuentoCompleto),
+        !Number.isFinite(total) || total < 0 || (total === 0 && !gratuidadTallerAutorizada),
         'El total de la operación no es válido.'
     );
     agregarSi(errores, Math.abs(redondear(baseImponible + igv) - total) > 0.01, 'La base imponible y el IGV no coinciden con el total.');
@@ -203,9 +210,16 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
             motor: texto(contexto.vehiculo_motor) || null
         },
         certificado: {
+            id: contexto.certificado_id == null ? null : Number(contexto.certificado_id),
             tipo: texto(contexto.tipo_certificado_clave) || null,
             numero: texto(contexto.numero_certificado) || null,
             servicio: itemsList[0]?.descripcion || null
+        },
+        servicio: {
+            tipoFlujo: texto(contexto.servicio_tipo_flujo) || null
+        },
+        taller: {
+            nombre: texto(contexto.formato_datos_snapshot?.taller?.nombre) || null
         },
         operacion: {
             id: contexto.operacion_id == null ? null : Number(contexto.operacion_id)
@@ -213,17 +227,20 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
         descuento: {
             codigo: texto(contexto.codigo_descuento_snapshot || descuento?.codigo) || null,
             importeOriginal: precioLista,
-            importe: importeDescuento,
-            importeFinal: total
+            importe: descuentoComercial,
+            importeFinal: total,
+            autorizacionGratuita: gratuidadTallerAutorizada,
+            importeReferencialGratuito: gratuidadTallerAutorizada ? precioLista : 0
         },
         items: itemsList,
         totales: {
             moneda: mayusculas(contexto.moneda_key) === 'SOL' ? 'PEN' : mayusculas(contexto.moneda_key || 'PEN'),
             precioAntesDescuento: precioLista,
-            descuento: importeDescuento,
+            descuento: descuentoComercial,
             baseImponible,
             igv,
-            total
+            total,
+            gratuita: gratuidadTallerAutorizada ? precioLista : 0
         },
         pago: {
             condicion: condicionPago === 'CREDITO' ? 'CREDITO' : 'CONTADO',
@@ -289,6 +306,8 @@ const obtenerContexto = async (certificadoId, queryable) => {
     const result = await queryable.query(`
         SELECT c.id AS certificado_id, c.planta_key, c.tarifa_codigo,
                c.tipo_certificado_clave, c.numero_certificado,
+               c.formato_datos_snapshot,
+               s.tipo_flujo AS servicio_tipo_flujo,
                COALESCE(f.sede_nombre_snapshot, p.nombre) AS sede_nombre,
                COALESCE(f.sede_direccion_snapshot, p.direccion) AS sede_direccion,
                COALESCE(f.sede_telefono_snapshot, p.telefono) AS sede_telefono,
@@ -308,6 +327,10 @@ const obtenerContexto = async (certificadoId, queryable) => {
                v.clase AS vehiculo_clase, v.marca AS vehiculo_marca,
                v.modelo AS vehiculo_modelo, v.numero_motor AS vehiculo_motor
         FROM fg_certificado c
+        LEFT JOIN fg_tarifa tf
+          ON tf.planta_key = c.planta_key
+         AND tf.codigo = c.tarifa_codigo
+        LEFT JOIN fg_servicio s ON s.id = tf.servicio_id
         JOIN fg_planta p ON p.key = c.planta_key
         JOIN fg_empresa e ON e.key = p.empresa_key
         LEFT JOIN fg_empresa_facturador ef
@@ -405,9 +428,11 @@ const obtenerDetalles = async (contexto, queryable) => {
 const obtenerDescuento = async (certificadoId, queryable) => {
     const result = await queryable.query(`
         SELECT cmp.importe_original, cmp.importe_descuento, cmp.importe_final,
-               cmp.estado, dc.codigo
+               cmp.estado, dc.codigo, dc.codigo AS codigo_autorizacion,
+               d.tipo AS descuento_tipo, d.activo AS descuento_activo
         FROM fg_descuentocomprobante cmp
         LEFT JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id
+        LEFT JOIN fg_descuento d ON d.id = dc.descuento_id
         WHERE cmp.certificado_id = $1
           AND cmp.estado IN ('RESERVADO', 'APLICADO')
         ORDER BY cmp.id DESC

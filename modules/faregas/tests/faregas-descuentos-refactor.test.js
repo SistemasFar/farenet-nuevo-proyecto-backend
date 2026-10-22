@@ -6,6 +6,145 @@ process.env.NODE_ENV = 'test';
 const db = require('../../../config/database');
 const descuentos = require('../services/faregas-descuentos.service');
 const helpers = descuentos._private;
+const gratuidadPolicy = require('../services/faregas-gratuidad-taller.policy');
+
+test('la gratuidad exige simultáneamente el código estable y el flujo estructurado de taller', () => {
+    assert.equal(gratuidadPolicy.esGratuidadTallerAutorizada({
+        reserva: { codigo_autorizacion: 'descuento_taller' },
+        tipoFlujo: 'TALLER_INSPECCION'
+    }), true);
+    assert.equal(gratuidadPolicy.esGratuidadTallerAutorizada({
+        reserva: { codigo_autorizacion: 'PROMO_100' },
+        tipoFlujo: 'TALLER_INSPECCION'
+    }), false);
+    assert.equal(gratuidadPolicy.esGratuidadTallerAutorizada({
+        reserva: { codigo_autorizacion: 'DESCUENTO_TALLER' },
+        tipoFlujo: 'CERTIFICACION'
+    }), false);
+});
+
+test('las campañas admiten certificaciones e inspecciones de taller', () => {
+    assert.deepEqual(helpers.FLUJOS_DESCONTABLES, ['CERTIFICACION', 'TALLER_INSPECCION']);
+});
+
+test('una petición directa no puede eliminar el convenio que contiene DESCUENTO_TALLER', async () => {
+    const originalConnect = db.connect;
+    const consultas = [];
+    const client = {
+        query: async (sql) => {
+            consultas.push(sql);
+            if (sql.includes('SELECT * FROM fg_descuento')) {
+                return { rowCount: 1, rows: [{ id: 17, nombre: 'DESCUENTO CERTIFICADO TALLER' }] };
+            }
+            if (sql.includes('UPPER(BTRIM(dc.codigo))')) {
+                return { rowCount: 1, rows: [{ id: 17, codigo_autorizacion: 'DESCUENTO_TALLER' }] };
+            }
+            return { rowCount: 0, rows: [] };
+        },
+        release: () => {}
+    };
+    db.connect = async () => client;
+    try {
+        await assert.rejects(
+            descuentos.eliminarDescuento(17, { username: 'admin' }),
+            error => error.message === 'CONVENIO_GRATUIDAD_NO_ELIMINABLE' && error.statusCode === 409
+        );
+        assert.equal(consultas.some(sql => sql.includes('DELETE FROM fg_descuento')), false);
+        assert.equal(consultas.some(sql => sql === 'ROLLBACK'), true);
+    } finally {
+        db.connect = originalConnect;
+    }
+});
+
+test('el convenio protegido tampoco puede desactivarse por llamada directa', async () => {
+    const originalConnect = db.connect;
+    const consultas = [];
+    const client = {
+        query: async (sql) => {
+            consultas.push(sql);
+            if (sql.includes('SELECT * FROM fg_descuento')) {
+                return { rowCount: 1, rows: [{ id: 17, activo: true }] };
+            }
+            if (sql.includes('UPPER(BTRIM(dc.codigo))')) {
+                return { rowCount: 1, rows: [{ id: 17, codigo_autorizacion: 'DESCUENTO_TALLER' }] };
+            }
+            return { rowCount: 0, rows: [] };
+        },
+        release: () => {}
+    };
+    db.connect = async () => client;
+    try {
+        await assert.rejects(
+            descuentos.cambiarEstadoDescuento(17, false, { username: 'admin' }),
+            error => error.message === 'CONVENIO_GRATUIDAD_PROTEGIDO' && error.statusCode === 409
+        );
+        assert.equal(consultas.some(sql => sql.includes('UPDATE fg_descuento SET activo')), false);
+        assert.equal(consultas.some(sql => sql === 'ROLLBACK'), true);
+    } finally {
+        db.connect = originalConnect;
+    }
+});
+
+test('el maestro administrativo consulta los dos flujos descontables', async () => {
+    const original = db.query;
+    const llamadas = [];
+    db.query = async (sql, params) => {
+        llamadas.push({ sql, params });
+        return { rows: [] };
+    };
+    try {
+        await descuentos.obtenerMaestrosAdministracion();
+        const consultaDisponibilidad = llamadas.find(item => item.sql.includes('FROM fg_tarifa t'));
+        assert.ok(consultaDisponibilidad);
+        assert.match(consultaDisponibilidad.sql, /s\.tipo_flujo = ANY\(\$1::varchar\[\]\)/);
+        assert.deepEqual(consultaDisponibilidad.params, [['CERTIFICACION', 'TALLER_INSPECCION']]);
+    } finally {
+        db.query = original;
+    }
+});
+
+test('guardar una regla vuelve a validar certificación e inspección de taller con el mismo alcance', async () => {
+    const originalConnect = db.connect;
+    const consultas = [];
+    const client = {
+        query: async (sql, params) => {
+            consultas.push({ sql, params });
+            if (sql.includes('SELECT id FROM fg_descuento')) {
+                return { rowCount: 1, rows: [{ id: 7 }] };
+            }
+            if (sql.includes('FROM fg_tarifa t')) {
+                return {
+                    rowCount: 1,
+                    rows: [{
+                        producto_facturacion_id: 46,
+                        producto_precio_referencia: 350,
+                        producto_precio_unitario: 296.61
+                    }]
+                };
+            }
+            return { rowCount: 1, rows: [] };
+        },
+        release: () => {}
+    };
+    db.connect = async () => client;
+    try {
+        const resultado = await descuentos.guardarReglasDescuento(7, {
+            reglas: [{
+                plantaKey: '98',
+                servicioId: 406,
+                tipoCalculo: 'MONTO',
+                valor: 10
+            }]
+        }, { username: 'tester' });
+        assert.deepEqual(resultado, { success: true });
+        const consultaReferencia = consultas.find(item => item.sql.includes('FROM fg_tarifa t'));
+        assert.ok(consultaReferencia);
+        assert.match(consultaReferencia.sql, /s\.tipo_flujo = ANY\(\$3::varchar\[\]\)/);
+        assert.deepEqual(consultaReferencia.params, ['98', 406, ['CERTIFICACION', 'TALLER_INSPECCION']]);
+    } finally {
+        db.connect = originalConnect;
+    }
+});
 
 test('administración usa precio_referencia y nunca fg_tarifa.precio', () => {
     const precio = helpers.resolverPrecioServicio({
