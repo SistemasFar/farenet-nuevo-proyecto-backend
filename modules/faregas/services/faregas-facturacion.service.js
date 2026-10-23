@@ -166,9 +166,31 @@ exports.obtenerFacturacion = async (certificadoId, userContext) => {
     };
 };
 
-exports.obtenerPreflight = async (certificadoId, userContext) => {
+exports.obtenerPreflight = async (certificadoId, userContext, dependencies = {}) => {
     await obtenerCertificado(db, certificadoId, userContext);
-    return readinessService.evaluarCertificado(certificadoId, db);
+    const preparacionFiscal = await readinessService.evaluarCertificado(certificadoId, db);
+    const certService = dependencies.certificadosService || require('./faregas-certificados.service');
+    const validacionTecnica = await certService.validarEmision(certificadoId, userContext, {
+        ignorarComprobanteNoEmitido: true,
+        ignorarChipNoConsumido: true
+    });
+    if (validacionTecnica?.valido) return preparacionFiscal;
+
+    const bloqueosTecnicos = (validacionTecnica?.errores || []).map((error) => ({
+        codigo: error.codigo || 'CERTIFICADO_TECNICO_INCOMPLETO',
+        estado: 'BLOQUEO',
+        mensaje: error.mensaje || String(error),
+        detalles: {
+            seccion: error.seccion || null,
+            campo: error.campo || null
+        }
+    }));
+    return {
+        ...preparacionFiscal,
+        estado: 'BLOQUEADO',
+        bloqueos: Number(preparacionFiscal.bloqueos || 0) + bloqueosTecnicos.length,
+        checks: [...(preparacionFiscal.checks || []), ...bloqueosTecnicos]
+    };
 };
 
 exports.guardarFacturacion = async (certificadoId, data, userContext) => {
@@ -334,8 +356,9 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
     }
 };
 
-const reservarEmision = async (certificadoId, userContext) => {
-    if (!nubefactService.obtenerEstadoConfiguracion().enabled) {
+const reservarEmision = async (certificadoId, userContext, dependencies = {}) => {
+    const nubefact = dependencies.nubefactService || nubefactService;
+    if (!nubefact.obtenerEstadoConfiguracion().enabled) {
         throw errorNegocio('NUBEFACT_DESHABILITADO', 503);
     }
     const client = await db.connect();
@@ -366,6 +389,24 @@ const reservarEmision = async (certificadoId, userContext) => {
         if (facturacion.estado === 'RECHAZADO') {
             throw errorNegocio('NUBEFACT_RECHAZADO', 422, {
                 motivo: facturacion.sunat_description || 'El comprobante fue rechazado por Nubefact/SUNAT.'
+            });
+        }
+
+        // PREVALIDACIÓN TÉCNICA OBLIGATORIA:
+        // Antes de llamar a NubeFact o emitir cualquier comprobante, validar
+        // que el certificado esté técnicamente completo usando el validador oficial.
+        const certService = dependencies?.certificadosService || require('./faregas-certificados.service');
+        const validacionTecnica = await certService.validarEmision(certificadoId, userContext, {
+            ignorarComprobanteNoEmitido: true,
+            ignorarChipNoConsumido: true
+        });
+        if (!validacionTecnica?.valido) {
+            const primerError = validacionTecnica.errores?.[0]?.mensaje
+                || (typeof validacionTecnica.errores?.[0] === 'string' ? validacionTecnica.errores[0] : null)
+                || 'El certificado presenta observaciones técnicas pendientes.';
+            throw errorNegocio('CERTIFICADO_NO_VALIDO_PARA_EMISION', 400, {
+                mensaje: `No se puede emitir el comprobante porque el certificado presenta observaciones técnicas: ${primerError}`,
+                errores: validacionTecnica.errores
             });
         }
 
@@ -638,7 +679,7 @@ async function persistirRespuestaNubeFact(reserva, resultadoEmision, recuperacio
 }
 
 exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}) => {
-    const reserva = await reservarEmision(certificadoId, userContext);
+    const reserva = await reservarEmision(certificadoId, userContext, dependencies);
     if (reserva.yaAceptada) {
         const client = await db.connect();
         try {

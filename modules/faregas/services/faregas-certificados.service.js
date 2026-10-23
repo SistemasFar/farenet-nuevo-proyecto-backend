@@ -84,7 +84,7 @@ const camposRequeridosComponenteGlp = (modalidad, componente) => {
         ['marca', `Marca requerida para componente ${tipo}`],
         ['numero_serie', `Serie requerida para componente ${tipo}`]
     ];
-    if (!(esAnual && esCilindro)) {
+    if (!esCilindro) {
         campos.push(['modelo', `Modelo requerido para componente ${tipo}`]);
     }
     if (esCilindro) {
@@ -689,7 +689,10 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             (EXTRACT(EPOCH FROM (emision_factura.fecha_emision + INTERVAL '24 hours')::timestamptz) * 1000) AS "anulacionHastaMs",
             anulacion.id AS "anulacionId",
             anulacion.estado AS "estadoAnulacion",
-            anulacion.sunat_description AS "descripcionAnulacion"
+            anulacion.sunat_description AS "descripcionAnulacion",
+            nota_credito.id AS "notaCreditoId",
+            nota_credito.estado AS "estadoNotaCredito",
+            nota_credito.nro_comprobante AS "nroNotaCredito"
         FROM fg_certificado c
         LEFT JOIN fg_certificado_vehiculo v ON c.id = v.certificado_id
         LEFT JOIN fg_certificado_titular tit ON c.id = tit.certificado_id AND tit.orden = 1
@@ -709,6 +712,13 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             ORDER BY a.id DESC
             LIMIT 1
         ) anulacion ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT nc.id, nc.estado, nc.nro_comprobante
+            FROM fg_credito nc
+            WHERE nc.facturacion_id = f.id
+            ORDER BY nc.id DESC
+            LIMIT 1
+        ) nota_credito ON TRUE
         WHERE ${filtroWhere}
         ORDER BY CASE
             WHEN c.estado = 'EMITIDO' THEN COALESCE(
@@ -1172,6 +1182,323 @@ exports.anularBorrador = async (id, userContext) => {
     }
 };
 
+exports.anularCertificadoEmitido = async ({ client, certificadoId, justificacion, solicitudId, usuario }) => {
+    if (!client || typeof client.query !== 'function') {
+        throw new Error('CLIENTE_TRANSACCIONAL_REQUERIDO');
+    }
+    const sid = Number(solicitudId);
+    const cid = Number(certificadoId);
+    const just = String(justificacion || '').trim();
+    const user = String(usuario || '').trim();
+    if (!sid || sid <= 0 || !cid || cid <= 0 || !user || !just) {
+        throw new Error('PARAMETROS_ANULACION_INVALIDOS');
+    }
+
+    // Comprobación defensiva obligatoria: la anulación técnica exige una solicitud administrativa autorizada
+    const solCheck = await client.query(
+        `SELECT id, estado, tipo_operacion, certificado_id, usuario_solicitante
+         FROM fg_solicitud_operacion
+         WHERE id = $1 FOR SHARE`,
+        [sid]
+    );
+    if (solCheck.rowCount === 0) {
+        throw new Error('SOLICITUD_AUTORIZACION_NO_ENCONTRADA');
+    }
+    const sol = solCheck.rows[0];
+    if (Number(sol.certificado_id) !== cid) {
+        throw new Error('SOLICITUD_NO_CORRESPONDE_AL_CERTIFICADO');
+    }
+    if (sol.tipo_operacion !== 'ANULAR_CERTIFICADO') {
+        throw new Error('TIPO_SOLICITUD_NO_PERMITE_ANULACION');
+    }
+    if (!['APROBADA', 'EN_EJECUCION', 'REQUIERE_INTERVENCION'].includes(sol.estado)) {
+        throw new Error('SOLICITUD_NO_AUTORIZADA_PARA_EJECUCION');
+    }
+    if (sol.usuario_solicitante === user) {
+        throw new Error('SEPARACION_FUNCIONES_VIOLADA');
+    }
+
+    return client.query(
+        `UPDATE fg_certificado
+         SET estado = 'ANULADO',
+             fecha_anulacion = CURRENT_TIMESTAMP,
+             motivo_anulacion = $1,
+             solicitud_anulacion_id = $2,
+             usuario_anulacion = $3,
+             usuario_modificacion = $3,
+             fecha_modificacion = CURRENT_TIMESTAMP
+         WHERE id = $4 AND estado = 'EMITIDO'`,
+        [just, sid, user, cid]
+    );
+};
+
+exports.obtenerSnapshotCompletoCertificado = async ({ client, certificadoId }) => {
+    if (!client || typeof client.query !== 'function') throw new Error('CLIENTE_TRANSACCIONAL_REQUERIDO');
+    const cid = Number(certificadoId);
+    if (!cid || cid <= 0) throw new Error('CERTIFICADO_ID_INVALIDO');
+
+    const certRes = await client.query(
+        `SELECT c.id, c.tipo_certificado_clave, c.numero_certificado, c.cliente_id,
+                c.planta_key, c.fecha_emision, c.estado, c.observaciones,
+                c.entidad_certificadora_nombre, c.resolucion_directoral,
+                c.lugar_emision, c.tarifa_codigo, c.formato_version_id,
+                p.empresa_key
+         FROM fg_certificado c
+         JOIN fg_planta p ON p.key = c.planta_key
+         WHERE c.id = $1`,
+        [cid]
+    );
+    if (certRes.rowCount === 0) return null;
+    const cert = certRes.rows[0];
+
+    const vehRes = await client.query(
+        `SELECT placa, categoria, clase, marca, modelo, version,
+                anio_fabricacion, anio_modelo, vin, serie_chasis, numero_motor,
+                combustible, color, carroceria, numero_cilindros, cilindrada,
+                numero_ejes, numero_ruedas, numero_asientos, numero_pasajeros,
+                longitud, ancho, alto, peso_neto, peso_bruto, carga_util,
+                potencia, formula_rodante
+         FROM fg_certificado_vehiculo WHERE certificado_id = $1`,
+        [cid]
+    );
+    const vehiculo = vehRes.rows[0] || null;
+
+    const titRes = await client.query(
+        `SELECT orden, tipo_documento, nro_documento, nombre_razon_social, direccion
+         FROM fg_certificado_titular WHERE certificado_id = $1 ORDER BY orden ASC`,
+        [cid]
+    );
+    const titulares = titRes.rows;
+
+    let especifico = null;
+    const tipo = cert.tipo_certificado_clave || '';
+    if (tipo.includes('GNV')) {
+        const gnvRes = await client.query(
+            `SELECT taller_autorizado_id, vigencia_hasta, taller_razon_social,
+                    taller_sede, taller_direccion, taller_codigo_autorizacion,
+                    modalidad, numero_chip, combustible_posterior,
+                    peso_neto_posterior, observaciones, taller_planta_key
+             FROM fg_certificado_gnv WHERE certificado_id = $1`,
+            [cid]
+        );
+        especifico = gnvRes.rows[0] || null;
+    } else if (tipo.includes('GLP')) {
+        const glpRes = await client.query(
+            `SELECT taller_autorizado_id, expediente_tecnico, vigencia_hasta,
+                    taller_razon_social, taller_sede, taller_direccion,
+                    taller_codigo_autorizacion, modalidad, combustible_posterior,
+                    peso_neto_posterior, carga_util_posterior
+             FROM fg_certificado_glp WHERE certificado_id = $1`,
+            [cid]
+        );
+        especifico = glpRes.rows[0] || null;
+    } else if (tipo === 'CONFORMIDAD') {
+        const confRes = await client.query(
+            `SELECT tipo_conformidad, tipo_tramite, caracteristica_registrable,
+                    motivo, descripcion, uso_original_vehiculo
+             FROM fg_certificado_conformidad WHERE certificado_id = $1`,
+            [cid]
+        );
+        especifico = confRes.rows[0] || null;
+    }
+
+    return {
+        esquema: 1,
+        certificadoId: Number(cert.id),
+        numeroCertificado: cert.numero_certificado,
+        tipoCertificado: cert.tipo_certificado_clave,
+        plantaKey: cert.planta_key,
+        empresaKey: cert.empresa_key,
+        fechaEmisionOriginal: cert.fecha_emision,
+        estado: cert.estado,
+        observaciones: cert.observaciones || null,
+        vehiculo,
+        titulares,
+        especifico
+    };
+};
+
+exports.asegurarVersionOriginal = async ({ client, certificadoId, usuario }) => {
+    if (!client || typeof client.query !== 'function') throw new Error('CLIENTE_TRANSACCIONAL_REQUERIDO');
+    const cid = Number(certificadoId);
+    const v1Check = await client.query(
+        `SELECT id, numero_version, estado_version, es_vigente
+         FROM fg_certificado_version
+         WHERE certificado_id = $1 AND numero_version = 1`,
+        [cid]
+    );
+    if (v1Check.rowCount > 0) return v1Check.rows[0];
+
+    const snapshot = await exports.obtenerSnapshotCompletoCertificado({ client, certificadoId: cid });
+    if (!snapshot) throw new Error('CERTIFICADO_NO_ENCONTRADO');
+
+    const v1 = await client.query(
+        `INSERT INTO fg_certificado_version (
+            certificado_id, solicitud_id, numero_version, estado_version,
+            es_vigente, fecha_emision_original, usuario_creacion, motivo,
+            snapshot_datos, diferencias, enlace_pdf_original, metadatos
+        ) VALUES (
+            $1, NULL, 1, 'ORIGINAL',
+            TRUE, $2, $3, 'Versión original de emisión del certificado.',
+            $4::jsonb, '[]'::jsonb, NULL, '{"origen": "EMISION_ORIGINAL"}'::jsonb
+        )
+        RETURNING *`,
+        [cid, snapshot.fechaEmisionOriginal, usuario || 'sistema', JSON.stringify(snapshot)]
+    );
+    return v1.rows[0];
+};
+
+exports.prepararVersionRectificada = async ({
+    client, certificadoId, solicitudId, usuario, aprobador, motivo,
+    datosPropuestos, diferencias, metadatos
+}) => {
+    if (!client || typeof client.query !== 'function') throw new Error('CLIENTE_TRANSACCIONAL_REQUERIDO');
+    const cid = Number(certificadoId);
+    const sid = Number(solicitudId);
+    if (!cid || !sid || !usuario || !motivo) throw new Error('PARAMETROS_INVALIDOS');
+
+    // Comprobación defensiva sobre la solicitud
+    const solCheck = await client.query(
+        `SELECT id, estado, tipo_operacion, certificado_id, usuario_solicitante, usuario_decision
+         FROM fg_solicitud_operacion WHERE id = $1 FOR SHARE`,
+        [sid]
+    );
+    if (solCheck.rowCount === 0) throw new Error('SOLICITUD_AUTORIZACION_NO_ENCONTRADA');
+    const sol = solCheck.rows[0];
+    if (Number(sol.certificado_id) !== cid) throw new Error('SOLICITUD_NO_CORRESPONDE_AL_CERTIFICADO');
+    if (sol.tipo_operacion !== 'RECTIFICAR_CERTIFICADO') throw new Error('TIPO_SOLICITUD_NO_PERMITE_RECTIFICACION');
+    if (!['APROBADA', 'EN_EJECUCION', 'REQUIERE_INTERVENCION'].includes(sol.estado)) {
+        throw new Error('SOLICITUD_NO_AUTORIZADA_PARA_EJECUCION');
+    }
+    if (sol.usuario_solicitante === usuario) throw new Error('SEPARACION_FUNCIONES_VIOLADA');
+
+    // Asegurar que existe versión 1 (ORIGINAL)
+    await exports.asegurarVersionOriginal({ client, certificadoId: cid, usuario: sol.usuario_decision || usuario });
+
+    // Determinar siguiente número de versión
+    const maxVerRes = await client.query(
+        `SELECT COALESCE(MAX(numero_version), 1) AS max_version
+         FROM fg_certificado_version
+         WHERE certificado_id = $1`,
+        [cid]
+    );
+    const siguienteVersion = Number(maxVerRes.rows[0]?.max_version || 1) + 1;
+
+    // Obtener snapshot actual y fusionar con datosPropuestos
+    const snapshotBase = await exports.obtenerSnapshotCompletoCertificado({ client, certificadoId: cid });
+    const snapshotFusionado = JSON.parse(JSON.stringify(snapshotBase));
+    snapshotFusionado.numeroVersion = siguienteVersion;
+    snapshotFusionado.fechaModificacionPropuesta = new Date().toISOString();
+
+    if (datosPropuestos && typeof datosPropuestos === 'object') {
+        Object.entries(datosPropuestos).forEach(([k, v]) => {
+            if (v && typeof v === 'object' && !Array.isArray(v)) {
+                if (snapshotFusionado[k] && typeof snapshotFusionado[k] === 'object') {
+                    Object.assign(snapshotFusionado[k], v);
+                }
+            } else {
+                if (k in (snapshotFusionado.vehiculo || {})) {
+                    snapshotFusionado.vehiculo[k] = v;
+                } else if (k === 'observaciones') {
+                    snapshotFusionado.observaciones = v;
+                } else if (snapshotFusionado.especifico && k in snapshotFusionado.especifico) {
+                    snapshotFusionado.especifico[k] = v;
+                } else if (k === 'titular_nombre' && snapshotFusionado.titulares && snapshotFusionado.titulares.length > 0) {
+                    snapshotFusionado.titulares[0].nombre_razon_social = v;
+                } else if (k in (snapshotFusionado.titulares?.[0] || {})) {
+                    snapshotFusionado.titulares[0][k] = v;
+                }
+            }
+        });
+    }
+
+    const res = await client.query(
+        `INSERT INTO fg_certificado_version (
+            certificado_id, solicitud_id, numero_version, estado_version,
+            es_vigente, fecha_emision_original, usuario_creacion, usuario_aprobacion,
+            motivo, snapshot_datos, diferencias, enlace_pdf_original,
+            enlace_pdf_version, metadatos
+        ) VALUES (
+            $1, $2, $3, 'PREPARADA',
+            FALSE, $4, $5, $6,
+            $7, $8::jsonb, $9::jsonb, NULL,
+            'BORRADOR DE RECTIFICACIÓN — NO VÁLIDO COMO CERTIFICADO OFICIAL', $10::jsonb
+        )
+        RETURNING *`,
+        [
+            cid, sid, siguienteVersion, snapshotBase.fechaEmisionOriginal,
+            usuario, aprobador || sol.usuario_decision, motivo,
+            JSON.stringify(snapshotFusionado),
+            JSON.stringify(diferencias || []),
+            JSON.stringify(metadatos || { origen: 'SOLICITUD_RECTIFICACION', solicitudId: sid })
+        ]
+    );
+
+    return res.rows[0];
+};
+
+exports.aplicarVersionRectificadaOficial = async ({ client, certificadoId, versionId, usuario }) => {
+    if (!client || typeof client.query !== 'function') throw new Error('CLIENTE_TRANSACCIONAL_REQUERIDO');
+    const cid = Number(certificadoId);
+    const vid = Number(versionId);
+
+    const verRes = await client.query(
+        `SELECT * FROM fg_certificado_version WHERE id = $1 AND certificado_id = $2 FOR UPDATE`,
+        [vid, cid]
+    );
+    if (verRes.rowCount === 0) throw new Error('VERSION_RECTIFICACION_NO_ENCONTRADA');
+    const version = verRes.rows[0];
+
+    await client.query(
+        `UPDATE fg_certificado_version
+         SET es_vigente = FALSE,
+             estado_version = CASE WHEN estado_version = 'ORIGINAL' THEN 'SUSTITUIDA' ELSE estado_version END
+         WHERE certificado_id = $1 AND es_vigente = TRUE`,
+        [cid]
+    );
+
+    await client.query(
+        `UPDATE fg_certificado_version
+         SET es_vigente = TRUE,
+             estado_version = 'VIGENTE',
+             fecha_aplicacion_oficial = CURRENT_TIMESTAMP
+         WHERE id = $1`,
+        [vid]
+    );
+
+    const snap = version.snapshot_datos;
+    if (snap.vehiculo) {
+        const v = snap.vehiculo;
+        await client.query(
+            `UPDATE fg_certificado_vehiculo
+             SET placa = COALESCE($1, placa),
+                 marca = COALESCE($2, marca),
+                 modelo = COALESCE($3, modelo),
+                 numero_motor = COALESCE($4, numero_motor),
+                 serie_chasis = COALESCE($5, serie_chasis),
+                 vin = COALESCE($6, vin),
+                 color = COALESCE($7, color),
+                 combustible = COALESCE($8, combustible),
+                 carroceria = COALESCE($9, carroceria)
+             WHERE certificado_id = $10`,
+            [v.placa, v.marca, v.modelo, v.numero_motor, v.serie_chasis, v.vin, v.color, v.combustible, v.carroceria, cid]
+        );
+    }
+
+    if (snap.observaciones !== undefined) {
+        await client.query(
+            `UPDATE fg_certificado
+             SET observaciones = $1,
+                 usuario_modificacion = $2,
+                 fecha_modificacion = CURRENT_TIMESTAMP
+             WHERE id = $3`,
+            [snap.observaciones, usuario, cid]
+        );
+    }
+
+    return version;
+};
+
 exports.actualizarBorrador = async (id, data, userContext) => {
     const client = await db.connect();
     try {
@@ -1444,7 +1771,26 @@ exports.guardarVehiculoBorrador = async (
     }
 };
 
+const validarDatosTitularCompletos = (data = {}) => {
+    const faltantes = [];
+    const tipoDocumento = String(data.tipoDocumento || '').trim().toUpperCase();
+    const nroDocumento = String(data.nroDocumento || '').trim();
+    if (!tipoDocumento) faltantes.push('tipoDocumento');
+    if (!nroDocumento) faltantes.push('nroDocumento');
+    if (!String(data.nombreRazonSocial || '').trim()) faltantes.push('nombreRazonSocial');
+    if (tipoDocumento && !['DNI', 'RUC'].includes(tipoDocumento)) faltantes.push('tipoDocumento');
+    if (tipoDocumento === 'DNI' && !/^\d{8}$/.test(nroDocumento)) faltantes.push('nroDocumento');
+    if (tipoDocumento === 'RUC' && !/^\d{11}$/.test(nroDocumento)) faltantes.push('nroDocumento');
+    if (faltantes.length > 0) {
+        const error = new Error('TITULAR_DATOS_INCOMPLETOS');
+        error.statusCode = 400;
+        error.detalles = { campos: [...new Set(faltantes)] };
+        throw error;
+    }
+};
+
 exports.agregarTitular = async (id, data, userContext) => {
+    validarDatosTitularCompletos(data);
     const client = await db.connect();
     try {
         await client.query('BEGIN');
@@ -1503,9 +1849,16 @@ exports.actualizarTitular = async (id, titularId, data, userContext) => {
         await validarAccesoCertificado(userContext.username, userContext.perfil_id, cert.planta_key);
         if (cert.estado !== 'BORRADOR') throw new Error('CERTIFICADO_NO_EDITABLE');
 
-        const qTit = `SELECT id FROM fg_certificado_titular WHERE id = $1 AND certificado_id = $2`;
+        const qTit = `SELECT * FROM fg_certificado_titular WHERE id = $1 AND certificado_id = $2`;
         const rTit = await client.query(qTit, [titularId, id]);
         if (rTit.rowCount === 0) throw new Error('TITULAR_NOT_FOUND');
+
+        const titularActual = rTit.rows[0];
+        validarDatosTitularCompletos({
+            tipoDocumento: data.tipoDocumento !== undefined ? data.tipoDocumento : titularActual.tipo_documento,
+            nroDocumento: data.nroDocumento !== undefined ? data.nroDocumento : titularActual.nro_documento,
+            nombreRazonSocial: data.nombreRazonSocial !== undefined ? data.nombreRazonSocial : titularActual.nombre_razon_social
+        });
 
         if (data.clienteId) {
             const cli = await client.query('SELECT estado FROM fg_cliente WHERE id = $1', [data.clienteId]);
@@ -2129,7 +2482,7 @@ exports.obtenerTalleresActivos = async () => {
 };
 
 
-exports.validarEmision = async (id, userContext) => {
+exports.validarEmision = async (id, userContext, options = {}) => {
     const rCert = await db.query(`
         SELECT c.*, t.clave AS tipo_clave,
                s.tipo_flujo AS servicio_tipo_flujo,
@@ -2349,7 +2702,7 @@ exports.validarEmision = async (id, userContext) => {
             if (chip.planta_actual_key !== cert.planta_key) {
                 pushError('chip', 'sede', 'CHIP_OTRA_SEDE', 'El chip seleccionado pertenece a otra sede');
             }
-            if (chip.estado !== 'VENDIDO') {
+            if (chip.estado !== 'VENDIDO' && !options?.ignorarChipNoConsumido) {
                 pushError('chip', 'estado', 'CHIP_NO_CONSUMIDO', 'La facturación todavía no consumió el chip seleccionado');
             }
         }
@@ -2358,7 +2711,9 @@ exports.validarEmision = async (id, userContext) => {
     if (rFacturacion.rowCount === 0) {
         pushError('facturacion', 'general', 'FACTURACION_FALTANTE', 'Faltan los datos de facturacion');
     } else if (!facturacionSimulada && !esDocumentoBaseOperable(rFacturacion.rows[0])) {
-        pushError('facturacion', 'estado', 'FACTURACION_NO_EMITIDA', 'El comprobante debe estar aceptado por SUNAT en PRODUCCIÓN o generado completamente por NubeFact en DEMO antes de emitir el certificado');
+        if (!options?.ignorarComprobanteNoEmitido) {
+            pushError('facturacion', 'estado', 'FACTURACION_NO_EMITIDA', 'El comprobante debe estar aceptado por SUNAT en PRODUCCIÓN o generado completamente por NubeFact en DEMO antes de emitir el certificado');
+        }
     } else {
         const anulacionActiva = await db.query(`
             SELECT estado
@@ -3126,5 +3481,6 @@ exports._private = Object.freeze({
     normalizarNombreTaller,
     pesosGnvSonIguales,
     requiereExpedienteTecnicoGlp,
-    camposRequeridosComponenteGlp
+    camposRequeridosComponenteGlp,
+    validarDatosTitularCompletos
 });

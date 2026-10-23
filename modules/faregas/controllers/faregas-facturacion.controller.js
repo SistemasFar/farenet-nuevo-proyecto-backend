@@ -18,6 +18,7 @@ const responderError = (res, error) => {
         DATOS_NUBEFACT_INVALIDOS: 'Los datos guardados no cumplen el contrato requerido por Nubefact.',
         FACTURACION_NO_EDITABLE: 'La facturacion ya fue enviada y no puede modificarse.',
         FACTURACION_FALTANTE: 'Primero debe guardar los datos de facturacion.',
+        CERTIFICADO_NO_VALIDO_PARA_EMISION: 'El certificado tiene datos técnicos pendientes antes de emitir el comprobante.',
         ORDEN_PAGO_FALTANTE: 'No existe una orden de pago para el certificado.',
         PAGO_INCOMPLETO: 'El pago debe estar completo antes de facturar.',
         CHIP_REQUERIDO_NO_SELECCIONADO: 'Seleccione y valide el chip requerido antes de facturar.',
@@ -65,10 +66,14 @@ const responderError = (res, error) => {
         PDF_NUBEFACT_INVALIDO: 'NubeFact no devolvió un archivo PDF válido.'
     };
     if (status >= 500) console.error('[FAREGAS FACTURACION]', error);
+    const codigo = error.code || error.message || 'ERROR_INTERNO';
+    const message = codigo === 'CERTIFICADO_NO_VALIDO_PARA_EMISION' && error.detalles?.mensaje
+        ? error.detalles.mensaje
+        : messages[codigo] || 'Error interno del servidor.';
     return res.status(status).json({
         ok: false,
-        codigo: error.code || error.message || 'ERROR_INTERNO',
-        message: messages[error.code || error.message] || 'Error interno del servidor.',
+        codigo,
+        message,
         detalles: error.detalles || undefined
     });
 };

@@ -89,8 +89,8 @@ const validarFacturacion = (facturacion) => {
     if (!facturacion.nombreRazonSocial || facturacion.nombreRazonSocial.length > 100) {
         errores.push('El nombre o razon social es obligatorio y admite hasta 100 caracteres.');
     }
-    if (!facturacion.direccion || facturacion.direccion.length > 100) {
-        errores.push('La direccion fiscal es obligatoria y admite hasta 100 caracteres.');
+    if (facturacion.direccion.length > 100) {
+        errores.push('La direccion fiscal admite hasta 100 caracteres.');
     }
     if (facturacion.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(facturacion.email)) {
         errores.push('El correo electronico no tiene un formato valido.');

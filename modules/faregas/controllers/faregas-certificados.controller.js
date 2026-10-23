@@ -450,6 +450,12 @@ exports.agregarTitular = async (req, res) => {
         if (e.message === 'PLANTA_NO_AUTORIZADA') return res.status(403).json({ ok: false, message: 'No tiene acceso a la planta de este certificado.' });
         if (e.message === 'CERTIFICADO_NO_EDITABLE') return res.status(409).json({ ok: false, message: 'El certificado ya no se encuentra en estado BORRADOR.' });
         if (e.message === 'CLIENTE_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El cliente indicado no existe' });
+        if (e.message === 'TITULAR_DATOS_INCOMPLETOS') return res.status(400).json({
+            ok: false,
+            codigo: e.message,
+            message: 'Registre un DNI válido de 8 dígitos o un RUC válido de 11 dígitos, además del nombre o razón social del titular.',
+            detalles: e.detalles
+        });
         if (e.message === 'ORDEN_TITULAR_DUPLICADO') return res.status(409).json({ ok: false, message: 'Ya existe un titular con ese orden en el certificado.' });
         
         console.error(e);
@@ -474,6 +480,12 @@ exports.actualizarTitular = async (req, res) => {
         if (e.message === 'PLANTA_NO_AUTORIZADA') return res.status(403).json({ ok: false, message: 'No tiene acceso a la planta de este certificado.' });
         if (e.message === 'CERTIFICADO_NO_EDITABLE') return res.status(409).json({ ok: false, message: 'El certificado ya no se encuentra en estado BORRADOR.' });
         if (e.message === 'CLIENTE_NOT_FOUND') return res.status(404).json({ ok: false, message: 'El cliente indicado no existe' });
+        if (e.message === 'TITULAR_DATOS_INCOMPLETOS') return res.status(400).json({
+            ok: false,
+            codigo: e.message,
+            message: 'Registre un DNI válido de 8 dígitos o un RUC válido de 11 dígitos, además del nombre o razón social del titular.',
+            detalles: e.detalles
+        });
         if (e.message === 'ORDEN_TITULAR_DUPLICADO') return res.status(409).json({ ok: false, message: 'Ya existe un titular con ese orden en el certificado.' });
         
         console.error(e);

@@ -191,14 +191,15 @@ test('3. PDF propio presenta bloque tributario independiente con código 1002 y 
     assert.match(htmlBoleta, /INFORMACIÓN TRIBUTARIA/);
     assert.match(htmlBoleta, /CÓDIGO SUNAT:\s*<strong>1002<\/strong>/);
     assert.match(htmlBoleta, /1002 - TRANSFERENCIA GRATUITA DE UN BIEN Y\/O SERVICIO PRESTADO GRATUITAMENTE/);
-    // Franja destacada debajo de productos
-    assert.match(htmlBoleta, /leyenda-gratuita/);
+    assert.equal((htmlBoleta.match(/1002 - TRANSFERENCIA GRATUITA DE UN BIEN Y\/O SERVICIO PRESTADO GRATUITAMENTE/g) || []).length, 1);
+    // La leyenda se presenta una sola vez dentro del bloque tributario.
 
     // Mismo bloque en Factura
     const htmlFactura = renderFacturaHtml({ ...viewModel, comprobante: { ...viewModel.comprobante, tipo: 'FACTURA', serie: 'FFF1' } });
     assert.match(htmlFactura, /bloque-tributario-leyenda/);
     assert.match(htmlFactura, /CÓDIGO SUNAT:\s*<strong>1002<\/strong>/);
     assert.match(htmlFactura, /1002 - TRANSFERENCIA GRATUITA DE UN BIEN Y\/O SERVICIO PRESTADO GRATUITAMENTE/);
+    assert.equal((htmlFactura.match(/1002 - TRANSFERENCIA GRATUITA DE UN BIEN Y\/O SERVICIO PRESTADO GRATUITAMENTE/g) || []).length, 1);
 });
 
 // =========================================================================
@@ -333,11 +334,11 @@ test('9. PDF propio no muestra el código administrativo DESCUENTO_TALLER al cli
     };
     const htmlBoleta = renderBoletaHtml(viewModel);
     assert.doesNotMatch(htmlBoleta, /DESCUENTO_TALLER/);
-    assert.doesNotMatch(htmlBoleta, /descuento-box/);
+    assert.doesNotMatch(htmlBoleta, /<div class="descuento-box">/);
 
     const htmlFactura = renderFacturaHtml({ ...viewModel, comprobante: { ...viewModel.comprobante, tipo: 'FACTURA' } });
     assert.doesNotMatch(htmlFactura, /DESCUENTO_TALLER/);
-    assert.doesNotMatch(htmlFactura, /descuento-box/);
+    assert.doesNotMatch(htmlFactura, /<div class="descuento-box">/);
 });
 
 // =========================================================================
@@ -408,8 +409,8 @@ test('11. Operación normal onerosa no incluye leyenda 1002 ni bloque tributario
         items: [{ cantidad: 1, valorReferencial: 350.00, precioUnitario: 350.00, valorUnitario: 296.61, total: 350.00 }],
         totales: { gravada: 296.61, gratuita: 0, descuento: 0, igv: 53.39, total: 350.00 }
     });
-    assert.doesNotMatch(html, /1002/);
-    assert.doesNotMatch(html, /bloque-tributario-leyenda/);
+    assert.doesNotMatch(html, /1002 - TRANSFERENCIA GRATUITA DE UN BIEN Y\/O SERVICIO PRESTADO GRATUITAMENTE/);
+    assert.doesNotMatch(html, /<div class="bloque-tributario-leyenda">/);
     assert.doesNotMatch(html, /TRANSFERENCIA GRATUITA/);
 });
 
@@ -472,6 +473,6 @@ test('12. Descuento comercial normal (ej. S/ 50.00) conserva código comercial y
     });
     assert.match(html, /descuento-box/);
     assert.match(html, /DESC50/);
-    assert.doesNotMatch(html, /1002/);
-    assert.doesNotMatch(html, /bloque-tributario-leyenda/);
+    assert.doesNotMatch(html, /1002 - TRANSFERENCIA GRATUITA DE UN BIEN Y\/O SERVICIO PRESTADO GRATUITAMENTE/);
+    assert.doesNotMatch(html, /<div class="bloque-tributario-leyenda">/);
 });

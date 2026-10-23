@@ -26,6 +26,23 @@ test('Carné de Extranjería conserva tipo y número alfanumérico al guardar da
     assert.deepEqual(validarFacturacion(facturacion), []);
 });
 
+test('la dirección fiscal es opcional y conserva el límite cuando se informa', () => {
+    const sinDireccion = normalizarFacturacion({
+        tipoComprobante: 'BOLETA',
+        tipoDocumentoCliente: 'DNI',
+        nroDocumento: '74045612',
+        nombreRazonSocial: 'Cliente sin direccion',
+        direccion: '',
+        telefono: '999999999',
+        condicionPago: 'CONTADO'
+    });
+
+    assert.deepEqual(validarFacturacion(sinDireccion), []);
+
+    const direccionLarga = { ...sinDireccion, direccion: 'A'.repeat(101) };
+    assert.ok(validarFacturacion(direccionLarga).some((error) => error.includes('hasta 100 caracteres')));
+});
+
 test('Carné de Extranjería no se transforma silenciosamente en DNI para Nubefact', () => {
     const errores = validarFacturacionNubefact({
         tipo_comprobante: 'BOLETA',

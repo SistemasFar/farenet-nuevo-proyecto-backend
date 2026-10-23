@@ -1,5 +1,6 @@
 const documentosService = require('../services/faregas-documentos-electronicos.service');
 const auditoriaService = require('../services/faregas-auditoria.service');
+const autorizacionFiscalService = require('../services/faregas-autorizacion-fiscal.service');
 
 const mensajes = {
     FACTURACION_FALTANTE: 'Primero debe guardar los datos de facturación.',
@@ -39,7 +40,19 @@ const mensajes = {
     ENTORNO_NUBEFACT_INVALIDO: 'El ambiente de la serie Nubefact no es válido.',
     SERIE_NUBEFACT_NO_EXCLUSIVA: 'La serie no es exclusiva de Nubefact o pertenece a otro ambiente.',
     SERIE_PRODUCCION_NO_CONFIRMADA: 'La serie tributaria todavía no fue confirmada para producción.',
-    NUBEFACT_RUTA_EMPRESA_INVALIDA: 'La ruta Nubefact de la empresa emisora no es válida.'
+    NUBEFACT_RUTA_EMPRESA_INVALIDA: 'La ruta Nubefact de la empresa emisora no es válida.',
+    FAREGAS_ANULACION_NO_AUTORIZADA: 'No tiene autorización para anular comprobantes electrónicos.',
+    FAREGAS_SOLICITUD_FISCAL_REQUERIDA: 'Debe existir una solicitud administrativa aprobada antes de iniciar una acción fiscal.',
+    FAREGAS_SOLICITUD_FISCAL_NO_ENCONTRADA: 'La solicitud fiscal no existe o no corresponde al certificado.',
+    FAREGAS_EJECUCION_FISCAL_NO_AUTORIZADA: 'No tiene permiso efectivo para ejecutar esta acción fiscal.',
+    SOLICITUD_SEPARACION_FUNCIONES_REQUERIDA: 'El solicitante no puede ejecutar su propia solicitud fiscal.',
+    SOLICITUD_NO_APROBADA: 'La solicitud fiscal todavía no está aprobada.',
+    SOLICITUD_TIPO_INCOMPATIBLE: 'La solicitud aprobada no autoriza este tipo de acción fiscal.',
+    SOLICITUD_FISCAL_YA_PROCESADA: 'La solicitud fiscal ya tiene un resultado registrado.',
+    DOCUMENTO_FISCAL_CORRECTIVO_EXISTENTE: 'Ya existe un documento fiscal correctivo activo para este comprobante.',
+    FAREGAS_EJECUCION_FISCAL_FASE_4B_PENDIENTE: 'La autorización fue validada, pero la ejecución fiscal permanece deshabilitada hasta implementar la Fase 4B.',
+    FAREGAS_OPERACION_FISCAL_INVALIDA: 'La operación fiscal solicitada no está habilitada.',
+    NOTA_CREDITO_ANULACION_REQUIERE_SOLICITUD: 'Las notas de crédito por anulación de operación requieren una solicitud administrativa previa aprobada por Sistemas.'
 };
 
 const responderError = (res, error) => {
@@ -82,12 +95,44 @@ exports.consultarComprobante = async (req, res) => {
     } catch (error) { return responderError(res, error); }
 };
 
+const MOTIVOS_ANULACION_OPERACION = new Set(['01', '1', '02', '2', '06', '6']);
+
 exports.emitirNota = async (req, res) => {
     try {
         const tipo = String(req.body?.tipo || '').toUpperCase();
+        const motivoCodigo = String(req.body?.motivoCodigo || req.body?.motivo_codigo || '').trim();
+        const esAnulacionOperacion = tipo === 'CREDITO' && MOTIVOS_ANULACION_OPERACION.has(motivoCodigo);
+
+        if (esAnulacionOperacion || req.body?.solicitudId) {
+            if (!req.body?.solicitudId) {
+                return res.status(403).json({
+                    ok: false,
+                    codigo: 'NOTA_CREDITO_ANULACION_REQUIERE_SOLICITUD',
+                    message: 'Las notas de crédito que anulan la operación o invalidan el comprobante requieren una solicitud administrativa previa aprobada por Sistemas.'
+                });
+            }
+            await autorizacionFiscalService.validarSolicitudAprobada({
+                solicitudId: req.body?.solicitudId,
+                certificadoId: Number(req.params.id),
+                operacion: 'NOTA_CORRECTIVA',
+                userContext: req.user
+            });
+        } else {
+            // Motivos no anulatorios (ej. 03 corrección de descripción):
+            // Requieren justificación funcional explícita
+            const sustento = String(req.body?.sustento || '').trim();
+            if (!sustento || sustento.length < 5 || sustento === 'CORRECCIÓN DE DESCRIPCIÓN') {
+                return res.status(400).json({
+                    ok: false,
+                    codigo: 'SUSTENTO_NOTA_INVALIDO',
+                    message: 'Debe ingresar un sustento descriptivo válido para la emisión de la nota de crédito.'
+                });
+            }
+        }
+
         const data = await documentosService.emitirNota(Number(req.params.id), tipo, req.body || {}, req.user);
         await auditar(req, `NOTA_${tipo}_EMITIDA`, tipo === 'CREDITO' ? 'fg_credito' : 'fg_debito', data.id,
-            `Se procesó una nota de ${tipo === 'CREDITO' ? 'crédito' : 'débito'}.`, { estado: data.estado, comprobante: data.nroComprobante });
+            `Se procesó una nota de ${tipo === 'CREDITO' ? 'crédito' : 'débito'}.`, { estado: data.estado, comprobante: data.nroComprobante, motivoCodigo });
         return res.json({ ok: true, data });
     } catch (error) { return responderError(res, error); }
 };
@@ -95,7 +140,8 @@ exports.emitirNota = async (req, res) => {
 exports.reintentarNota = async (req, res) => {
     try {
         const tipo = String(req.params.tipo || '').toUpperCase();
-        const data = await documentosService.reintentarNota(Number(req.params.id), tipo, Number(req.params.notaId), req.user);
+        const notaId = Number(req.params.notaId);
+        const data = await documentosService.reintentarNota(Number(req.params.id), tipo, notaId, req.user);
         await auditar(req, `NOTA_${tipo}_REINTENTADA`, tipo === 'CREDITO' ? 'fg_credito' : 'fg_debito', data.id,
             'Se reintentó la emisión de una nota electrónica.', { estado: data.estado, comprobante: data.nroComprobante });
         return res.json({ ok: true, data });
@@ -104,9 +150,26 @@ exports.reintentarNota = async (req, res) => {
 
 exports.generarAnulacion = async (req, res) => {
     try {
+        if (!req.body?.solicitudId) {
+            return res.status(403).json({
+                ok: false,
+                codigo: 'FAREGAS_SOLICITUD_FISCAL_REQUERIDA',
+                message: 'La anulación de comprobante requiere una solicitud administrativa previa aprobada por Sistemas.'
+            });
+        }
+        await autorizacionFiscalService.validarSolicitudAprobada({
+            solicitudId: req.body?.solicitudId,
+            certificadoId: Number(req.params.id),
+            operacion: 'ANULACION_COMPROBANTE',
+            userContext: req.user
+        });
         const data = await documentosService.generarAnulacion(Number(req.params.id), req.body || {}, req.user);
         await auditar(req, 'DOCUMENTO_ANULACION_ENVIADA', 'fg_documento_anulacion', data.id,
-            'Se envió una solicitud de anulación a Nubefact/SUNAT.', { estado: data.estado });
+            'Se envió una solicitud de anulación a Nubefact/SUNAT.', {
+                estado: data.estado,
+                tipoDocumento: String(req.body?.tipoDocumento || '').toUpperCase(),
+                motivo: String(req.body?.motivo || '').trim()
+            });
         return res.json({ ok: true, data });
     } catch (error) { return responderError(res, error); }
 };
@@ -134,11 +197,16 @@ const auditarOperacion = async (req, evento, entidadId, mensaje, datos = {}) => 
 
 exports.generarAnulacionOperacion = async (req, res) => {
     try {
+        autorizacionFiscalService.exigirSolicitudAdministrativaDisponible();
         const data = await documentosService.generarAnulacionOperacion(
             Number(req.params.operacionId), req.body || {}, req.user
         );
         await auditarOperacion(req, 'DOCUMENTO_ANULACION_ENVIADA', data.id,
-            'Se envió una solicitud de anulación del comprobante de venta de chips.', { estado: data.estado });
+            'Se envió una solicitud de anulación del comprobante de venta de chips.', {
+                estado: data.estado,
+                tipoDocumento: String(req.body?.tipoDocumento || '').toUpperCase(),
+                motivo: String(req.body?.motivo || '').trim()
+            });
         return res.json({ ok: true, data });
     } catch (error) { return responderError(res, error); }
 };

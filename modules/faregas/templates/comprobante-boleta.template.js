@@ -354,11 +354,6 @@ function renderBoletaHtml(data) {
             color: #666666;
             line-height: 1.35;
         }
-        .leyenda-gratuita {
-            margin: 4px 0 8px 0;
-            font-size: 7.5pt;
-            font-weight: bold;
-        }
         .qr-container {
             margin-bottom: 6px;
         }
@@ -447,8 +442,6 @@ function renderBoletaHtml(data) {
     </table>
 
     <div class="son-letras">${textoImporte}</div>
-    ${esOperacionGratuita ? '<div class="leyenda-gratuita">1002 - TRANSFERENCIA GRATUITA DE UN BIEN Y/O SERVICIO PRESTADO GRATUITAMENTE</div>' : ''}
-
     <div class="bottom-row">
         <div class="bottom-left">
             ${esOperacionGratuita ? `

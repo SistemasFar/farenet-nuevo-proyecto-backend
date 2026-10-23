@@ -98,11 +98,28 @@ const validarPermisoNotaCredito = async (executor, userContext) => {
     const permiso = await executor.query(`
         SELECT 1
         FROM fg_perfil_permiso
-        WHERE perfil_clave = $1
-          AND permiso_clave = 'FAREGAS_NOTA_CREDITO'
+        JOIN fg_permiso ON fg_permiso.clave = fg_perfil_permiso.permiso_clave
+        WHERE fg_perfil_permiso.perfil_clave = $1
+          AND fg_perfil_permiso.permiso_clave = 'FAREGAS_NOTA_CREDITO'
+          AND fg_permiso.activo = TRUE
         LIMIT 1
     `, [userContext.perfil_id]);
     if (permiso.rowCount === 0) throw errorNegocio('PERMISO_DENEGADO_NOTA_CREDITO', 403);
+};
+
+const validarPermisoAnulacionComprobante = async (executor, userContext) => {
+    const permiso = await executor.query(`
+        SELECT 1
+        FROM fg_perfil_permiso
+        JOIN fg_permiso ON fg_permiso.clave = fg_perfil_permiso.permiso_clave
+        WHERE fg_perfil_permiso.perfil_clave = $1
+          AND fg_perfil_permiso.permiso_clave = 'FAREGAS_ANULAR_COMPROBANTE'
+          AND fg_permiso.activo = TRUE
+        LIMIT 1
+    `, [userContext.perfil_id]);
+    if (permiso.rowCount === 0) {
+        throw errorNegocio('FAREGAS_ANULACION_NO_AUTORIZADA', 403);
+    }
 };
 
 
@@ -541,12 +558,16 @@ const validarPlazoAnulacion = async (client, objetivo) => {
 };
 
 const generarAnulacionConAcceso = async (referenciaId, data, userContext, dependencies, validarAcceso) => {
-    const motivo = String(data.motivo || '').trim();
-    if (!motivo || motivo.length > 100) throw errorNegocio('MOTIVO_ANULACION_INVALIDO');
     const client = await db.connect();
     let reserva;
     try {
         await client.query('BEGIN');
+        // La autorización se valida dentro de la misma transacción y antes de
+        // consultar el comprobante. De este modo ninguna ruta (certificados o
+        // ventas de chips) puede iniciar una baja confiando sólo en React.
+        await validarPermisoAnulacionComprobante(client, userContext);
+        const motivo = String(data.motivo || '').trim();
+        if (!motivo || motivo.length > 100) throw errorNegocio('MOTIVO_ANULACION_INVALIDO');
         const facturacion = await validarAcceso(client, referenciaId, userContext, true);
         await validarSinAnulacionActiva(client, facturacion.id);
         const objetivo = await obtenerObjetivoAnulacion(client, facturacion, data.tipoDocumento, data.documentoId);
@@ -667,6 +688,8 @@ exports.consultarAnulacionOperacion = async (operacionId, anulacionId, userConte
 
 exports._private = { validarPlazoNotaCredito,
     validarDatosNota,
+    validarPermisoNotaCredito,
+    validarPermisoAnulacionComprobante,
     reservarSerieNota,
     registrarOperacion,
     finalizarOperacion,

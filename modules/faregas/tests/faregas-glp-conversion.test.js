@@ -16,8 +16,8 @@ test('GLP anual exige capacidad/año sin modelo ni mes en el cilindro', () => {
     const anualRegulador = camposRequeridosComponenteGlp('ANUAL', 'REGULADOR').map(([campo]) => campo);
 
     assert.deepEqual(anualCilindro, ['marca', 'numero_serie', 'capacidad_litros', 'anio_fabricacion']);
-    assert.ok(inicialCilindro.includes('modelo'));
-    assert.ok(inicialCilindro.includes('mes_fabricacion'));
+    assert.deepEqual(inicialCilindro, ['marca', 'numero_serie', 'capacidad_litros', 'anio_fabricacion', 'mes_fabricacion']);
+    assert.equal(inicialCilindro.includes('modelo'), false);
     assert.deepEqual(anualRegulador, ['marca', 'numero_serie', 'modelo']);
 });
 

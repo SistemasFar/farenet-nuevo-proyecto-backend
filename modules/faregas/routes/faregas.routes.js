@@ -18,6 +18,11 @@ router.use('/usuarios', usuariosRoutes);
 const auditoriaRoutes = require('./faregas-auditoria.routes');
 router.use('/auditoria', auditoriaRoutes);
 
+// Solicitudes administrativas de anulación y rectificación. Este módulo sólo
+// registra y decide solicitudes; no ejecuta efectos técnicos ni fiscales.
+const solicitudesOperacionRoutes = require('./faregas-solicitudes-operacion.routes');
+router.use('/solicitudes-operacion', solicitudesOperacionRoutes);
+
 // MÃ³dulo de certificados (Fase 1)
 const certificadosRoutes = require('./faregas-certificados.routes');
 router.use('/certificados', certificadosRoutes);

@@ -3,6 +3,17 @@ const bcrypt = require('bcryptjs');
 const paginacion = require('./faregas-paginacion.rules');
 const validacion = require('./faregas-usuarios-validacion.service');
 
+const PERMISOS_INICIO_ANULACIONES = Object.freeze([
+    'FAREGAS_SOLICITUD_CREAR',
+    'FAREGAS_SOLICITUD_VER',
+    'FAREGAS_SOLICITUD_APROBAR',
+    'FAREGAS_SOLICITUD_RECHAZAR',
+    'FAREGAS_SOLICITUD_ADMINISTRAR',
+    'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR',
+    'FAREGAS_NOTA_CREDITO',
+    'FAREGAS_ANULAR_COMPROBANTE'
+]);
+
 // El trim de los campos vive en `faregas-usuarios-validacion.service`, que es
 // quien devuelve los valores ya normalizados y validados. Aquí no se normaliza
 // nada por separado: lo que se guarda es exactamente lo que se comprobó.
@@ -416,8 +427,14 @@ exports.actualizarPerfil = async (clave, data) => {
 
         await client.query(`
             DELETE FROM fg_perfil_permiso 
-            WHERE perfil_clave = $1 AND permiso_clave IN (SELECT clave FROM fg_permiso WHERE modulo = 'MENU')
-        `, [clave]);
+            WHERE perfil_clave = $1
+              AND permiso_clave IN (
+                  SELECT clave
+                  FROM fg_permiso
+                  WHERE modulo = 'MENU'
+                     OR clave = ANY($2::varchar[])
+              )
+        `, [clave, PERMISOS_INICIO_ANULACIONES]);
         
         if (Array.isArray(permisos) && permisos.length > 0) {
             for (const p of permisos) {
@@ -453,7 +470,16 @@ exports.obtenerPlantas = async () => {
 };
 
 exports.obtenerPermisos = async () => {
-    const result = await db.query("SELECT clave, nombre FROM fg_permiso WHERE modulo = 'MENU' AND activo = true ORDER BY nombre");
+    const result = await db.query(`
+        SELECT clave, nombre, modulo
+        FROM fg_permiso
+        WHERE activo = TRUE
+          AND (
+              modulo = 'MENU'
+              OR clave = ANY($1::varchar[])
+          )
+        ORDER BY modulo, nombre
+    `, [PERMISOS_INICIO_ANULACIONES]);
     return result.rows;
 };
 

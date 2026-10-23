@@ -1,0 +1,1714 @@
+const crypto = require('crypto');
+const db = require('../../../config/database');
+const certificadosService = require('./faregas-certificados.service');
+const defaultDocumentosService = require('./faregas-documentos-electronicos.service');
+const { esDocumentoBaseOperable } = require('./faregas-comprobante-operabilidad.service');
+const {
+    TIPOS_SOLICITUD,
+    ESTADOS_SOLICITUD,
+    ESTADOS_QUE_BLOQUEAN,
+    PERMISOS_SOLICITUD,
+    TIPOS_CERTIFICADO,
+    TIPOS_COMPROBANTE,
+    TIPOS_AMBOS,
+    TIPOS_RECTIFICACION,
+    CAMPOS_RECTIFICABLES_BASE,
+    CAMPOS_RECTIFICABLES_ESPECIFICOS,
+    CAMPOS_RECTIFICABLES_PERMITIDOS,
+    CAMPOS_RECTIFICABLES_COMPROBANTE,
+    CAMPOS_RECTIFICABLES_COMPROBANTE_PERMITIDOS,
+    TRANSICIONES_ADMINISTRATIVAS,
+    CONFIG_ANULACION_TECNICA
+} = require('./faregas-solicitudes-operacion.constants');
+
+const errorNegocio = (code, statusCode = 400, detalles) => {
+    const error = new Error(code);
+    error.code = code;
+    error.statusCode = statusCode;
+    if (detalles !== undefined) error.detalles = detalles;
+    return error;
+};
+
+const texto = (valor, maximo, obligatorio = false) => {
+    const limpio = valor === undefined || valor === null ? '' : String(valor).trim();
+    if (obligatorio && !limpio) throw errorNegocio('CAMPO_OBLIGATORIO');
+    if (limpio.length > maximo) throw errorNegocio('TEXTO_DEMASIADO_LARGO');
+    return limpio || null;
+};
+
+const enteroPositivo = (valor, codigo = 'IDENTIFICADOR_INVALIDO') => {
+    const numero = Number(valor);
+    if (!Number.isInteger(numero) || numero <= 0) throw errorNegocio(codigo);
+    return numero;
+};
+
+const normalizarTipo = (valor) => {
+    const tipo = String(valor || '').trim().toUpperCase();
+    if (!TIPOS_SOLICITUD.includes(tipo)) throw errorNegocio('TIPO_SOLICITUD_INVALIDO');
+    return tipo;
+};
+
+const normalizarUuid = (valor) => {
+    const clave = String(valor || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(clave)) {
+        throw errorNegocio('IDEMPOTENCIA_INVALIDA');
+    }
+    return clave;
+};
+
+const CLAVES_PROPUESTAS_PROHIBIDAS = /(password|contras|token|secret|credencial|correlativo|numero_certificado|fecha_emision|enlace_pdf|enlace_xml|enlace_cdr|empresa_key|planta_key|estado|id)$/i;
+
+const CATEGORIAS_PERMITIDAS = new Set(['vehiculo', 'titular', 'taller', 'especifico', 'certificado', 'comprobante', 'datos']);
+
+const camposRectificablesCertificado = (tipoCertificado) => {
+    const clave = String(tipoCertificado || '').toUpperCase();
+    let especificos = [];
+    if (clave.includes('GNV')) especificos = CAMPOS_RECTIFICABLES_ESPECIFICOS.GNV;
+    else if (clave.includes('GLP')) especificos = CAMPOS_RECTIFICABLES_ESPECIFICOS.GLP;
+    else if (clave.includes('CONFORMIDAD')) especificos = CAMPOS_RECTIFICABLES_ESPECIFICOS.CONFORMIDAD;
+    return [...new Set([...CAMPOS_RECTIFICABLES_BASE, ...especificos])];
+};
+
+const camposPermitidosParaTipo = (tipo, camposCertificado = CAMPOS_RECTIFICABLES_PERMITIDOS) => {
+    if (tipo === 'RECTIFICAR_CERTIFICADO') return new Set(camposCertificado);
+    if (tipo === 'RECTIFICAR_COMPROBANTE') return CAMPOS_RECTIFICABLES_COMPROBANTE_PERMITIDOS;
+    if (tipo === 'RECTIFICAR_AMBOS') {
+        return new Set([...camposCertificado, ...CAMPOS_RECTIFICABLES_COMPROBANTE_PERMITIDOS]);
+    }
+    return new Set();
+};
+
+const validarDatosPropuestos = (tipo, valor, camposCertificado = CAMPOS_RECTIFICABLES_PERMITIDOS) => {
+    if (!TIPOS_RECTIFICACION.has(tipo)) return null;
+    if (!valor || typeof valor !== 'object' || Array.isArray(valor) || Object.keys(valor).length === 0) {
+        throw errorNegocio('DATOS_PROPUESTOS_REQUERIDOS');
+    }
+    const serializado = JSON.stringify(valor);
+    if (serializado.length > 10000) throw errorNegocio('DATOS_PROPUESTOS_DEMASIADO_GRANDES');
+
+    let conteoCamposValidos = 0;
+    const camposPermitidos = camposPermitidosParaTipo(tipo, camposCertificado);
+
+    const revisar = (objeto, esNivelRaiz = false) => {
+        Object.entries(objeto).forEach(([clave, contenido]) => {
+            if (CLAVES_PROPUESTAS_PROHIBIDAS.test(clave)) {
+                throw errorNegocio('DATO_PROPUESTO_PROHIBIDO', 400, { campo: clave });
+            }
+            if (contenido && typeof contenido === 'object' && !Array.isArray(contenido)) {
+                if (esNivelRaiz && CATEGORIAS_PERMITIDAS.has(clave)) {
+                    revisar(contenido, false);
+                } else {
+                    revisar(contenido, false);
+                }
+            } else {
+                if (!camposPermitidos.has(clave)) {
+                    throw errorNegocio('CAMPO_NO_RECTIFICABLE', 400, { campo: clave });
+                }
+                conteoCamposValidos += 1;
+            }
+        });
+    };
+    revisar(valor, true);
+    if (conteoCamposValidos === 0) {
+        throw errorNegocio('DATOS_PROPUESTOS_REQUERIDOS');
+    }
+    return valor;
+};
+
+const aplanarPropuestas = (datosPropuestos) => {
+    const plano = {};
+    if (!datosPropuestos || typeof datosPropuestos !== 'object') return plano;
+    Object.entries(datosPropuestos).forEach(([k, v]) => {
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+            Object.assign(plano, aplanarPropuestas(v));
+        } else {
+            plano[k] = v;
+        }
+    });
+    return plano;
+};
+
+const obtenerValorDeSnapshot = (snapshot, campo) => {
+    if (!snapshot) return null;
+    if (snapshot.vehiculo && campo in snapshot.vehiculo) return snapshot.vehiculo[campo];
+    if (campo === 'observaciones') return snapshot.observaciones;
+    if (snapshot.especifico && campo in snapshot.especifico) return snapshot.especifico[campo];
+    if (campo === 'titular_nombre' || campo === 'nombre_razon_social') {
+        return snapshot.titulares?.[0]?.nombre_razon_social || null;
+    }
+    if (snapshot.titulares?.[0] && campo in snapshot.titulares[0]) {
+        return snapshot.titulares[0][campo];
+    }
+    return null;
+};
+
+const calcularDiferencias = (snapshot, datosPropuestos) => {
+    const plano = aplanarPropuestas(datosPropuestos);
+    const diferencias = [];
+    Object.entries(plano).forEach(([campo, valorNuevo]) => {
+        const valorOriginal = obtenerValorDeSnapshot(snapshot, campo);
+        const normOrig = valorOriginal === null || valorOriginal === undefined ? '' : String(valorOriginal).trim();
+        const normNuevo = valorNuevo === null || valorNuevo === undefined ? '' : String(valorNuevo).trim();
+        if (normOrig !== normNuevo) {
+            diferencias.push({
+                campo,
+                valorOriginal: valorOriginal ?? null,
+                valorPropuesto: valorNuevo ?? null
+            });
+        }
+    });
+    return diferencias;
+};
+
+const requiereComprobante = (tipo) => TIPOS_COMPROBANTE.has(tipo) || TIPOS_AMBOS.has(tipo);
+const afectaCertificado = (tipo) => TIPOS_CERTIFICADO.has(tipo) || TIPOS_AMBOS.has(tipo);
+
+const consultaContextoCertificado = (bloquear = false) => `
+    SELECT
+        c.id AS certificado_id,
+        c.numero_certificado,
+        c.tipo_certificado_clave,
+        tc.nombre AS tipo_certificado_nombre,
+        c.estado AS certificado_estado,
+        c.fecha_emision,
+        c.fecha_anulacion,
+        c.planta_key,
+        p.nombre AS planta_nombre,
+        p.empresa_key,
+        e.nombre AS empresa_nombre,
+        v.placa,
+        f.id AS facturacion_id,
+        f.tipo_comprobante,
+        f.nro_comprobante,
+        f.estado AS facturacion_estado,
+        f.fecha_documento,
+        f.importe_total,
+        f.tipo_documento_cliente,
+        f.nro_documento,
+        f.nombre_razon_social,
+        f.direccion AS direccion_cliente,
+        f.moneda_key,
+        f.serie,
+        f.numero,
+        f.proveedor,
+        f.aceptada_sunat,
+        f.sunat_description,
+        f.sunat_responsecode,
+        f.entorno_facturador,
+        f.enlace_pdf,
+        f.enlace_xml,
+        fd.descripcion_servicio
+    FROM fg_certificado c
+    JOIN fg_planta p ON p.key = c.planta_key
+    JOIN fg_empresa e ON e.key = p.empresa_key
+    LEFT JOIN fg_tipo_certificado tc ON tc.clave = c.tipo_certificado_clave
+    LEFT JOIN LATERAL (
+        SELECT fact.*
+        FROM fg_facturacion fact
+        WHERE fact.certificado_id = c.id
+        ORDER BY fact.id DESC
+        LIMIT 1
+    ) f ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT string_agg(od.descripcion_snapshot, ' | ' ORDER BY od.orden) AS descripcion_servicio
+        FROM fg_operacion_detalle od
+        WHERE od.operacion_id = f.operacion_id
+          AND od.certificado_id = c.id
+    ) fd ON f.id IS NOT NULL
+    LEFT JOIN fg_certificado_vehiculo v ON v.certificado_id = c.id
+    WHERE c.id = $1
+    ${bloquear ? 'FOR UPDATE OF c' : ''}
+`;
+
+const obtenerUsuarioActual = async (executor, userContext) => {
+    const username = texto(userContext?.username, 255, true);
+    const result = await executor.query(`
+        SELECT username, perfil_id, estado
+        FROM fg_usuario
+        WHERE username = $1
+        LIMIT 1
+    `, [username]);
+    if (result.rowCount === 0) throw errorNegocio('USUARIO_NO_ENCONTRADO', 401);
+    if (!result.rows[0].estado) throw errorNegocio('USUARIO_INACTIVO', 403);
+    return result.rows[0];
+};
+
+const obtenerPermisos = async (executor, perfilId) => {
+    const result = await executor.query(`
+        SELECT pp.permiso_clave
+        FROM fg_perfil_permiso pp
+        JOIN fg_permiso p ON p.clave = pp.permiso_clave AND p.activo = TRUE
+        WHERE pp.perfil_clave = $1
+          AND pp.permiso_clave = ANY($2::varchar[])
+    `, [perfilId, Object.values(PERMISOS_SOLICITUD)]);
+    return new Set(result.rows.map((row) => row.permiso_clave));
+};
+
+const exigirPermiso = (permisos, requerido) => {
+    if (!permisos.has(requerido) && !permisos.has(PERMISOS_SOLICITUD.ADMINISTRAR)) {
+        throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { permiso: requerido });
+    }
+};
+
+const validarAccesoPlanta = async (executor, usuario, plantaKey) => {
+    const acceso = await executor.query(`
+        SELECT 1
+        FROM fg_usuario_planta up
+        JOIN fg_perfil_planta pp
+          ON pp.planta_key = up.plantas_key
+         AND pp.perfil_clave = $2
+        JOIN fg_planta p ON p.key = up.plantas_key AND p.activo = TRUE
+        WHERE up.usuario_username = $1
+          AND up.plantas_key = $3
+        LIMIT 1
+    `, [usuario.username, usuario.perfil_id, plantaKey]);
+    if (acceso.rowCount === 0) throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
+};
+
+const snapshotCertificado = (row) => ({
+    id: Number(row.certificado_id),
+    numero: row.numero_certificado || null,
+    tipo: row.tipo_certificado_clave,
+    estado: row.certificado_estado,
+    fechaEmision: row.fecha_emision || null,
+    fechaAnulacion: row.fecha_anulacion || null,
+    placa: row.placa || null
+});
+
+const snapshotComprobante = (row) => row.facturacion_id ? ({
+    id: Number(row.facturacion_id),
+    tipo: row.tipo_comprobante,
+    numero: row.nro_comprobante || null,
+    estado: row.facturacion_estado,
+    fechaEmision: row.fecha_documento || null,
+    importeTotal: row.importe_total === null ? null : Number(row.importe_total),
+    moneda: row.moneda_key || null,
+    tipoDocumentoCliente: row.tipo_documento_cliente || null,
+    numeroDocumentoCliente: row.nro_documento || null,
+    nombreRazonSocial: row.nombre_razon_social || null,
+    direccionCliente: row.direccion_cliente || null,
+    descripcionServicio: row.descripcion_servicio || null,
+    serie: row.serie || null,
+    correlativo: row.numero === null ? null : Number(row.numero),
+    proveedor: row.proveedor || null,
+    entorno: row.entorno_facturador || null,
+    aceptadaSunat: row.aceptada_sunat,
+    sunatCodigo: row.sunat_responsecode || null,
+    sunatDescripcion: row.sunat_description || null
+}) : null;
+
+const datosFiscalesActuales = (row) => row.facturacion_id ? ({
+    facturacion_tipo_documento: row.tipo_documento_cliente || '',
+    facturacion_nro_documento: row.nro_documento || '',
+    facturacion_nombre_razon_social: row.nombre_razon_social || '',
+    facturacion_direccion: row.direccion_cliente || '',
+    facturacion_descripcion_servicio: row.descripcion_servicio || ''
+}) : null;
+
+const estadoSolicitudComprobante = (row) => {
+    if (!row.facturacion_id) {
+        return { disponible: false, codigo: 'SOLICITUD_COMPROBANTE_REQUERIDO', motivo: 'No existe un comprobante asociado al certificado.' };
+    }
+    if (!esDocumentoBaseOperable({
+        estado: row.facturacion_estado,
+        aceptada_sunat: row.aceptada_sunat,
+        entorno_facturador: row.entorno_facturador,
+        proveedor: row.proveedor,
+        nro_comprobante: row.nro_comprobante,
+        serie: row.serie,
+        numero: row.numero,
+        enlace_pdf: row.enlace_pdf,
+        enlace_xml: row.enlace_xml
+    })) {
+        return {
+            disponible: false,
+            codigo: 'SOLICITUD_COMPROBANTE_NO_EMITIDO',
+            motivo: 'El comprobante todavía no fue aceptado por SUNAT ni generado completamente por el proveedor en el ambiente de prueba.'
+        };
+    }
+    return { disponible: true, codigo: null, motivo: null };
+};
+
+const validarContextoParaTipo = (row, tipo, opciones = {}) => {
+    if (String(row.certificado_estado || '').toUpperCase() !== 'EMITIDO' || !row.numero_certificado) {
+        throw errorNegocio('SOLICITUD_CERTIFICADO_NO_EMITIDO', 409);
+    }
+    if (requiereComprobante(tipo) && opciones.permitirComprobanteNoEmitido !== true) {
+        const disponibilidad = estadoSolicitudComprobante(row);
+        if (!disponibilidad.disponible) {
+            throw errorNegocio(disponibilidad.codigo, 409, { motivo: disponibilidad.motivo });
+        }
+    }
+};
+
+const mapearSolicitud = (row) => ({
+    id: Number(row.id),
+    tipoOperacion: row.tipo_operacion,
+    certificadoId: row.certificado_id === null ? null : Number(row.certificado_id),
+    facturacionId: row.facturacion_id === null ? null : Number(row.facturacion_id),
+    empresaKey: row.empresa_key,
+    empresaNombre: row.empresa_nombre || null,
+    plantaKey: row.planta_key,
+    plantaNombre: row.planta_nombre || null,
+    usuarioSolicitante: row.usuario_solicitante,
+    motivo: row.motivo,
+    observaciones: row.observaciones,
+    estado: row.estado,
+    usuarioDecision: row.usuario_decision,
+    fechaSolicitud: row.fecha_solicitud,
+    fechaDecision: row.fecha_decision,
+    justificacionDecision: row.justificacion_decision,
+    datosOriginalesCertificado: row.datos_originales_certificado,
+    datosOriginalesComprobante: row.datos_originales_comprobante,
+    datosPropuestos: row.datos_propuestos,
+    fechaEmisionOriginal: row.fecha_emision_original,
+    resultadoTecnico: row.resultado_tecnico,
+    resultadoFiscal: row.resultado_fiscal,
+    usuarioEjecucion: row.usuario_ejecucion || null,
+    fechaEjecucion: row.fecha_ejecucion || null,
+    idempotenciaEjecucion: row.idempotencia_ejecucion || null,
+    version: Number(row.version),
+    fechaCreacion: row.fecha_creacion,
+    fechaModificacion: row.fecha_modificacion,
+    numeroCertificado: row.numero_certificado || row.datos_originales_certificado?.numero || null,
+    tipoCertificado: row.tipo_certificado_nombre || row.datos_originales_certificado?.tipo || null,
+    nroComprobante: row.nro_comprobante || row.datos_originales_comprobante?.numero || null,
+    placa: row.placa || row.datos_originales_certificado?.placa || null
+});
+
+const SELECT_SOLICITUD = `
+    SELECT s.*, p.nombre AS planta_nombre, e.nombre AS empresa_nombre,
+           c.numero_certificado, tc.nombre AS tipo_certificado_nombre,
+           f.nro_comprobante, v.placa
+    FROM fg_solicitud_operacion s
+    JOIN fg_planta p ON p.key = s.planta_key
+    JOIN fg_empresa e ON e.key = s.empresa_key
+    LEFT JOIN fg_certificado c ON c.id = s.certificado_id
+    LEFT JOIN fg_tipo_certificado tc ON tc.clave = c.tipo_certificado_clave
+    LEFT JOIN fg_facturacion f ON f.id = s.facturacion_id
+    LEFT JOIN fg_certificado_vehiculo v ON v.certificado_id = c.id
+`;
+
+const registrarEvento = async (executor, {
+    solicitudId, tipoEvento, estadoAnterior = null, estadoPosterior,
+    username, comentario = null, metadatos = null
+}) => {
+    await executor.query(`
+        INSERT INTO fg_solicitud_operacion_evento (
+            solicitud_id, tipo_evento, estado_anterior, estado_posterior,
+            usuario_responsable, comentario, metadatos
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+    `, [
+        solicitudId, tipoEvento, estadoAnterior, estadoPosterior, username,
+        comentario, metadatos ? JSON.stringify(metadatos) : null
+    ]);
+};
+
+const crearServicio = (database = db, config = {}) => {
+    const conTransaccion = async (operacion) => {
+        const client = await database.connect();
+        try {
+            await client.query('BEGIN');
+            const resultado = await operacion(client);
+            await client.query('COMMIT');
+            return resultado;
+        } catch (error) {
+            if (!error?.transaccionYaComprometida) {
+                try { await client.query('ROLLBACK'); } catch (_) {}
+            }
+            throw error;
+        } finally {
+            client.release();
+        }
+    };
+
+    const contextoCertificado = async (certificadoId, userContext) => {
+        const id = enteroPositivo(certificadoId, 'CERTIFICADO_ID_INVALIDO');
+        const usuario = await obtenerUsuarioActual(database, userContext);
+        const permisos = await obtenerPermisos(database, usuario.perfil_id);
+        if (!permisos.has(PERMISOS_SOLICITUD.CREAR) && !permisos.has(PERMISOS_SOLICITUD.VER)
+            && !permisos.has(PERMISOS_SOLICITUD.ADMINISTRAR)) {
+            throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403);
+        }
+        const result = await database.query(consultaContextoCertificado(false), [id]);
+        if (result.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
+        const row = result.rows[0];
+        await validarAccesoPlanta(database, usuario, row.planta_key);
+        let datosTecnicosActuales = null;
+        try {
+            datosTecnicosActuales = await certificadosService.obtenerSnapshotCompletoCertificado({ client: database, certificadoId: id });
+        } catch (_) {}
+        const disponibilidadComprobante = estadoSolicitudComprobante(row);
+        const camposTecnicos = camposRectificablesCertificado(row.tipo_certificado_clave);
+        const tiposDisponibles = ['ANULAR_AMBOS'];
+
+        return {
+            certificado: snapshotCertificado(row),
+            comprobante: snapshotComprobante(row),
+            empresa: { key: row.empresa_key, nombre: row.empresa_nombre },
+            planta: { key: row.planta_key, nombre: row.planta_nombre },
+            tiposDisponibles,
+            camposRectificables: camposTecnicos,
+            camposRectificablesPorTipo: {
+                RECTIFICAR_CERTIFICADO: camposTecnicos,
+                RECTIFICAR_COMPROBANTE: disponibilidadComprobante.disponible ? [...CAMPOS_RECTIFICABLES_COMPROBANTE] : [],
+                RECTIFICAR_AMBOS: disponibilidadComprobante.disponible
+                    ? [...new Set([...camposTecnicos, ...CAMPOS_RECTIFICABLES_COMPROBANTE])]
+                    : []
+            },
+            datosTecnicosActuales,
+            datosFiscalesActuales: datosFiscalesActuales(row),
+            comprobanteRestriccion: disponibilidadComprobante
+        };
+    };
+
+    const crear = async (entrada, userContext, opciones = {}) => conTransaccion(async (client) => {
+        const usuario = await obtenerUsuarioActual(client, userContext);
+        const permisos = await obtenerPermisos(client, usuario.perfil_id);
+        exigirPermiso(permisos, PERMISOS_SOLICITUD.CREAR);
+
+        const certificadoId = enteroPositivo(entrada?.certificadoId, 'CERTIFICADO_ID_INVALIDO');
+        const tipo = normalizarTipo(entrada?.tipoOperacion);
+        const motivo = texto(entrada?.motivo, 500, true);
+        const observaciones = texto(entrada?.observaciones, 2000);
+        const idempotenciaClave = normalizarUuid(entrada?.idempotenciaClave);
+
+        const contextoResult = await client.query(consultaContextoCertificado(true), [certificadoId]);
+        if (contextoResult.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
+        const contexto = contextoResult.rows[0];
+        await validarAccesoPlanta(client, usuario, contexto.planta_key);
+        validarContextoParaTipo(contexto, tipo, {
+            permitirComprobanteNoEmitido: opciones.flujoAnulacionTotal === true
+        });
+        const datosPropuestos = validarDatosPropuestos(
+            tipo,
+            entrada?.datosPropuestos,
+            camposRectificablesCertificado(contexto.tipo_certificado_clave)
+        );
+
+        const existenteIdempotente = await client.query(`
+            SELECT * FROM fg_solicitud_operacion
+            WHERE usuario_solicitante = $1 AND idempotencia_clave = $2::uuid
+            LIMIT 1
+        `, [usuario.username, idempotenciaClave]);
+        if (existenteIdempotente.rowCount > 0) {
+            const existente = existenteIdempotente.rows[0];
+            if (Number(existente.certificado_id) !== certificadoId || existente.tipo_operacion !== tipo) {
+                throw errorNegocio('IDEMPOTENCIA_REUTILIZADA', 409);
+            }
+            return { solicitud: mapearSolicitud(existente), creada: false };
+        }
+
+        const facturacionId = requiereComprobante(tipo) && contexto.facturacion_id
+            ? Number(contexto.facturacion_id)
+            : null;
+        const activa = await client.query(`
+            SELECT id, tipo_operacion, estado
+            FROM fg_solicitud_operacion
+            WHERE estado = ANY($1::varchar[])
+              AND (certificado_id = $2 OR ($3::bigint IS NOT NULL AND facturacion_id = $3))
+            ORDER BY id DESC
+            LIMIT 1
+        `, [ESTADOS_QUE_BLOQUEAN, certificadoId, facturacionId]);
+        if (activa.rowCount > 0) {
+            throw errorNegocio('SOLICITUD_INCOMPATIBLE_ACTIVA', 409, {
+                solicitudId: Number(activa.rows[0].id),
+                estado: activa.rows[0].estado
+            });
+        }
+
+        let insertada;
+        try {
+            insertada = await client.query(`
+                INSERT INTO fg_solicitud_operacion (
+                    tipo_operacion, certificado_id, facturacion_id, empresa_key, planta_key,
+                    usuario_solicitante, motivo, observaciones, estado,
+                    datos_originales_certificado, datos_originales_comprobante, datos_propuestos,
+                    fecha_emision_original, idempotencia_clave
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, 'PENDIENTE_APROBACION',
+                    $9::jsonb, $10::jsonb, $11::jsonb, $12, $13::uuid
+                ) RETURNING *
+            `, [
+                tipo, certificadoId, facturacionId, contexto.empresa_key, contexto.planta_key,
+                usuario.username, motivo, observaciones,
+                JSON.stringify(snapshotCertificado(contexto)),
+                contexto.facturacion_id ? JSON.stringify(snapshotComprobante(contexto)) : null,
+                datosPropuestos ? JSON.stringify(datosPropuestos) : null,
+                contexto.fecha_emision || null,
+                idempotenciaClave
+            ]);
+        } catch (error) {
+            if (error.code === '23505') throw errorNegocio('SOLICITUD_INCOMPATIBLE_ACTIVA', 409);
+            throw error;
+        }
+        const solicitud = insertada.rows[0];
+        await registrarEvento(client, {
+            solicitudId: solicitud.id,
+            tipoEvento: 'SOLICITUD_CREADA',
+            estadoPosterior: 'PENDIENTE_APROBACION',
+            username: usuario.username,
+            comentario: motivo,
+            metadatos: { tipoOperacion: tipo, version: 1 }
+        });
+        return { solicitud: mapearSolicitud(solicitud), creada: true };
+    });
+
+    const construirAlcance = async (executor, userContext, permisoRequerido = PERMISOS_SOLICITUD.VER) => {
+        const usuario = await obtenerUsuarioActual(executor, userContext);
+        const permisos = await obtenerPermisos(executor, usuario.perfil_id);
+        exigirPermiso(permisos, permisoRequerido);
+        const plantas = await executor.query(`
+            SELECT DISTINCT up.plantas_key
+            FROM fg_usuario_planta up
+            JOIN fg_perfil_planta pp
+              ON pp.planta_key = up.plantas_key AND pp.perfil_clave = $2
+            JOIN fg_planta p ON p.key = up.plantas_key AND p.activo = TRUE
+            WHERE up.usuario_username = $1
+        `, [usuario.username, usuario.perfil_id]);
+        return {
+            usuario,
+            permisos,
+            plantas: plantas.rows.map((row) => row.plantas_key),
+            puedeRevisar: permisos.has(PERMISOS_SOLICITUD.APROBAR)
+                || permisos.has(PERMISOS_SOLICITUD.RECHAZAR)
+                || permisos.has(PERMISOS_SOLICITUD.ADMINISTRAR)
+        };
+    };
+
+    const listar = async (filtros = {}, userContext) => {
+        const alcance = await construirAlcance(database, userContext);
+        if (alcance.plantas.length === 0) return { data: [], total: 0, page: 1, pageSize: 10, totalPages: 1 };
+        const params = [alcance.plantas];
+        const condiciones = ['s.planta_key = ANY($1::varchar[])'];
+        if (!alcance.puedeRevisar) {
+            params.push(alcance.usuario.username);
+            condiciones.push(`s.usuario_solicitante = $${params.length}`);
+        }
+        const agregar = (sql, valor) => { params.push(valor); condiciones.push(sql.replace('?', `$${params.length}`)); };
+        if (filtros.estado) {
+            const estado = String(filtros.estado).toUpperCase();
+            if (!ESTADOS_SOLICITUD.includes(estado)) throw errorNegocio('ESTADO_SOLICITUD_INVALIDO');
+            agregar('s.estado = ?', estado);
+        }
+        if (filtros.tipoOperacion) agregar('s.tipo_operacion = ?', normalizarTipo(filtros.tipoOperacion));
+        if (filtros.plantaKey) {
+            if (!alcance.plantas.includes(filtros.plantaKey)) throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
+            agregar('s.planta_key = ?', filtros.plantaKey);
+        }
+        if (filtros.usuarioSolicitante && alcance.puedeRevisar) agregar('s.usuario_solicitante ILIKE ?', `%${String(filtros.usuarioSolicitante).trim()}%`);
+        if (filtros.fechaDesde) agregar('s.fecha_solicitud >= ?::date', filtros.fechaDesde);
+        if (filtros.fechaHasta) agregar(`s.fecha_solicitud < ?::date + INTERVAL '1 day'`, filtros.fechaHasta);
+        const page = Math.max(1, Number(filtros.page) || 1);
+        const pageSize = Math.min(50, Math.max(1, Number(filtros.pageSize) || 10));
+        const where = condiciones.join(' AND ');
+        const totalResult = await database.query(`SELECT COUNT(*)::int AS total FROM fg_solicitud_operacion s WHERE ${where}`, params);
+        params.push(pageSize, (page - 1) * pageSize);
+        const result = await database.query(`
+            ${SELECT_SOLICITUD}
+            WHERE ${where}
+            ORDER BY s.fecha_solicitud DESC, s.id DESC
+            LIMIT $${params.length - 1} OFFSET $${params.length}
+        `, params);
+        const total = Number(totalResult.rows[0]?.total || 0);
+        return { data: result.rows.map(mapearSolicitud), total, page, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
+    };
+
+    const obtener = async (id, userContext, executor = database, bloquear = false, permiso = PERMISOS_SOLICITUD.VER) => {
+        const solicitudId = enteroPositivo(id, 'SOLICITUD_ID_INVALIDO');
+        const alcance = await construirAlcance(executor, userContext, permiso);
+        const result = await executor.query(`${SELECT_SOLICITUD} WHERE s.id = $1 ${bloquear ? 'FOR UPDATE OF s' : ''}`, [solicitudId]);
+        if (result.rowCount === 0) throw errorNegocio('SOLICITUD_NO_ENCONTRADA', 404);
+        const row = result.rows[0];
+        if (!alcance.plantas.includes(row.planta_key)) throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
+        if (!alcance.puedeRevisar && row.usuario_solicitante !== alcance.usuario.username) {
+            throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403);
+        }
+        return { row, alcance, solicitud: mapearSolicitud(row) };
+    };
+
+    const crearAnulacionTotal = async (entrada, userContext) => {
+        const tipo = String(entrada?.tipoOperacion || '').trim().toUpperCase();
+        if (tipo !== 'ANULAR_AMBOS') throw errorNegocio('TIPO_SOLICITUD_NO_DISPONIBLE', 400);
+        if (entrada?.datosPropuestos !== undefined && entrada?.datosPropuestos !== null) {
+            throw errorNegocio('DATOS_PROPUESTOS_NO_PERMITIDOS', 400);
+        }
+        return crear({ ...entrada, tipoOperacion: 'ANULAR_AMBOS', datosPropuestos: undefined }, userContext, {
+            flujoAnulacionTotal: true
+        });
+    };
+
+    const decidir = async (id, accion, entrada, userContext) => conTransaccion(async (client) => {
+        const transicion = TRANSICIONES_ADMINISTRATIVAS[accion];
+        if (!transicion || accion === 'CANCELAR') throw errorNegocio('TRANSICION_SOLICITUD_INVALIDA');
+        const permiso = accion === 'APROBAR' ? PERMISOS_SOLICITUD.APROBAR : PERMISOS_SOLICITUD.RECHAZAR;
+        const { row, alcance } = await obtener(id, userContext, client, true, permiso);
+        if (row.tipo_operacion !== 'ANULAR_AMBOS') {
+            throw errorNegocio('SOLICITUD_TIPO_HISTORICO_SOLO_LECTURA', 409);
+        }
+        if (alcance.usuario.perfil_id !== 'SISTEMAS') {
+            throw errorNegocio('SOLICITUD_DECISION_EXCLUSIVA_SISTEMAS', 403);
+        }
+        if (row.estado !== transicion.desde) throw errorNegocio('SOLICITUD_NO_DECIDIBLE', 409, { estado: row.estado });
+        if (row.usuario_solicitante === alcance.usuario.username) throw errorNegocio('SOLICITUD_AUTODECISION_PROHIBIDA', 403);
+        const justificacion = texto(entrada?.justificacion, 1000, accion === 'RECHAZAR');
+        const version = enteroPositivo(entrada?.version, 'VERSION_SOLICITUD_INVALIDA');
+        if (version !== Number(row.version)) throw errorNegocio('SOLICITUD_VERSION_DESACTUALIZADA', 409);
+        const actualizada = await client.query(`
+            UPDATE fg_solicitud_operacion
+            SET estado = $1, usuario_decision = $2, fecha_decision = CURRENT_TIMESTAMP,
+                justificacion_decision = $3, version = version + 1,
+                fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $4 AND estado = 'PENDIENTE_APROBACION' AND version = $5
+            RETURNING *
+        `, [transicion.hacia, alcance.usuario.username, justificacion, row.id, version]);
+        if (actualizada.rowCount === 0) throw errorNegocio('SOLICITUD_DECISION_CONCURRENTE', 409);
+        await registrarEvento(client, {
+            solicitudId: row.id,
+            tipoEvento: accion === 'APROBAR' ? 'SOLICITUD_APROBADA' : 'SOLICITUD_RECHAZADA',
+            estadoAnterior: row.estado,
+            estadoPosterior: transicion.hacia,
+            username: alcance.usuario.username,
+            comentario: justificacion,
+            metadatos: { versionAnterior: version, pendienteEjecucion: accion === 'APROBAR' }
+        });
+        return mapearSolicitud(actualizada.rows[0]);
+    });
+
+    const cancelar = async (id, entrada, userContext) => conTransaccion(async (client) => {
+        const { row, alcance } = await obtener(id, userContext, client, true);
+        if (row.tipo_operacion !== 'ANULAR_AMBOS') {
+            throw errorNegocio('SOLICITUD_TIPO_HISTORICO_SOLO_LECTURA', 409);
+        }
+        if (row.estado !== 'PENDIENTE_APROBACION') throw errorNegocio('SOLICITUD_NO_CANCELABLE', 409, { estado: row.estado });
+        const esPropia = row.usuario_solicitante === alcance.usuario.username;
+        if (!esPropia && !alcance.permisos.has(PERMISOS_SOLICITUD.ADMINISTRAR)) {
+            throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403);
+        }
+        const version = enteroPositivo(entrada?.version, 'VERSION_SOLICITUD_INVALIDA');
+        if (version !== Number(row.version)) throw errorNegocio('SOLICITUD_VERSION_DESACTUALIZADA', 409);
+        const comentario = texto(entrada?.comentario, 1000, true);
+        const actualizada = await client.query(`
+            UPDATE fg_solicitud_operacion
+            SET estado = 'CANCELADA', usuario_decision = $1, fecha_decision = CURRENT_TIMESTAMP,
+                justificacion_decision = $2, version = version + 1,
+                fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $3 AND estado = 'PENDIENTE_APROBACION' AND version = $4
+            RETURNING *
+        `, [alcance.usuario.username, comentario, row.id, version]);
+        if (actualizada.rowCount === 0) throw errorNegocio('SOLICITUD_DECISION_CONCURRENTE', 409);
+        await registrarEvento(client, {
+            solicitudId: row.id,
+            tipoEvento: 'SOLICITUD_CANCELADA',
+            estadoAnterior: row.estado,
+            estadoPosterior: 'CANCELADA',
+            username: alcance.usuario.username,
+            comentario,
+            metadatos: { versionAnterior: version }
+        });
+        return mapearSolicitud(actualizada.rows[0]);
+    });
+
+    const historial = async (id, userContext) => {
+        const { row } = await obtener(id, userContext);
+        const result = await database.query(`
+            SELECT id, solicitud_id, tipo_evento, estado_anterior, estado_posterior,
+                   usuario_responsable, fecha_evento, comentario, metadatos
+            FROM fg_solicitud_operacion_evento
+            WHERE solicitud_id = $1
+            ORDER BY fecha_evento ASC, id ASC
+        `, [row.id]);
+        return result.rows.map((evento) => ({
+            id: Number(evento.id), solicitudId: Number(evento.solicitud_id),
+            tipoEvento: evento.tipo_evento, estadoAnterior: evento.estado_anterior,
+            estadoPosterior: evento.estado_posterior, usuarioResponsable: evento.usuario_responsable,
+            fechaEvento: evento.fecha_evento, comentario: evento.comentario, metadatos: evento.metadatos
+        }));
+    };
+
+    const esTipoPermitidoParaAnulacionLocal = (tipoCertificado) => {
+        // Deshabilitado por defecto para todos los tipos sin presunciones.
+        // Solo se activa mediante configuración explícita o variable de entorno de habilitación real comprobada.
+        if (config?.habilitarAnulacionTecnica === true) {
+            if (config?.permitirTodosLosTiposLocal === true) return true;
+            if (Array.isArray(config?.tiposPermitidosLocal) && config.tiposPermitidosLocal.includes(tipoCertificado)) {
+                return true;
+            }
+        }
+        if (process.env.FAREGAS_HABILITAR_ANULACION_TECNICA === 'true') {
+            if (process.env.FAREGAS_PERMITIR_ANULACION_LOCAL_TODOS === 'true') return true;
+            const tiposEnv = process.env.FAREGAS_TIPOS_ANULACION_LOCAL
+                ? process.env.FAREGAS_TIPOS_ANULACION_LOCAL.split(',').map((s) => s.trim())
+                : [];
+            if (tiposEnv.includes(tipoCertificado)) return true;
+        }
+        return false;
+    };
+
+    const ejecutarAnulacionCertificado = async (id, entrada, userContext) => conTransaccion(async (client) => {
+        const solicitudId = enteroPositivo(id, 'SOLICITUD_ID_INVALIDO');
+        const usuario = await obtenerUsuarioActual(client, userContext);
+        const permisos = await obtenerPermisos(client, usuario.perfil_id);
+        if (!permisos.has(PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO)
+            && !permisos.has(PERMISOS_SOLICITUD.ADMINISTRAR)) {
+            throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { permiso: PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO });
+        }
+
+        // Bloqueo de fila sobre la solicitud
+        const solResult = await client.query(`${SELECT_SOLICITUD} WHERE s.id = $1 FOR UPDATE OF s`, [solicitudId]);
+        if (solResult.rowCount === 0) throw errorNegocio('SOLICITUD_NO_ENCONTRADA', 404);
+        const row = solResult.rows[0];
+
+        // Validación de sede del ejecutor
+        const plantasUsuario = await client.query(`
+            SELECT DISTINCT up.plantas_key
+            FROM fg_usuario_planta up
+            JOIN fg_perfil_planta pp ON pp.planta_key = up.plantas_key AND pp.perfil_clave = $2
+            JOIN fg_planta p ON p.key = up.plantas_key AND p.activo = TRUE
+            WHERE up.usuario_username = $1
+        `, [usuario.username, usuario.perfil_id]);
+        const plantasPermitidas = plantasUsuario.rows.map((r) => r.plantas_key);
+        if (!plantasPermitidas.includes(row.planta_key)) {
+            throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
+        }
+
+        // Separación de funciones: el solicitante no puede ser el ejecutor
+        if (row.usuario_solicitante === usuario.username) {
+            throw errorNegocio('SOLICITUD_AUTODECISION_PROHIBIDA', 403);
+        }
+
+        // Tipo de operación permitido
+        if (row.tipo_operacion !== 'ANULAR_CERTIFICADO') {
+            throw errorNegocio('TIPO_OPERACION_INVALIDO_PARA_EJECUCION', 409, { tipo: row.tipo_operacion });
+        }
+
+        // Idempotencia: si ya está COMPLETADA, retornar el resultado consolidado
+        if (row.estado === 'COMPLETADA') {
+            const certActual = await client.query('SELECT id, numero_certificado, estado FROM fg_certificado WHERE id = $1', [row.certificado_id]);
+            return {
+                solicitud: mapearSolicitud(row),
+                certificado: {
+                    id: Number(row.certificado_id),
+                    numero: certActual.rows[0]?.numero_certificado || null,
+                    estado: certActual.rows[0]?.estado || 'ANULADO'
+                },
+                yaCompletada: true
+            };
+        }
+
+        if (row.estado === 'PENDIENTE_APROBACION') throw errorNegocio('SOLICITUD_NO_APROBADA', 409);
+        if (row.estado === 'RECHAZADA') throw errorNegocio('SOLICITUD_RECHAZADA', 409);
+        if (row.estado === 'CANCELADA') throw errorNegocio('SOLICITUD_CANCELADA', 409);
+        if (row.estado !== 'APROBADA' && row.estado !== 'REQUIERE_INTERVENCION') {
+            throw errorNegocio('SOLICITUD_ESTADO_INVALIDO', 409, { estado: row.estado });
+        }
+
+        // Versión esperada (concurrencia optimista)
+        const versionEsperada = enteroPositivo(entrada?.version, 'VERSION_SOLICITUD_INVALIDA');
+        if (versionEsperada !== Number(row.version)) {
+            throw errorNegocio('SOLICITUD_VERSION_DESACTUALIZADA', 409);
+        }
+
+        // Bloqueo y verificación del certificado
+        const certResult = await client.query(`
+            SELECT c.*, p.empresa_key
+            FROM fg_certificado c
+            JOIN fg_planta p ON p.key = c.planta_key
+            WHERE c.id = $1
+            FOR UPDATE OF c
+        `, [row.certificado_id]);
+        if (certResult.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
+        const cert = certResult.rows[0];
+
+        // Sede y empresa autorizadas
+        if (cert.planta_key !== row.planta_key) throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
+        if (cert.empresa_key !== row.empresa_key) throw errorNegocio('SOLICITUD_EMPRESA_NO_AUTORIZADA', 403);
+
+        // Estado técnico del certificado
+        if (cert.estado === 'ANULADO') throw errorNegocio('CERTIFICADO_YA_ANULADO', 409);
+        if (cert.estado !== 'EMITIDO') throw errorNegocio('CERTIFICADO_NO_EMITIDO', 409, { estadoActual: cert.estado });
+        if (!cert.numero_certificado) throw errorNegocio('CERTIFICADO_SIN_NUMERO_DG', 409);
+
+        // Verificación de integración / procedimiento externo
+        if (!esTipoPermitidoParaAnulacionLocal(cert.tipo_certificado_clave)) {
+            // El certificado permanece con estado = 'EMITIDO' intacto.
+            // La solicitud NO se marca como COMPLETADA.
+            // Pasa a REQUIERE_INTERVENCION (o se conserva si ya estaba allí),
+            // permitiendo que el procedimiento pueda continuarse posteriormente cuando se autorice.
+            const versionSiguiente = Number(row.version) + (row.estado !== 'REQUIERE_INTERVENCION' ? 1 : 0);
+            await client.query(`
+                UPDATE fg_solicitud_operacion
+                SET estado = 'REQUIERE_INTERVENCION',
+                    version = $1,
+                    fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE id = $2
+            `, [versionSiguiente, row.id]);
+
+            await registrarEvento(client, {
+                solicitudId: row.id,
+                tipoEvento: 'ANULACION_REQUIERE_VALIDACION_EXTERNA',
+                estadoAnterior: row.estado,
+                estadoPosterior: 'REQUIERE_INTERVENCION',
+                username: usuario.username,
+                comentario: 'Ejecución técnica no habilitada por defecto: el tipo de certificado no cuenta con regla explícita ni integración externa verificada.',
+                metadatos: {
+                    tipoCertificado: cert.tipo_certificado_clave,
+                    numeroCertificado: cert.numero_certificado,
+                    estadoCertificado: cert.estado
+                }
+            });
+
+            await client.query('COMMIT');
+
+            const err = errorNegocio('ANULACION_REQUIERE_VALIDACION_EXTERNA', 409, {
+                tipoCertificado: cert.tipo_certificado_clave,
+                numeroCertificado: cert.numero_certificado,
+                estadoCertificado: cert.estado
+            });
+            err.transaccionYaComprometida = true;
+            throw err;
+        }
+
+        // 1. Transición controlada a EN_EJECUCION
+        await client.query(`
+            UPDATE fg_solicitud_operacion
+            SET estado = 'EN_EJECUCION',
+                fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $1
+        `, [row.id]);
+
+        await registrarEvento(client, {
+            solicitudId: row.id,
+            tipoEvento: 'EJECUCION_INICIADA',
+            estadoAnterior: row.estado,
+            estadoPosterior: 'EN_EJECUCION',
+            username: usuario.username,
+            comentario: 'Inicio de ejecución técnica de anulación.',
+            metadatos: { versionEsperada }
+        });
+
+        // 2. Modificación técnica sobre el certificado emitido
+        const justificacion = texto(entrada?.justificacion, 1000) || row.motivo;
+        const fechaAnulacionIso = new Date().toISOString();
+
+        await certificadosService.anularCertificadoEmitido({
+            client,
+            certificadoId: cert.id,
+            justificacion,
+            solicitudId: row.id,
+            usuario: usuario.username
+        });
+
+        const resultadoTecnico = {
+            certificadoId: Number(cert.id),
+            numeroCertificado: cert.numero_certificado,
+            tipoCertificado: cert.tipo_certificado_clave,
+            estadoAnterior: cert.estado,
+            estadoPosterior: 'ANULADO',
+            fechaAnulacion: fechaAnulacionIso,
+            usuarioEjecutor: usuario.username,
+            justificacion
+        };
+
+        // 3. Transición final a COMPLETADA
+        const actualizada = await client.query(`
+            UPDATE fg_solicitud_operacion
+            SET estado = 'COMPLETADA',
+                resultado_tecnico = $1::jsonb,
+                version = version + 1,
+                fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $2 AND estado = 'EN_EJECUCION'
+            RETURNING *
+        `, [JSON.stringify(resultadoTecnico), row.id]);
+
+        if (actualizada.rowCount === 0) {
+            throw errorNegocio('SOLICITUD_DECISION_CONCURRENTE', 409);
+        }
+
+        await registrarEvento(client, {
+            solicitudId: row.id,
+            tipoEvento: 'CERTIFICADO_ANULADO_TECNICAMENTE',
+            estadoAnterior: 'EN_EJECUCION',
+            estadoPosterior: 'COMPLETADA',
+            username: usuario.username,
+            comentario: justificacion,
+            metadatos: resultadoTecnico
+        });
+
+        return {
+            solicitud: mapearSolicitud(actualizada.rows[0]),
+            certificado: {
+                id: Number(cert.id),
+                numero: cert.numero_certificado,
+                estado: 'ANULADO'
+            },
+            yaCompletada: false
+        };
+    });
+
+    const esAplicacionOficialRectificacionHabilitada = () => {
+        if (config?.habilitarAplicacionOficial === true) return true;
+        if (process.env.FAREGAS_HABILITAR_RECTIFICACION_OFICIAL === 'true') return true;
+        return false;
+    };
+
+    const ejecutarRectificacionCertificado = async (id, entrada, userContext) => conTransaccion(async (client) => {
+        const solicitudId = enteroPositivo(id, 'SOLICITUD_ID_INVALIDO');
+        const usuario = await obtenerUsuarioActual(client, userContext);
+        const permisos = await obtenerPermisos(client, usuario.perfil_id);
+        if (!permisos.has(PERMISOS_SOLICITUD.EJECUTAR_RECTIFICACION_CERTIFICADO)
+            && !permisos.has(PERMISOS_SOLICITUD.ADMINISTRAR)) {
+            throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { permiso: PERMISOS_SOLICITUD.EJECUTAR_RECTIFICACION_CERTIFICADO });
+        }
+
+        // Bloqueo de fila sobre la solicitud
+        const solResult = await client.query(`${SELECT_SOLICITUD} WHERE s.id = $1 FOR UPDATE OF s`, [solicitudId]);
+        if (solResult.rowCount === 0) throw errorNegocio('SOLICITUD_NO_ENCONTRADA', 404);
+        const row = solResult.rows[0];
+
+        // Validación de sede del ejecutor
+        const plantasUsuario = await client.query(`
+            SELECT DISTINCT up.plantas_key
+            FROM fg_usuario_planta up
+            JOIN fg_perfil_planta pp ON pp.planta_key = up.plantas_key AND pp.perfil_clave = $2
+            JOIN fg_planta p ON p.key = up.plantas_key AND p.activo = TRUE
+            WHERE up.usuario_username = $1
+        `, [usuario.username, usuario.perfil_id]);
+        const plantasPermitidas = plantasUsuario.rows.map((r) => r.plantas_key);
+        if (!plantasPermitidas.includes(row.planta_key)) {
+            throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
+        }
+
+        // Separación de funciones
+        if (row.usuario_solicitante === usuario.username) {
+            throw errorNegocio('SOLICITUD_AUTODECISION_PROHIBIDA', 403);
+        }
+
+        if (row.tipo_operacion !== 'RECTIFICAR_CERTIFICADO') {
+            throw errorNegocio('TIPO_OPERACION_INVALIDO_PARA_EJECUCION', 409, { tipo: row.tipo_operacion });
+        }
+
+        // Idempotencia
+        if (row.estado === 'COMPLETADA') {
+            const certActual = await client.query('SELECT id, numero_certificado, estado, fecha_emision FROM fg_certificado WHERE id = $1', [row.certificado_id]);
+            const verActual = await client.query(
+                `SELECT * FROM fg_certificado_version WHERE solicitud_id = $1 ORDER BY numero_version DESC LIMIT 1`,
+                [row.id]
+            );
+            return {
+                solicitud: mapearSolicitud(row),
+                certificado: {
+                    id: Number(row.certificado_id),
+                    numero: certActual.rows[0]?.numero_certificado || null,
+                    estado: certActual.rows[0]?.estado || 'EMITIDO',
+                    fechaEmision: certActual.rows[0]?.fecha_emision || null
+                },
+                version: verActual.rows[0] || null,
+                yaCompletada: true,
+                oficialAplicado: true
+            };
+        }
+
+        if (row.estado === 'PENDIENTE_APROBACION') throw errorNegocio('SOLICITUD_NO_APROBADA', 409);
+        if (row.estado === 'RECHAZADA') throw errorNegocio('SOLICITUD_RECHAZADA', 409);
+        if (row.estado === 'CANCELADA') throw errorNegocio('SOLICITUD_CANCELADA', 409);
+        if (row.estado !== 'APROBADA' && row.estado !== 'REQUIERE_INTERVENCION') {
+            throw errorNegocio('SOLICITUD_ESTADO_INVALIDO', 409, { estado: row.estado });
+        }
+
+        const versionEsperada = enteroPositivo(entrada?.version, 'VERSION_SOLICITUD_INVALIDA');
+        if (versionEsperada !== Number(row.version)) {
+            throw errorNegocio('SOLICITUD_VERSION_DESACTUALIZADA', 409);
+        }
+
+        // Bloqueo y verificación del certificado
+        const certResult = await client.query(`
+            SELECT c.*, p.empresa_key
+            FROM fg_certificado c
+            JOIN fg_planta p ON p.key = c.planta_key
+            WHERE c.id = $1
+            FOR UPDATE OF c
+        `, [row.certificado_id]);
+        if (certResult.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
+        const cert = certResult.rows[0];
+
+        if (cert.planta_key !== row.planta_key) throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
+        if (cert.empresa_key !== row.empresa_key) throw errorNegocio('SOLICITUD_EMPRESA_NO_AUTORIZADA', 403);
+        if (cert.estado !== 'EMITIDO') throw errorNegocio('CERTIFICADO_NO_EMITIDO', 409, { estadoActual: cert.estado });
+        if (!cert.numero_certificado) throw errorNegocio('CERTIFICADO_SIN_NUMERO_DG', 409);
+
+        // Snapshot actual completo
+        const snapshotActual = await certificadosService.obtenerSnapshotCompletoCertificado({ client, certificadoId: cert.id });
+
+        // Detección de drift con respecto al momento de creación
+        const origSolicitud = row.datos_originales_certificado;
+        if (origSolicitud && origSolicitud.placa && snapshotActual.vehiculo?.placa) {
+            if (origSolicitud.placa !== snapshotActual.vehiculo.placa) {
+                throw errorNegocio('DOCUMENTO_ORIGINAL_MODIFICADO', 409, {
+                    mensaje: 'El documento original cambió después de creada la solicitud. Se requiere nueva revisión.'
+                });
+            }
+        }
+
+        // Calcular diferencias reales
+        const diferencias = calcularDiferencias(snapshotActual, row.datos_propuestos);
+        if (diferencias.length === 0) {
+            throw errorNegocio('PROPUESTA_SIN_DIFERENCIAS', 400, {
+                mensaje: 'Los datos propuestos no presentan diferencias con el certificado original.'
+            });
+        }
+
+        // Nivel 1 — Transición a EN_EJECUCION
+        await client.query(`
+            UPDATE fg_solicitud_operacion
+            SET estado = 'EN_EJECUCION',
+                fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $1
+        `, [row.id]);
+
+        await registrarEvento(client, {
+            solicitudId: row.id,
+            tipoEvento: 'EJECUCION_RECTIFICACION_INICIADA',
+            estadoAnterior: row.estado,
+            estadoPosterior: 'EN_EJECUCION',
+            username: usuario.username,
+            comentario: 'Inicio de preparación de rectificación técnica.',
+            metadatos: { versionEsperada, totalDiferencias: diferencias.length }
+        });
+
+        const motivo = texto(entrada?.justificacion, 1000) || row.motivo;
+
+        // Crear versión PREPARADA en fg_certificado_version
+        const versionCreada = await certificadosService.prepararVersionRectificada({
+            client,
+            certificadoId: cert.id,
+            solicitudId: row.id,
+            usuario: usuario.username,
+            aprobador: row.usuario_decision,
+            motivo,
+            datosPropuestos: row.datos_propuestos,
+            diferencias,
+            metadatos: {
+                tipoCertificado: cert.tipo_certificado_clave,
+                numeroCertificado: cert.numero_certificado,
+                versionSolicitud: versionEsperada
+            }
+        });
+
+        const esOficialHabilitada = esAplicacionOficialRectificacionHabilitada();
+
+        if (!esOficialHabilitada) {
+            // Nivel 2 deshabilitado por defecto: versión queda PREPARADA, certificado permanece intacto.
+            // Solicitud pasa a REQUIERE_INTERVENCION informando detención controlada.
+            const resultadoTecnico = {
+                nivel: 'PREPARACION_INTERNA',
+                versionId: Number(versionCreada.id),
+                numeroVersion: versionCreada.numero_version,
+                estadoVersion: 'PREPARADA',
+                fechaVersion: versionCreada.fecha_version,
+                fechaEmisionOriginal: cert.fecha_emision,
+                diferencias,
+                oficialAplicado: false,
+                mensaje: 'Versión técnica preparada internamente. Aplicación oficial en vivo deshabilitada por defecto hasta autorización normativa.'
+            };
+
+            const versionSiguiente = Number(row.version) + (row.estado !== 'REQUIERE_INTERVENCION' ? 1 : 0);
+            const actReq = await client.query(`
+                UPDATE fg_solicitud_operacion
+                SET estado = 'REQUIERE_INTERVENCION',
+                    resultado_tecnico = $1::jsonb,
+                    version = $2,
+                    fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE id = $3
+                RETURNING *
+            `, [JSON.stringify(resultadoTecnico), versionSiguiente, row.id]);
+
+            await registrarEvento(client, {
+                solicitudId: row.id,
+                tipoEvento: 'VERSION_RECTIFICACION_PREPARADA',
+                estadoAnterior: 'EN_EJECUCION',
+                estadoPosterior: 'REQUIERE_INTERVENCION',
+                username: usuario.username,
+                comentario: 'Versión de rectificación preparada internamente. Aplicación oficial pendiente de confirmación normativa.',
+                metadatos: resultadoTecnico
+            });
+
+            return {
+                solicitud: mapearSolicitud(actReq.rows[0]),
+                certificado: {
+                    id: Number(cert.id),
+                    numero: cert.numero_certificado,
+                    estado: cert.estado,
+                    fechaEmision: cert.fecha_emision
+                },
+                version: versionCreada,
+                oficialAplicado: false,
+                requiereIntervencion: true,
+                yaCompletada: false
+            };
+        }
+
+        // Nivel 2 autorizado: promover versión a VIGENTE y actualizar campos técnicos
+        const versionOficial = await certificadosService.aplicarVersionRectificadaOficial({
+            client,
+            certificadoId: cert.id,
+            versionId: versionCreada.id,
+            usuario: usuario.username
+        });
+
+        const resultadoTecnicoOficial = {
+            nivel: 'APLICACION_OFICIAL',
+            versionId: Number(versionOficial.id),
+            numeroVersion: versionOficial.numero_version,
+            estadoVersion: 'VIGENTE',
+            fechaVersion: versionOficial.fecha_version,
+            fechaAplicacionOficial: versionOficial.fecha_aplicacion_oficial,
+            fechaEmisionOriginal: cert.fecha_emision,
+            diferencias,
+            oficialAplicado: true
+        };
+
+        const actComp = await client.query(`
+            UPDATE fg_solicitud_operacion
+            SET estado = 'COMPLETADA',
+                resultado_tecnico = $1::jsonb,
+                version = version + 1,
+                fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = $2 AND estado = 'EN_EJECUCION'
+            RETURNING *
+        `, [JSON.stringify(resultadoTecnicoOficial), row.id]);
+
+        await registrarEvento(client, {
+            solicitudId: row.id,
+            tipoEvento: 'CERTIFICADO_RECTIFICADO_OFICIALMENTE',
+            estadoAnterior: 'EN_EJECUCION',
+            estadoPosterior: 'COMPLETADA',
+            username: usuario.username,
+            comentario: motivo,
+            metadatos: resultadoTecnicoOficial
+        });
+
+        return {
+            solicitud: mapearSolicitud(actComp.rows[0]),
+            certificado: {
+                id: Number(cert.id),
+                numero: cert.numero_certificado,
+                estado: cert.estado,
+                fechaEmision: cert.fecha_emision
+            },
+            version: versionOficial,
+            oficialAplicado: true,
+            yaCompletada: false
+        };
+    });
+
+    const ejecutarAnulacionTotal = async (id, entrada, userContext) => {
+        const solicitudId = enteroPositivo(id, 'SOLICITUD_ID_INVALIDO');
+        const usuario = await obtenerUsuarioActual(database, userContext);
+        if (usuario.perfil_id !== 'SISTEMAS') {
+            throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { perfilRequerido: 'SISTEMAS' });
+        }
+        const permisos = await obtenerPermisos(database, usuario.perfil_id);
+        exigirPermiso(permisos, PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO);
+
+        // PASO 1: Transacción corta de verificación, bloqueo y transición a EN_EJECUCION
+        let solPrevia;
+        let certInfo;
+        let factInfo = null;
+        let idempotenciaEjecucion;
+
+        const client1 = await database.connect();
+        try {
+            await client1.query('BEGIN');
+            const solResult = await client1.query(`${SELECT_SOLICITUD} WHERE s.id = $1 FOR UPDATE OF s`, [solicitudId]);
+            if (solResult.rowCount === 0) throw errorNegocio('SOLICITUD_NO_ENCONTRADA', 404);
+            const row = solResult.rows[0];
+
+            // Validación de sede del ejecutor
+            await validarAccesoPlanta(client1, usuario, row.planta_key);
+
+            // Separación de funciones: nadie ejecuta su propia solicitud
+            if (row.usuario_solicitante === usuario.username) {
+                throw errorNegocio('SOLICITUD_AUTODECISION_PROHIBIDA', 403);
+            }
+
+            // Tipo de operación permitido: exclusivamente ANULAR_AMBOS
+            if (row.tipo_operacion !== 'ANULAR_AMBOS') {
+                throw errorNegocio('TIPO_OPERACION_INVALIDO_PARA_EJECUCION', 409, { tipo: row.tipo_operacion });
+            }
+
+            // Idempotencia: si ya está COMPLETADA, retornar el resultado consolidado
+            if (row.estado === 'COMPLETADA') {
+                await client1.query('COMMIT');
+                return {
+                    solicitud: mapearSolicitud(row),
+                    resultadoFiscal: row.resultado_fiscal,
+                    resultadoTecnico: row.resultado_tecnico,
+                    completada: true,
+                    yaCompletada: true
+                };
+            }
+
+            if (row.estado === 'PENDIENTE_APROBACION') throw errorNegocio('SOLICITUD_NO_APROBADA', 409);
+            if (row.estado === 'RECHAZADA') throw errorNegocio('SOLICITUD_RECHAZADA', 409);
+            if (row.estado === 'CANCELADA') throw errorNegocio('SOLICITUD_CANCELADA', 409);
+            if (row.estado === 'EN_EJECUCION') {
+                throw errorNegocio('SOLICITUD_EJECUCION_EN_CURSO', 409);
+            }
+            if (row.estado !== 'APROBADA' && row.estado !== 'REQUIERE_INTERVENCION') {
+                throw errorNegocio('SOLICITUD_ESTADO_INVALIDO', 409, { estado: row.estado });
+            }
+
+            // Versión optimista si se especifica
+            if (entrada?.version !== undefined && entrada?.version !== null) {
+                const versionEsperada = enteroPositivo(entrada.version, 'VERSION_SOLICITUD_INVALIDA');
+                if (versionEsperada !== Number(row.version)) {
+                    throw errorNegocio('SOLICITUD_VERSION_DESACTUALIZADA', 409);
+                }
+            }
+
+            // Bloqueo y verificación del certificado
+            const certResult = await client1.query(`
+                SELECT c.*, p.empresa_key
+                FROM fg_certificado c
+                JOIN fg_planta p ON p.key = c.planta_key
+                WHERE c.id = $1
+                FOR UPDATE OF c
+            `, [row.certificado_id]);
+            if (certResult.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
+            const cert = certResult.rows[0];
+
+            if (cert.planta_key !== row.planta_key) throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
+            if (cert.empresa_key !== row.empresa_key) throw errorNegocio('SOLICITUD_EMPRESA_NO_AUTORIZADA', 403);
+            if (cert.estado !== 'EMITIDO' && cert.estado !== 'ANULADO') {
+                throw errorNegocio('CERTIFICADO_NO_EMITIDO', 409, { estadoActual: cert.estado });
+            }
+            if (!cert.numero_certificado) throw errorNegocio('CERTIFICADO_SIN_NUMERO_DG', 409);
+
+            // Facturación si existe
+            if (row.facturacion_id) {
+                const factResult = await client1.query(`
+                    SELECT f.*, p.empresa_key
+                    FROM fg_facturacion f
+                    JOIN fg_planta p ON p.key = f.planta_key
+                    WHERE f.id = $1
+                    FOR UPDATE OF f
+                `, [row.facturacion_id]);
+                if (factResult.rowCount > 0) {
+                    factInfo = factResult.rows[0];
+                    if (factInfo.planta_key !== row.planta_key) throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
+                    if (factInfo.empresa_key !== row.empresa_key) throw errorNegocio('SOLICITUD_EMPRESA_NO_AUTORIZADA', 403);
+                }
+            }
+
+            idempotenciaEjecucion = entrada?.idempotenciaClave
+                ? normalizarUuid(entrada.idempotenciaClave)
+                : (row.idempotencia_ejecucion || crypto.randomUUID());
+
+            // Marcar EN_EJECUCION en transacción corta
+            await client1.query(`
+                UPDATE fg_solicitud_operacion
+                SET estado = 'EN_EJECUCION',
+                    usuario_ejecucion = $1,
+                    fecha_ejecucion = COALESCE(fecha_ejecucion, CURRENT_TIMESTAMP),
+                    idempotencia_ejecucion = $2,
+                    fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE id = $3
+            `, [usuario.username, idempotenciaEjecucion, row.id]);
+
+            await registrarEvento(client1, {
+                solicitudId: row.id,
+                tipoEvento: 'EJECUCION_INICIADA',
+                estadoAnterior: row.estado,
+                estadoPosterior: 'EN_EJECUCION',
+                username: usuario.username,
+                comentario: 'Inicio de ejecución de anulación total autorizada.',
+                metadatos: {
+                    idempotenciaEjecucion,
+                    certificadoId: cert.id,
+                    facturacionId: factInfo?.id || null
+                }
+            });
+
+            await client1.query('COMMIT');
+            solPrevia = row;
+            certInfo = cert;
+        } catch (error) {
+            await client1.query('ROLLBACK');
+            throw error;
+        } finally {
+            client1.release();
+        }
+
+        // PASO 2: Evaluación y ejecución fiscal (SIN transacciones PostgreSQL abiertas)
+        let resultadoFiscal = null;
+
+        if (!factInfo) {
+            // Caso A: Certificado sin comprobante fiscal asociado
+            resultadoFiscal = {
+                resuelto: true,
+                estado: 'NO_REQUERIDA',
+                motivo: 'Certificado sin comprobante fiscal asociado emitido; no requiere operación fiscal externa.'
+            };
+        } else if (factInfo.estado === 'ANULADO') {
+            // Caso B: Comprobante previamente anulado
+            resultadoFiscal = {
+                resuelto: true,
+                estado: 'ACEPTADO',
+                motivo: 'Comprobante fiscal previamente anulado en SUNAT/proveedor fiscal.',
+                comprobante: factInfo.nro_comprobante
+            };
+        } else if (factInfo.estado === 'PENDIENTE_SUNAT') {
+            // Caso C: Comprobante con emisión electrónica en trámite ante SUNAT
+            // Punto 2: No declarar la regularización completada. No generar bajas ni notas ficticias.
+            // Comprobar si existe una emisión electrónica en trámite
+            const opTramite = await database.query(`
+                SELECT id, operacion, estado, error, fecha_creacion
+                FROM fg_documento_electronico_operacion
+                WHERE facturacion_id = $1 AND operacion = 'EMITIR'
+                ORDER BY id DESC LIMIT 1
+            `, [factInfo.id]);
+
+            const operacionEnTramite = opTramite.rowCount > 0;
+            resultadoFiscal = {
+                resuelto: false,
+                estado: 'PENDIENTE_SUNAT',
+                enTramite: operacionEnTramite,
+                motivo: 'Comprobante electrónico con emisión en trámite ante SUNAT; la regularización fiscal no se declara completada hasta conocer el resultado definitivo de SUNAT. No se generan bajas ni notas ficticias.',
+                comprobante: factInfo.nro_comprobante,
+                ultimaOperacion: opTramite.rows[0] || null
+            };
+        } else if (factInfo.estado === 'BORRADOR') {
+            // Caso D: Comprobante borrador sin emisión ante SUNAT
+            resultadoFiscal = {
+                resuelto: true,
+                estado: 'REGULARIZACION_INTERNA',
+                motivo: 'Comprobante en estado BORRADOR (sin emisión electrónica ante SUNAT); regularización interna sin baja ni nota ficticia.',
+                comprobante: factInfo.nro_comprobante
+            };
+        } else if (factInfo.estado === 'RECHAZADO') {
+            // Caso E: Comprobante rechazado definitivamente por SUNAT
+            resultadoFiscal = {
+                resuelto: true,
+                estado: 'REGULARIZACION_INTERNA',
+                motivo: 'Comprobante rechazado definitivamente por SUNAT; no tiene validez tributaria ni admite baja o nota de crédito.',
+                comprobante: factInfo.nro_comprobante
+            };
+        } else if (factInfo.estado === 'ACEPTADO') {
+            // Caso F: Comprobante formalmente aceptado en SUNAT
+            // 1. Recuperación idempotente: verificar si ya existe nota de crédito 01/02/06 aceptada o baja aceptada previa
+            const notasAceptadas = await database.query(`
+                SELECT * FROM fg_credito
+                WHERE facturacion_id = $1 AND motivo_codigo IN ('01', '1', '02', '2', '06', '6') AND estado = 'ACEPTADO'
+            `, [factInfo.id]);
+            const bajasAceptadas = await database.query(`
+                SELECT * FROM fg_documento_anulacion
+                WHERE facturacion_id = $1 AND estado = 'ACEPTADO'
+            `, [factInfo.id]);
+
+            if (notasAceptadas.rowCount > 0) {
+                resultadoFiscal = {
+                    resuelto: true,
+                    estado: 'ACEPTADO',
+                    tipoOperacion: 'NOTA_CREDITO',
+                    motivo: 'Nota de crédito total previamente aceptada en SUNAT.',
+                    notaId: Number(notasAceptadas.rows[0].id),
+                    nroComprobante: notasAceptadas.rows[0].nro_comprobante
+                };
+            } else if (bajasAceptadas.rowCount > 0) {
+                resultadoFiscal = {
+                    resuelto: true,
+                    estado: 'ACEPTADO',
+                    tipoOperacion: 'COMUNICACION_BAJA',
+                    motivo: 'Comunicación de baja previamente aceptada en SUNAT.',
+                    anulacionId: Number(bajasAceptadas.rows[0].id),
+                    ticketSunat: bajasAceptadas.rows[0].ticket_sunat
+                };
+            } else {
+                // 2. Comprobar si existe una operación fiscal correctiva en trámite (PENDIENTE)
+                const notasPendientes = await database.query(`
+                    SELECT * FROM fg_credito
+                    WHERE facturacion_id = $1 AND estado = 'PENDIENTE'
+                `, [factInfo.id]);
+                const bajasPendientes = await database.query(`
+                    SELECT * FROM fg_documento_anulacion
+                    WHERE facturacion_id = $1 AND estado = 'PENDIENTE'
+                `, [factInfo.id]);
+
+                if (notasPendientes.rowCount > 0 || bajasPendientes.rowCount > 0) {
+                    resultadoFiscal = {
+                        resuelto: false,
+                        estado: 'EN_TRAMITE',
+                        motivo: 'Existe una operación fiscal correctiva previa en trámite ante SUNAT; se mantiene en espera sin generar operaciones concurrentes.',
+                        comprobante: factInfo.nro_comprobante
+                    };
+                } else {
+                    // 3. Selección del mecanismo tributario conforme a políticas tributarias de FAREGAS
+                    // Punto 1: No usar únicamente la regla de 24h. Considerar tipo de comprobante,
+                    // estado fiscal, fecha y condiciones aplicables.
+                    const tieneSerieYNumero = Boolean(factInfo.serie && factInfo.numero !== null);
+                    const esOperable = esDocumentoBaseOperable(factInfo);
+
+                    if (!tieneSerieYNumero || !esOperable) {
+                        resultadoFiscal = {
+                            resuelto: false,
+                            estado: 'REQUIERE_INTERVENCION',
+                            motivo: 'El comprobante no reúne las condiciones tributarias operables para emitir baja o nota de crédito. Requiere intervención de Sistemas.',
+                            comprobante: factInfo.nro_comprobante
+                        };
+                    } else {
+                        // Determinar si aplica Comunicación de Baja o Nota de Crédito Total
+                        // Consulta de plazos y condiciones:
+                        const plazoBajaQuery = await database.query(`
+                            SELECT MIN(fecha_creacion) AS primer_intento,
+                                   clock_timestamp() >= MIN(fecha_creacion)
+                                   AND clock_timestamp() < MIN(fecha_creacion) + INTERVAL '24 hours' AS dentro_plazo_baja
+                            FROM fg_facturacion_intento WHERE facturacion_id = $1
+                        `, [factInfo.id]);
+
+                        const dentroPlazoBaja = plazoBajaQuery.rows[0]?.dentro_plazo_baja === true;
+
+                        // Total de notas de crédito existentes que no sean de error
+                        const notasPreviasQuery = await database.query(`
+                            SELECT COALESCE(SUM(importe_total), 0) AS total
+                            FROM fg_credito
+                            WHERE facturacion_id = $1 AND estado NOT IN ('RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO')
+                              AND motivo_codigo NOT IN ('3', '03')
+                        `, [factInfo.id]);
+                        const totalNotasPrevias = Number(notasPreviasQuery.rows[0]?.total || 0);
+
+                        let mecanismoDeterminado = null;
+
+                        // Procedimiento 1: Comunicación de Baja
+                        // Exigencias normativas: dentro de plazo de baja (24h), sin notas de crédito previas, y comprobante no alterado.
+                        if (dentroPlazoBaja && totalNotasPrevias === 0) {
+                            mecanismoDeterminado = 'COMUNICACION_BAJA';
+                        } else if (!dentroPlazoBaja && totalNotasPrevias === 0) {
+                            // Procedimiento 2: Nota de Crédito Total (motivo 01)
+                            // Exigencias normativas: plazo de baja vencido, sin notas previas que consuman el comprobante,
+                            // e importe total coincide con el comprobante original.
+                            const originalTotal = Number(factInfo.importe_total);
+                            if (originalTotal > 0) {
+                                mecanismoDeterminado = 'NOTA_CREDITO';
+                            }
+                        }
+
+                        // Si no se puede determinar con certeza el procedimiento permitido:
+                        if (!mecanismoDeterminado) {
+                            resultadoFiscal = {
+                                resuelto: false,
+                                estado: 'REQUIERE_INTERVENCION',
+                                motivo: 'No se puede determinar con certeza el procedimiento tributario permitido para este comprobante (tipo, plazo o notas previas en conflicto). No se emite operación fiscal sin intervención de Sistemas.',
+                                comprobante: factInfo.nro_comprobante,
+                                dentroPlazoBaja,
+                                totalNotasPrevias
+                            };
+                        } else {
+                            // Procedimiento determinado con certeza -> Ejecutar sin transacciones PostgreSQL abiertas
+                            const docsService = config?.documentosService || defaultDocumentosService;
+                            const ctxEjecutor = { ...userContext, solicitudId: solPrevia.id };
+
+                            try {
+                                if (mecanismoDeterminado === 'COMUNICACION_BAJA') {
+                                    const resBaja = await docsService.generarAnulacion(
+                                        certInfo.id,
+                                        { tipoDocumento: 'FACTURACION', motivo: solPrevia.motivo, solicitudId: solPrevia.id },
+                                        ctxEjecutor,
+                                        config?.dependencies || {}
+                                    );
+                                    const aceptada = resBaja.estado === 'ACEPTADO';
+                                    resultadoFiscal = {
+                                        resuelto: aceptada,
+                                        estado: resBaja.estado || 'PENDIENTE',
+                                        tipoOperacion: 'COMUNICACION_BAJA',
+                                        anulacionId: resBaja.id,
+                                        ticketSunat: resBaja.ticketSunat || null,
+                                        respuesta: resBaja.respuesta || null,
+                                        motivo: aceptada ? 'Baja aceptada por SUNAT.' : 'Baja enviada; ticket pendiente de resolución definitiva en SUNAT.'
+                                    };
+                                } else if (mecanismoDeterminado === 'NOTA_CREDITO') {
+                                    const resNota = await docsService.emitirNota(
+                                        certInfo.id,
+                                        'CREDITO',
+                                        {
+                                            motivoCodigo: '01',
+                                            sustento: solPrevia.motivo,
+                                            baseImponible: Number(factInfo.base_imponible),
+                                            igv: Number(factInfo.igv),
+                                            importeTotal: Number(factInfo.importe_total),
+                                            solicitudId: solPrevia.id
+                                        },
+                                        ctxEjecutor,
+                                        config?.dependencies || {}
+                                    );
+                                    const aceptada = resNota.estado === 'ACEPTADO';
+                                    resultadoFiscal = {
+                                        resuelto: aceptada,
+                                        estado: resNota.estado || 'PENDIENTE',
+                                        tipoOperacion: 'NOTA_CREDITO',
+                                        notaId: resNota.id,
+                                        nroComprobante: resNota.nroComprobante,
+                                        respuesta: resNota,
+                                        motivo: aceptada ? 'Nota de crédito total aceptada por SUNAT.' : 'Nota de crédito enviada; pendiente de CDR/aceptación en SUNAT.'
+                                    };
+                                }
+                            } catch (errFiscal) {
+                                resultadoFiscal = {
+                                    resuelto: false,
+                                    estado: errFiscal.code || 'ERROR_OPERACION_FISCAL',
+                                    error: errFiscal.message || String(errFiscal),
+                                    detalles: errFiscal.detalles || null
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Cualquier otro estado fiscal no tipificado
+            resultadoFiscal = {
+                resuelto: false,
+                estado: 'REQUIERE_INTERVENCION',
+                motivo: `Estado fiscal '${factInfo.estado}' no admite determinación tributaria automática. Requiere intervención de Sistemas.`,
+                comprobante: factInfo.nro_comprobante
+            };
+        }
+
+        // PASO 3: Evaluación técnica del certificado
+        let resultadoTecnico = null;
+        const habilitadoTecnico = esTipoPermitidoParaAnulacionLocal(certInfo.tipo_certificado_clave);
+
+        if (!habilitadoTecnico) {
+            // Protección técnica: el certificado emitido permanece en EMITIDO intacto.
+            // Se conserva el correlativo DG, fecha original, pagos, trazabilidad y PDF.
+            resultadoTecnico = {
+                resuelto: false,
+                estado: 'BLOQUEADO_NORMATIVA',
+                motivo: 'Anulación técnica de certificado bloqueada por defecto hasta contar con procedimiento externo oficial verificado.',
+                tipoCertificado: certInfo.tipo_certificado_clave,
+                numeroCertificado: certInfo.numero_certificado,
+                estadoCertificado: certInfo.estado
+            };
+        } else {
+            // Procedimiento oficial validado
+            await certificadosService.anularCertificadoEmitido({
+                client: database,
+                certificadoId: certInfo.id,
+                justificacion: solPrevia.motivo,
+                solicitudId: solPrevia.id,
+                usuario: usuario.username
+            });
+            resultadoTecnico = {
+                resuelto: true,
+                estado: 'ANULADO',
+                tipoCertificado: certInfo.tipo_certificado_clave,
+                numeroCertificado: certInfo.numero_certificado,
+                fechaAnulacion: new Date().toISOString()
+            };
+        }
+
+        // PASO 4: Transacción corta de cierre y consolidación
+        let solFinal;
+        const client2 = await database.connect();
+        try {
+            await client2.query('BEGIN');
+            const solResult2 = await client2.query(`SELECT * FROM fg_solicitud_operacion WHERE id = $1 FOR UPDATE`, [solPrevia.id]);
+            const rowActual = solResult2.rows[0];
+
+            const ambosResueltos = (resultadoFiscal?.resuelto === true) && (resultadoTecnico?.resuelto === true);
+            const nuevoEstado = ambosResueltos ? 'COMPLETADA' : 'REQUIERE_INTERVENCION';
+
+            const actResult = await client2.query(`
+                UPDATE fg_solicitud_operacion
+                SET estado = $1,
+                    resultado_fiscal = $2::jsonb,
+                    resultado_tecnico = $3::jsonb,
+                    version = version + 1,
+                    fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE id = $4
+                RETURNING *
+            `, [nuevoEstado, JSON.stringify(resultadoFiscal), JSON.stringify(resultadoTecnico), rowActual.id]);
+
+            solFinal = actResult.rows[0];
+
+            const tipoEvento = ambosResueltos
+                ? 'ANULACION_TOTAL_COMPLETADA'
+                : (resultadoFiscal?.resuelto ? 'EJECUCION_PARCIAL_REQUIERE_INTERVENCION' : 'EJECUCION_FALLIDA_REQUIERE_INTERVENCION');
+
+            await registrarEvento(client2, {
+                solicitudId: rowActual.id,
+                tipoEvento,
+                estadoAnterior: 'EN_EJECUCION',
+                estadoPosterior: nuevoEstado,
+                username: usuario.username,
+                comentario: ambosResueltos
+                    ? 'Anulación total completada satisfactoriamente.'
+                    : `Ejecución finalizada con estado ${nuevoEstado}. Fiscal: ${resultadoFiscal?.estado}, Técnico: ${resultadoTecnico?.estado}.`,
+                metadatos: {
+                    resultadoFiscal,
+                    resultadoTecnico,
+                    ambosResueltos
+                }
+            });
+
+            await client2.query('COMMIT');
+        } catch (error) {
+            await client2.query('ROLLBACK');
+            throw error;
+        } finally {
+            client2.release();
+        }
+
+        return {
+            solicitud: mapearSolicitud(solFinal),
+            resultadoFiscal,
+            resultadoTecnico,
+            completada: solFinal.estado === 'COMPLETADA',
+            requiereIntervencion: solFinal.estado === 'REQUIERE_INTERVENCION',
+            yaCompletada: false
+        };
+    };
+
+    return {
+        contextoCertificado,
+        crear,
+        crearAnulacionTotal,
+        listar,
+        obtener: async (id, userContext) => (await obtener(id, userContext)).solicitud,
+        aprobar: (id, entrada, userContext) => decidir(id, 'APROBAR', entrada, userContext),
+        rechazar: (id, entrada, userContext) => decidir(id, 'RECHAZAR', entrada, userContext),
+        cancelar,
+        historial,
+        ejecutarAnulacionCertificado,
+        ejecutarRectificacionCertificado,
+        ejecutarAnulacionTotal
+    };
+};
+
+const servicio = crearServicio();
+
+module.exports = {
+    ...servicio,
+    _private: {
+        crearServicio,
+        errorNegocio,
+        normalizarTipo,
+        normalizarUuid,
+        validarDatosPropuestos,
+        validarContextoParaTipo,
+        requiereComprobante,
+        afectaCertificado,
+        snapshotCertificado,
+        snapshotComprobante,
+        mapearSolicitud,
+        consultaContextoCertificado,
+        registrarEvento,
+        aplanarPropuestas,
+        calcularDiferencias,
+        camposPermitidosParaTipo,
+        camposRectificablesCertificado,
+        estadoSolicitudComprobante,
+        datosFiscalesActuales,
+        crypto
+    }
+};
