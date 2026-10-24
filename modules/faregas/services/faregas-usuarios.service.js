@@ -379,7 +379,16 @@ exports.crearPerfil = async (data) => {
         }
 
         if (Array.isArray(permisos) && permisos.length > 0) {
+            const permisosExclusivosSistemas = new Set([
+                'FAREGAS_SOLICITUD_APROBAR',
+                'FAREGAS_SOLICITUD_RECHAZAR',
+                'FAREGAS_SOLICITUD_ADMINISTRAR',
+                'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR'
+            ]);
             for (const p of permisos) {
+                if (clave !== 'SISTEMAS' && permisosExclusivosSistemas.has(p)) {
+                    continue;
+                }
                 await client.query('INSERT INTO fg_perfil_permiso (perfil_clave, permiso_clave) VALUES ($1, $2)', [clave, p]);
             }
         }
@@ -437,7 +446,16 @@ exports.actualizarPerfil = async (clave, data) => {
         `, [clave, PERMISOS_INICIO_ANULACIONES]);
         
         if (Array.isArray(permisos) && permisos.length > 0) {
+            const permisosExclusivosSistemas = new Set([
+                'FAREGAS_SOLICITUD_APROBAR',
+                'FAREGAS_SOLICITUD_RECHAZAR',
+                'FAREGAS_SOLICITUD_ADMINISTRAR',
+                'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR'
+            ]);
             for (const p of permisos) {
+                if (clave !== 'SISTEMAS' && permisosExclusivosSistemas.has(p)) {
+                    continue;
+                }
                 await client.query('INSERT INTO fg_perfil_permiso (perfil_clave, permiso_clave) VALUES ($1, $2) ON CONFLICT DO NOTHING', [clave, p]);
             }
         }

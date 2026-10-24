@@ -692,7 +692,11 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             anulacion.sunat_description AS "descripcionAnulacion",
             nota_credito.id AS "notaCreditoId",
             nota_credito.estado AS "estadoNotaCredito",
-            nota_credito.nro_comprobante AS "nroNotaCredito"
+            nota_credito.nro_comprobante AS "nroNotaCredito",
+            solicitud.id AS "solicitudOperacionId",
+            solicitud.estado AS "solicitudOperacionEstado",
+            solicitud.tipo_operacion AS "solicitudOperacionTipo",
+            solicitud.motivo AS "solicitudOperacionMotivo"
         FROM fg_certificado c
         LEFT JOIN fg_certificado_vehiculo v ON c.id = v.certificado_id
         LEFT JOIN fg_certificado_titular tit ON c.id = tit.certificado_id AND tit.orden = 1
@@ -719,6 +723,16 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             ORDER BY nc.id DESC
             LIMIT 1
         ) nota_credito ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT s.id AS "solicitudOperacionId", s.estado AS "solicitudOperacionEstado",
+                   s.tipo_operacion AS "solicitudOperacionTipo", s.motivo AS "solicitudOperacionMotivo"
+            FROM fg_solicitud_operacion s
+            WHERE s.certificado_id = c.id
+            ORDER BY (s.estado = ANY(ARRAY['PENDIENTE_APROBACION','APROBADA','EN_EJECUCION','REQUIERE_INTERVENCION'])) DESC,
+                     s.fecha_solicitud DESC,
+                     s.id DESC
+            LIMIT 1
+        ) solicitud ON TRUE
         WHERE ${filtroWhere}
         ORDER BY CASE
             WHEN c.estado = 'EMITIDO' THEN COALESCE(
