@@ -11,9 +11,10 @@ test('Bloque A: el listado del panel resume la solicitud administrativa por cert
     // La consulta del panel obtiene la solicitud administrativa en la misma operación de listado.
     assert.match(service, /LEFT JOIN LATERAL[\s\S]*?SELECT s\.id AS "solicitudOperacionId"/);
     assert.match(service, /FROM fg_solicitud_operacion s/);
-    assert.match(service, /solicitud\.estado AS "solicitudOperacionEstado"/);
-    assert.match(service, /solicitud\.tipo_operacion AS "solicitudOperacionTipo"/);
-    assert.match(service, /solicitud\.motivo AS "solicitudOperacionMotivo"/);
+    assert.match(service, /solicitud\."solicitudOperacionId" AS "solicitudOperacionId"/);
+    assert.match(service, /solicitud\."solicitudOperacionEstado" AS "solicitudOperacionEstado"/);
+    assert.match(service, /solicitud\."solicitudOperacionTipo" AS "solicitudOperacionTipo"/);
+    assert.match(service, /solicitud\."solicitudOperacionMotivo" AS "solicitudOperacionMotivo"/);
 });
 
 test('Bloque A: el alta de solicitudes sigue bloqueando duplicados activos', () => {

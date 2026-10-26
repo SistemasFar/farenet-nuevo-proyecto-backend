@@ -66,9 +66,11 @@ const contextoPublico = (row, credentials = null) => ({
     provider: 'NUBEFACT',
     environment: row?.entorno || integrationsConfig.nubefact.environment,
     productionConfirmed: integrationsConfig.nubefact.productionConfirmed,
+    enviarSunat: integrationsConfig.nubefact.enviarSunat,
     detractionDecision: integrationsConfig.nubefact.detractionDecision,
     correlativosV2Enabled: integrationsConfig.nubefact.correlativosV2Enabled,
     cronReconciliationEnabled: integrationsConfig.nubefact.cronReconciliationEnabled,
+    notasCronReconciliationEnabled: integrationsConfig.nubefact.notasCronReconciliationEnabled,
     empresaKey: row?.empresa_key || null,
     rucEmisor: row?.ruc_emisor || null
 });

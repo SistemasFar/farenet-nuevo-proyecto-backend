@@ -16,12 +16,13 @@ test('Fase 4C: creación usa permiso RBAC y decisión/ejecución mantienen perfi
     assert.match(servicio, /row\.usuario_solicitante === usuario\.username/);
 });
 
-test('Fase 4C: edición de perfil administra los ocho permisos bajo Inicio sin duplicarlos', () => {
+test('Fase 4C: edición de perfil administra los permisos bajo Inicio sin duplicarlos', () => {
     const usuarios = leer('../services/faregas-usuarios.service.js');
     const esperados = [
         'FAREGAS_SOLICITUD_CREAR',
         'FAREGAS_SOLICITUD_VER',
         'FAREGAS_SOLICITUD_APROBAR',
+        'FAREGAS_SOLICITUD_AUTOAPROBAR',
         'FAREGAS_SOLICITUD_RECHAZAR',
         'FAREGAS_SOLICITUD_ADMINISTRAR',
         'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR',

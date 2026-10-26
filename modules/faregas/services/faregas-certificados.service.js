@@ -693,10 +693,10 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             nota_credito.id AS "notaCreditoId",
             nota_credito.estado AS "estadoNotaCredito",
             nota_credito.nro_comprobante AS "nroNotaCredito",
-            solicitud.id AS "solicitudOperacionId",
-            solicitud.estado AS "solicitudOperacionEstado",
-            solicitud.tipo_operacion AS "solicitudOperacionTipo",
-            solicitud.motivo AS "solicitudOperacionMotivo"
+            solicitud."solicitudOperacionId" AS "solicitudOperacionId",
+            solicitud."solicitudOperacionEstado" AS "solicitudOperacionEstado",
+            solicitud."solicitudOperacionTipo" AS "solicitudOperacionTipo",
+            solicitud."solicitudOperacionMotivo" AS "solicitudOperacionMotivo"
         FROM fg_certificado c
         LEFT JOIN fg_certificado_vehiculo v ON c.id = v.certificado_id
         LEFT JOIN fg_certificado_titular tit ON c.id = tit.certificado_id AND tit.orden = 1
@@ -706,8 +706,10 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
         LEFT JOIN fg_orden_pago op ON op.certificado_id = c.id
         LEFT JOIN fg_facturacion f ON f.certificado_id = c.id
         LEFT JOIN LATERAL (
-            SELECT MIN(fi.fecha_creacion) AS fecha_emision
-            FROM fg_facturacion_intento fi WHERE fi.facturacion_id = f.id
+            SELECT MIN(COALESCE(fi.fecha_finalizacion, fi.fecha_creacion) AT TIME ZONE 'America/Lima') AS fecha_emision
+            FROM fg_facturacion_intento fi
+            WHERE fi.facturacion_id = f.id
+              AND fi.estado IN ('ACEPTADO', 'PENDIENTE_SUNAT')
         ) emision_factura ON TRUE
         LEFT JOIN LATERAL (
             SELECT a.id, a.estado, a.sunat_description

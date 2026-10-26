@@ -62,7 +62,7 @@ const crearDbSimulada = (opciones = {}) => {
         permisos: {
             OPERADOR: [PERMISOS_SOLICITUD.CREAR, PERMISOS_SOLICITUD.VER],
             JEFE_PLANTA: [PERMISOS_SOLICITUD.VER, PERMISOS_SOLICITUD.APROBAR, PERMISOS_SOLICITUD.RECHAZAR],
-            SISTEMAS: [PERMISOS_SOLICITUD.VER, PERMISOS_SOLICITUD.APROBAR, PERMISOS_SOLICITUD.RECHAZAR, PERMISOS_SOLICITUD.ADMINISTRAR],
+            SISTEMAS: opciones.permisosSistemas || [PERMISOS_SOLICITUD.VER, PERMISOS_SOLICITUD.APROBAR, PERMISOS_SOLICITUD.RECHAZAR, PERMISOS_SOLICITUD.ADMINISTRAR],
             SUPERVISOR: [],
         },
         plantas: {
@@ -89,6 +89,8 @@ const crearDbSimulada = (opciones = {}) => {
             nro_comprobante: 'BBB1-1',
             facturacion_estado: 'ACEPTADO',
             aceptada_sunat: true,
+            fecha_emision_fiscal: '2026-10-22T10:00:00.000Z',
+            anulacion_directa_en_plazo: true,
             fecha_documento: '2026-10-20',
             importe_total: '90.00',
             tipo_documento_cliente: 'DNI',
@@ -239,10 +241,61 @@ test('7b. JEFE_PLANTA no puede decidir incluso si conserva un permiso de sesión
     );
 });
 
-test('8. nadie puede aprobar su propia solicitud', async () => {
+test('8. una solicitud propia sin permiso especial permanece prohibida', async () => {
     const db = crearDbSimulada({ solicitudes: [filaSolicitud({ usuario_solicitante: 'sistemas' })] });
     const servicio = _private.crearServicio(db);
-    assert.equal(await capturarCodigo(servicio.aprobar(1, { version: 1 }, usuario('sistemas', 'SISTEMAS'))), 'SOLICITUD_AUTODECISION_PROHIBIDA');
+    assert.equal(await capturarCodigo(servicio.aprobar(1, { version: 1 }, usuario('sistemas', 'SISTEMAS'))), 'SOLICITUD_AUTOAPROBACION_NO_AUTORIZADA');
+});
+
+test('8b. autoaprobación propia exige el permiso especial', async () => {
+    const db = crearDbSimulada({ solicitudes: [filaSolicitud({ usuario_solicitante: 'sistemas' })] });
+    const servicio = _private.crearServicio(db);
+    assert.equal(await capturarCodigo(servicio.aprobar(1, {
+        version: 1,
+        justificacion: 'Excepción sustentada',
+        confirmarAutoaprobacion: true,
+    }, usuario('sistemas', 'SISTEMAS'))), 'SOLICITUD_AUTOAPROBACION_NO_AUTORIZADA');
+});
+
+test('8c. autoaprobación autorizada exige justificación y confirmación explícita', async () => {
+    const permisosSistemas = [
+        PERMISOS_SOLICITUD.VER,
+        PERMISOS_SOLICITUD.APROBAR,
+        PERMISOS_SOLICITUD.AUTOAPROBAR,
+    ];
+    const propia = filaSolicitud({ usuario_solicitante: 'sistemas' });
+    const sinJustificacion = _private.crearServicio(crearDbSimulada({ solicitudes: [propia], permisosSistemas }));
+    assert.equal(await capturarCodigo(sinJustificacion.aprobar(1, {
+        version: 1,
+        confirmarAutoaprobacion: true,
+    }, usuario('sistemas', 'SISTEMAS'))), 'CAMPO_OBLIGATORIO');
+
+    const sinConfirmacion = _private.crearServicio(crearDbSimulada({ solicitudes: [propia], permisosSistemas }));
+    assert.equal(await capturarCodigo(sinConfirmacion.aprobar(1, {
+        version: 1,
+        justificacion: 'Excepción sustentada',
+    }, usuario('sistemas', 'SISTEMAS'))), 'SOLICITUD_AUTOAPROBACION_CONFIRMACION_REQUERIDA');
+});
+
+test('8d. SISTEMAS con ambos permisos autoaprueba sin iniciar ejecución', async () => {
+    const db = crearDbSimulada({
+        solicitudes: [filaSolicitud({ usuario_solicitante: 'sistemas' })],
+        permisosSistemas: [
+            PERMISOS_SOLICITUD.VER,
+            PERMISOS_SOLICITUD.APROBAR,
+            PERMISOS_SOLICITUD.AUTOAPROBAR,
+        ],
+    });
+    const servicio = _private.crearServicio(db);
+    const aprobada = await servicio.aprobar(1, {
+        version: 1,
+        justificacion: 'Excepción sustentada por contingencia operativa',
+        confirmarAutoaprobacion: true,
+    }, usuario('sistemas', 'SISTEMAS'));
+    assert.equal(aprobada.estado, 'APROBADA');
+    assert.equal(aprobada.resultadoTecnico, null);
+    assert.equal(aprobada.resultadoFiscal, null);
+    assert.equal(db.estado.eventos[0].metadatos.autoaprobacion, true);
 });
 
 test('9. otro usuario autorizado aprueba sin ejecutar la operación', async () => {
@@ -314,16 +367,41 @@ test('19. toda decisión registra estado anterior, posterior y responsable', asy
 const serviceSource = fs.readFileSync(path.join(__dirname, '../services/faregas-solicitudes-operacion.service.js'), 'utf8');
 const migrationSource = fs.readFileSync(path.join(__dirname, '../database/migrations_history/20261022_faregas_fase1_solicitudes_administrativas.sql'), 'utf8');
 const masterSource = fs.readFileSync(path.join(__dirname, '../database/migrations/0001_faregas_schema.sql'), 'utf8');
+const autoaprobarMigrationSource = fs.readFileSync(path.join(__dirname, '../database/migrations_history/20261026_faregas_solicitud_autoaprobar.sql'), 'utf8');
 
 test('20. el módulo no modifica fg_certificado', () => assert.doesNotMatch(serviceSource, /UPDATE\s+fg_certificado|DELETE\s+FROM\s+fg_certificado/i));
 test('21. el módulo no modifica fg_facturacion', () => assert.doesNotMatch(serviceSource, /UPDATE\s+fg_facturacion|INSERT\s+INTO\s+fg_facturacion|DELETE\s+FROM\s+fg_facturacion/i));
 test('22. el módulo no modifica pagos', () => assert.doesNotMatch(serviceSource, /fg_pago|fg_orden_pago/i));
 test('23. el módulo no consume correlativos DG', () => assert.doesNotMatch(serviceSource, /fg_correlativo|numero_certificado\s*=/i));
-test('24. el módulo no importa ni llama a NubeFact', () => assert.doesNotMatch(serviceSource, /nubefact|integrations\/nubefact/i));
+test('24. la integración fiscal usa el servicio existente y permanece detrás de una activación explícita', () => {
+    assert.match(serviceSource, /faregas-nubefact-config\.service/);
+    assert.match(serviceSource, /FAREGAS_ANULACION_AUTOMATICA_ENABLED/);
+    assert.match(serviceSource, /documentosService\s*\|\|\s*defaultDocumentosService/);
+    assert.doesNotMatch(serviceSource, /integrations\/nubefact/i);
+});
 
 test('25. conserva la regresión de seguridad de Fase 0', () => {
     const fase0 = fs.readFileSync(path.join(__dirname, '../database/migrations_history/20261022_faregas_fase0_seguridad_documentos.sql'), 'utf8');
     assert.match(fase0, /FAREGAS_ANULAR_COMPROBANTE/); assert.match(fase0, /FAREGAS_NOTA_CREDITO/);
+});
+
+test('25b. el permiso de autoaprobación se asigna únicamente a SISTEMAS', () => {
+    assert.match(masterSource, /FAREGAS_SOLICITUD_AUTOAPROBAR/);
+    assert.match(autoaprobarMigrationSource, /INSERT INTO public\.fg_permiso/);
+    assert.match(autoaprobarMigrationSource, /DROP CONSTRAINT IF EXISTS ck_fg_solicitud_no_autoaprobacion/);
+    assert.doesNotMatch(masterSource, /CONSTRAINT ck_fg_solicitud_no_autoaprobacion/);
+    assert.match(masterSource, /CONSTRAINT ck_fg_solicitud_no_autoejecucion/);
+    assert.match(autoaprobarMigrationSource, /INSERT INTO public\.fg_perfil_permiso/);
+    assert.match(autoaprobarMigrationSource, /WHERE perfil\.clave = 'SISTEMAS'/);
+    assert.doesNotMatch(autoaprobarMigrationSource, /WHERE perfil\.clave = '(OPERADOR|JEFE_PLANTA)'/);
+    assert.doesNotMatch(autoaprobarMigrationSource, /DELETE\s+FROM|DROP\s+TABLE|TRUNCATE/i);
+});
+
+test('25c. la ventana usa hora de servidor, zona controlada y estados fiscales emitidos', () => {
+    const consulta = _private.consultaContextoCertificado(false);
+    assert.match(consulta, /clock_timestamp\(\)/);
+    assert.match(consulta, /AT TIME ZONE 'America\/Lima'/);
+    assert.match(consulta, /fi\.estado IN \('ACEPTADO', 'PENDIENTE_SUNAT'\)/);
 });
 
 test('26. una solicitud activa o aprobada bloquea otra incompatible', async () => {
@@ -337,6 +415,35 @@ test('27. solicitudes rechazadas y canceladas no bloquean una nueva', async () =
         const creada = await servicio.crear(entradaValida({ idempotenciaClave: estado === 'RECHAZADA' ? UUID_2 : UUID_3 }), usuario('operador', 'OPERADOR'));
         assert.equal(creada.creada, true);
     }
+});
+
+test('28. rechaza una nueva anulación directa cuando vencieron las 24 horas', async () => {
+    const contexto = {
+        ...crearDbSimulada().estado.contexto,
+        fecha_emision_fiscal: '2026-10-20T10:00:00.000Z',
+        anulacion_directa_en_plazo: false,
+    };
+    const servicio = _private.crearServicio(crearDbSimulada({ contexto }));
+    assert.equal(
+        await capturarCodigo(servicio.crear(entradaValida(), usuario('operador', 'OPERADOR'))),
+        'SOLICITUD_ANULACION_PLAZO_VENCIDO'
+    );
+});
+
+test('29. una solicitud activa continúa bloqueando duplicados aunque venza el plazo', async () => {
+    const contexto = {
+        ...crearDbSimulada().estado.contexto,
+        fecha_emision_fiscal: '2026-10-20T10:00:00.000Z',
+        anulacion_directa_en_plazo: false,
+    };
+    const servicio = _private.crearServicio(crearDbSimulada({
+        contexto,
+        solicitudes: [filaSolicitud({ estado: 'PENDIENTE_APROBACION' })],
+    }));
+    assert.equal(
+        await capturarCodigo(servicio.crear(entradaValida({ idempotenciaClave: UUID_2 }), usuario('operador', 'OPERADOR'))),
+        'SOLICITUD_INCOMPATIBLE_ACTIVA'
+    );
 });
 
 test('28. una rectificación exige datos propuestos y rechaza campos protegidos', () => {

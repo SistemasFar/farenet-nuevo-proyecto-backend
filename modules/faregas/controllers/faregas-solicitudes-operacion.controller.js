@@ -20,10 +20,14 @@ const MENSAJES = {
     SOLICITUD_CERTIFICADO_NO_EMITIDO: 'Solo se pueden crear solicitudes sobre certificados emitidos.',
     SOLICITUD_COMPROBANTE_REQUERIDO: 'Este tipo de solicitud requiere un comprobante relacionado.',
     SOLICITUD_INCOMPATIBLE_ACTIVA: 'Ya existe una solicitud activa o aprobada pendiente de ejecución para este documento.',
+    SOLICITUD_FECHA_EMISION_FISCAL_NO_DISPONIBLE: 'No se pudo verificar la fecha y hora fiscal del comprobante. No se creó la solicitud.',
+    SOLICITUD_ANULACION_PLAZO_VENCIDO: 'La ventana operativa de 24 horas para solicitar la anulación directa ya venció. Evalúe la regularización tributaria correspondiente.',
     SOLICITUD_NO_ENCONTRADA: 'La solicitud no existe.',
     SOLICITUD_PERMISO_DENEGADO: 'No tiene autorización para realizar esta acción.',
     SOLICITUD_SEDE_NO_AUTORIZADA: 'No tiene acceso a la sede de esta solicitud.',
     SOLICITUD_AUTODECISION_PROHIBIDA: 'El solicitante no puede aprobar ni rechazar su propia solicitud.',
+    SOLICITUD_AUTOAPROBACION_NO_AUTORIZADA: 'La autoaprobación requiere los permisos explícitos de aprobación y autoaprobación.',
+    SOLICITUD_AUTOAPROBACION_CONFIRMACION_REQUERIDA: 'Confirme expresamente la autoaprobación antes de continuar.',
     SOLICITUD_DECISION_EXCLUSIVA_SISTEMAS: 'Sólo un usuario SISTEMAS puede aprobar o rechazar solicitudes de anulación total.',
     SOLICITUD_TIPO_HISTORICO_SOLO_LECTURA: 'Las solicitudes de tipos anteriores se conservan únicamente como historial y ya no admiten acciones.',
     SOLICITUD_NO_DECIDIBLE: 'La solicitud ya fue decidida o cancelada.',
@@ -119,9 +123,24 @@ exports.obtener = async (req, res) => {
 
 exports.aprobar = async (req, res) => {
     try {
-        const data = await solicitudesService.aprobar(req.params.id, req.body || {}, req.user);
-        await auditar(req, 'SOLICITUD_APROBADA', data, 'Se aprobó administrativamente una solicitud; permanece pendiente de ejecución.');
-        return res.json({ ok: true, data });
+        const resultado = await solicitudesService.aprobarYCoordinarEjecucion(
+            req.params.id,
+            req.body || {},
+            req.user
+        );
+        await auditar(
+            req,
+            'SOLICITUD_APROBADA',
+            resultado.solicitud,
+            resultado.ejecucionAutomatica?.iniciada
+                ? 'Se aprobó la solicitud y se inició su ejecución automática controlada.'
+                : `Se aprobó la solicitud; ejecución pendiente: ${resultado.ejecucionAutomatica?.codigo || 'NO_INICIADA'}.`
+        );
+        return res.json({
+            ok: true,
+            data: resultado.solicitud,
+            ejecucionAutomatica: resultado.ejecucionAutomatica
+        });
     } catch (error) { return responderError(res, error); }
 };
 

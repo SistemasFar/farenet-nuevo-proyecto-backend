@@ -5487,7 +5487,6 @@ CREATE TABLE public.fg_solicitud_operacion (
     ),
     CONSTRAINT ck_fg_solicitud_motivo CHECK (btrim(motivo) <> ''),
     CONSTRAINT ck_fg_solicitud_version CHECK (version > 0),
-    CONSTRAINT ck_fg_solicitud_no_autoaprobacion CHECK (estado <> 'APROBADA' OR usuario_decision IS DISTINCT FROM usuario_solicitante),
     CONSTRAINT ck_fg_solicitud_no_autoejecucion CHECK (usuario_ejecucion IS NULL OR usuario_ejecucion IS DISTINCT FROM usuario_solicitante),
     CONSTRAINT uq_fg_solicitud_idempotencia UNIQUE (usuario_solicitante, idempotencia_clave)
 );
@@ -5534,7 +5533,8 @@ INSERT INTO public.fg_permiso (clave, nombre, modulo, descripcion, activo)
 VALUES
     ('FAREGAS_SOLICITUD_CREAR', 'Solicitar anulación total', 'FAREGAS', 'Permite a un perfil autorizado por RBAC solicitar la anulación total sin aprobarla ni ejecutarla.', TRUE),
     ('FAREGAS_SOLICITUD_VER', 'Consultar solicitudes de anulación', 'FAREGAS', 'Permite consultar solicitudes dentro del alcance autorizado.', TRUE),
-    ('FAREGAS_SOLICITUD_APROBAR', 'Aprobar anulaciones', 'FAREGAS', 'Permite a SISTEMAS aprobar solicitudes de otro usuario dentro del alcance autorizado.', TRUE),
+    ('FAREGAS_SOLICITUD_APROBAR', 'Aprobar anulaciones', 'FAREGAS', 'Permite a SISTEMAS aprobar solicitudes dentro del alcance autorizado.', TRUE),
+    ('FAREGAS_SOLICITUD_AUTOAPROBAR', 'Autoaprobar anulación excepcional', 'FAREGAS', 'Permite a SISTEMAS aprobar excepcionalmente una solicitud propia con justificación y confirmación explícitas. No habilita la ejecución fiscal.', TRUE),
     ('FAREGAS_SOLICITUD_RECHAZAR', 'Rechazar anulaciones', 'FAREGAS', 'Permite a SISTEMAS rechazar solicitudes de otro usuario dentro del alcance autorizado.', TRUE),
     ('FAREGAS_SOLICITUD_ADMINISTRAR', 'Administrar solicitudes de anulación', 'FAREGAS', 'Permite administrar solicitudes sin omitir la separación de funciones.', TRUE),
     ('FAREGAS_CERTIFICADO_ANULAR_EJECUTAR', 'Ejecutar anulación autorizada', 'FAREGAS', 'Permite a SISTEMAS iniciar la ejecución de una anulación total aprobada y ajena.', TRUE),
@@ -5551,6 +5551,7 @@ JOIN (VALUES
     ('SISTEMAS'::varchar, 'FAREGAS_SOLICITUD_CREAR'::varchar),
     ('SISTEMAS'::varchar, 'FAREGAS_SOLICITUD_VER'::varchar),
     ('SISTEMAS'::varchar, 'FAREGAS_SOLICITUD_APROBAR'::varchar),
+    ('SISTEMAS'::varchar, 'FAREGAS_SOLICITUD_AUTOAPROBAR'::varchar),
     ('SISTEMAS'::varchar, 'FAREGAS_SOLICITUD_RECHAZAR'::varchar),
     ('SISTEMAS'::varchar, 'FAREGAS_SOLICITUD_ADMINISTRAR'::varchar),
     ('SISTEMAS'::varchar, 'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR'::varchar)

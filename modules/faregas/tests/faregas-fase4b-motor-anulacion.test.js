@@ -15,7 +15,7 @@ const crearMockDb = ({
     perfilUsuario = 'SISTEMAS',
     usernameUsuario = 'sistemas_user',
     plantasUsuario = ['PLANTA_SURCO'],
-    permisos = ['FAREGAS_CERTIFICADO_ANULAR_EJECUTAR', 'FAREGAS_SOLICITUD_VER', 'FAREGAS_SOLICITUD_ADMINISTRAR'],
+    permisos = ['FAREGAS_CERTIFICADO_ANULAR_EJECUTAR', 'FAREGAS_SOLICITUD_VER', 'FAREGAS_SOLICITUD_ADMINISTRAR', 'FAREGAS_SOLICITUD_APROBAR'],
     notasExistentes = [],
     bajasExistentes = []
 } = {}) => {
@@ -142,16 +142,41 @@ const crearMockDb = ({
 
         // Notas existentes
         if (normal.includes('FROM fg_credito') && normal.includes('WHERE facturacion_id = $1')) {
+            if (normal.includes("estado = 'ACEPTADO'")) {
+                return res(notasExistentes.filter((row) => row.estado === 'ACEPTADO'));
+            }
+            if (normal.includes("estado NOT IN ('ACEPTADO', 'RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO')")) {
+                return res(notasExistentes.filter((row) => !['ACEPTADO', 'RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO'].includes(row.estado)));
+            }
+            if (normal.includes("estado IN ('RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO')")) {
+                return res(notasExistentes.filter((row) => ['RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO'].includes(row.estado)));
+            }
             return res(notasExistentes);
         }
 
         // Bajas existentes
         if (normal.includes('FROM fg_documento_anulacion') && normal.includes('WHERE facturacion_id = $1')) {
+            if (normal.includes("estado = 'ACEPTADO'")) {
+                return res(bajasExistentes.filter((row) => row.estado === 'ACEPTADO'));
+            }
+            if (normal.includes("estado NOT IN ('ACEPTADO', 'RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO')")) {
+                return res(bajasExistentes.filter((row) => !['ACEPTADO', 'RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO'].includes(row.estado)));
+            }
+            if (normal.includes("estado IN ('RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO')")) {
+                return res(bajasExistentes.filter((row) => ['RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO'].includes(row.estado)));
+            }
             return res(bajasExistentes);
         }
 
         // Actualizar solicitud
         if (normal.startsWith('UPDATE fg_solicitud_operacion')) {
+            if (normal.includes("WHERE id = $4 AND estado = 'PENDIENTE_APROBACION'")) {
+                solicitud.estado = params[0];
+                solicitud.usuario_decision = params[1];
+                solicitud.justificacion_decision = params[2];
+                solicitud.version = Number(solicitud.version) + 1;
+                return res([solicitud]);
+            }
             if (normal.includes("SET estado = 'EN_EJECUCION'")) {
                 solicitud.estado = 'EN_EJECUCION';
                 solicitud.usuario_ejecucion = params[0];
@@ -512,4 +537,136 @@ test('12. FASE 4B: Bloquea ejecución si el usuario no tiene acceso a la sede de
             return true;
         }
     );
+});
+
+test('13. Aprobación inicia una sola ejecución automática en NubeFact DEMO configurado', async () => {
+    let llamadasFiscales = 0;
+    const db = crearMockDb({
+        solicitudOverrides: { estado: 'PENDIENTE_APROBACION', version: 1 },
+        facturacionOverrides: { estado: 'ACEPTADO', enPlazo: true }
+    });
+    const servicio = _private.crearServicio(db, {
+        ejecucionAutomatica: { enabled: true, productionAuthorized: false },
+        nubefactConfigService: {
+            obtenerEstadoParaPlanta: async () => ({
+                provider: 'NUBEFACT',
+                enabled: true,
+                configured: true,
+                environment: 'DEMO'
+            })
+        },
+        documentosService: {
+            generarAnulacion: async () => {
+                llamadasFiscales += 1;
+                return { id: 901, estado: 'PENDIENTE', ticketSunat: 'TICKET-DEMO-1' };
+            }
+        }
+    });
+
+    const resultado = await servicio.aprobarYCoordinarEjecucion(
+        50,
+        { version: 1, justificacion: 'Aprobada para ejecución controlada' },
+        { username: 'sistemas_user' }
+    );
+
+    assert.equal(llamadasFiscales, 1);
+    assert.equal(resultado.ejecucionAutomatica.iniciada, true);
+    assert.equal(resultado.ejecucionAutomatica.completada, false);
+    assert.equal(resultado.ejecucionAutomatica.resultadoFiscal.estado, 'PENDIENTE');
+    assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
+    assert.equal(db.getCertificado().numero_certificado, 'DG-41-000500');
+    assert.equal(db.getCertificado().estado, 'EMITIDO');
+});
+
+test('14. Autoaprobación conserva APROBADA y exige un ejecutor SISTEMAS distinto', async () => {
+    let consultasProveedor = 0;
+    const db = crearMockDb({
+        solicitudOverrides: {
+            estado: 'PENDIENTE_APROBACION',
+            version: 1,
+            usuario_solicitante: 'sistemas_user'
+        },
+        permisos: [
+            'FAREGAS_SOLICITUD_APROBAR',
+            'FAREGAS_SOLICITUD_AUTOAPROBAR',
+            'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR'
+        ]
+    });
+    const servicio = _private.crearServicio(db, {
+        ejecucionAutomatica: { enabled: true },
+        nubefactConfigService: {
+            obtenerEstadoParaPlanta: async () => {
+                consultasProveedor += 1;
+                return { provider: 'NUBEFACT', enabled: true, configured: true, environment: 'DEMO' };
+            }
+        }
+    });
+
+    const resultado = await servicio.aprobarYCoordinarEjecucion(
+        50,
+        {
+            version: 1,
+            confirmarAutoaprobacion: true,
+            justificacion: 'Urgencia documentada; ejecución separada obligatoria'
+        },
+        { username: 'sistemas_user' }
+    );
+
+    assert.equal(consultasProveedor, 0);
+    assert.equal(resultado.solicitud.estado, 'APROBADA');
+    assert.equal(resultado.ejecucionAutomatica.iniciada, false);
+    assert.equal(resultado.ejecucionAutomatica.codigo, 'EJECUTOR_DISTINTO_REQUERIDO');
+});
+
+test('15. Reintento con baja previa no terminal no crea una segunda operación fiscal', async () => {
+    let llamadasFiscales = 0;
+    const db = crearMockDb({
+        solicitudOverrides: { estado: 'REQUIERE_INTERVENCION' },
+        facturacionOverrides: { estado: 'ACEPTADO', enPlazo: true },
+        bajasExistentes: [{ id: 902, facturacion_id: 200, estado: 'PENDIENTE_SUNAT', ticket_sunat: 'TICKET-EXISTENTE' }]
+    });
+    const servicio = _private.crearServicio(db, {
+        documentosService: {
+            generarAnulacion: async () => { llamadasFiscales += 1; },
+            emitirNota: async () => { llamadasFiscales += 1; }
+        }
+    });
+
+    const resultado = await servicio.ejecutarAnulacionTotal(50, {}, { username: 'sistemas_user' });
+
+    assert.equal(llamadasFiscales, 0);
+    assert.equal(resultado.resultadoFiscal.estado, 'EN_TRAMITE');
+    assert.equal(resultado.resultadoFiscal.anulacionId, 902);
+    assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
+});
+
+test('16. Producción exige autorización expresa y reconciliación de bajas y notas', () => {
+    const base = {
+        solicitud: { usuarioSolicitante: 'operador', usuarioDecision: 'sistemas' },
+        estadoProveedor: {
+            provider: 'NUBEFACT',
+            enabled: true,
+            configured: true,
+            environment: 'PRODUCCION',
+            productionConfirmed: true,
+            enviarSunat: true,
+            correlativosV2Enabled: true,
+            cronReconciliationEnabled: true,
+            notasCronReconciliationEnabled: true
+        }
+    };
+
+    const bloqueada = _private.evaluarActivacionEjecucionAutomatica({
+        ...base,
+        configuracion: { enabled: true, productionAuthorized: false }
+    });
+    assert.equal(bloqueada.habilitada, false);
+    assert.equal(bloqueada.codigo, 'NUBEFACT_PRODUCCION_NO_AUTORIZADA');
+
+    const habilitada = _private.evaluarActivacionEjecucionAutomatica({
+        ...base,
+        configuracion: { enabled: true, productionAuthorized: true }
+    });
+    assert.equal(habilitada.habilitada, true);
+    assert.equal(habilitada.entorno, 'PRODUCCION');
 });
