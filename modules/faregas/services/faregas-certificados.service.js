@@ -3102,8 +3102,12 @@ const generateGlpAnualHtml = require('../templates/glp-anual.template');
 const generateGlpInicialHtml = require('../templates/glp-inicial.template');
 const generateConformidadHtml = require('../templates/conformidad.template');
 
-exports.obtenerPrevisualizacion = async (id, userContext) => {
-    const borrador = await exports.obtenerBorradorCompleto(id, userContext);
+const renderizarPrevisualizacionDesdeBorrador = async ({
+    borrador,
+    id,
+    userContext,
+    datosEspecificos = null
+}) => {
     const tipoClave = borrador.tipo ? borrador.tipo.clave : null;
     const vehiculoPlantilla = paraPlantilla(borrador.vehiculo || {});
     // La previsualización nunca consume un correlativo. Para borradores sin
@@ -3130,19 +3134,28 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
     const usaVersionOficialDinamica = borrador.formatoFormulario?.motor === 'HTML_DINAMICO'
         && (borrador.estado !== 'EMITIDO' || Boolean(borrador.formatoVersionAsignadaId));
     if ((borrador.servicio?.tipoFlujo === 'TALLER_INSPECCION' || usaVersionOficialDinamica) && borrador.formatoVersionId) {
-        const datosEspecificos = tipoClave === 'CONFORMIDAD'
-            ? await exports.obtenerConformidad(id, userContext)
-            : {};
-        const dataFormato = buildFormatoData(borrador, datosEspecificos);
+        const datosConformidad = datosEspecificos?.conformidad !== undefined
+            ? datosEspecificos
+            : (tipoClave === 'CONFORMIDAD'
+                ? await exports.obtenerConformidad(id, userContext)
+                : {});
+        const dataFormato = buildFormatoData(borrador, datosConformidad);
         const { data: html } = await formatosService.renderVersion(borrador.formatoVersionId, dataFormato, true);
         return { html, tipo: tipoClave };
     }
 
     if (tipoClave === 'GNV_ANUAL') {
-        const dataGnv = await exports.obtenerGNV(id, userContext);
+        const dataGnv = datosEspecificos?.gnv !== undefined
+            ? datosEspecificos
+            : await exports.obtenerGNV(id, userContext);
         const gnv = {
             ...(dataGnv.gnv || {}),
-            numero_chip: borrador.chipSeleccion?.chip?.numeroChip || dataGnv.gnv?.numero_chip || null
+            // El número propuesto en la rectificación tiene prioridad sobre la
+            // asociación histórica de chip, que no se modifica en este flujo.
+            numero_chip: dataGnv.gnv?.numero_chip
+                || borrador.especifico?.numero_chip
+                || borrador.chipSeleccion?.chip?.numeroChip
+                || null
         };
         if (gnv.modalidad === 'INICIAL') {
             const html = generateGnvInicialHtml({
@@ -3169,7 +3182,9 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
         }, { modo: modoPlantilla });
         return { html, tipo: 'GNV_ANUAL' };
     } else if (tipoClave === 'GLP_ANUAL') {
-        const dataGlp = await exports.obtenerGLP(id, userContext);
+        const dataGlp = datosEspecificos?.glp !== undefined
+            ? datosEspecificos
+            : await exports.obtenerGLP(id, userContext);
         const glp = dataGlp.glp || {};
         const templateData = {
             cabecera: {
@@ -3191,7 +3206,9 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
         }
         return { html, tipo: 'GLP_ANUAL' };
     } else if (tipoClave === 'CONFORMIDAD') {
-        const dataConf = await exports.obtenerConformidad(id, userContext);
+        const dataConf = datosEspecificos?.conformidad !== undefined
+            ? datosEspecificos
+            : await exports.obtenerConformidad(id, userContext);
         const html = generateConformidadHtml({
             cabecera: {
                 ...cabeceraComun,
@@ -3210,6 +3227,96 @@ exports.obtenerPrevisualizacion = async (id, userContext) => {
         const { data: html } = await formatosService.renderVersion(borrador.formatoVersionId, dataFormato, true);
         return { html, tipo: tipoClave };
     }
+};
+
+exports.obtenerPrevisualizacion = async (id, userContext) => {
+    const borrador = await exports.obtenerBorradorCompleto(id, userContext);
+    return renderizarPrevisualizacionDesdeBorrador({ borrador, id, userContext });
+};
+
+/**
+ * Genera la previsualización de una rectificación sin persistir nada.
+ * El documento conserva el número DG y la fecha de emisión originales porque
+ * el borrador de base ya está emitido; los cambios sólo viven en memoria.
+ */
+exports.previsualizarRectificacion = async (id, datosPropuestos, userContext) => {
+    const {
+        aplicarPropuestaABorrador,
+        calcularDiferenciasRectificacion,
+        advertenciasGestionExterna,
+        tipoEspecifico
+    } = require('./faregas-rectificacion-datos');
+    const borradorBase = await exports.obtenerBorradorCompleto(id, userContext);
+    const tipo = tipoEspecifico(borradorBase.tipo?.clave);
+    let datosEspecificos = null;
+    let especifico = null;
+
+    if (tipo === 'GNV') {
+        const actual = await exports.obtenerGNV(id, userContext);
+        especifico = actual.gnv || null;
+        datosEspecificos = {
+            gnv: actual.gnv,
+            componentes: actual.componentes || [],
+            verificaciones: actual.verificaciones || []
+        };
+    } else if (tipo === 'GLP') {
+        const actual = await exports.obtenerGLP(id, userContext);
+        especifico = actual.glp || null;
+        datosEspecificos = {
+            glp: actual.glp,
+            componentes: actual.componentes || [],
+            verificaciones: actual.verificaciones || []
+        };
+    } else if (tipo === 'CONFORMIDAD') {
+        const actual = await exports.obtenerConformidad(id, userContext);
+        especifico = actual.conformidad || null;
+        datosEspecificos = { conformidad: actual.conformidad };
+    }
+
+    // Conservar las colecciones originales antes de mutar la copia que se usa
+    // para renderizar; así el diff compara contra el certificado vigente y no
+    // contra los valores propuestos.
+    const componentesOriginales = datosEspecificos?.componentes || [];
+    const verificacionesOriginales = datosEspecificos?.verificaciones || [];
+
+    const borradorParaFusion = {
+        ...borradorBase,
+        empresaKey: borradorBase.empresaKey,
+        especifico,
+        componentes: datosEspecificos?.componentes,
+        verificaciones: datosEspecificos?.verificaciones
+    };
+    const { borrador } = aplicarPropuestaABorrador(borradorParaFusion, datosPropuestos);
+    if (datosEspecificos?.gnv) datosEspecificos.gnv = borrador.especifico;
+    if (datosEspecificos?.glp) datosEspecificos.glp = borrador.especifico;
+    if (datosEspecificos?.conformidad) datosEspecificos.conformidad = borrador.especifico;
+    if (datosEspecificos) {
+        datosEspecificos.componentes = borrador.componentes || datosEspecificos.componentes;
+        datosEspecificos.verificaciones = borrador.verificaciones || datosEspecificos.verificaciones;
+    }
+
+    const resultado = await renderizarPrevisualizacionDesdeBorrador({
+        borrador,
+        id,
+        userContext,
+        datosEspecificos
+    });
+    const snapshotBase = {
+        vehiculo: borradorBase.vehiculo || {},
+        titulares: borradorBase.titulares || [],
+        observaciones: borradorBase.observaciones,
+        especifico,
+        formatoDatosSnapshot: borradorBase.formatoDatosSnapshot || {},
+        componentes: componentesOriginales,
+        verificaciones: verificacionesOriginales
+    };
+    return {
+        ...resultado,
+        diferencias: calcularDiferenciasRectificacion(snapshotBase, datosPropuestos),
+        advertencias: advertenciasGestionExterna(
+            calcularDiferenciasRectificacion(snapshotBase, datosPropuestos)
+        )
+    };
 };
 
 const buildFormatoData = (borrador, extras = {}) => {

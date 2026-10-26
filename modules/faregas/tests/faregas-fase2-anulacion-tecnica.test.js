@@ -515,7 +515,11 @@ test('26. Ningún UPDATE sobre fg_pago y fg_orden_pago', async () => {
 test('27. Ninguna llamada NubeFact ni modificación de rangos DG', async () => {
     const backendRoot = path.resolve(__dirname, '..');
     const codigoSvc = fs.readFileSync(path.join(backendRoot, 'services', 'faregas-solicitudes-operacion.service.js'), 'utf8');
-    assert.doesNotMatch(codigoSvc, /nubefact/i, 'El servicio de solicitudes no debe importar NubeFact');
+    assert.doesNotMatch(
+        codigoSvc,
+        /require\(['"][^'"]*(?:integrations[\\/]nubefact|nubefact\.service)[^'"]*['"]\)|api\.nubefact\.com/i,
+        'El servicio de solicitudes no debe importar el cliente NubeFact ni llamar su API'
+    );
 
     const dbMock = crearDbSimuladaFase2();
     const svc = _private.crearServicio(dbMock, CONFIG_HABILITADA_PRUEBAS);

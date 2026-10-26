@@ -5,6 +5,11 @@ const defaultDocumentosService = require('./faregas-documentos-electronicos.serv
 const defaultNubefactConfigService = require('./faregas-nubefact-config.service');
 const { esDocumentoBaseOperable } = require('./faregas-comprobante-operabilidad.service');
 const {
+    resolverOperacionFiscal,
+    RESULTADOS: RESULTADOS_RESOLUCION_FISCAL,
+    OPERACIONES: OPERACIONES_RESOLUCION_FISCAL
+} = require('./faregas-anulacion-fiscal.resolver');
+const {
     TIPOS_SOLICITUD,
     ESTADOS_SOLICITUD,
     ESTADOS_QUE_BLOQUEAN,
@@ -460,6 +465,7 @@ const mapearSolicitud = (row) => ({
     usuarioEjecucion: row.usuario_ejecucion || null,
     fechaEjecucion: row.fecha_ejecucion || null,
     idempotenciaEjecucion: row.idempotencia_ejecucion || null,
+    autorizacionAutoejecucion: row.autorizacion_autoejecucion === true,
     version: Number(row.version),
     fechaCreacion: row.fecha_creacion,
     fechaModificacion: row.fecha_modificacion,
@@ -533,7 +539,7 @@ const crearServicio = (database = db, config = {}) => {
         } catch (_) {}
         const disponibilidadComprobante = estadoSolicitudComprobante(row);
         const camposTecnicos = camposRectificablesCertificado(row.tipo_certificado_clave);
-        const tiposDisponibles = ['ANULAR_AMBOS'];
+        const tiposDisponibles = ['ANULAR_AMBOS', 'RECTIFICAR_CERTIFICADO'];
 
         return {
             certificado: snapshotCertificado(row),
@@ -722,6 +728,163 @@ const crearServicio = (database = db, config = {}) => {
         return { row, alcance, solicitud: mapearSolicitud(row) };
     };
 
+    const obtenerDetalle = async (id, userContext) => {
+        const { row, alcance, solicitud } = await obtener(id, userContext);
+        const permisos = alcance.permisos;
+        const esPropia = row.usuario_solicitante === alcance.usuario.username;
+        const esRectificacion = row.tipo_operacion === 'RECTIFICAR_CERTIFICADO';
+        const permisosAutoejecucion = [
+            PERMISOS_SOLICITUD.APROBAR,
+            PERMISOS_SOLICITUD.AUTOAPROBAR,
+            PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO,
+            PERMISOS_SOLICITUD.AUTOEJECUTAR
+        ];
+        const permisosFaltantes = esPropia && !esRectificacion
+            ? permisosAutoejecucion.filter((permiso) => !permisos.has(permiso))
+            : [];
+        const permisoEjecucion = esRectificacion
+            ? PERMISOS_SOLICITUD.EJECUTAR_RECTIFICACION_CERTIFICADO
+            : PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO;
+        const tienePermisoEjecucion = permisos.has(permisoEjecucion)
+            || permisos.has(PERMISOS_SOLICITUD.ADMINISTRAR);
+        const esSistemas = alcance.usuario.perfil_id === 'SISTEMAS';
+        // La rectificación se ejecuta exclusivamente con la solicitud aprobada.
+        // La anulación fiscal conserva sus estados de recuperación.
+        const estadoEjecutable = esRectificacion
+            ? row.estado === 'APROBADA'
+            : ['APROBADA', 'REQUIERE_INTERVENCION', 'ERROR'].includes(row.estado);
+        let puedeEjecutar = estadoEjecutable && tienePermisoEjecucion
+            && (esRectificacion || (esSistemas && (!esPropia || permisosFaltantes.length === 0)));
+
+        let motivoBloqueo = null;
+        if (!tienePermisoEjecucion) motivoBloqueo = `Falta el permiso ${permisoEjecucion}.`;
+        else if (!esRectificacion && !esSistemas) motivoBloqueo = 'Sólo un usuario SISTEMAS puede ejecutar la anulación total.';
+        else if (!esRectificacion && esPropia && permisosFaltantes.length > 0) motivoBloqueo = `La autoejecución exige los permisos: ${permisosFaltantes.join(', ')}.`;
+        else if (row.estado === 'PENDIENTE_APROBACION') motivoBloqueo = 'La solicitud aún no está aprobada.';
+        else if (['RECHAZADA', 'CANCELADA'].includes(row.estado)) motivoBloqueo = `La solicitud está ${row.estado}.`;
+        else if (row.estado === 'EN_EJECUCION') motivoBloqueo = 'La solicitud está en ejecución.';
+        else if (row.estado === 'COMPLETADA') motivoBloqueo = 'La solicitud ya fue completada.';
+        else if (esRectificacion && row.estado !== 'APROBADA') motivoBloqueo = 'La rectificación sólo puede ejecutarse cuando la solicitud está aprobada.';
+        else if (!esRectificacion && row.tipo_operacion !== 'ANULAR_AMBOS') motivoBloqueo = 'El tipo de operación no admite ejecución fiscal.';
+
+        let estadoFiscalActual = null;
+        let resolucionFiscal = null;
+        if (row.facturacion_id) {
+            const fiscal = await database.query(`
+                SELECT f.id, f.serie, f.numero, f.nro_comprobante, f.tipo_comprobante, f.estado,
+                       f.aceptada_sunat, f.sunat_description, f.sunat_responsecode,
+                       f.fecha_documento, f.fecha_creacion, f.fecha_aceptacion,
+                       f.enlace_pdf, f.enlace_cdr, f.entorno_facturador, f.proveedor,
+                       f.importe_total, f.respuesta_proveedor
+                FROM fg_facturacion f WHERE f.id = $1
+            `, [row.facturacion_id]);
+            if (fiscal.rowCount > 0) {
+                const f = fiscal.rows[0];
+                const [anulaciones, notas] = await Promise.all([
+                    database.query(`
+                        SELECT id, estado, aceptada_sunat, ticket_sunat, fecha_creacion
+                        FROM fg_documento_anulacion
+                        WHERE facturacion_id = $1 ORDER BY id DESC LIMIT 5
+                    `, [f.id]),
+                    database.query(`
+                        SELECT id, estado, nro_comprobante, motivo_codigo, importe_total, fecha_creacion
+                        FROM fg_credito
+                        WHERE facturacion_id = $1 ORDER BY id DESC LIMIT 5
+                    `, [f.id])
+                ]);
+                const anulacionesPrevias = anulaciones.rows.map((item) => ({
+                    id: Number(item.id),
+                    tipo: 'BAJA',
+                    estado: item.estado,
+                    aceptadaSunat: item.aceptada_sunat,
+                    ticketSunat: item.ticket_sunat,
+                    fechaCreacion: item.fecha_creacion
+                }));
+                const notasCredito = notas.rows.map((item) => ({
+                    id: Number(item.id),
+                    tipo: 'NOTA_CREDITO',
+                    estado: item.estado,
+                    nroComprobante: item.nro_comprobante,
+                    motivoCodigo: item.motivo_codigo,
+                    importeTotal: item.importe_total === null ? null : Number(item.importe_total),
+                    fechaCreacion: item.fecha_creacion
+                }));
+                const totalNotasPrevias = notasCredito
+                    .filter((item) => item.estado === 'ACEPTADO')
+                    .reduce((total, item) => total + Number(item.importeTotal || 0), 0);
+
+                resolucionFiscal = resolverOperacionFiscal({
+                    documento: {
+                        ...f,
+                        tipoComprobante: f.tipo_comprobante,
+                        estado: f.estado,
+                        aceptadaSunat: f.aceptada_sunat,
+                        fechaEmision: f.fecha_documento || f.fecha_creacion,
+                        fechaAceptacion: f.fecha_aceptacion,
+                        enlaceCdr: f.enlace_cdr,
+                        importeTotal: Number(f.importe_total),
+                        entorno: f.entorno_facturador,
+                        proveedor: f.proveedor
+                    },
+                    estadoProveedor: f.estado,
+                    operacionesPrevias: [...anulacionesPrevias, ...notasCredito],
+                    totalNotasPrevias
+                });
+
+                estadoFiscalActual = {
+                    facturacionId: Number(f.id),
+                    comprobante: f.nro_comprobante,
+                    tipoComprobante: f.tipo_comprobante,
+                    estado: f.estado,
+                    aceptadaSunat: f.aceptada_sunat,
+                    sunatDescripcion: f.sunat_description,
+                    fechaEmision: f.fecha_documento || f.fecha_creacion,
+                    fechaAceptacion: f.fecha_aceptacion,
+                    enlacePdf: f.enlace_pdf,
+                    enlaceCdr: f.enlace_cdr,
+                    entorno: f.entorno_facturador,
+                    pendienteSunat: f.estado === 'PENDIENTE_SUNAT',
+                    anulaciones: anulacionesPrevias,
+                    notasCredito
+                };
+
+                const bloqueoFiscal = [
+                    RESULTADOS_RESOLUCION_FISCAL.NO_ELEGIBLE,
+                    RESULTADOS_RESOLUCION_FISCAL.YA_ANULADO
+                ].includes(resolucionFiscal.resultado);
+                // La rectificación técnica no modifica el comprobante. Un
+                // estado fiscal desfavorable no debe impedir corregir el
+                // certificado ni debe sugerir una operación tributaria.
+                if (bloqueoFiscal && !esRectificacion) {
+                    puedeEjecutar = false;
+                    if (!motivoBloqueo) motivoBloqueo = resolucionFiscal.motivo;
+                }
+            }
+        }
+
+        return {
+            ...solicitud,
+            autorizacionAutoejecucion: row.autorizacion_autoejecucion === true,
+            detalle: {
+                estadoAdministrativo: row.estado,
+                estadoFiscalActual,
+                resolucionFiscal,
+                estadoTecnico: row.resultado_tecnico || null,
+                ejecucion: {
+                    puedeEjecutar,
+                    esAutoejecucion: esPropia,
+                    permisosFaltantes,
+                    autoejecucionAutorizada: row.autorizacion_autoejecucion === true,
+                    motivoBloqueo,
+                    requiereSincronizacionFiscal: !esRectificacion && (
+                        estadoFiscalActual?.pendienteSunat === true
+                        || resolucionFiscal?.resultado === RESULTADOS_RESOLUCION_FISCAL.PENDIENTE_VERIFICACION
+                    )
+                }
+            }
+        };
+    };
+
     const crearAnulacionTotal = async (entrada, userContext) => {
         const tipo = String(entrada?.tipoOperacion || '').trim().toUpperCase();
         if (tipo !== 'ANULAR_AMBOS') throw errorNegocio('TIPO_SOLICITUD_NO_DISPONIBLE', 400);
@@ -738,7 +901,7 @@ const crearServicio = (database = db, config = {}) => {
         if (!transicion || accion === 'CANCELAR') throw errorNegocio('TRANSICION_SOLICITUD_INVALIDA');
         const permiso = accion === 'APROBAR' ? PERMISOS_SOLICITUD.APROBAR : PERMISOS_SOLICITUD.RECHAZAR;
         const { row, alcance } = await obtener(id, userContext, client, true, permiso);
-        if (row.tipo_operacion !== 'ANULAR_AMBOS') {
+        if (!['ANULAR_AMBOS', 'RECTIFICAR_CERTIFICADO'].includes(row.tipo_operacion)) {
             throw errorNegocio('SOLICITUD_TIPO_HISTORICO_SOLO_LECTURA', 409);
         }
         if (alcance.usuario.perfil_id !== 'SISTEMAS') {
@@ -793,7 +956,7 @@ const crearServicio = (database = db, config = {}) => {
 
     const cancelar = async (id, entrada, userContext) => conTransaccion(async (client) => {
         const { row, alcance } = await obtener(id, userContext, client, true);
-        if (row.tipo_operacion !== 'ANULAR_AMBOS') {
+        if (!['ANULAR_AMBOS', 'RECTIFICAR_CERTIFICADO'].includes(row.tipo_operacion)) {
             throw errorNegocio('SOLICITUD_TIPO_HISTORICO_SOLO_LECTURA', 409);
         }
         if (row.estado !== 'PENDIENTE_APROBACION') throw errorNegocio('SOLICITUD_NO_CANCELABLE', 409, { estado: row.estado });
@@ -1318,6 +1481,129 @@ const crearServicio = (database = db, config = {}) => {
         };
     });
 
+    /**
+     * Consulta la evidencia de plazo disponible en los intentos de emisión y
+     * delega la decisión tributaria al resolvedor central. La consulta usa el
+     * reloj de PostgreSQL y no renueva el plazo con reintentos.
+     */
+    const resolverFiscalFacturacion = async (documento, opciones = {}) => {
+        let plazoBaja = null;
+        if (documento?.id) {
+            try {
+                const plazo = await database.query(`
+                    SELECT MIN(fecha_creacion) AS fecha_emision,
+                           MAX(CASE WHEN estado = 'ACEPTADO'
+                               THEN COALESCE(fecha_finalizacion, fecha_creacion) END) AS fecha_aceptacion,
+                           clock_timestamp() >= COALESCE(
+                               MAX(CASE WHEN estado = 'ACEPTADO'
+                                   THEN COALESCE(fecha_finalizacion, fecha_creacion) END),
+                               MIN(fecha_creacion))
+                           AND clock_timestamp() < COALESCE(
+                               MAX(CASE WHEN estado = 'ACEPTADO'
+                                   THEN COALESCE(fecha_finalizacion, fecha_creacion) END),
+                               MIN(fecha_creacion)) + INTERVAL '7 days' AS dentro_plazo_baja
+                    FROM fg_facturacion_intento
+                    WHERE facturacion_id = $1
+                `, [documento.id]);
+                const fila = plazo.rows?.[0];
+                if (documento.fecha_aceptacion) {
+                    // La fecha de aceptación persistida es la evidencia más
+                    // fuerte del CDR; el resolvedor calcula el vencimiento.
+                    plazoBaja = {
+                        fechaBase: documento.fecha_aceptacion,
+                        fuente: 'CDR'
+                    };
+                } else if (fila?.fecha_emision) {
+                    plazoBaja = {
+                        dentro: fila.dentro_plazo_baja === true,
+                        fechaBase: fila.fecha_aceptacion || fila.fecha_emision,
+                        fuente: fila.fecha_aceptacion ? 'CDR' : 'EMISION'
+                    };
+                }
+            } catch (_) {
+                // Sin evidencia de intentos se resuelve con las fechas del
+                // documento; el resolvedor devolverá verificación si no basta.
+            }
+        }
+        return resolverOperacionFiscal({
+            documento,
+            estadoProveedor: documento?.estado,
+            fechaEmision: documento?.fecha_documento || documento?.fecha_creacion,
+            fechaAceptacion: documento?.fecha_aceptacion,
+            plazoBaja,
+            ...opciones
+        });
+    };
+
+    const ejecutarResolucionFiscal = async ({ resolucion, factInfo, certInfo, solPrevia, userContext }) => {
+        const docsService = config?.documentosService || defaultDocumentosService;
+        const ctxEjecutor = { ...userContext, solicitudId: solPrevia.id };
+        try {
+            if (resolucion.operacion === OPERACIONES_RESOLUCION_FISCAL.COMUNICACION_BAJA) {
+                const resBaja = await docsService.generarAnulacion(
+                    certInfo.id,
+                    { tipoDocumento: 'FACTURACION', motivo: solPrevia.motivo, solicitudId: solPrevia.id },
+                    ctxEjecutor,
+                    config?.dependencies || {}
+                );
+                const aceptada = resBaja.estado === 'ACEPTADO';
+                return {
+                    resuelto: aceptada,
+                    estado: resBaja.estado || 'PENDIENTE',
+                    tipoOperacion: 'COMUNICACION_BAJA',
+                    anulacionId: resBaja.id,
+                    ticketSunat: resBaja.ticketSunat || null,
+                    respuesta: resBaja.respuesta || null,
+                    motivo: aceptada ? 'Baja aceptada por SUNAT.' : 'Baja enviada; ticket pendiente de resolución definitiva en SUNAT.',
+                    resolucionFiscal: resolucion
+                };
+            }
+
+            if (resolucion.operacion === OPERACIONES_RESOLUCION_FISCAL.NOTA_CREDITO) {
+                const resNota = await docsService.emitirNota(
+                    certInfo.id,
+                    'CREDITO',
+                    {
+                        motivoCodigo: '01',
+                        sustento: solPrevia.motivo,
+                        baseImponible: Number(factInfo.base_imponible),
+                        igv: Number(factInfo.igv),
+                        importeTotal: Number(factInfo.importe_total),
+                        solicitudId: solPrevia.id
+                    },
+                    ctxEjecutor,
+                    config?.dependencies || {}
+                );
+                const aceptada = resNota.estado === 'ACEPTADO';
+                return {
+                    resuelto: aceptada,
+                    estado: resNota.estado || 'PENDIENTE',
+                    tipoOperacion: 'NOTA_CREDITO',
+                    notaId: resNota.id,
+                    nroComprobante: resNota.nroComprobante,
+                    respuesta: resNota,
+                    motivo: aceptada ? 'Nota de crédito total aceptada por SUNAT.' : 'Nota de crédito enviada; pendiente de CDR/aceptación en SUNAT.',
+                    resolucionFiscal: resolucion
+                };
+            }
+
+            return {
+                resuelto: false,
+                estado: 'REQUIERE_INTERVENCION',
+                motivo: resolucion.motivo,
+                resolucionFiscal: resolucion
+            };
+        } catch (errFiscal) {
+            return {
+                resuelto: false,
+                estado: errFiscal.code || 'ERROR_OPERACION_FISCAL',
+                error: errFiscal.message || String(errFiscal),
+                detalles: errFiscal.detalles || null,
+                resolucionFiscal: resolucion
+            };
+        }
+    };
+
     const ejecutarAnulacionTotalCore = async (id, entrada, userContext) => {
         const solicitudId = enteroPositivo(id, 'SOLICITUD_ID_INVALIDO');
         const usuario = await obtenerUsuarioActual(database, userContext);
@@ -1343,9 +1629,29 @@ const crearServicio = (database = db, config = {}) => {
             // Validación de sede del ejecutor
             await validarAccesoPlanta(client1, usuario, row.planta_key, row.empresa_key);
 
-            // Separación de funciones: nadie ejecuta su propia solicitud
-            if (row.usuario_solicitante === usuario.username) {
-                throw errorNegocio('SOLICITUD_AUTODECISION_PROHIBIDA', 403);
+            // Separación de funciones: la ejecución ordinaria exige un ejecutor
+            // distinto del solicitante. La única excepción es la autoejecución
+            // autorizada expresamente, que exige el permiso dedicado, confirmación
+            // explícita y justificación obligatoria, y queda auditada.
+            const esAutoejecucion = row.usuario_solicitante === usuario.username;
+            let autorizacionAutoejecucion = false;
+            let justificacionAutoejecucion = null;
+            if (esAutoejecucion) {
+                const permisosExcepcion = [
+                    PERMISOS_SOLICITUD.APROBAR,
+                    PERMISOS_SOLICITUD.AUTOAPROBAR,
+                    PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO,
+                    PERMISOS_SOLICITUD.AUTOEJECUTAR
+                ];
+                const faltantes = permisosExcepcion.filter((permiso) => !permisos.has(permiso));
+                if (faltantes.length > 0) {
+                    throw errorNegocio('SOLICITUD_AUTODECISION_PROHIBIDA', 403, { permisosRequeridos: faltantes });
+                }
+                if (entrada?.confirmarAutoejecucion !== true) {
+                    throw errorNegocio('SOLICITUD_AUTOEJECUCION_CONFIRMACION_REQUERIDA', 400);
+                }
+                justificacionAutoejecucion = texto(entrada?.justificacion, 1000, true);
+                autorizacionAutoejecucion = true;
             }
 
             // Tipo de operación permitido: exclusivamente ANULAR_AMBOS
@@ -1421,24 +1727,33 @@ const crearServicio = (database = db, config = {}) => {
                 ? normalizarUuid(entrada.idempotenciaClave)
                 : (row.idempotencia_ejecucion || crypto.randomUUID());
 
-            // Marcar EN_EJECUCION en transacción corta
+            // Marcar EN_EJECUCION en transacción corta. La evidencia de la
+            // excepción sólo se escribe cuando la autoejecución fue autorizada.
+            const evidenciaAutoejecucion = autorizacionAutoejecucion
+                ? ', autorizacion_autoejecucion = TRUE'
+                : '';
             await client1.query(`
                 UPDATE fg_solicitud_operacion
                 SET estado = 'EN_EJECUCION',
                     usuario_ejecucion = $1,
                     fecha_ejecucion = COALESCE(fecha_ejecucion, CURRENT_TIMESTAMP),
-                    idempotencia_ejecucion = $2,
+                    idempotencia_ejecucion = $2
+                    ${evidenciaAutoejecucion},
                     fecha_modificacion = CURRENT_TIMESTAMP
                 WHERE id = $3
             `, [usuario.username, idempotenciaEjecucion, row.id]);
 
             await registrarEvento(client1, {
                 solicitudId: row.id,
-                tipoEvento: 'EJECUCION_INICIADA',
+                tipoEvento: autorizacionAutoejecucion
+                    ? 'AUTOEJECUCION_EXCEPCIONAL_AUTORIZADA'
+                    : 'EJECUCION_INICIADA',
                 estadoAnterior: row.estado,
                 estadoPosterior: 'EN_EJECUCION',
                 username: usuario.username,
-                comentario: 'Inicio de ejecución de anulación total autorizada.',
+                comentario: autorizacionAutoejecucion
+                    ? 'Autoejecución excepcional autorizada por el propio solicitante SISTEMAS con permiso dedicado.'
+                    : 'Inicio de ejecución de anulación total autorizada.',
                 metadatos: {
                     idempotenciaEjecucion,
                     certificadoId: cert.id,
@@ -1448,7 +1763,9 @@ const crearServicio = (database = db, config = {}) => {
                         : 'MANUAL',
                     identidadProceso: entrada?.identidadProceso || null,
                     usuarioAprobador: row.usuario_decision || null,
-                    usuarioEjecutor: usuario.username
+                    usuarioEjecutor: usuario.username,
+                    autoejecucionAutorizada: autorizacionAutoejecucion,
+                    justificacionAutoejecucion
                 }
             });
 
@@ -1464,6 +1781,41 @@ const crearServicio = (database = db, config = {}) => {
 
         // PASO 2: Evaluación y ejecución fiscal (SIN transacciones PostgreSQL abiertas)
         let resultadoFiscal = null;
+        let sincronizacionFiscal = null;
+
+        // Antes de decidir el mecanismo tributario, si el comprobante aún no tiene
+        // resultado fiscal definitivo se consulta al proveedor para recuperar el
+        // estado real. La consulta es idempotente y no degrada estados ya
+        // confirmados; si el proveedor no responde se conserva PENDIENTE_SUNAT.
+        if (factInfo && factInfo.estado === 'PENDIENTE_SUNAT') {
+            const docsServiceSync = config?.documentosService || defaultDocumentosService;
+            if (typeof docsServiceSync.consultarFacturacion === 'function') {
+                try {
+                    const consulta = await docsServiceSync.consultarFacturacion(
+                        certInfo.id,
+                        { ...userContext, solicitudId: solPrevia.id },
+                        config?.dependencies || {}
+                    );
+                    sincronizacionFiscal = {
+                        consultado: true,
+                        estadoProveedor: consulta?.estado || null
+                    };
+                } catch (errorSync) {
+                    sincronizacionFiscal = {
+                        consultado: false,
+                        codigo: errorSync?.code || 'ERROR_CONSULTA_FISCAL',
+                        mensaje: errorSync?.message || String(errorSync)
+                    };
+                }
+                const refresco = await database.query(`
+                    SELECT f.*, p.empresa_key
+                    FROM fg_facturacion f
+                    JOIN fg_planta p ON p.key = f.planta_key
+                    WHERE f.id = $1
+                `, [factInfo.id]);
+                if (refresco.rowCount > 0) factInfo = refresco.rows[0];
+            }
+        }
 
         if (!factInfo) {
             // Caso A: Certificado sin comprobante fiscal asociado
@@ -1481,9 +1833,10 @@ const crearServicio = (database = db, config = {}) => {
                 comprobante: factInfo.nro_comprobante
             };
         } else if (factInfo.estado === 'PENDIENTE_SUNAT') {
-            // Caso C: Comprobante con emisión electrónica en trámite ante SUNAT
-            // Punto 2: No declarar la regularización completada. No generar bajas ni notas ficticias.
-            // Comprobar si existe una emisión electrónica en trámite
+            // Caso C: Comprobante con emisión electrónica en trámite ante SUNAT.
+            // El resolvedor decide si la falta de CDR es un bloqueo definitivo
+            // (factura/nota) o si la boleta aún puede comunicarse de baja dentro
+            // del plazo legal, incluso si el proveedor la mantiene pendiente.
             const opTramite = await database.query(`
                 SELECT id, operacion, estado, error, fecha_creacion
                 FROM fg_documento_electronico_operacion
@@ -1492,14 +1845,48 @@ const crearServicio = (database = db, config = {}) => {
             `, [factInfo.id]);
 
             const operacionEnTramite = opTramite.rowCount > 0;
-            resultadoFiscal = {
-                resuelto: false,
-                estado: 'PENDIENTE_SUNAT',
-                enTramite: operacionEnTramite,
-                motivo: 'Comprobante electrónico con emisión en trámite ante SUNAT; la regularización fiscal no se declara completada hasta conocer el resultado definitivo de SUNAT. No se generan bajas ni notas ficticias.',
-                comprobante: factInfo.nro_comprobante,
-                ultimaOperacion: opTramite.rows[0] || null
-            };
+            const resolucion = await resolverFiscalFacturacion(factInfo);
+
+            if ([
+                RESULTADOS_RESOLUCION_FISCAL.BAJA_ELEGIBLE,
+                RESULTADOS_RESOLUCION_FISCAL.NOTA_CREDITO_ELEGIBLE
+            ].includes(resolucion.resultado)) {
+                resultadoFiscal = await ejecutarResolucionFiscal({
+                    resolucion,
+                    factInfo,
+                    certInfo,
+                    solPrevia,
+                    userContext
+                });
+            } else if (resolucion.resultado === RESULTADOS_RESOLUCION_FISCAL.YA_ANULADO) {
+                resultadoFiscal = {
+                    resuelto: true,
+                    estado: 'ACEPTADO',
+                    motivo: resolucion.motivo,
+                    comprobante: factInfo.nro_comprobante,
+                    resolucionFiscal: resolucion
+                };
+            } else if (resolucion.resultado === RESULTADOS_RESOLUCION_FISCAL.NO_ELEGIBLE) {
+                resultadoFiscal = {
+                    resuelto: false,
+                    estado: 'REQUIERE_INTERVENCION',
+                    motivo: resolucion.motivo,
+                    comprobante: factInfo.nro_comprobante,
+                    resolucionFiscal: resolucion
+                };
+            } else {
+                // PENDIENTE_VERIFICACION: no se inventa una baja ni una nota.
+                resultadoFiscal = {
+                    resuelto: false,
+                    estado: 'PENDIENTE_SUNAT',
+                    enTramite: operacionEnTramite,
+                    motivo: 'Comprobante electrónico con emisión en trámite ante SUNAT; la regularización fiscal no se declara completada hasta conocer el resultado definitivo de SUNAT. No se generan bajas ni notas ficticias.',
+                    motivoResolucionFiscal: resolucion.motivo,
+                    comprobante: factInfo.nro_comprobante,
+                    ultimaOperacion: opTramite.rows[0] || null,
+                    resolucionFiscal: resolucion
+                };
+            }
         } else if (factInfo.estado === 'BORRADOR') {
             // Caso D: Comprobante borrador sin emisión ante SUNAT
             resultadoFiscal = {
@@ -1597,127 +1984,48 @@ const crearServicio = (database = db, config = {}) => {
                         estadoOperacion: notasFallidas.rows[0]?.estado || bajasFallidas.rows[0]?.estado || null
                     };
                 } else {
-                    // 3. Selección del mecanismo tributario conforme a políticas tributarias de FAREGAS
-                    // Punto 1: No usar únicamente la regla de 24h. Considerar tipo de comprobante,
-                    // estado fiscal, fecha y condiciones aplicables.
-                    const tieneSerieYNumero = Boolean(factInfo.serie && factInfo.numero !== null);
-                    const esOperable = esDocumentoBaseOperable(factInfo);
-                    const tipoComprobante = String(factInfo.tipo_comprobante || '').trim().toUpperCase();
-                    const tipoAdmitido = ['BOLETA', 'FACTURA'].includes(tipoComprobante);
+                    // 3. Resolvedor fiscal central: tipo, estado del proveedor,
+                    // CDR/resumen, plazo legal y operaciones previas. La ventana
+                    // operativa de solicitud sigue siendo de 24 h; el resolvedor
+                    // sólo decide el mecanismo fiscal y no bloquea todo pendiente.
+                    const notasPreviasQuery = await database.query(`
+                        SELECT COALESCE(SUM(importe_total), 0) AS total
+                        FROM fg_credito
+                        WHERE facturacion_id = $1 AND estado NOT IN ('RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO')
+                          AND motivo_codigo NOT IN ('3', '03')
+                    `, [factInfo.id]);
+                    const totalNotasPrevias = Number(notasPreviasQuery.rows[0]?.total || 0);
+                    const resolucion = await resolverFiscalFacturacion(factInfo, { totalNotasPrevias });
 
-                    if (!tieneSerieYNumero || !esOperable || !tipoAdmitido) {
+                    if (resolucion.resultado === RESULTADOS_RESOLUCION_FISCAL.YA_ANULADO) {
+                        resultadoFiscal = {
+                            resuelto: true,
+                            estado: 'ACEPTADO',
+                            tipoOperacion: resolucion.operacion,
+                            motivo: resolucion.motivo,
+                            comprobante: factInfo.nro_comprobante,
+                            resolucionFiscal: resolucion
+                        };
+                    } else if ([
+                        RESULTADOS_RESOLUCION_FISCAL.BAJA_ELEGIBLE,
+                        RESULTADOS_RESOLUCION_FISCAL.NOTA_CREDITO_ELEGIBLE
+                    ].includes(resolucion.resultado)) {
+                        resultadoFiscal = await ejecutarResolucionFiscal({
+                            resolucion,
+                            factInfo,
+                            certInfo,
+                            solPrevia,
+                            userContext
+                        });
+                    } else {
                         resultadoFiscal = {
                             resuelto: false,
                             estado: 'REQUIERE_INTERVENCION',
-                            motivo: 'El comprobante no reúne las condiciones tributarias operables para emitir baja o nota de crédito. Requiere intervención de Sistemas.',
+                            motivo: resolucion.motivo,
                             comprobante: factInfo.nro_comprobante,
-                            tipoComprobante: tipoComprobante || null
+                            tipoComprobante: factInfo.tipo_comprobante || null,
+                            resolucionFiscal: resolucion
                         };
-                    } else {
-                        // Determinar si aplica Comunicación de Baja o Nota de Crédito Total
-                        // Consulta de plazos y condiciones:
-                        const plazoBajaQuery = await database.query(`
-                            SELECT MIN(fecha_creacion) AS primer_intento,
-                                   clock_timestamp() >= MIN(fecha_creacion)
-                                   AND clock_timestamp() < MIN(fecha_creacion) + INTERVAL '24 hours' AS dentro_plazo_baja
-                            FROM fg_facturacion_intento WHERE facturacion_id = $1
-                        `, [factInfo.id]);
-
-                        const dentroPlazoBaja = plazoBajaQuery.rows[0]?.dentro_plazo_baja === true;
-
-                        // Total de notas de crédito existentes que no sean de error
-                        const notasPreviasQuery = await database.query(`
-                            SELECT COALESCE(SUM(importe_total), 0) AS total
-                            FROM fg_credito
-                            WHERE facturacion_id = $1 AND estado NOT IN ('RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO')
-                              AND motivo_codigo NOT IN ('3', '03')
-                        `, [factInfo.id]);
-                        const totalNotasPrevias = Number(notasPreviasQuery.rows[0]?.total || 0);
-
-                        let mecanismoDeterminado = null;
-
-                        // Procedimiento 1: Comunicación de Baja
-                        // Exigencias normativas: dentro de plazo de baja (24h), sin notas de crédito previas, y comprobante no alterado.
-                        if (dentroPlazoBaja && totalNotasPrevias === 0) {
-                            mecanismoDeterminado = 'COMUNICACION_BAJA';
-                        } else if (!dentroPlazoBaja && totalNotasPrevias === 0) {
-                            // Procedimiento 2: Nota de Crédito Total (motivo 01)
-                            // Exigencias normativas: plazo de baja vencido, sin notas previas que consuman el comprobante,
-                            // e importe total coincide con el comprobante original.
-                            const originalTotal = Number(factInfo.importe_total);
-                            if (originalTotal > 0) {
-                                mecanismoDeterminado = 'NOTA_CREDITO';
-                            }
-                        }
-
-                        // Si no se puede determinar con certeza el procedimiento permitido:
-                        if (!mecanismoDeterminado) {
-                            resultadoFiscal = {
-                                resuelto: false,
-                                estado: 'REQUIERE_INTERVENCION',
-                                motivo: 'No se puede determinar con certeza el procedimiento tributario permitido para este comprobante (tipo, plazo o notas previas en conflicto). No se emite operación fiscal sin intervención de Sistemas.',
-                                comprobante: factInfo.nro_comprobante,
-                                dentroPlazoBaja,
-                                totalNotasPrevias
-                            };
-                        } else {
-                            // Procedimiento determinado con certeza -> Ejecutar sin transacciones PostgreSQL abiertas
-                            const docsService = config?.documentosService || defaultDocumentosService;
-                            const ctxEjecutor = { ...userContext, solicitudId: solPrevia.id };
-
-                            try {
-                                if (mecanismoDeterminado === 'COMUNICACION_BAJA') {
-                                    const resBaja = await docsService.generarAnulacion(
-                                        certInfo.id,
-                                        { tipoDocumento: 'FACTURACION', motivo: solPrevia.motivo, solicitudId: solPrevia.id },
-                                        ctxEjecutor,
-                                        config?.dependencies || {}
-                                    );
-                                    const aceptada = resBaja.estado === 'ACEPTADO';
-                                    resultadoFiscal = {
-                                        resuelto: aceptada,
-                                        estado: resBaja.estado || 'PENDIENTE',
-                                        tipoOperacion: 'COMUNICACION_BAJA',
-                                        anulacionId: resBaja.id,
-                                        ticketSunat: resBaja.ticketSunat || null,
-                                        respuesta: resBaja.respuesta || null,
-                                        motivo: aceptada ? 'Baja aceptada por SUNAT.' : 'Baja enviada; ticket pendiente de resolución definitiva en SUNAT.'
-                                    };
-                                } else if (mecanismoDeterminado === 'NOTA_CREDITO') {
-                                    const resNota = await docsService.emitirNota(
-                                        certInfo.id,
-                                        'CREDITO',
-                                        {
-                                            motivoCodigo: '01',
-                                            sustento: solPrevia.motivo,
-                                            baseImponible: Number(factInfo.base_imponible),
-                                            igv: Number(factInfo.igv),
-                                            importeTotal: Number(factInfo.importe_total),
-                                            solicitudId: solPrevia.id
-                                        },
-                                        ctxEjecutor,
-                                        config?.dependencies || {}
-                                    );
-                                    const aceptada = resNota.estado === 'ACEPTADO';
-                                    resultadoFiscal = {
-                                        resuelto: aceptada,
-                                        estado: resNota.estado || 'PENDIENTE',
-                                        tipoOperacion: 'NOTA_CREDITO',
-                                        notaId: resNota.id,
-                                        nroComprobante: resNota.nroComprobante,
-                                        respuesta: resNota,
-                                        motivo: aceptada ? 'Nota de crédito total aceptada por SUNAT.' : 'Nota de crédito enviada; pendiente de CDR/aceptación en SUNAT.'
-                                    };
-                                }
-                            } catch (errFiscal) {
-                                resultadoFiscal = {
-                                    resuelto: false,
-                                    estado: errFiscal.code || 'ERROR_OPERACION_FISCAL',
-                                    error: errFiscal.message || String(errFiscal),
-                                    detalles: errFiscal.detalles || null
-                                };
-                            }
-                        }
                     }
                 }
             }
@@ -1732,6 +2040,9 @@ const crearServicio = (database = db, config = {}) => {
         }
 
         // PASO 3: Evaluación técnica del certificado
+        if (resultadoFiscal && sincronizacionFiscal) {
+            resultadoFiscal = { ...resultadoFiscal, sincronizacion: sincronizacionFiscal };
+        }
         let resultadoTecnico = null;
         const habilitadoTecnico = esTipoPermitidoParaAnulacionLocal(certInfo.tipo_certificado_clave);
 
@@ -1745,6 +2056,19 @@ const crearServicio = (database = db, config = {}) => {
                 tipoCertificado: certInfo.tipo_certificado_clave,
                 numeroCertificado: certInfo.numero_certificado,
                 estadoCertificado: certInfo.estado
+            };
+        } else if (resultadoFiscal?.resuelto !== true) {
+            // La anulación técnica no puede adelantarse a la resolución fiscal:
+            // marcar el certificado como ANULADO mientras el comprobante sigue
+            // pendiente o en trámite produciría una inconsistencia tributaria.
+            resultadoTecnico = {
+                resuelto: false,
+                estado: 'BLOQUEADO_POR_FISCAL',
+                motivo: 'La anulación técnica del certificado queda bloqueada hasta que la operación fiscal (baja o nota de crédito) quede resuelta. El certificado permanece EMITIDO.',
+                tipoCertificado: certInfo.tipo_certificado_clave,
+                numeroCertificado: certInfo.numero_certificado,
+                estadoCertificado: certInfo.estado,
+                estadoFiscal: resultadoFiscal?.estado || null
             };
         } else {
             // Procedimiento oficial validado
@@ -1889,6 +2213,20 @@ const crearServicio = (database = db, config = {}) => {
 
     const aprobarYCoordinarEjecucion = async (id, entrada, userContext) => {
         const solicitud = await decidir(id, 'APROBAR', entrada, userContext);
+        // La ejecución automática fiscal sólo corresponde a la anulación total.
+        // Las rectificaciones de certificado se ejecutan por su servicio técnico
+        // dedicado y nunca deben llamar al motor de comprobantes.
+        if (solicitud.tipoOperacion !== 'ANULAR_AMBOS') {
+            return {
+                solicitud,
+                ejecucionAutomatica: {
+                    iniciada: false,
+                    habilitada: false,
+                    codigo: 'EJECUCION_AUTOMATICA_NO_APLICA',
+                    motivo: 'Esta solicitud no admite ejecución fiscal automática. Debe ejecutarse desde el flujo autorizado correspondiente.'
+                }
+            };
+        }
         const configuracion = config.ejecucionAutomatica || {
             enabled: process.env.FAREGAS_ANULACION_AUTOMATICA_ENABLED,
             productionAuthorized: process.env.FAREGAS_ANULACION_AUTOMATICA_PRODUCCION_AUTORIZADA
@@ -1959,6 +2297,7 @@ const crearServicio = (database = db, config = {}) => {
         crearAnulacionTotal,
         listar,
         obtener: async (id, userContext) => (await obtener(id, userContext)).solicitud,
+        obtenerDetalle,
         aprobar: (id, entrada, userContext) => decidir(id, 'APROBAR', entrada, userContext),
         aprobarYCoordinarEjecucion,
         rechazar: (id, entrada, userContext) => decidir(id, 'RECHAZAR', entrada, userContext),

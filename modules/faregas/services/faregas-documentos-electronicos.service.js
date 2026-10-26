@@ -12,6 +12,10 @@ const {
     crearCodigoUnico
 } = require('../integrations/nubefact-faregas.adapter');
 const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
+const {
+    resolverOperacionFiscal,
+    RESULTADOS: RESULTADOS_RESOLUCION_FISCAL
+} = require('./faregas-anulacion-fiscal.resolver');
 
 const TIPOS = Object.freeze({
     CREDITO: { tabla: 'fg_credito', fk: 'credito_id', comprobante: 3, prefijo: 'FGNC' },
@@ -485,19 +489,22 @@ exports.consultarFacturacion = async (certificadoId, userContext, dependencies =
     const resultado = await proveedor.consultarComprobante(payload, { credentials: configuracion.credentials });
     const respuesta = limpiarRespuestaProveedor(resultado.data) || {};
     const estadoProveedor = mapearEstadoProveedor(resultado, 'FACTURACION');
-    const estadoPersistido = estadoProveedor === 'ERROR' ? facturacion.estado : estadoProveedor;
+    const anuladaPorProveedor = respuesta.anulado === true || respuesta.anulado === 'true';
+    const estadoPersistido = estadoProveedor === 'ERROR'
+        ? facturacion.estado
+        : (anuladaPorProveedor ? 'ANULADO' : estadoProveedor);
     const client = await db.connect();
     try {
         await client.query('BEGIN');
         await finalizarOperacion(client, operacionId, resultado, respuesta);
         const actualizada = await client.query(`UPDATE fg_facturacion SET estado=$2,
-            aceptada_sunat=CASE WHEN $2='ACEPTADO' THEN TRUE WHEN $2='RECHAZADO' THEN FALSE ELSE aceptada_sunat END,
+            aceptada_sunat=CASE WHEN $2 IN ('ACEPTADO','ANULADO') THEN TRUE WHEN $2='RECHAZADO' THEN FALSE ELSE aceptada_sunat END,
             sunat_description=$3, sunat_responsecode=$4, sunat_soap_error=$5,
             enlace_pdf=COALESCE($6,enlace_pdf), enlace_xml=COALESCE($7,enlace_xml),
             enlace_cdr=COALESCE($8,enlace_cdr), respuesta_proveedor=$9::jsonb,
-            fecha_aceptacion=CASE WHEN $2='ACEPTADO' THEN COALESCE(fecha_aceptacion,CURRENT_TIMESTAMP) ELSE fecha_aceptacion END,
+            fecha_aceptacion=CASE WHEN $2 IN ('ACEPTADO','ANULADO') THEN COALESCE(fecha_aceptacion,CURRENT_TIMESTAMP) ELSE fecha_aceptacion END,
             usuario_modificacion=$10, fecha_modificacion=CURRENT_TIMESTAMP
-            WHERE id=$1 AND estado IN ('PENDIENTE','PENDIENTE_SUNAT','ERROR')
+            WHERE id=$1 AND (estado IN ('PENDIENTE','PENDIENTE_SUNAT','ERROR') OR $2='ANULADO')
             RETURNING id`, [
             facturacion.id, estadoPersistido,
             respuesta.sunat_description || respuesta.errors || resultado.reason || null,
@@ -539,7 +546,9 @@ const obtenerObjetivoAnulacion = async (client, facturacion, tipoDocumento, docu
     return { tipo: notaTipo, tabla: meta.tabla, fk: meta.fk, row: result.rows[0], tipoComprobante: meta.comprobante, prefijo: notaTipo === 'CREDITO' ? 'C' : 'D' };
 };
 
-// La primera solicitud de emisión fija el inicio del plazo. Un reintento no lo renueva.
+// La primera solicitud de emisión fija el inicio del plazo operativo de 24 h
+// definido por FAREGAS. Un reintento no lo renueva. Este plazo es distinto del
+// plazo fiscal de 7 días que evalúa el resolvedor para elegir baja o nota.
 const validarPlazoAnulacion = async (client, objetivo) => {
     const result = objetivo.tipo === 'FACTURACION'
         ? await client.query(`
@@ -571,8 +580,33 @@ const generarAnulacionConAcceso = async (referenciaId, data, userContext, depend
         const facturacion = await validarAcceso(client, referenciaId, userContext, true);
         await validarSinAnulacionActiva(client, facturacion.id);
         const objetivo = await obtenerObjetivoAnulacion(client, facturacion, data.tipoDocumento, data.documentoId);
-        if (!esDocumentoBaseOperable(objetivo.row)) throw errorNegocio('DOCUMENTO_NO_ANULABLE', 409);
+        // La ventana operativa FAREGAS sigue siendo de 24 h. La elegibilidad
+        // fiscal de la baja (7 días calendario) la decide el resolvedor.
         await validarPlazoAnulacion(client, objetivo);
+        const tipoComprobante = objetivo.tipo === 'FACTURACION' ? facturacion.tipo_comprobante : objetivo.tipo;
+        const resolucion = resolverOperacionFiscal({
+            documento: {
+                ...objetivo.row,
+                tipoComprobante,
+                estado: objetivo.row.estado,
+                aceptadaSunat: objetivo.row.aceptada_sunat,
+                fechaEmision: objetivo.row.fecha_documento || objetivo.row.fecha_creacion || facturacion.fecha_documento,
+                fechaAceptacion: objetivo.row.fecha_aceptacion,
+                enlaceCdr: objetivo.row.enlace_cdr,
+                importeTotal: objetivo.row.importe_total,
+                entorno: facturacion.entorno_facturador,
+                proveedor: facturacion.proveedor
+            },
+            estadoProveedor: objetivo.row.estado,
+            operacionesPrevias: [],
+            totalNotasPrevias: 0
+        });
+        if (resolucion.resultado === RESULTADOS_RESOLUCION_FISCAL.YA_ANULADO) {
+            throw errorNegocio('DOCUMENTO_YA_ANULADO', 409, { resolucion });
+        }
+        if (resolucion.resultado !== RESULTADOS_RESOLUCION_FISCAL.BAJA_ELEGIBLE) {
+            throw errorNegocio('DOCUMENTO_NO_ANULABLE', 409, { resolucion });
+        }
         const configuracion = await nubefactConfigService.resolverParaPlanta(facturacion.planta_key, client);
         const codigoUnico = crearCodigoUnico(objetivo.row.id, `FGA${objetivo.prefijo}`);
         const insert = await client.query(`

@@ -10,6 +10,7 @@ const MENSAJES = {
     CERTIFICADO_NOT_FOUND: 'El certificado no existe.',
     CERTIFICADO_NO_ES_ULTIMO: 'Sólo puede solicitarse el duplicado del último certificado emitido de ese tipo.',
     CERTIFICADO_NO_DUPLICABLE: 'El certificado está anulado o superó un año desde su emisión.',
+    CERTIFICADO_NO_DISPONIBLE_PARA_DUPLICADO: 'El certificado tiene una anulación activa o confirmada y no está disponible para duplicado.',
     CERTIFICADO_SIN_CONTENIDO: 'No se encontró la representación original del certificado.',
     DUPLICADO_NOT_FOUND: 'La solicitud de duplicado no existe.',
     DUPLICADO_ANULADO: 'La solicitud de duplicado está anulada.',

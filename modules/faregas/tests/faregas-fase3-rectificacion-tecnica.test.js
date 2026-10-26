@@ -592,7 +592,13 @@ test('22. No modificar correlativos DG (fg_correlativo_certificado)', async () =
 test('23. No llamar a NubeFact en rectificación técnica', () => {
     const backendRoot = path.resolve(__dirname, '..');
     const codigoSvc = fs.readFileSync(path.join(backendRoot, 'services', 'faregas-solicitudes-operacion.service.js'), 'utf8');
-    assert.doesNotMatch(codigoSvc, /nubefact/i, 'El servicio de solicitudes no debe importar NubeFact');
+    // El servicio también contiene la anulación fiscal, que sí integra NubeFact.
+    // La garantía debe evaluarse sobre el flujo técnico de rectificación.
+    const inicio = codigoSvc.indexOf('const ejecutarRectificacionCertificado');
+    const fin = codigoSvc.indexOf('\n    const ', inicio + 10);
+    const bloqueRectificacion = codigoSvc.slice(inicio, fin > inicio ? fin : undefined);
+    assert.ok(bloqueRectificacion.length > 0, 'No se encontró el flujo de rectificación');
+    assert.doesNotMatch(bloqueRectificacion, /nubefact/i, 'La rectificación técnica no debe llamar a NubeFact');
 });
 
 test('24. Historial de auditoría completo registra eventos de preparación', async () => {

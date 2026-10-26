@@ -8,6 +8,7 @@ const PERMISOS_INICIO_ANULACIONES = Object.freeze([
     'FAREGAS_SOLICITUD_VER',
     'FAREGAS_SOLICITUD_APROBAR',
     'FAREGAS_SOLICITUD_AUTOAPROBAR',
+    'FAREGAS_SOLICITUD_AUTOEJECUTAR',
     'FAREGAS_SOLICITUD_RECHAZAR',
     'FAREGAS_SOLICITUD_ADMINISTRAR',
     'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR',
@@ -383,6 +384,7 @@ exports.crearPerfil = async (data) => {
             const permisosExclusivosSistemas = new Set([
                 'FAREGAS_SOLICITUD_APROBAR',
                 'FAREGAS_SOLICITUD_AUTOAPROBAR',
+                'FAREGAS_SOLICITUD_AUTOEJECUTAR',
                 'FAREGAS_SOLICITUD_RECHAZAR',
                 'FAREGAS_SOLICITUD_ADMINISTRAR',
                 'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR'
@@ -451,6 +453,7 @@ exports.actualizarPerfil = async (clave, data) => {
             const permisosExclusivosSistemas = new Set([
                 'FAREGAS_SOLICITUD_APROBAR',
                 'FAREGAS_SOLICITUD_AUTOAPROBAR',
+                'FAREGAS_SOLICITUD_AUTOEJECUTAR',
                 'FAREGAS_SOLICITUD_RECHAZAR',
                 'FAREGAS_SOLICITUD_ADMINISTRAR',
                 'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR'

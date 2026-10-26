@@ -188,4 +188,15 @@ router.put('/borradores/:id/snapshot', controller.guardarTaller);
 // TALLERES
 router.get('/talleres', controller.obtenerTalleresActivos);
 
+// RECTIFICACIÓN TÉCNICA DE CERTIFICADOS EMITIDOS
+// Solicitud -> aprobación -> ejecución. Estas rutas no emiten comprobantes ni
+// consumen correlativos. La ejecución se realiza desde solicitudes-operacion.
+const rectificacionesController = require('../controllers/faregas-rectificaciones.controller');
+router.get('/:id/rectificacion/contexto', rectificacionesController.contexto);
+router.get('/:id/rectificacion/historial', rectificacionesController.historial);
+router.post('/:id/rectificacion/previsualizacion', rectificacionesController.previsualizar);
+router.post('/:id/rectificacion/directa', rectificacionesController.ejecutarDirecta);
+router.post('/:id/rectificacion', rectificacionesController.crear);
+router.get('/:id/rectificacion/versiones/:versionId/pdf', rectificacionesController.descargarPdfVersion);
+
 module.exports = router;

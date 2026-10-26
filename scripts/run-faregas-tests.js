@@ -20,6 +20,8 @@ const nubefactFiles = new Set([
     'faregas-nubefact-demo-alias.test.js',
     'faregas-certificados-formato-dinamico.test.js',
     'faregas-nubefact-cron.service.test.js',
+    'faregas-fase4d-autoejecucion-nubefact.test.js',
+    'faregas-anulacion-fiscal-resolver.test.js',
     'faregas-nubefact-readiness.test.js',
     'faregas-nubefact-simulation.test.js',
     'faregas-nubefact.service.test.js',

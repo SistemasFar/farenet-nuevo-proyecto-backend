@@ -25,7 +25,8 @@ const MENSAJES = {
     SOLICITUD_NO_ENCONTRADA: 'La solicitud no existe.',
     SOLICITUD_PERMISO_DENEGADO: 'No tiene autorización para realizar esta acción.',
     SOLICITUD_SEDE_NO_AUTORIZADA: 'No tiene acceso a la sede de esta solicitud.',
-    SOLICITUD_AUTODECISION_PROHIBIDA: 'El solicitante no puede aprobar ni rechazar su propia solicitud.',
+    SOLICITUD_AUTODECISION_PROHIBIDA: 'El solicitante no puede aprobar ni rechazar su propia solicitud. La autoejecución exige el permiso excepcional FAREGAS_SOLICITUD_AUTOEJECUTAR.',
+    SOLICITUD_AUTOEJECUCION_CONFIRMACION_REQUERIDA: 'Confirme expresamente la autoejecución excepcional antes de continuar.',
     SOLICITUD_AUTOAPROBACION_NO_AUTORIZADA: 'La autoaprobación requiere los permisos explícitos de aprobación y autoaprobación.',
     SOLICITUD_AUTOAPROBACION_CONFIRMACION_REQUERIDA: 'Confirme expresamente la autoaprobación antes de continuar.',
     SOLICITUD_DECISION_EXCLUSIVA_SISTEMAS: 'Sólo un usuario SISTEMAS puede aprobar o rechazar solicitudes de anulación total.',
@@ -116,7 +117,7 @@ exports.listar = async (req, res) => {
 
 exports.obtener = async (req, res) => {
     try {
-        const data = await solicitudesService.obtener(req.params.id, req.user);
+        const data = await solicitudesService.obtenerDetalle(req.params.id, req.user);
         return res.json({ ok: true, data });
     } catch (error) { return responderError(res, error); }
 };
@@ -203,9 +204,11 @@ exports.ejecutarAnulacionTotal = async (req, res) => {
         await auditar(req, 'SOLICITUD_ANULACION_TOTAL_EJECUTADA', resultado.solicitud,
             resultado.yaCompletada
                 ? 'Se consultó una anulación total ya ejecutada.'
-                : (resultado.completada
-                    ? 'Se ejecutó la anulación total de certificado y comprobante.'
-                    : 'Se ejecutó la regularización autorizada (requiere intervención para conclusión técnica).'));
+                : (resultado.solicitud?.autorizacionAutoejecucion
+                    ? 'Se ejecutó la autoejecución excepcional autorizada de la anulación total.'
+                    : (resultado.completada
+                        ? 'Se ejecutó la anulación total de certificado y comprobante.'
+                        : 'Se ejecutó la regularización autorizada (requiere intervención para conclusión técnica).')));
         return res.json({
             ok: true,
             data: resultado.solicitud,

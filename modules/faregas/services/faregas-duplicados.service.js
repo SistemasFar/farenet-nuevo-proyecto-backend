@@ -4,12 +4,19 @@ const certificadosService = require('./faregas-certificados.service');
 const clientesService = require('./faregas-clientes.service');
 const pagosService = require('./faregas-pagos.service');
 const facturacionService = require('./faregas-facturacion.service');
-const { agregarMarcaDuplicado } = require('./faregas-duplicado-pdf.service');
+const { prepararHtmlDuplicado } = require('./faregas-duplicado-pdf.service');
 
 const PRECIO_DUPLICADO = 50;
 const BASE_DUPLICADO = 42.37;
 const IGV_DUPLICADO = 7.63;
 const HISTORIAL_POR_PAGINA = 10;
+const ESTADOS_ANULACION_QUE_BLOQUEAN = Object.freeze([
+    'PENDIENTE_APROBACION',
+    'APROBADA',
+    'EN_EJECUCION',
+    'REQUIERE_INTERVENCION',
+    'COMPLETADA'
+]);
 
 const errorNegocio = (codigo, statusCode = 400, detalles) => {
     const error = new Error(codigo);
@@ -54,33 +61,44 @@ const validarAccesoPlanta = async (userContext, plantaKey) => {
     if (!acceso) throw errorNegocio('PLANTA_NO_AUTORIZADA', 403);
 };
 
-const mapearCandidato = (row) => ({
-    certificadoId: Number(row.certificado_id),
-    numeroCertificado: row.numero_certificado,
-    placa: row.placa,
-    tipoCertificadoClave: row.tipo_certificado_clave,
-    modalidad: row.modalidad,
-    tipoNombre: etiquetaTipo(row.tipo_certificado_clave, row.modalidad),
-    fechaEmision: row.fecha_emision,
-    fechaLimiteDuplicado: row.fecha_limite_duplicado,
-    vigente: row.vigente === true,
-    anulacionAceptada: row.anulacion_aceptada === true,
-    duplicable: row.vigente === true && row.anulacion_aceptada !== true,
-    duplicadosEmitidosCount: Number(row.duplicados_emitidos_count || 0),
-    motivoNoDisponible: row.anulacion_aceptada === true
-        ? 'El certificado fue anulado.'
-        : row.vigente !== true ? 'El certificado superó un año desde su emisión.' : null,
-    plantaKey: row.planta_key,
-    plantaNombre: row.planta_nombre,
-    cliente: {
-        tipoDocumento: row.cliente_tipo_documento || '',
-        nroDocumento: row.cliente_documento || '',
-        nombreRazonSocial: row.cliente_nombre || '',
-        direccion: row.cliente_direccion || '',
-        email: row.cliente_email || '',
-        telefono: row.cliente_telefono || ''
-    }
-});
+const mapearCandidato = (row) => {
+    const vigente = row.vigente === true;
+    const anulacionAceptada = row.anulacion_aceptada === true;
+    const anulacionAdministrativaActiva = row.anulacion_administrativa_activa === true;
+    const duplicable = vigente && !anulacionAceptada && !anulacionAdministrativaActiva;
+    return {
+        certificadoId: Number(row.certificado_id),
+        numeroCertificado: row.numero_certificado,
+        placa: row.placa,
+        tipoCertificadoClave: row.tipo_certificado_clave,
+        modalidad: row.modalidad,
+        tipoNombre: etiquetaTipo(row.tipo_certificado_clave, row.modalidad),
+        fechaEmision: row.fecha_emision,
+        fechaLimiteDuplicado: row.fecha_limite_duplicado,
+        vigente,
+        anulacionAceptada,
+        anulacionAdministrativaActiva,
+        duplicable,
+        duplicadosEmitidosCount: Number(row.duplicados_emitidos_count || 0),
+        motivoNoDisponible: anulacionAdministrativaActiva
+            ? 'El certificado tiene una solicitud de anulación activa.'
+            : anulacionAceptada
+                ? 'El certificado fue anulado.'
+                : !vigente ? 'El certificado superó un año desde su emisión.' : null,
+        plantaKey: row.planta_key,
+        plantaNombre: row.planta_nombre,
+        cliente: {
+            tipoDocumento: row.cliente_tipo_documento || '',
+            nroDocumento: row.cliente_documento || '',
+            nombreRazonSocial: row.cliente_nombre || '',
+            direccion: row.cliente_direccion || '',
+            email: row.cliente_email || '',
+            telefono: row.cliente_telefono || ''
+        }
+    };
+};
+
+const filtrarCandidatosDisponibles = (candidatos) => candidatos.filter((candidato) => candidato.duplicable);
 
 const consultarUltimosEmitidos = async ({ placa, tipo, plantaKey }, queryable = db) => {
     const placaNormalizada = normalizarPlaca(placa);
@@ -97,12 +115,28 @@ const consultarUltimosEmitidos = async ({ placa, tipo, plantaKey }, queryable = 
                    to_char(c.fecha_emision, 'YYYY-MM-DD') AS fecha_emision,
                    to_char(c.fecha_emision + INTERVAL '1 year', 'YYYY-MM-DD') AS fecha_limite_duplicado,
                    CURRENT_DATE <= (c.fecha_emision + INTERVAL '1 year')::date AS vigente,
+                   (
+                       EXISTS (
+                           SELECT 1
+                           FROM fg_facturacion fac
+                           JOIN fg_documento_anulacion anu ON anu.facturacion_id = fac.id
+                           WHERE fac.certificado_id = c.id AND anu.estado = 'ACEPTADO'
+                       )
+                       OR EXISTS (
+                           SELECT 1
+                           FROM fg_facturacion fac_anulada
+                           WHERE fac_anulada.certificado_id = c.id
+                             AND UPPER(BTRIM(fac_anulada.estado)) = 'ANULADO'
+                       )
+                       OR c.fecha_anulacion IS NOT NULL
+                   ) AS anulacion_aceptada,
                    EXISTS (
                        SELECT 1
-                       FROM fg_facturacion fac
-                       JOIN fg_documento_anulacion anu ON anu.facturacion_id = fac.id
-                       WHERE fac.certificado_id = c.id AND anu.estado = 'ACEPTADO'
-                   ) AS anulacion_aceptada,
+                       FROM fg_solicitud_operacion so
+                       WHERE so.certificado_id = c.id
+                         AND so.tipo_operacion IN ('ANULAR_AMBOS', 'ANULAR_CERTIFICADO')
+                         AND so.estado IN ('PENDIENTE_APROBACION', 'APROBADA', 'EN_EJECUCION', 'REQUIERE_INTERVENCION', 'COMPLETADA')
+                   ) AS anulacion_administrativa_activa,
                    COALESCE(tit.tipo_documento, fac_original.tipo_documento_cliente) AS cliente_tipo_documento,
                    COALESCE(tit.nro_documento, fac_original.nro_documento) AS cliente_documento,
                    COALESCE(tit.nombre_razon_social, fac_original.nombre_razon_social) AS cliente_nombre,
@@ -128,6 +162,7 @@ const consultarUltimosEmitidos = async ({ placa, tipo, plantaKey }, queryable = 
             LEFT JOIN fg_certificado_titular tit ON tit.certificado_id = c.id AND tit.orden = 1
             LEFT JOIN fg_facturacion fac_original ON fac_original.certificado_id = c.id
             WHERE c.estado = 'EMITIDO'
+              AND c.fecha_anulacion IS NULL
               AND c.fecha_emision IS NOT NULL
               AND c.numero_certificado IS NOT NULL
               AND c.planta_key = $2
@@ -167,30 +202,39 @@ exports.listarTipos = async (userContext) => {
 exports.buscar = async (filtros, userContext) => {
     if (!userContext?.planta_key) throw errorNegocio('PLANTA_REQUERIDA', 400);
     await validarAccesoPlanta(userContext, userContext.planta_key);
-    return consultarUltimosEmitidos({ ...filtros, plantaKey: userContext.planta_key });
+    const candidatos = await consultarUltimosEmitidos({ ...filtros, plantaKey: userContext.planta_key });
+    return filtrarCandidatosDisponibles(candidatos);
 };
 
-const obtenerCandidato = async (certificadoId, userContext) => {
-    const base = await db.query(`
-        SELECT c.id, c.planta_key, c.tipo_certificado_clave, v.placa,
-               COALESCE(NULLIF(UPPER(BTRIM(s.modalidad)), ''), 'ANUAL') AS modalidad
+const obtenerCandidato = async (certificadoId, userContext, queryable = db, bloquear = false) => {
+    const base = await queryable.query(`
+        SELECT c.id, c.planta_key, c.tipo_certificado_clave, c.estado, c.fecha_anulacion,
+               v.placa, COALESCE(NULLIF(UPPER(BTRIM(s.modalidad)), ''), 'ANUAL') AS modalidad
         FROM fg_certificado c
         JOIN fg_certificado_vehiculo v ON v.certificado_id = c.id
         LEFT JOIN fg_tarifa ta ON ta.codigo = c.tarifa_codigo AND ta.planta_key = c.planta_key
         LEFT JOIN fg_servicio s ON s.id = ta.servicio_id
         WHERE c.id = $1
+        ${bloquear ? 'FOR UPDATE OF c' : ''}
     `, [Number(certificadoId)]);
     if (!base.rowCount) throw errorNegocio('CERTIFICADO_NOT_FOUND', 404);
     const row = base.rows[0];
     await validarAccesoPlanta(userContext, row.planta_key);
+    const estado = String(row.estado || '').trim().toUpperCase();
+    if ((estado && estado !== 'EMITIDO') || row.fecha_anulacion) {
+        throw errorNegocio('CERTIFICADO_NO_DISPONIBLE_PARA_DUPLICADO', 409);
+    }
     const candidatos = await consultarUltimosEmitidos({
         placa: row.placa,
         tipo: `${row.tipo_certificado_clave}:${row.modalidad}`,
         plantaKey: row.planta_key
-    });
+    }, queryable);
     const candidato = candidatos[0];
     if (!candidato || candidato.certificadoId !== Number(certificadoId)) {
         throw errorNegocio('CERTIFICADO_NO_ES_ULTIMO', 409);
+    }
+    if (candidato.anulacionAdministrativaActiva || candidato.anulacionAceptada) {
+        throw errorNegocio('CERTIFICADO_NO_DISPONIBLE_PARA_DUPLICADO', 409, candidato);
     }
     if (!candidato.duplicable) throw errorNegocio('CERTIFICADO_NO_DUPLICABLE', 409, candidato);
     return candidato;
@@ -339,13 +383,16 @@ exports.listarHistorial = async (filtros, userContext) => {
 };
 
 exports.crearSolicitud = async (certificadoId, userContext) => {
-    const candidato = await obtenerCandidato(certificadoId, userContext);
+    let candidato = await obtenerCandidato(certificadoId, userContext);
     const preview = await certificadosService.obtenerPrevisualizacion(certificadoId, userContext);
     if (!preview?.html) throw errorNegocio('CERTIFICADO_SIN_CONTENIDO', 409);
 
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+        // Revalidar dentro de la transacción y bloquear el certificado para
+        // serializar la creación del duplicado con una anulación concurrente.
+        candidato = await obtenerCandidato(certificadoId, userContext, client, true);
         const existente = await client.query(`
             SELECT d.id
             FROM fg_certificado_duplicado d
@@ -585,7 +632,7 @@ exports.obtenerDocumento = async (duplicadoId, userContext) => {
         WHERE id=$1
     `, [duplicadoId]);
     return {
-        html: agregarMarcaDuplicado(duplicado.html_original_snapshot),
+        html: prepararHtmlDuplicado(duplicado.html_original_snapshot),
         filename: `DUPLICADO-${String(duplicado.numero_certificado || duplicado.id).replace(/[^A-Za-z0-9_-]/g, '-')}.pdf`
     };
 };
@@ -596,7 +643,7 @@ exports.obtenerVista = async (duplicadoId, userContext) => {
         throw errorNegocio('DUPLICADO_NO_DISPONIBLE', 409);
     }
     return {
-        html: agregarMarcaDuplicado(duplicado.html_original_snapshot),
+        html: prepararHtmlDuplicado(duplicado.html_original_snapshot),
         numeroCertificado: duplicado.numero_certificado || duplicado.numero_certificado_snapshot
     };
 };
@@ -626,5 +673,8 @@ exports._private = {
     asegurarSnapshotOperacion,
     consultarHistorial,
     HISTORIAL_POR_PAGINA,
+    ESTADOS_ANULACION_QUE_BLOQUEAN,
+    filtrarCandidatosDisponibles,
+    obtenerCandidato,
     consultarUltimosEmitidos
 };

@@ -15,7 +15,10 @@ const obtenerEstadoConfiguracion = (credentials = null) => ({
 
 const normalizarRespuesta = (response, options = {}) => {
   const body = response.data || {};
-  const aceptadaSunat = body.aceptada_por_sunat === true || body.aceptada_por_sunat === 'true';
+  const anuladaSunat = body.anulado === true || body.anulado === 'true';
+  const aceptadaSunat = body.aceptada_por_sunat === true
+    || body.aceptada_por_sunat === 'true'
+    || anuladaSunat;
   const httpOk = response.status >= 200 && response.status < 300;
   const tieneTicket = Boolean(body.sunat_ticket_numero || body.ticket || body.numero_ticket);
   const autenticacion = response.status === 401 || response.status === 403;

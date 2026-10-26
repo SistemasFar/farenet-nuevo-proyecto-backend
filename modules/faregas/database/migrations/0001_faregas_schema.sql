@@ -5467,6 +5467,7 @@ CREATE TABLE public.fg_solicitud_operacion (
     usuario_ejecucion varchar(255),
     fecha_ejecucion timestamptz,
     idempotencia_ejecucion uuid,
+    autorizacion_autoejecucion boolean NOT NULL DEFAULT FALSE,
     version integer NOT NULL DEFAULT 1,
     fecha_creacion timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     fecha_modificacion timestamptz,
@@ -5487,7 +5488,11 @@ CREATE TABLE public.fg_solicitud_operacion (
     ),
     CONSTRAINT ck_fg_solicitud_motivo CHECK (btrim(motivo) <> ''),
     CONSTRAINT ck_fg_solicitud_version CHECK (version > 0),
-    CONSTRAINT ck_fg_solicitud_no_autoejecucion CHECK (usuario_ejecucion IS NULL OR usuario_ejecucion IS DISTINCT FROM usuario_solicitante),
+    CONSTRAINT ck_fg_solicitud_no_autoejecucion CHECK (
+        usuario_ejecucion IS NULL
+        OR usuario_ejecucion IS DISTINCT FROM usuario_solicitante
+        OR (usuario_ejecucion = usuario_solicitante AND autorizacion_autoejecucion = TRUE)
+    ),
     CONSTRAINT uq_fg_solicitud_idempotencia UNIQUE (usuario_solicitante, idempotencia_clave)
 );
 
@@ -5509,6 +5514,7 @@ CREATE INDEX idx_fg_solicitud_planta ON public.fg_solicitud_operacion (planta_ke
 CREATE INDEX idx_fg_solicitud_empresa ON public.fg_solicitud_operacion (empresa_key, fecha_solicitud DESC);
 CREATE INDEX idx_fg_solicitud_estado ON public.fg_solicitud_operacion (estado, fecha_solicitud DESC);
 CREATE INDEX idx_fg_solicitud_tipo ON public.fg_solicitud_operacion (tipo_operacion, fecha_solicitud DESC);
+CREATE INDEX idx_fg_solicitud_cert_tipo_estado ON public.fg_solicitud_operacion (certificado_id, tipo_operacion, estado, fecha_solicitud DESC);
 CREATE INDEX idx_fg_solicitud_solicitante ON public.fg_solicitud_operacion (usuario_solicitante, fecha_solicitud DESC);
 CREATE INDEX idx_fg_solicitud_ejecutor ON public.fg_solicitud_operacion (usuario_ejecucion, fecha_ejecucion DESC)
     WHERE usuario_ejecucion IS NOT NULL;
@@ -5535,10 +5541,11 @@ VALUES
     ('FAREGAS_SOLICITUD_VER', 'Consultar solicitudes de anulación', 'FAREGAS', 'Permite consultar solicitudes dentro del alcance autorizado.', TRUE),
     ('FAREGAS_SOLICITUD_APROBAR', 'Aprobar anulaciones', 'FAREGAS', 'Permite a SISTEMAS aprobar solicitudes dentro del alcance autorizado.', TRUE),
     ('FAREGAS_SOLICITUD_AUTOAPROBAR', 'Autoaprobar anulación excepcional', 'FAREGAS', 'Permite a SISTEMAS aprobar excepcionalmente una solicitud propia con justificación y confirmación explícitas. No habilita la ejecución fiscal.', TRUE),
+    ('FAREGAS_SOLICITUD_AUTOEJECUTAR', 'Autoejecución excepcional de anulación', 'FAREGAS', 'Permite a un usuario SISTEMAS ejecutar su propia solicitud de anulación previamente aprobada, con confirmación explícita, justificación obligatoria y auditoría inmutable. No se asigna automáticamente a ningún perfil.', TRUE),
     ('FAREGAS_SOLICITUD_RECHAZAR', 'Rechazar anulaciones', 'FAREGAS', 'Permite a SISTEMAS rechazar solicitudes de otro usuario dentro del alcance autorizado.', TRUE),
     ('FAREGAS_SOLICITUD_ADMINISTRAR', 'Administrar solicitudes de anulación', 'FAREGAS', 'Permite administrar solicitudes sin omitir la separación de funciones.', TRUE),
     ('FAREGAS_CERTIFICADO_ANULAR_EJECUTAR', 'Ejecutar anulación autorizada', 'FAREGAS', 'Permite a SISTEMAS iniciar la ejecución de una anulación total aprobada y ajena.', TRUE),
-    ('FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR', 'Ejecutar rectificación técnica de certificado', 'FAREGAS', 'Permite ejecutar la rectificación técnica y versionado de un certificado emitido con solicitud administrativa aprobada.', TRUE)
+    ('FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR', 'Rectificar directamente un certificado', 'FAREGAS', 'Permite rectificar directamente un certificado emitido, con versionado y auditoría, sin alterar comprobantes, pagos, fecha original ni correlativo DG.', TRUE)
 ON CONFLICT (clave) DO UPDATE SET nombre = EXCLUDED.nombre, modulo = EXCLUDED.modulo, descripcion = EXCLUDED.descripcion, activo = EXCLUDED.activo;
 
 INSERT INTO public.fg_perfil_permiso (perfil_clave, permiso_clave)
@@ -5554,7 +5561,8 @@ JOIN (VALUES
     ('SISTEMAS'::varchar, 'FAREGAS_SOLICITUD_AUTOAPROBAR'::varchar),
     ('SISTEMAS'::varchar, 'FAREGAS_SOLICITUD_RECHAZAR'::varchar),
     ('SISTEMAS'::varchar, 'FAREGAS_SOLICITUD_ADMINISTRAR'::varchar),
-    ('SISTEMAS'::varchar, 'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR'::varchar)
+    ('SISTEMAS'::varchar, 'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR'::varchar),
+    ('SISTEMAS'::varchar, 'FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR'::varchar)
 ) permiso(perfil_clave, clave) ON permiso.perfil_clave = perfil.clave
 ON CONFLICT (perfil_clave, permiso_clave) DO NOTHING;
 

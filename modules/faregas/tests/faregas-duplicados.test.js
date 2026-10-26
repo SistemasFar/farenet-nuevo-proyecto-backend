@@ -13,16 +13,87 @@ require.cache[databasePath] = {
 
 const duplicadosService = require('../services/faregas-duplicados.service');
 const duplicadosController = require('../controllers/faregas-duplicados.controller');
-const { agregarMarcaDuplicado } = require('../services/faregas-duplicado-pdf.service');
+const { prepararHtmlDuplicado } = require('../services/faregas-duplicado-pdf.service');
 
-test('duplicado conserva el HTML y agrega una sola marca de fondo', () => {
+const contextoOperador = { username: 'OPERADOR', perfil_id: 1, planta_key: '98' };
+
+const filaBaseCertificado = (overrides = {}) => ({
+    id: '608',
+    planta_key: '98',
+    tipo_certificado_clave: 'GLP',
+    estado: 'EMITIDO',
+    fecha_anulacion: null,
+    placa: 'ABC123',
+    modalidad: 'INICIAL',
+    ...overrides
+});
+
+const filaCandidato = (overrides = {}) => ({
+    certificado_id: '608',
+    numero_certificado: 'DG-41-012488',
+    placa: 'ABC123',
+    tipo_certificado_clave: 'GLP',
+    modalidad: 'INICIAL',
+    fecha_emision: '2026-10-19',
+    fecha_limite_duplicado: '2027-10-19',
+    vigente: true,
+    anulacion_aceptada: false,
+    anulacion_administrativa_activa: false,
+    planta_key: '98',
+    planta_nombre: 'SURCO',
+    cliente_tipo_documento: 'DNI',
+    cliente_documento: '74045612',
+    cliente_nombre: 'JUAN PEREZ',
+    cliente_direccion: 'LIMA',
+    duplicados_emitidos_count: 1,
+    ...overrides
+});
+
+test('duplicado conserva exactamente el HTML original sin marca de agua', () => {
     const original = '<html><body><main>Certificado DG-41-012488</main></body></html>';
-    const marcado = agregarMarcaDuplicado(original);
+    const preparado = prepararHtmlDuplicado(original);
 
-    assert.match(marcado, /data-faregas-duplicado="true"/);
-    assert.match(marcado, />DUPLICADO<\/div>/);
-    assert.match(marcado, /Certificado DG-41-012488/);
-    assert.equal((agregarMarcaDuplicado(marcado).match(/data-faregas-duplicado/g) || []).length, 1);
+    assert.equal(preparado, original);
+    assert.doesNotMatch(preparado, /data-faregas-duplicado|>DUPLICADO<\/div>/);
+});
+
+test('vista previa y PDF del duplicado devuelven el mismo HTML original', async () => {
+    const dbMock = require('../../../config/database');
+    const authService = require('../services/faregas-auth.service');
+    const original = '<html><body><main>Certificado DG-41-012488</main></body></html>';
+
+    dbMock.query = async (sql) => {
+        if (sql.includes('SELECT d.*, c.numero_certificado')) {
+            return {
+                rowCount: 1,
+                rows: [{
+                    id: '1',
+                    certificado_original_id: '608',
+                    operacion_id: '991',
+                    planta_key: '98',
+                    precio: '50.00',
+                    estado: 'DISPONIBLE',
+                    numero_certificado: 'DG-41-012488',
+                    numero_certificado_snapshot: 'DG-41-012488',
+                    facturacion_estado: 'ACEPTADO',
+                    aceptada_sunat: true,
+                    html_original_snapshot: original
+                }]
+            };
+        }
+        return { rowCount: 1, rows: [] };
+    };
+    authService.validarAccesoPlanta = async () => true;
+
+    const contexto = { username: 'USER', planta_key: '98', perfil_id: 1 };
+    const vista = await duplicadosService.obtenerVista(1, contexto);
+    const documento = await duplicadosService.obtenerDocumento(1, contexto);
+
+    assert.equal(vista.html, original);
+    assert.equal(documento.html, original);
+    assert.doesNotMatch(vista.html, /data-faregas-duplicado|>DUPLICADO<\/div>/);
+    assert.doesNotMatch(documento.html, /data-faregas-duplicado|>DUPLICADO<\/div>/);
+    assert.equal(documento.filename, 'DUPLICADO-DG-41-012488.pdf');
 });
 
 test('busqueda normaliza placa y acepta TODOS o una modalidad GLP/GNV', () => {
@@ -151,6 +222,189 @@ test('consulta devuelve sólo el último emitido por tipo y modalidad de la plac
     assert.equal(candidatos[0].duplicable, true);
 });
 
+test('buscador excluye anulación activa, anulación confirmada y certificados no vigentes', async () => {
+    const dbMock = require('../../../config/database');
+    const authService = require('../services/faregas-auth.service');
+    let consulta = null;
+
+    dbMock.query = async (sql) => {
+        if (sql.includes('WITH candidatos AS')) {
+            consulta = { sql };
+            return {
+                rows: [
+                    filaCandidato({ certificado_id: '608' }),
+                    filaCandidato({ certificado_id: '609', anulacion_administrativa_activa: true }),
+                    filaCandidato({ certificado_id: '610', anulacion_aceptada: true }),
+                    filaCandidato({ certificado_id: '611', vigente: false })
+                ]
+            };
+        }
+        return { rows: [] };
+    };
+    authService.validarAccesoPlanta = async () => true;
+
+    const resultados = await duplicadosService.buscar(
+        { placa: 'ABC-123', tipo: 'TODOS' },
+        contextoOperador
+    );
+
+    assert.deepEqual(resultados.map((c) => c.certificadoId), [608]);
+    assert.match(consulta.sql, /FROM fg_solicitud_operacion so/);
+    assert.match(consulta.sql, /tipo_operacion IN \('ANULAR_AMBOS', 'ANULAR_CERTIFICADO'\)/);
+    assert.match(consulta.sql, /c\.estado = 'EMITIDO'/);
+    assert.match(consulta.sql, /c\.fecha_anulacion IS NULL/);
+    for (const estado of duplicadosService._private.ESTADOS_ANULACION_QUE_BLOQUEAN) {
+        assert.ok(consulta.sql.includes(`'${estado}'`), `falta el estado bloqueante ${estado}`);
+    }
+    assert.doesNotMatch(consulta.sql, /so\.estado IN \([^)]*'(RECHAZADA|CANCELADA)'/);
+});
+
+test('solicitud rechazada o cancelada no bloquea si el certificado continúa vigente', () => {
+    const reglas = duplicadosService._private;
+    const rechazada = reglas.mapearCandidato(filaCandidato({
+        anulacion_administrativa_activa: false,
+        anulacion_aceptada: false,
+        vigente: true
+    }));
+
+    assert.equal(rechazada.duplicable, true);
+    assert.equal(rechazada.anulacionAdministrativaActiva, false);
+    assert.equal(rechazada.motivoNoDisponible, null);
+    assert.equal(reglas.filtrarCandidatosDisponibles([rechazada]).length, 1);
+});
+
+test('crearSolicitud bloquea llamada directa con anulación activa y no genera cobros ni duplicados', async () => {
+    const dbMock = require('../../../config/database');
+    const authService = require('../services/faregas-auth.service');
+    const certificadosService = require('../services/faregas-certificados.service');
+    let previewLlamada = false;
+    let conexionLlamada = false;
+
+    dbMock.query = async (sql) => {
+        if (sql.includes('SELECT c.id, c.planta_key') && sql.includes('FROM fg_certificado')) {
+            return { rowCount: 1, rows: [filaBaseCertificado()] };
+        }
+        if (sql.includes('WITH candidatos AS') && sql.includes('FROM fg_certificado c')) {
+            return { rowCount: 1, rows: [filaCandidato({ anulacion_administrativa_activa: true })] };
+        }
+        return { rowCount: 0, rows: [] };
+    };
+    dbMock.connect = async () => {
+        conexionLlamada = true;
+        throw new Error('No debe abrirse una transacción para un certificado bloqueado.');
+    };
+    authService.validarAccesoPlanta = async () => true;
+    certificadosService.obtenerPrevisualizacion = async () => {
+        previewLlamada = true;
+        return { html: '<html><body>Certificado original</body></html>' };
+    };
+
+    await assert.rejects(
+        () => duplicadosService.crearSolicitud(608, contextoOperador),
+        (error) => {
+            assert.equal(error.code, 'CERTIFICADO_NO_DISPONIBLE_PARA_DUPLICADO');
+            assert.equal(error.statusCode, 409);
+            return true;
+        }
+    );
+    assert.equal(previewLlamada, false);
+    assert.equal(conexionLlamada, false);
+});
+
+test('crearSolicitud bloquea certificado con estado técnico ANULADO', async () => {
+    const dbMock = require('../../../config/database');
+    const authService = require('../services/faregas-auth.service');
+    let conexionLlamada = false;
+
+    dbMock.query = async (sql) => {
+        if (sql.includes('SELECT c.id, c.planta_key') && sql.includes('FROM fg_certificado')) {
+            return {
+                rowCount: 1,
+                rows: [filaBaseCertificado({ estado: 'ANULADO' })]
+            };
+        }
+        return { rowCount: 0, rows: [] };
+    };
+    dbMock.connect = async () => {
+        conexionLlamada = true;
+        throw new Error('No debe abrirse una transacción para un certificado anulado.');
+    };
+    authService.validarAccesoPlanta = async () => true;
+
+    await assert.rejects(
+        () => duplicadosService.crearSolicitud(608, contextoOperador),
+        (error) => {
+            assert.equal(error.code, 'CERTIFICADO_NO_DISPONIBLE_PARA_DUPLICADO');
+            return true;
+        }
+    );
+    assert.equal(conexionLlamada, false);
+});
+
+test('anulación concurrente: revalida con bloqueo dentro de la transacción y no inserta duplicado', async () => {
+    const dbMock = require('../../../config/database');
+    const authService = require('../services/faregas-auth.service');
+    const certificadosService = require('../services/faregas-certificados.service');
+    const consultas = [];
+    let liberado = false;
+
+    const clientMock = {
+        query: async (sql, params) => {
+            consultas.push({ sql, params });
+            if (sql.includes('SELECT c.id, c.planta_key') && sql.includes('FROM fg_certificado')) {
+                return { rowCount: 1, rows: [filaBaseCertificado()] };
+            }
+            if (sql.includes('WITH candidatos AS') && sql.includes('FROM fg_certificado c')) {
+                // La anulación alcanzó a confirmarse después de la búsqueda inicial.
+                return { rowCount: 1, rows: [filaCandidato({ anulacion_administrativa_activa: true })] };
+            }
+            return { rowCount: 0, rows: [] };
+        },
+        release: () => { liberado = true; }
+    };
+
+    dbMock.connect = async () => clientMock;
+    dbMock.query = async (sql) => {
+        if (sql.includes('SELECT c.id, c.planta_key') && sql.includes('FROM fg_certificado')) {
+            return { rowCount: 1, rows: [filaBaseCertificado()] };
+        }
+        if (sql.includes('WITH candidatos AS') && sql.includes('FROM fg_certificado c')) {
+            return { rowCount: 1, rows: [filaCandidato()] };
+        }
+        return { rowCount: 0, rows: [] };
+    };
+    authService.validarAccesoPlanta = async () => true;
+    certificadosService.obtenerPrevisualizacion = async () => ({
+        html: '<html><body>Certificado original</body></html>'
+    });
+
+    await assert.rejects(
+        () => duplicadosService.crearSolicitud(608, contextoOperador),
+        (error) => {
+            assert.equal(error.code, 'CERTIFICADO_NO_DISPONIBLE_PARA_DUPLICADO');
+            return true;
+        }
+    );
+
+    const indiceBloqueo = consultas.findIndex((q) => /FOR UPDATE OF c/.test(q.sql));
+    const indiceRevalidacion = consultas.findIndex((q) => q.sql.includes('WITH candidatos AS'));
+    assert.ok(indiceBloqueo >= 0, 'debe bloquear el certificado dentro de la transacción');
+    assert.ok(indiceRevalidacion > indiceBloqueo, 'debe revalidar después de obtener el bloqueo');
+    assert.ok(!consultas.some((q) => /INSERT INTO/.test(q.sql)), 'no debe insertar operación ni duplicado');
+    assert.ok(consultas.some((q) => q.sql === 'ROLLBACK'));
+    assert.equal(liberado, true);
+});
+
+test('buscar rechaza sedes no autorizadas', async () => {
+    const authService = require('../services/faregas-auth.service');
+    authService.validarAccesoPlanta = async () => false;
+
+    await assert.rejects(
+        () => duplicadosService.buscar({ placa: 'ABC123', tipo: 'TODOS' }, contextoOperador),
+        /PLANTA_NO_AUTORIZADA/
+    );
+});
+
 test('esquema consolidado contiene tabla, restricciones e indices del duplicado', () => {
     const sql = fs.readFileSync(path.join(__dirname, '../database/migrations/0001_faregas_schema.sql'), 'utf8');
     assert.match(sql, /CREATE TABLE public\.fg_certificado_duplicado/);
@@ -236,6 +490,12 @@ test('crearSolicitud genera nueva operacion cuando los duplicados anteriores est
     const clientMock = {
         query: async (sql, params) => {
             queriesEjecutadas.push({ sql, params });
+            if (sql.includes('SELECT c.id, c.planta_key') && sql.includes('FROM fg_certificado')) {
+                return { rowCount: 1, rows: [filaBaseCertificado()] };
+            }
+            if (sql.includes('WITH candidatos AS') && sql.includes('FROM fg_certificado c')) {
+                return { rowCount: 1, rows: [filaCandidato()] };
+            }
             if (sql.includes('SELECT d.id') && sql.includes('fg_certificado_duplicado')) {
                 // Simula que NO hay duplicados pendientes (los anteriores estan DISPONIBLE)
                 return { rowCount: 0, rows: [] };
@@ -258,25 +518,10 @@ test('crearSolicitud genera nueva operacion cuando los duplicados anteriores est
     dbMock.query = async (sql, params) => {
         queriesEjecutadas.push({ sql, params });
         if (sql.includes('SELECT c.id, c.planta_key') && sql.includes('FROM fg_certificado')) {
-            return {
-                rowCount: 1,
-                rows: [{
-                    id: '608', planta_key: '98', tipo_certificado_clave: 'GLP', placa: 'ABC123', modalidad: 'INICIAL'
-                }]
-            };
+            return { rowCount: 1, rows: [filaBaseCertificado()] };
         }
         if (sql.includes('WITH candidatos AS') && sql.includes('FROM fg_certificado c')) {
-            return {
-                rowCount: 1,
-                rows: [{
-                    certificado_id: '608', numero_certificado: 'DG-41-012488', placa: 'ABC123',
-                    tipo_certificado_clave: 'GLP', modalidad: 'INICIAL', fecha_emision: '2026-10-19',
-                    fecha_limite_duplicado: '2027-10-19', vigente: true, anulacion_aceptada: false,
-                    planta_key: '98', planta_nombre: 'SURCO', cliente_tipo_documento: 'DNI',
-                    cliente_documento: '74045612', cliente_nombre: 'JUAN PEREZ', cliente_direccion: 'LIMA',
-                    duplicados_emitidos_count: 1
-                }]
-            };
+            return { rowCount: 1, rows: [filaCandidato()] };
         }
         if (sql.includes('SELECT d.*, c.numero_certificado') && sql.includes('FROM fg_certificado_duplicado d')) {
             return {
@@ -300,7 +545,7 @@ test('crearSolicitud genera nueva operacion cuando los duplicados anteriores est
     authService.validarAccesoPlanta = async () => true;
     certificadosService.obtenerPrevisualizacion = async () => ({ html: '<html><body>Certificado original</body></html>' });
 
-    const solicitud = await duplicadosService.crearSolicitud(608, { username: 'OPERADOR', perfil_id: 1, planta_key: '98' });
+    const solicitud = await duplicadosService.crearSolicitud(608, contextoOperador);
 
     assert.equal(solicitud.id, 2);
     assert.equal(solicitud.estado, 'PENDIENTE_PAGO');
@@ -310,6 +555,7 @@ test('crearSolicitud genera nueva operacion cuando los duplicados anteriores est
     // Verifica que se insertó una nueva operación comercial y detalle
     assert.ok(queriesEjecutadas.some(q => q.sql.includes('INSERT INTO fg_operacion_comercial')));
     assert.ok(queriesEjecutadas.some(q => q.sql.includes('INSERT INTO fg_certificado_duplicado')));
+    assert.ok(queriesEjecutadas.some(q => /FOR UPDATE OF c/.test(q.sql)));
 });
 
 test('crearSolicitud no genera nueva operacion cuando existe una solicitud PENDIENTE (idempotencia y doble click)', async () => {
@@ -321,6 +567,12 @@ test('crearSolicitud no genera nueva operacion cuando existe una solicitud PENDI
     const clientMock = {
         query: async (sql, params) => {
             queriesEjecutadas.push({ sql, params });
+            if (sql.includes('SELECT c.id, c.planta_key') && sql.includes('FROM fg_certificado')) {
+                return { rowCount: 1, rows: [filaBaseCertificado()] };
+            }
+            if (sql.includes('WITH candidatos AS') && sql.includes('FROM fg_certificado c')) {
+                return { rowCount: 1, rows: [filaCandidato()] };
+            }
             if (sql.includes('SELECT d.id') && sql.includes('fg_certificado_duplicado')) {
                 // Simula que YA existe una solicitud pendiente de pago
                 return { rowCount: 1, rows: [{ id: '2' }] };
@@ -334,25 +586,10 @@ test('crearSolicitud no genera nueva operacion cuando existe una solicitud PENDI
     dbMock.query = async (sql, params) => {
         queriesEjecutadas.push({ sql, params });
         if (sql.includes('SELECT c.id, c.planta_key') && sql.includes('FROM fg_certificado')) {
-            return {
-                rowCount: 1,
-                rows: [{
-                    id: '608', planta_key: '98', tipo_certificado_clave: 'GLP', placa: 'ABC123', modalidad: 'INICIAL'
-                }]
-            };
+            return { rowCount: 1, rows: [filaBaseCertificado()] };
         }
         if (sql.includes('WITH candidatos AS') && sql.includes('FROM fg_certificado c')) {
-            return {
-                rowCount: 1,
-                rows: [{
-                    certificado_id: '608', numero_certificado: 'DG-41-012488', placa: 'ABC123',
-                    tipo_certificado_clave: 'GLP', modalidad: 'INICIAL', fecha_emision: '2026-10-19',
-                    fecha_limite_duplicado: '2027-10-19', vigente: true, anulacion_aceptada: false,
-                    planta_key: '98', planta_nombre: 'SURCO', cliente_tipo_documento: 'DNI',
-                    cliente_documento: '74045612', cliente_nombre: 'JUAN PEREZ', cliente_direccion: 'LIMA',
-                    duplicados_emitidos_count: 1
-                }]
-            };
+            return { rowCount: 1, rows: [filaCandidato()] };
         }
         if (sql.includes('SELECT d.*, c.numero_certificado') && sql.includes('FROM fg_certificado_duplicado d')) {
             return {
@@ -376,7 +613,7 @@ test('crearSolicitud no genera nueva operacion cuando existe una solicitud PENDI
     authService.validarAccesoPlanta = async () => true;
     certificadosService.obtenerPrevisualizacion = async () => ({ html: '<html><body>Certificado original</body></html>' });
 
-    const solicitud = await duplicadosService.crearSolicitud(608, { username: 'OPERADOR', perfil_id: 1, planta_key: '98' });
+    const solicitud = await duplicadosService.crearSolicitud(608, contextoOperador);
 
     assert.equal(solicitud.id, 2);
     assert.equal(solicitud.estado, 'PENDIENTE_PAGO');

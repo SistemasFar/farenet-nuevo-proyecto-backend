@@ -401,6 +401,7 @@ test('25c. la ventana usa hora de servidor, zona controlada y estados fiscales e
     const consulta = _private.consultaContextoCertificado(false);
     assert.match(consulta, /clock_timestamp\(\)/);
     assert.match(consulta, /AT TIME ZONE 'America\/Lima'/);
+    assert.match(consulta, /INTERVAL '24 hours'/);
     assert.match(consulta, /fi\.estado IN \('ACEPTADO', 'PENDIENTE_SUNAT'\)/);
 });
 

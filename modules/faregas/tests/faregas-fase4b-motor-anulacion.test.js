@@ -291,10 +291,40 @@ test('5. FASE 4B: Comprobante PENDIENTE_SUNAT no se declara resuelto, detecta tr
     assert.equal(llamadasNubeFact, 0);
     assert.equal(resultado.resultadoFiscal.resuelto, false);
     assert.equal(resultado.resultadoFiscal.estado, 'PENDIENTE_SUNAT');
+    assert.equal(resultado.resultadoFiscal.resolucionFiscal.resultado, 'PENDIENTE_VERIFICACION');
     assert.equal(resultado.resultadoFiscal.enTramite, true);
     assert.match(resultado.resultadoFiscal.motivo, /emisión en trámite ante SUNAT/i);
     // Técnica bloqueada por defecto
     assert.equal(resultado.resultadoTecnico.resuelto, false);
+    assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
+    assert.equal(resultado.completada, false);
+});
+
+test('5c. FASE 4B: con anulación técnica habilitada, un fiscal pendiente no marca el certificado como ANULADO', async () => {
+    let llamadasNubeFact = 0;
+    const mockDocsService = {
+        generarAnulacion: async () => { llamadasNubeFact++; throw new Error('No debe invocarse'); },
+        emitirNota: async () => { llamadasNubeFact++; throw new Error('No debe invocarse'); }
+    };
+    const db = crearMockDb({
+        facturacionOverrides: { estado: 'PENDIENTE_SUNAT' },
+        certificadoOverrides: { tipo_certificado_clave: 'GNV_INICIAL', estado: 'EMITIDO' }
+    });
+    const servicio = _private.crearServicio(db, {
+        documentosService: mockDocsService,
+        habilitarAnulacionTecnica: true,
+        tiposPermitidosLocal: ['GNV_INICIAL']
+    });
+
+    const resultado = await servicio.ejecutarAnulacionTotal(50, {}, { username: 'sistemas_user' });
+
+    assert.equal(llamadasNubeFact, 0);
+    assert.equal(resultado.resultadoFiscal.resuelto, false);
+    assert.equal(resultado.resultadoFiscal.estado, 'PENDIENTE_SUNAT');
+    assert.equal(resultado.resultadoTecnico.resuelto, false);
+    assert.equal(resultado.resultadoTecnico.estado, 'BLOQUEADO_POR_FISCAL');
+    assert.equal(resultado.resultadoTecnico.estadoFiscal, 'PENDIENTE_SUNAT');
+    assert.equal(db.getCertificado().estado, 'EMITIDO');
     assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
     assert.equal(resultado.completada, false);
 });
