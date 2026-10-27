@@ -189,8 +189,9 @@ router.put('/borradores/:id/snapshot', controller.guardarTaller);
 router.get('/talleres', controller.obtenerTalleresActivos);
 
 // RECTIFICACIÓN TÉCNICA DE CERTIFICADOS EMITIDOS
-// Solicitud -> aprobación -> ejecución. Estas rutas no emiten comprobantes ni
-// consumen correlativos. La ejecución se realiza desde solicitudes-operacion.
+// El endpoint directo actualiza y versiona el certificado sin solicitudes,
+// comprobantes nuevos ni consumo de correlativos. Las rutas administrativas se
+// conservan separadas para el historial y los procesos que todavía las usan.
 const rectificacionesController = require('../controllers/faregas-rectificaciones.controller');
 router.get('/:id/rectificacion/contexto', rectificacionesController.contexto);
 router.get('/:id/rectificacion/historial', rectificacionesController.historial);

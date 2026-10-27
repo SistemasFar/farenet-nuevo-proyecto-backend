@@ -14,8 +14,12 @@ const {
 } = require('../services/faregas-rectificacion-datos');
 const {
     _private,
-    TIPO_RECTIFICACION
+    TIPO_RECTIFICACION,
+    ejecutarRectificacionDirecta
 } = require('../services/faregas-rectificaciones.service');
+const database = require('../../../config/database');
+const certificadosService = require('../services/faregas-certificados.service');
+const pdfVersionService = require('../services/faregas-rectificacion-pdf.service');
 
 const NUMERO_DG = 'DG-41-0000316';
 const FECHA_EMISION = '2026-04-09';
@@ -566,21 +570,201 @@ test('el esquema garantiza una sola versión vigente por certificado', () => {
     assert.match(schema, /FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR/);
 });
 
-test('la rectificación directa exige el permiso técnico explícito', () => {
-    assert.doesNotThrow(() => _private.exigirPermisoExplicito(
-        new Set(['FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR']),
-        'FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR'
-    ));
-    assert.throws(
-        () => _private.exigirPermisoExplicito(
-            new Set(['FAREGAS_SOLICITUD_ADMINISTRAR']),
-            'FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR'
+test('SUPERVISOR, CAJERO y SISTEMAS tienen la misma validación de acceso por sede', async () => {
+    for (const perfil of ['SUPERVISOR', 'CAJERO', 'SISTEMAS']) {
+        const executor = {
+            query: async (_sql, params) => {
+                assert.deepEqual(params, [`usuario_${perfil}`, perfil, 'SURCO']);
+                return { rowCount: 1, rows: [{ acceso: 1 }] };
+            }
+        };
+        await assert.doesNotReject(() => _private.validarAccesoPlanta(
+            executor,
+            { username: `usuario_${perfil}`, perfil_id: perfil },
+            'SURCO'
+        ));
+    }
+
+    const backendRoot = path.resolve(__dirname, '..');
+    const servicio = fs.readFileSync(path.join(backendRoot, 'services', 'faregas-rectificaciones.service.js'), 'utf8');
+    const inicio = servicio.indexOf('const ejecutarRectificacionDirecta');
+    const fin = servicio.indexOf('\nconst upsertVehiculo', inicio);
+    const flujoDirecto = servicio.slice(inicio, fin);
+
+    assert.ok(inicio >= 0 && fin > inicio);
+    assert.match(flujoDirecto, /obtenerUsuarioActual/);
+    assert.match(flujoDirecto, /validarAccesoPlanta/);
+    assert.match(flujoDirecto, /directa: true/);
+    assert.doesNotMatch(flujoDirecto, /obtenerPermisos|exigirPermiso|perfil_id/);
+    assert.doesNotMatch(flujoDirecto, /SUPERVISOR|CAJERO|SISTEMAS|ADMINISTRADOR|OPERADOR/);
+});
+
+test('un usuario sin acceso a la sede continúa bloqueado', async () => {
+    const executor = { query: async () => ({ rowCount: 0, rows: [] }) };
+    await assert.rejects(
+        () => _private.validarAccesoPlanta(
+            executor,
+            { username: 'usuario_sin_sede', perfil_id: 'CAJERO' },
+            'SURCO'
         ),
-        (error) => error.code === 'SOLICITUD_PERMISO_DENEGADO' && error.statusCode === 403
+        (error) => error.code === 'PLANTA_NO_AUTORIZADA' && error.statusCode === 403
     );
 });
 
-test('el endpoint directo omite aprobación externa y reutiliza la ejecución idempotente', () => {
+test('la ejecución directa persiste la versión corregida vigente sin solicitud ni escritura fiscal', async () => {
+    const originales = {
+        connect: database.connect,
+        previsualizar: certificadosService.previsualizarRectificacion,
+        obtenerPreview: certificadosService.obtenerPrevisualizacion,
+        generarPdf: pdfVersionService.generarPdfVersionPersistente
+    };
+    const consultas = [];
+    let insercionesVersion = 0;
+    const cert = {
+        id: 316,
+        tipo_certificado_clave: 'GNV_ANUAL',
+        numero_certificado: NUMERO_DG,
+        cliente_id: 9,
+        planta_key: 'SURCO',
+        fecha_emision: FECHA_EMISION,
+        estado: 'EMITIDO',
+        observaciones: 'OBSERVACION ORIGINAL',
+        usuario_creacion: 'emisor',
+        fecha_creacion: FECHA_EMISION,
+        entidad_certificadora_nombre: 'FAREGAS',
+        resolucion_directoral: 'RD-1',
+        domicilio_fiscal: 'CALLAO',
+        telefono_certificadora: '111111',
+        lugar_emision: 'LIMA',
+        tarifa_codigo: '0121',
+        formato_version_id: 1,
+        formato_datos_snapshot: {},
+        fecha_anulacion: null,
+        motivo_anulacion: null,
+        solicitud_anulacion_id: null,
+        empresa_key: 'FAREGAS',
+        planta_nombre: 'SURCO',
+        empresa_nombre: 'FAREGAS',
+        tipo_nombre: 'CERTIFICADO ANUAL GNV',
+        cliente_tipo_doc: 'DNI',
+        cliente_nro_doc: '12345678',
+        cliente_nombre: 'JUAN PEREZ'
+    };
+    const base = snapshotBase();
+    const client = {
+        release: () => undefined,
+        query: async (sql, params = []) => {
+            const limpio = String(sql).replace(/\s+/g, ' ').trim();
+            consultas.push({ sql: limpio, params });
+            if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(limpio)) return { rowCount: 0, rows: [] };
+            if (limpio.includes('FROM fg_usuario') && !limpio.includes('fg_usuario_planta')) {
+                return { rowCount: 1, rows: [{ username: 'cajero', perfil_id: 'CAJERO', estado: true }] };
+            }
+            if (limpio.includes('FROM fg_certificado c')) return { rowCount: 1, rows: [cert] };
+            if (limpio.includes('FROM fg_usuario_planta')) return { rowCount: 1, rows: [{ acceso: 1 }] };
+            if (limpio.includes("metadatos->>'idempotenciaClave'")) return { rowCount: 0, rows: [] };
+            if (limpio.includes('FROM fg_solicitud_operacion')) return { rowCount: 0, rows: [] };
+            if (limpio.includes('COALESCE(MAX(numero_version)')) return { rowCount: 1, rows: [{ ultima: 0 }] };
+            if (limpio.includes('FROM fg_certificado_vehiculo')) return { rowCount: 1, rows: [base.vehiculo] };
+            if (limpio.includes('FROM fg_certificado_titular')) return { rowCount: 1, rows: base.titulares };
+            if (limpio.includes('FROM fg_certificado_gnv WHERE')) return { rowCount: 1, rows: [base.especifico] };
+            if (limpio.includes('FROM fg_certificado_gnv_componente')) return { rowCount: 1, rows: base.componentes };
+            if (limpio.includes('FROM fg_certificado_gnv_verificacion')) return { rowCount: 1, rows: base.verificaciones };
+            if (limpio.includes('FROM fg_certificado_chip')) return { rowCount: 0, rows: [] };
+            if (limpio.includes('FROM fg_facturacion')) {
+                return { rowCount: 1, rows: [{ id: 99, tipo_comprobante: 'BOLETA', importe_total: 80 }] };
+            }
+            if (limpio.includes("FROM fg_certificado_version WHERE certificado_id = $1 AND estado_version = 'ORIGINAL'")) {
+                return { rowCount: 0, rows: [] };
+            }
+            if (limpio.startsWith('INSERT INTO fg_certificado_version')) {
+                insercionesVersion += 1;
+                if (insercionesVersion === 1) {
+                    return {
+                        rowCount: 1,
+                        rows: [{
+                            id: 1,
+                            certificado_id: 316,
+                            solicitud_id: null,
+                            numero_version: 1,
+                            estado_version: 'ORIGINAL',
+                            es_vigente: true,
+                            fecha_emision_original: FECHA_EMISION,
+                            usuario_creacion: 'emisor',
+                            motivo: params[3],
+                            snapshot_datos: JSON.parse(params[4]),
+                            diferencias: null,
+                            enlace_pdf_original: params[5],
+                            enlace_pdf_version: null,
+                            metadatos: JSON.parse(params[6])
+                        }]
+                    };
+                }
+                return {
+                    rowCount: 1,
+                    rows: [{
+                        id: 2,
+                        certificado_id: params[0],
+                        solicitud_id: null,
+                        numero_version: params[1],
+                        estado_version: 'VIGENTE',
+                        es_vigente: true,
+                        fecha_emision_original: params[2],
+                        fecha_version: '2026-10-27T10:00:00.000Z',
+                        fecha_aplicacion_oficial: '2026-10-27T10:00:00.000Z',
+                        usuario_creacion: params[3],
+                        usuario_aprobacion: null,
+                        motivo: params[4],
+                        snapshot_datos: JSON.parse(params[5]),
+                        diferencias: JSON.parse(params[6]),
+                        enlace_pdf_original: params[7],
+                        enlace_pdf_version: params[8],
+                        metadatos: JSON.parse(params[9])
+                    }]
+                };
+            }
+            return { rowCount: 1, rows: [] };
+        }
+    };
+
+    database.connect = async () => client;
+    certificadosService.previsualizarRectificacion = async () => ({ html: '<html>CORREGIDO</html>' });
+    certificadosService.obtenerPrevisualizacion = async () => ({ html: '<html>ORIGINAL</html>' });
+    pdfVersionService.generarPdfVersionPersistente = async ({ tipo }) => ({
+        enlace: `uploads/${tipo.toLowerCase()}.pdf`,
+        limpiar: () => undefined
+    });
+
+    try {
+        const resultado = await ejecutarRectificacionDirecta(316, {
+            motivo: 'Corregir motor',
+            datosPropuestos: { numero_motor: 'MOTOR-CORREGIDO' },
+            idempotenciaClave: '11111111-1111-4111-8111-111111111111',
+            versionBase: 1
+        }, { username: 'cajero' });
+
+        assert.equal(resultado.version.numeroVersion, 2);
+        assert.equal(resultado.version.esVigente, true);
+        assert.equal(resultado.version.solicitudId, null);
+        assert.equal(resultado.resultado.numeroCertificado, NUMERO_DG);
+        assert.equal(resultado.resultado.fechaEmisionOriginal, FECHA_EMISION);
+        assert.equal(resultado.resultado.enlacePdfVersion, 'uploads/rectificada.pdf');
+        assert.equal(resultado.version.snapshot.vehiculo.numero_motor, 'MOTOR-CORREGIDO');
+        assert.equal(insercionesVersion, 2);
+        assert.ok(consultas.some((q) => q.sql === 'COMMIT'));
+        assert.ok(consultas.some((q) => q.sql.startsWith('UPDATE fg_certificado SET observaciones')));
+        assert.ok(consultas.some((q) => q.sql.includes("estado_version = 'SUSTITUIDA'")));
+        assert.ok(!consultas.some((q) => /INSERT INTO fg_solicitud_operacion/.test(q.sql)));
+        assert.ok(!consultas.some((q) => /UPDATE fg_facturacion|INSERT INTO fg_facturacion|UPDATE fg_pago|INSERT INTO fg_pago/.test(q.sql)));
+    } finally {
+        database.connect = originales.connect;
+        certificadosService.previsualizarRectificacion = originales.previsualizar;
+        certificadosService.obtenerPrevisualizacion = originales.obtenerPreview;
+        pdfVersionService.generarPdfVersionPersistente = originales.generarPdf;
+    }
+});
+
+test('el endpoint directo no crea solicitudes ni pasa por aprobación o autoejecución', () => {
     const backendRoot = path.resolve(__dirname, '..');
     const servicio = fs.readFileSync(path.join(backendRoot, 'services', 'faregas-rectificaciones.service.js'), 'utf8');
     const rutas = fs.readFileSync(path.join(backendRoot, 'routes', 'faregas-certificados.routes.js'), 'utf8');
@@ -589,19 +773,59 @@ test('el endpoint directo omite aprobación externa y reutiliza la ejecución id
     const fin = servicio.indexOf('\nconst upsertVehiculo', inicio);
     const flujoDirecto = servicio.slice(inicio, fin);
 
-    assert.ok(inicio >= 0 && fin > inicio);
-    assert.match(flujoDirecto, /directa: true/);
-    assert.match(flujoDirecto, /ejecutarRectificacionSolicitud/);
-    assert.doesNotMatch(flujoDirecto, /SOLICITUD_APROBAR|NubeFact|fg_pago|fg_facturacion|fg_correlativo/i);
+    assert.match(flujoDirecto, /consultaCertificadoBase\(true\)/);
+    assert.match(flujoDirecto, /ignorarRectificacionActiva: true/);
+    assert.match(flujoDirecto, /solicitud_id, numero_version/);
+    assert.match(flujoDirecto, /\$1, NULL, \$2, 'VIGENTE'/);
+    assert.doesNotMatch(flujoDirecto, /crearSolicitudRectificacion|ejecutarRectificacionSolicitud/);
+    assert.doesNotMatch(flujoDirecto, /fg_solicitud_operacion|PENDIENTE_APROBACION|APROBADA|autoejecucion/i);
+    assert.doesNotMatch(flujoDirecto, /NubeFact|fg_pago|UPDATE\s+fg_facturacion|INSERT\s+INTO\s+fg_facturacion|fg_correlativo/i);
     assert.match(rutas, /rectificacion\/directa/);
     assert.match(controlador, /RECTIFICACION_DIRECTA_EJECUTADA/);
+    assert.doesNotMatch(controlador, /registroId: data\?\.solicitud/);
 });
 
-test('el registro directo nace aprobado y nunca pendiente de aprobación', () => {
+test('el flujo directo conserva historial, vuelve vigente el PDF corregido y detecta concurrencia', () => {
     const servicio = fs.readFileSync(
         path.join(__dirname, '..', 'services', 'faregas-rectificaciones.service.js'),
         'utf8'
     );
-    assert.match(servicio, /rectificacionDirecta \? 'APROBADA' : 'PENDIENTE_APROBACION'/);
-    assert.match(servicio, /Rectificación directa iniciada sin cambios fiscales ni aprobación externa/);
+    const inicio = servicio.indexOf('const ejecutarRectificacionDirecta');
+    const fin = servicio.indexOf('\nconst upsertVehiculo', inicio);
+    const flujoDirecto = servicio.slice(inicio, fin);
+
+    assert.match(flujoDirecto, /VERSION_RECTIFICACION_DESACTUALIZADA/);
+    assert.match(flujoDirecto, /metadatos->>'idempotenciaClave'/);
+    assert.match(flujoDirecto, /estado_version = 'SUSTITUIDA'/);
+    assert.match(flujoDirecto, /'VIGENTE', TRUE/);
+    assert.match(flujoDirecto, /tipo: 'ORIGINAL'/);
+    assert.match(flujoDirecto, /tipo: 'RECTIFICADA'/);
+    assert.match(flujoDirecto, /aplicarSnapshotTecnico/);
+    assert.match(flujoDirecto, /fechaEmisionOriginal: cert\.fecha_emision/);
+    assert.match(flujoDirecto, /numeroCertificado: cert\.numero_certificado/);
+    assert.match(flujoDirecto, /sinCambiosFiscales: true/);
+});
+
+test('contexto, previsualización, historial y PDF histórico validan sede sin permiso especial', () => {
+    const servicio = fs.readFileSync(
+        path.join(__dirname, '..', 'services', 'faregas-rectificaciones.service.js'),
+        'utf8'
+    );
+    const extraer = (desde, hasta) => {
+        const inicio = servicio.indexOf(`const ${desde}`);
+        const fin = servicio.indexOf(`\nconst ${hasta}`, inicio);
+        assert.ok(inicio >= 0 && fin > inicio, `${desde} debe existir`);
+        return servicio.slice(inicio, fin);
+    };
+    const bloques = [
+        extraer('obtenerContextoRectificacion', 'obtenerHistorialRectificacion'),
+        extraer('obtenerHistorialRectificacion', 'validarPropuestaParaTipo'),
+        extraer('previsualizarRectificacion', 'crearSolicitudRectificacion'),
+        extraer('descargarPdfVersionRectificacion', 'listarSolicitudesPendientesRectificacion')
+    ];
+
+    bloques.forEach((bloque) => {
+        assert.match(bloque, /validarAccesoPlanta/);
+        assert.doesNotMatch(bloque, /obtenerPermisos|exigirPermiso|SOLICITUD_PERMISO_DENEGADO/);
+    });
 });

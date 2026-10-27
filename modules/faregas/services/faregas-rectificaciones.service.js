@@ -1,10 +1,9 @@
 /**
  * Rectificación administrativa de certificados ya emitidos.
  *
- * La rectificación operativa se ejecuta directamente por un usuario con el
- * permiso técnico explícito. El registro administrativo se conserva como
- * antecedente COMPLETADO, sin estados pendientes ni aprobación externa. La
- * ejecución sólo regenera el certificado técnico y sus versiones: no crea
+ * La rectificación operativa se ejecuta directamente por cualquier usuario
+ * activo con acceso a la sede del certificado, sin solicitud ni aprobación.
+ * La ejecución sólo actualiza el certificado técnico y sus versiones: no crea
  * comprobantes, no consume correlativos, no modifica pagos y no llama a
  * NubeFact.
  */
@@ -30,11 +29,9 @@ const {
     normalizarComponentes,
     normalizarVerificaciones
 } = require('./faregas-rectificacion-datos');
-
 const TIPO_RECTIFICACION = 'RECTIFICAR_CERTIFICADO';
 const TIPOS_ANULACION = ['ANULAR_CERTIFICADO', 'ANULAR_AMBOS'];
 const ESTADOS_RECTIFICABLES = new Set(['EMITIDO']);
-
 const errorNegocio = (code, statusCode = 400, detalles) => {
     const error = new Error(code);
     error.code = code;
@@ -42,20 +39,17 @@ const errorNegocio = (code, statusCode = 400, detalles) => {
     if (detalles !== undefined) error.detalles = detalles;
     return error;
 };
-
 const texto = (valor, maximo, obligatorio = false) => {
     const limpio = valor === undefined || valor === null ? '' : String(valor).trim();
     if (obligatorio && !limpio) throw errorNegocio('CAMPO_OBLIGATORIO');
     if (limpio.length > maximo) throw errorNegocio('TEXTO_DEMASIADO_LARGO');
     return limpio || null;
 };
-
 const enteroPositivo = (valor, codigo = 'IDENTIFICADOR_INVALIDO') => {
     const numero = Number(valor);
     if (!Number.isInteger(numero) || numero <= 0) throw errorNegocio(codigo);
     return numero;
 };
-
 const normalizarUuid = (valor) => {
     const clave = String(valor || '').trim().toLowerCase();
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(clave)) {
@@ -63,7 +57,6 @@ const normalizarUuid = (valor) => {
     }
     return clave;
 };
-
 const fechaIsoONull = (valor) => {
     if (valor === undefined || valor === null || valor === '') return null;
     const textoFecha = String(valor).trim();
@@ -77,13 +70,11 @@ const fechaIsoONull = (valor) => {
     }
     return soloFecha;
 };
-
 const numeroONull = (valor) => {
     if (valor === undefined || valor === null || valor === '') return null;
     const numero = Number(valor);
     return Number.isFinite(numero) ? numero : null;
 };
-
 const obtenerUsuarioActual = async (executor, userContext) => {
     const username = texto(userContext?.username, 255, true);
     const result = await executor.query(`
@@ -96,7 +87,6 @@ const obtenerUsuarioActual = async (executor, userContext) => {
     if (!result.rows[0].estado) throw errorNegocio('USUARIO_INACTIVO', 403);
     return result.rows[0];
 };
-
 const obtenerPermisos = async (executor, perfilId) => {
     const result = await executor.query(`
         SELECT pp.permiso_clave
@@ -107,23 +97,14 @@ const obtenerPermisos = async (executor, perfilId) => {
     `, [perfilId, Object.values(PERMISOS_SOLICITUD)]);
     return new Set(result.rows.map((row) => row.permiso_clave));
 };
-
 const tienePermiso = (permisos, permiso) => (
     permisos.has(permiso) || permisos.has(PERMISOS_SOLICITUD.ADMINISTRAR)
 );
-
 const exigirPermiso = (permisos, permiso) => {
     if (!tienePermiso(permisos, permiso)) {
         throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { permiso });
     }
 };
-
-const exigirPermisoExplicito = (permisos, permiso) => {
-    if (!permisos.has(permiso)) {
-        throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { permiso });
-    }
-};
-
 const validarAccesoPlanta = async (executor, usuario, plantaKey) => {
     const acceso = await executor.query(`
         SELECT 1
@@ -138,7 +119,6 @@ const validarAccesoPlanta = async (executor, usuario, plantaKey) => {
     `, [usuario.username, usuario.perfil_id, plantaKey]);
     if (acceso.rowCount === 0) throw errorNegocio('PLANTA_NO_AUTORIZADA', 403);
 };
-
 const conTransaccion = async (trabajo) => {
     const client = await db.connect();
     try {
@@ -153,7 +133,6 @@ const conTransaccion = async (trabajo) => {
         client.release();
     }
 };
-
 const consultaCertificadoBase = (bloqueo = false) => `
     SELECT c.id, c.tipo_certificado_clave, c.numero_certificado, c.cliente_id,
            c.planta_key, c.fecha_emision, c.estado, c.observaciones,
@@ -176,7 +155,6 @@ const consultaCertificadoBase = (bloqueo = false) => `
     WHERE c.id = $1
     ${bloqueo ? 'FOR UPDATE OF c' : ''}
 `;
-
 const obtenerComprobanteAsociado = async (executor, certificadoId) => {
     const result = await executor.query(`
         SELECT id, tipo_comprobante, serie, numero, nro_comprobante, estado,
@@ -189,7 +167,6 @@ const obtenerComprobanteAsociado = async (executor, certificadoId) => {
     `, [certificadoId]);
     return result.rows[0] || null;
 };
-
 const obtenerVersionActual = async (executor, certificadoId) => {
     const result = await executor.query(`
         SELECT COALESCE(MAX(numero_version), 0) AS ultima
@@ -199,7 +176,6 @@ const obtenerVersionActual = async (executor, certificadoId) => {
     const ultima = Number(result.rows[0]?.ultima || 0);
     return ultima > 0 ? ultima : 1;
 };
-
 const obtenerSolicitudesActivas = async (executor, certificadoId) => {
     const result = await executor.query(`
         SELECT id, tipo_operacion, estado, usuario_solicitante, fecha_solicitud
@@ -210,7 +186,6 @@ const obtenerSolicitudesActivas = async (executor, certificadoId) => {
     `, [certificadoId, ESTADOS_QUE_BLOQUEAN]);
     return result.rows;
 };
-
 const motivosBloqueoRectificacion = (cert, activas = []) => {
     const motivos = [];
     if (!cert) return ['CERTIFICADO_NO_ENCONTRADO'];
@@ -227,7 +202,6 @@ const motivosBloqueoRectificacion = (cert, activas = []) => {
     if (rectificacionActiva) motivos.push('RECTIFICACION_EN_CURSO');
     return [...new Set(motivos)];
 };
-
 const consultarDatosEspecificos = async (executor, certificadoId, tipo) => {
     if (tipo === 'GNV') {
         const cab = await executor.query('SELECT * FROM fg_certificado_gnv WHERE certificado_id = $1', [certificadoId]);
@@ -267,7 +241,6 @@ const consultarDatosEspecificos = async (executor, certificadoId, tipo) => {
     }
     return { especifico: null, componentes: [], verificaciones: [] };
 };
-
 const cargarSnapshotTecnico = async (executor, cert, usuario, versionBase) => {
     const vehiculoRes = await executor.query(
         'SELECT * FROM fg_certificado_vehiculo WHERE certificado_id = $1',
@@ -287,7 +260,6 @@ const cargarSnapshotTecnico = async (executor, cert, usuario, versionBase) => {
         ORDER BY cc.fecha_asociacion DESC
         LIMIT 1
     `, [cert.id]);
-
     return construirSnapshotVersion({
         versionBase,
         usuario,
@@ -327,7 +299,6 @@ const cargarSnapshotTecnico = async (executor, cert, usuario, versionBase) => {
         }
     });
 };
-
 const mapearVersion = (row) => ({
     id: Number(row.id),
     certificadoId: Number(row.certificado_id),
@@ -347,7 +318,6 @@ const mapearVersion = (row) => ({
     metadatos: row.metadatos || null,
     snapshot: row.snapshot_datos || null
 });
-
 const mapearSolicitudRectificacion = (row) => ({
     id: Number(row.id),
     tipoOperacion: row.tipo_operacion,
@@ -372,16 +342,15 @@ const mapearSolicitudRectificacion = (row) => ({
     autorizacionAutoejecucion: row.autorizacion_autoejecucion === true,
     version: Number(row.version || 1)
 });
-
 const construirRespuestaContexto = ({
     cert,
     snapshot,
     comprobante,
     activas,
-    permisos,
     versiones
 }) => {
-    const bloqueos = motivosBloqueoRectificacion(cert, activas);
+    const bloqueos = motivosBloqueoRectificacion(cert, activas)
+        .filter((motivo) => motivo !== 'RECTIFICACION_EN_CURSO');
     const tipo = tipoEspecifico(cert?.tipo_certificado_clave);
     const rectificacionActiva = activas.find((s) => s.tipo_operacion === TIPO_RECTIFICACION) || null;
     return {
@@ -419,14 +388,6 @@ const construirRespuestaContexto = ({
             usuarioSolicitante: rectificacionActiva.usuario_solicitante,
             fechaSolicitud: rectificacionActiva.fecha_solicitud
         } : null,
-        permisos: {
-            solicitar: tienePermiso(permisos, PERMISOS_SOLICITUD.CREAR),
-            aprobar: tienePermiso(permisos, PERMISOS_SOLICITUD.APROBAR),
-            ejecutar: tienePermiso(permisos, PERMISOS_SOLICITUD.EJECUTAR_RECTIFICACION_CERTIFICADO),
-            rectificarDirectamente: permisos.has(PERMISOS_SOLICITUD.EJECUTAR_RECTIFICACION_CERTIFICADO),
-            verHistorial: tienePermiso(permisos, PERMISOS_SOLICITUD.VER)
-                || tienePermiso(permisos, PERMISOS_SOLICITUD.EJECUTAR_RECTIFICACION_CERTIFICADO)
-        },
         versiones: versiones.map(mapearVersion),
         gestionExterna: {
             aplicaLocalmente: true,
@@ -434,7 +395,6 @@ const construirRespuestaContexto = ({
         }
     };
 };
-
 const obtenerContextoRectificacion = async (certificadoId, userContext) => {
     const id = enteroPositivo(certificadoId, 'CERTIFICADO_ID_INVALIDO');
     const usuario = await obtenerUsuarioActual(db, userContext);
@@ -442,15 +402,6 @@ const obtenerContextoRectificacion = async (certificadoId, userContext) => {
     if (certRes.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
     const cert = certRes.rows[0];
     await validarAccesoPlanta(db, usuario, cert.planta_key);
-    const permisos = await obtenerPermisos(db, usuario.perfil_id);
-    // Un cajero con permiso de creación debe poder preparar la solicitud aunque
-    // no tenga acceso al listado administrativo de solicitudes.
-    if (!tienePermiso(permisos, PERMISOS_SOLICITUD.VER)
-        && !tienePermiso(permisos, PERMISOS_SOLICITUD.CREAR)
-        && !tienePermiso(permisos, PERMISOS_SOLICITUD.EJECUTAR_RECTIFICACION_CERTIFICADO)) {
-        throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { permiso: PERMISOS_SOLICITUD.VER });
-    }
-
     const versionBase = await obtenerVersionActual(db, id);
     const snapshot = await cargarSnapshotTecnico(db, cert, usuario.username, versionBase);
     const comprobante = await obtenerComprobanteAsociado(db, id);
@@ -461,17 +412,14 @@ const obtenerContextoRectificacion = async (certificadoId, userContext) => {
         WHERE certificado_id = $1
         ORDER BY numero_version ASC
     `, [id]);
-
     return construirRespuestaContexto({
         cert,
         snapshot,
         comprobante,
         activas,
-        permisos,
         versiones: versionesRes.rows
     });
 };
-
 const obtenerHistorialRectificacion = async (certificadoId, userContext) => {
     const id = enteroPositivo(certificadoId, 'CERTIFICADO_ID_INVALIDO');
     const usuario = await obtenerUsuarioActual(db, userContext);
@@ -479,12 +427,6 @@ const obtenerHistorialRectificacion = async (certificadoId, userContext) => {
     if (certRes.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
     const cert = certRes.rows[0];
     await validarAccesoPlanta(db, usuario, cert.planta_key);
-    const permisos = await obtenerPermisos(db, usuario.perfil_id);
-    if (!tienePermiso(permisos, PERMISOS_SOLICITUD.VER)
-        && !tienePermiso(permisos, PERMISOS_SOLICITUD.EJECUTAR_RECTIFICACION_CERTIFICADO)) {
-        throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { permiso: PERMISOS_SOLICITUD.VER });
-    }
-
     const [versiones, solicitudes, eventos] = await Promise.all([
         db.query(`SELECT * FROM fg_certificado_version WHERE certificado_id = $1 ORDER BY numero_version ASC`, [id]),
         db.query(`
@@ -501,7 +443,6 @@ const obtenerHistorialRectificacion = async (certificadoId, userContext) => {
             ORDER BY ev.id ASC
         `, [id, TIPO_RECTIFICACION])
     ]);
-
     return {
         certificadoId: id,
         versiones: versiones.rows.map(mapearVersion),
@@ -519,7 +460,6 @@ const obtenerHistorialRectificacion = async (certificadoId, userContext) => {
         }))
     };
 };
-
 const validarPropuestaParaTipo = (datosPropuestos, tipo) => {
     if (!datosPropuestos || typeof datosPropuestos !== 'object' || Array.isArray(datosPropuestos)
         || Object.keys(datosPropuestos).length === 0) {
@@ -527,7 +467,6 @@ const validarPropuestaParaTipo = (datosPropuestos, tipo) => {
     }
     const serializado = JSON.stringify(datosPropuestos);
     if (serializado.length > 60000) throw errorNegocio('DATOS_PROPUESTOS_DEMASIADO_GRANDES');
-
     const permitidos = new Set([
         ...CAMPOS_VEHICULO,
         ...CAMPOS_TITULAR,
@@ -555,7 +494,6 @@ const validarPropuestaParaTipo = (datosPropuestos, tipo) => {
     }
     return datosPropuestos;
 };
-
 const validarRectificacionElegible = async (executor, cert, activas, opciones = {}) => {
     const bloqueos = motivosBloqueoRectificacion(cert, activas)
         .filter((motivo) => opciones.ignorarRectificacionActiva && motivo === 'RECTIFICACION_EN_CURSO'
@@ -565,7 +503,6 @@ const validarRectificacionElegible = async (executor, cert, activas, opciones = 
         throw errorNegocio('CERTIFICADO_NO_DISPONIBLE_PARA_RECTIFICACION', 409, { motivos: bloqueos });
     }
 };
-
 const previsualizarRectificacion = async (certificadoId, datosPropuestos, userContext) => {
     const id = enteroPositivo(certificadoId, 'CERTIFICADO_ID_INVALIDO');
     const usuario = await obtenerUsuarioActual(db, userContext);
@@ -573,16 +510,8 @@ const previsualizarRectificacion = async (certificadoId, datosPropuestos, userCo
     if (certRes.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
     const cert = certRes.rows[0];
     await validarAccesoPlanta(db, usuario, cert.planta_key);
-    const permisos = await obtenerPermisos(db, usuario.perfil_id);
-    // El solicitante necesita CREAR; el ejecutor autorizado puede previsualizar
-    // durante la ejecución aunque no tenga permiso para crear solicitudes.
-    if (!tienePermiso(permisos, PERMISOS_SOLICITUD.CREAR)
-        && !tienePermiso(permisos, PERMISOS_SOLICITUD.EJECUTAR_RECTIFICACION_CERTIFICADO)) {
-        throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { permiso: PERMISOS_SOLICITUD.CREAR });
-    }
     const activas = await obtenerSolicitudesActivas(db, id);
     await validarRectificacionElegible(db, cert, activas, { ignorarRectificacionActiva: true });
-
     const tipo = tipoEspecifico(cert.tipo_certificado_clave);
     const datos = validarPropuestaParaTipo(datosPropuestos, tipo);
     const versionBase = await obtenerVersionActual(db, id);
@@ -599,23 +528,15 @@ const previsualizarRectificacion = async (certificadoId, datosPropuestos, userCo
         numeroCertificado: cert.numero_certificado
     };
 };
-
-const crearSolicitudRectificacion = async (certificadoId, entrada, userContext, opciones = {}) => conTransaccion(async (client) => {
+const crearSolicitudRectificacion = async (certificadoId, entrada, userContext) => conTransaccion(async (client) => {
     const id = enteroPositivo(certificadoId, 'CERTIFICADO_ID_INVALIDO');
     const usuario = await obtenerUsuarioActual(client, userContext);
     const permisos = await obtenerPermisos(client, usuario.perfil_id);
-    const rectificacionDirecta = opciones.directa === true;
-    if (rectificacionDirecta) {
-        exigirPermisoExplicito(permisos, PERMISOS_SOLICITUD.EJECUTAR_RECTIFICACION_CERTIFICADO);
-    } else {
-        exigirPermiso(permisos, PERMISOS_SOLICITUD.CREAR);
-    }
-
+    exigirPermiso(permisos, PERMISOS_SOLICITUD.CREAR);
     const motivo = texto(entrada?.motivo, 500, true);
     const observaciones = texto(entrada?.observaciones, 2000);
     const idempotenciaClave = normalizarUuid(entrada?.idempotenciaClave);
     const datosPropuestos = entrada?.datosPropuestos;
-
     // La clave es única por usuario; no debe revelar ni reutilizar solicitudes
     // creadas por terceros que casualmente usaran el mismo UUID.
     const existente = await client.query(`
@@ -632,14 +553,12 @@ const crearSolicitudRectificacion = async (certificadoId, entrada, userContext, 
         }
         return { solicitud: mapearSolicitudRectificacion(row), creada: false };
     }
-
     const certRes = await client.query(consultaCertificadoBase(true), [id]);
     if (certRes.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
     const cert = certRes.rows[0];
     await validarAccesoPlanta(client, usuario, cert.planta_key);
     const activas = await obtenerSolicitudesActivas(client, id);
     await validarRectificacionElegible(client, cert, activas);
-
     const tipo = tipoEspecifico(cert.tipo_certificado_clave);
     const datos = validarPropuestaParaTipo(datosPropuestos, tipo);
     const versionBase = await obtenerVersionActual(client, id);
@@ -648,24 +567,19 @@ const crearSolicitudRectificacion = async (certificadoId, entrada, userContext, 
     if (diferencias.length === 0) throw errorNegocio('SIN_CAMBIOS_PARA_RECTIFICAR', 400);
     const advertencias = advertenciasGestionExterna(diferencias);
     const comprobante = await obtenerComprobanteAsociado(client, id);
-
     let insert;
     try {
         insert = await client.query(`
             INSERT INTO fg_solicitud_operacion (
                 tipo_operacion, certificado_id, facturacion_id, empresa_key, planta_key,
                 usuario_solicitante, motivo, observaciones, estado,
-                usuario_decision, fecha_decision, justificacion_decision,
                 datos_originales_certificado, datos_originales_comprobante,
-                datos_propuestos, fecha_emision_original, idempotencia_clave,
-                autorizacion_autoejecucion, version
+                datos_propuestos, fecha_emision_original, idempotencia_clave, version
             ) VALUES (
                 $1, $2, $3, $4, $5,
-                $6, $7, $8, $9,
-                $10, CASE WHEN $10::varchar IS NULL THEN NULL ELSE clock_timestamp() END, $11,
-                $12::jsonb, $13::jsonb,
-                $14::jsonb, $15, $16,
-                $17, 1
+                $6, $7, $8, 'PENDIENTE_APROBACION',
+                $9::jsonb, $10::jsonb,
+                $11::jsonb, $12, $13, 1
             )
             ON CONFLICT (usuario_solicitante, idempotencia_clave) DO NOTHING
             RETURNING *
@@ -678,15 +592,11 @@ const crearSolicitudRectificacion = async (certificadoId, entrada, userContext, 
             usuario.username,
             motivo,
             observaciones,
-            rectificacionDirecta ? 'APROBADA' : 'PENDIENTE_APROBACION',
-            rectificacionDirecta ? usuario.username : null,
-            rectificacionDirecta ? 'Rectificación directa autorizada por permiso técnico explícito.' : null,
             JSON.stringify(snapshot),
             JSON.stringify(comprobante ? copiaProfunda(comprobante) : null),
             JSON.stringify(datos),
             cert.fecha_emision,
-            idempotenciaClave,
-            rectificacionDirecta
+            idempotenciaClave
         ]);
     } catch (error) {
         if (error?.code === '23505') {
@@ -694,7 +604,6 @@ const crearSolicitudRectificacion = async (certificadoId, entrada, userContext, 
         }
         throw error;
     }
-
     if (insert.rowCount === 0) {
         const repetida = await client.query(`
             SELECT *
@@ -707,26 +616,21 @@ const crearSolicitudRectificacion = async (certificadoId, entrada, userContext, 
         if (!row || Number(row.certificado_id) !== id || row.tipo_operacion !== TIPO_RECTIFICACION) {
             throw errorNegocio('IDEMPOTENCIA_CONFLICTIVA', 409);
         }
-        return { solicitud: mapearSolicitudRectificacion(row), creada: false, directa: rectificacionDirecta };
+        return { solicitud: mapearSolicitudRectificacion(row), creada: false };
     }
-
     const row = insert.rows[0];
     await client.query(`
         INSERT INTO fg_solicitud_operacion_evento (
             solicitud_id, tipo_evento, estado_anterior, estado_posterior,
             usuario_responsable, comentario, metadatos
-        ) VALUES ($1, $2, NULL, $3, $4, $5, $6::jsonb)
+        ) VALUES ($1, 'SOLICITUD_CREADA', NULL, 'PENDIENTE_APROBACION', $2, $3, $4::jsonb)
     `, [
         row.id,
-        rectificacionDirecta ? 'RECTIFICACION_DIRECTA_INICIADA' : 'SOLICITUD_CREADA',
-        rectificacionDirecta ? 'APROBADA' : 'PENDIENTE_APROBACION',
         usuario.username,
-        rectificacionDirecta
-            ? 'Rectificación directa iniciada sin cambios fiscales ni aprobación externa.'
-            : 'Solicitud de rectificación técnica creada sin cambios fiscales.',
+        'Solicitud de rectificación técnica creada sin cambios fiscales.',
         JSON.stringify({
             tipoOperacion: TIPO_RECTIFICACION,
-            flujo: rectificacionDirecta ? 'DIRECTO' : 'ADMINISTRATIVO',
+            flujo: 'ADMINISTRATIVO',
             certificadoId: id,
             numeroCertificado: cert.numero_certificado,
             fechaEmisionOriginal: cert.fecha_emision,
@@ -735,31 +639,227 @@ const crearSolicitudRectificacion = async (certificadoId, entrada, userContext, 
             comprobanteId: comprobante?.id || null
         })
     ]);
-
     return {
         solicitud: mapearSolicitudRectificacion(row),
         diferencias,
         advertencias,
-        creada: true,
-        directa: rectificacionDirecta
+        creada: true
     };
 });
-
 const ejecutarRectificacionDirecta = async (certificadoId, entrada, userContext) => {
-    const preparacion = await crearSolicitudRectificacion(certificadoId, entrada, userContext, { directa: true });
-    const ejecucion = await ejecutarRectificacionSolicitud(preparacion.solicitud.id, {
-        version: preparacion.solicitud.version,
-        idempotenciaEjecucion: entrada?.idempotenciaClave
-    }, userContext);
-    return {
-        ...ejecucion,
-        directa: true,
-        registroCreado: preparacion.creada === true,
-        diferencias: preparacion.diferencias || ejecucion.resultado?.diferencias || [],
-        advertencias: preparacion.advertencias || ejecucion.resultado?.advertencias || []
-    };
+    const archivosGenerados = [];
+    try {
+        return await conTransaccion(async (client) => {
+            const id = enteroPositivo(certificadoId, 'CERTIFICADO_ID_INVALIDO');
+            const usuario = await obtenerUsuarioActual(client, userContext);
+            const motivo = texto(entrada?.motivo, 500, true);
+            const observaciones = texto(entrada?.observaciones, 2000);
+            const idempotenciaClave = normalizarUuid(entrada?.idempotenciaClave);
+            const versionEsperada = entrada?.versionBase === undefined
+                ? null
+                : enteroPositivo(entrada.versionBase, 'VERSION_BASE_INVALIDA');
+            const certRes = await client.query(consultaCertificadoBase(true), [id]);
+            if (certRes.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
+            const cert = certRes.rows[0];
+            // La autorización del flujo directo depende exclusivamente de una
+            // cuenta activa y del acceso efectivo a la sede del certificado.
+            await validarAccesoPlanta(client, usuario, cert.planta_key);
+            const repetida = await client.query(`
+                SELECT *
+                FROM fg_certificado_version
+                WHERE certificado_id = $1
+                  AND metadatos->>'flujo' = 'DIRECTO'
+                  AND metadatos->>'idempotenciaClave' = $2
+                ORDER BY numero_version DESC
+                LIMIT 1
+            `, [id, idempotenciaClave]);
+            if (repetida.rowCount > 0) {
+                const version = mapearVersion(repetida.rows[0]);
+                return {
+                    directa: true,
+                    yaCompletada: true,
+                    version,
+                    resultado: version.metadatos?.resultado || {
+                        version: version.numeroVersion,
+                        numeroCertificado: cert.numero_certificado,
+                        fechaEmisionOriginal: cert.fecha_emision,
+                        enlacePdfOriginal: version.enlacePdfOriginal,
+                        enlacePdfVersion: version.enlacePdfVersion,
+                        sinCambiosFiscales: true
+                    }
+                };
+            }
+            const activas = await obtenerSolicitudesActivas(client, id);
+            await validarRectificacionElegible(client, cert, activas, { ignorarRectificacionActiva: true });
+            const versionBaseActual = await obtenerVersionActual(client, id);
+            if (versionEsperada !== null && versionEsperada !== versionBaseActual) {
+                throw errorNegocio('VERSION_RECTIFICACION_DESACTUALIZADA', 409, {
+                    versionActual: versionBaseActual,
+                    versionEnviada: versionEsperada
+                });
+            }
+            const tipo = tipoEspecifico(cert.tipo_certificado_clave);
+            const datosPropuestos = validarPropuestaParaTipo(entrada?.datosPropuestos, tipo);
+            const snapshotActual = await cargarSnapshotTecnico(
+                client,
+                cert,
+                usuario.username,
+                versionBaseActual
+            );
+            const diferencias = calcularDiferenciasRectificacion(snapshotActual, datosPropuestos);
+            if (diferencias.length === 0) throw errorNegocio('SIN_CAMBIOS_PARA_RECTIFICAR', 409);
+            const advertencias = advertenciasGestionExterna(diferencias);
+            const comprobante = await obtenerComprobanteAsociado(client, id);
+            const originalExistente = await client.query(`
+                SELECT *
+                FROM fg_certificado_version
+                WHERE certificado_id = $1 AND estado_version = 'ORIGINAL'
+                ORDER BY numero_version ASC
+                LIMIT 1
+            `, [id]);
+            const tienePdfOriginal = originalExistente.rowCount > 0
+                && Boolean(originalExistente.rows[0].enlace_pdf_original);
+            const previewRectificado = await certificadosService.previsualizarRectificacion(
+                id,
+                datosPropuestos,
+                userContext
+            );
+            const numeroVersion = versionBaseActual + 1;
+            let pdfOriginal = null;
+            if (!tienePdfOriginal) {
+                const previewOriginal = await certificadosService.obtenerPrevisualizacion(id, userContext);
+                pdfOriginal = await pdfVersionService.generarPdfVersionPersistente({
+                    html: previewOriginal.html,
+                    certificadoId: id,
+                    numeroCertificado: cert.numero_certificado,
+                    numeroVersion: `v${versionBaseActual}`,
+                    tipo: 'ORIGINAL'
+                });
+                archivosGenerados.push(pdfOriginal);
+            }
+            const pdfRectificado = await pdfVersionService.generarPdfVersionPersistente({
+                html: previewRectificado.html,
+                certificadoId: id,
+                numeroCertificado: cert.numero_certificado,
+                numeroVersion: `v${numeroVersion}`,
+                tipo: 'RECTIFICADA'
+            });
+            archivosGenerados.push(pdfRectificado);
+            const fusion = aplicarPropuestaABorrador({
+                ...snapshotActual,
+                tipo: { clave: cert.tipo_certificado_clave },
+                especifico: snapshotActual.especifico,
+                especificoBase: snapshotActual.especifico,
+                formatoDatosSnapshot: snapshotActual.formatoDatosSnapshot,
+                vehiculo: snapshotActual.vehiculo,
+                titulares: snapshotActual.titulares,
+                componentes: snapshotActual.componentes,
+                verificaciones: snapshotActual.verificaciones
+            }, datosPropuestos);
+            const snapshotFinal = {
+                ...snapshotActual,
+                vehiculo: copiaProfunda(fusion.borrador.vehiculo || {}),
+                titulares: copiaProfunda(fusion.borrador.titulares || []),
+                observaciones: fusion.borrador.observaciones,
+                formatoDatosSnapshot: copiaProfunda(fusion.borrador.formatoDatosSnapshot || {}),
+                especifico: fusion.borrador.especifico
+                    ? copiaProfunda(fusion.borrador.especifico)
+                    : null,
+                componentes: normalizarComponentes(
+                    fusion.borrador.componentes || snapshotActual.componentes || []
+                ),
+                verificaciones: normalizarVerificaciones(
+                    fusion.borrador.verificaciones || snapshotActual.verificaciones || []
+                ),
+                versionBase: numeroVersion,
+                fechaSnapshot: new Date().toISOString(),
+                usuarioRectificacion: usuario.username
+            };
+            const versionOriginal = await asegurarVersionOriginal(
+                client,
+                cert,
+                snapshotActual,
+                usuario.username,
+                pdfOriginal
+            );
+            const enlacePdfOriginal = versionOriginal.enlace_pdf_original || pdfOriginal?.enlace || null;
+            await client.query(`
+                UPDATE fg_certificado_version
+                SET es_vigente = FALSE,
+                    estado_version = 'SUSTITUIDA'
+                WHERE certificado_id = $1
+                  AND es_vigente = TRUE
+            `, [id]);
+            const resultadoTecnico = {
+                diferencias,
+                advertencias,
+                fechaAplicacionOficial: new Date().toISOString(),
+                version: numeroVersion,
+                numeroCertificado: cert.numero_certificado,
+                fechaEmisionOriginal: cert.fecha_emision,
+                enlacePdfOriginal,
+                enlacePdfVersion: pdfRectificado.enlace,
+                gestionExternaRequerida: advertencias.length > 0,
+                facturacionId: comprobante?.id || null,
+                sinCambiosFiscales: true
+            };
+            const versionInsert = await client.query(`
+                INSERT INTO fg_certificado_version (
+                    certificado_id, solicitud_id, numero_version, estado_version, es_vigente,
+                    fecha_emision_original, fecha_aplicacion_oficial, usuario_creacion,
+                    usuario_aprobacion, motivo, snapshot_datos, diferencias,
+                    enlace_pdf_original, enlace_pdf_version, metadatos
+                ) VALUES (
+                    $1, NULL, $2, 'VIGENTE', TRUE,
+                    $3, clock_timestamp(), $4,
+                    NULL, $5, $6::jsonb, $7::jsonb,
+                    $8, $9, $10::jsonb
+                )
+                RETURNING *
+            `, [
+                id,
+                numeroVersion,
+                cert.fecha_emision,
+                usuario.username,
+                motivo,
+                JSON.stringify(snapshotFinal),
+                JSON.stringify(diferencias),
+                enlacePdfOriginal,
+                pdfRectificado.enlace,
+                JSON.stringify({
+                    origen: 'RECTIFICACION_DIRECTA',
+                    flujo: 'DIRECTO',
+                    idempotenciaClave,
+                    versionBase: versionBaseActual,
+                    numeroCertificado: cert.numero_certificado,
+                    fechaEmisionOriginal: cert.fecha_emision,
+                    fechaRectificacion: resultadoTecnico.fechaAplicacionOficial,
+                    usuarioRectificacion: usuario.username,
+                    observaciones,
+                    advertenciasGestionExterna: advertencias,
+                    comprobanteAsociadoId: comprobante?.id || null,
+                    pdfOriginal: enlacePdfOriginal,
+                    pdfRectificado: pdfRectificado.enlace,
+                    sinCambiosFiscales: true,
+                    resultado: resultadoTecnico
+                })
+            ]);
+            await aplicarSnapshotTecnico(client, id, snapshotFinal, usuario.username);
+            archivosGenerados.length = 0;
+            return {
+                directa: true,
+                yaCompletada: false,
+                version: mapearVersion(versionInsert.rows[0]),
+                resultado: resultadoTecnico,
+                diferencias,
+                advertencias
+            };
+        });
+    } catch (error) {
+        archivosGenerados.forEach((archivo) => archivo?.limpiar?.());
+        throw error;
+    }
 };
-
 const upsertVehiculo = async (client, certificadoId, vehiculo = {}) => {
     const columnas = CAMPOS_VEHICULO;
     const valores = columnas.map((campo) => textoONull(vehiculo[campo]));
@@ -772,7 +872,6 @@ const upsertVehiculo = async (client, certificadoId, vehiculo = {}) => {
             ${updates.join(',\n            ')}
     `, [certificadoId, ...valores]);
 };
-
 const upsertTitulares = async (client, certificadoId, titulares = []) => {
     const lista = Array.isArray(titulares) ? titulares : [];
     for (const titular of lista) {
@@ -810,7 +909,6 @@ const upsertTitulares = async (client, certificadoId, titulares = []) => {
         }
     }
 };
-
 const upsertEspecifico = async (client, certificadoId, tipo, especifico = {}) => {
     if (tipo === 'GNV') {
         await client.query(`
@@ -917,12 +1015,10 @@ const upsertEspecifico = async (client, certificadoId, tipo, especifico = {}) =>
         ]);
     }
 };
-
 const reemplazarComponentesYVerificaciones = async (client, certificadoId, tipo, componentes, verificaciones) => {
     if (!['GNV', 'GLP'].includes(tipo)) return;
     const tablaComponente = tipo === 'GNV' ? 'fg_certificado_gnv_componente' : 'fg_certificado_glp_componente';
     const tablaVerificacion = tipo === 'GNV' ? 'fg_certificado_gnv_verificacion' : 'fg_certificado_glp_verificacion';
-
     if (Array.isArray(componentes)) {
         await client.query(`DELETE FROM ${tablaComponente} WHERE certificado_id = $1`, [certificadoId]);
         for (const [indice, componente] of componentes.entries()) {
@@ -944,7 +1040,6 @@ const reemplazarComponentesYVerificaciones = async (client, certificadoId, tipo,
             ]);
         }
     }
-
     if (Array.isArray(verificaciones)) {
         await client.query(`DELETE FROM ${tablaVerificacion} WHERE certificado_id = $1`, [certificadoId]);
         for (const [indice, verificacion] of verificaciones.entries()) {
@@ -965,7 +1060,6 @@ const reemplazarComponentesYVerificaciones = async (client, certificadoId, tipo,
         }
     }
 };
-
 const aplicarSnapshotTecnico = async (client, certificadoId, snapshot, usuario) => {
     const tipo = tipoEspecifico(snapshot?.tipoCertificado);
     await client.query(`
@@ -994,7 +1088,6 @@ const aplicarSnapshotTecnico = async (client, certificadoId, snapshot, usuario) 
         normalizarVerificaciones(snapshot.verificaciones || [])
     );
 };
-
 const asegurarVersionOriginal = async (client, cert, snapshot, usuario, pdfOriginal) => {
     const existente = await client.query(`
         SELECT *
@@ -1015,7 +1108,6 @@ const asegurarVersionOriginal = async (client, cert, snapshot, usuario, pdfOrigi
         }
         return version;
     }
-
     const insert = await client.query(`
         INSERT INTO fg_certificado_version (
             certificado_id, solicitud_id, numero_version, estado_version, es_vigente,
@@ -1037,7 +1129,6 @@ const asegurarVersionOriginal = async (client, cert, snapshot, usuario, pdfOrigi
     ]);
     return insert.rows[0];
 };
-
 const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext) => {
     const archivosGenerados = [];
     try {
@@ -1046,7 +1137,6 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
             const usuario = await obtenerUsuarioActual(client, userContext);
             const permisos = await obtenerPermisos(client, usuario.perfil_id);
             exigirPermiso(permisos, PERMISOS_SOLICITUD.EJECUTAR_RECTIFICACION_CERTIFICADO);
-
             const solicitudRes = await client.query(`
                 SELECT s.*
                 FROM fg_solicitud_operacion s
@@ -1059,7 +1149,6 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
                 throw errorNegocio('SOLICITUD_TIPO_NO_RECTIFICACION', 409);
             }
             await validarAccesoPlanta(client, usuario, solicitud.planta_key);
-
             if (solicitud.estado === 'COMPLETADA') {
                 return {
                     solicitud: mapearSolicitudRectificacion(solicitud),
@@ -1070,6 +1159,18 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
             if (solicitud.estado !== 'APROBADA') {
                 throw errorNegocio('SOLICITUD_NO_APROBADA', 409, { estado: solicitud.estado });
             }
+            // Evitar que el solicitante ejecute su propia solicitud
+            // si no tiene autorización de autoejecución.
+            const mismoUsuario =
+                String(solicitud.usuario_solicitante) ===
+                String(usuario.username);
+            if (mismoUsuario && solicitud.autorizacion_autoejecucion !== true) {
+                throw errorNegocio(
+                    'AUTOEJECUCION_NO_AUTORIZADA',
+                    403,
+                    { solicitudId: solicitud.id }
+                );
+            }
             const versionEsperada = entrada?.version === undefined ? null : Number(entrada.version);
             if (versionEsperada !== null && versionEsperada !== Number(solicitud.version)) {
                 throw errorNegocio('SOLICITUD_VERSION_DESACTUALIZADA', 409, {
@@ -1077,27 +1178,32 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
                     versionEnviada: versionEsperada
                 });
             }
-
             const certRes = await client.query(consultaCertificadoBase(true), [Number(solicitud.certificado_id)]);
             if (certRes.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
             const cert = certRes.rows[0];
             const activas = await obtenerSolicitudesActivas(client, cert.id);
             await validarRectificacionElegible(client, cert, activas, { ignorarRectificacionActiva: true });
-
             const versionBaseActual = await obtenerVersionActual(client, cert.id);
             const snapshotSolicitud = solicitud.datos_originales_certificado || {};
-            const versionBaseSolicitud = Number(snapshotSolicitud.versionBase || 1);
+            const versionBaseSolicitud = snapshotSolicitud.versionBase === undefined
+                ? versionBaseActual
+                : Number(snapshotSolicitud.versionBase);
             if (versionBaseActual !== versionBaseSolicitud) {
                 throw errorNegocio('CERTIFICADO_MODIFICADO_DESDE_SOLICITUD', 409, {
                     versionActual: versionBaseActual,
                     versionSolicitud: versionBaseSolicitud
                 });
             }
+            const normalizarFechaConcurrencia = (valor) => {
+                if (valor === null || valor === undefined || valor === '') return '';
+                const fecha = valor instanceof Date ? valor : new Date(valor);
+                if (Number.isNaN(fecha.getTime())) return String(valor);
+                return fecha.toISOString();
+            };
             if (snapshotSolicitud.numeroCertificado !== cert.numero_certificado
-                || String(snapshotSolicitud.fechaEmisionOriginal || '') !== String(cert.fecha_emision || '')) {
+                || normalizarFechaConcurrencia(snapshotSolicitud.fechaEmisionOriginal) !== normalizarFechaConcurrencia(cert.fecha_emision)) {
                 throw errorNegocio('CERTIFICADO_MODIFICADO_DESDE_SOLICITUD', 409);
             }
-
             const snapshotActual = await cargarSnapshotTecnico(client, cert, usuario.username, versionBaseActual);
             const datosPropuestos = validarPropuestaParaTipo(
                 solicitud.datos_propuestos,
@@ -1106,7 +1212,6 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
             const diferencias = calcularDiferenciasRectificacion(snapshotActual, datosPropuestos);
             if (diferencias.length === 0) throw errorNegocio('SIN_CAMBIOS_PARA_RECTIFICAR', 409);
             const advertencias = advertenciasGestionExterna(diferencias);
-
             // La versión original y su PDF son inmutables. Si ya existen no se
             // vuelven a generar, evitando archivos huérfanos en rectificaciones
             // consecutivas.
@@ -1119,7 +1224,6 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
             `, [cert.id]);
             const tienePdfOriginal = originalExistente.rowCount > 0
                 && Boolean(originalExistente.rows[0].enlace_pdf_original);
-
             const previewRectificado = await certificadosService.previsualizarRectificacion(
                 cert.id,
                 datosPropuestos,
@@ -1146,7 +1250,6 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
                 tipo: 'RECTIFICADA'
             });
             archivosGenerados.push(pdfRectificado);
-
             const fusion = aplicarPropuestaABorrador({
                 ...snapshotActual,
                 tipo: { clave: cert.tipo_certificado_clave },
@@ -1171,7 +1274,6 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
                 fechaSnapshot: new Date().toISOString(),
                 usuarioRectificacion: usuario.username
             };
-
             const versionOriginal = await asegurarVersionOriginal(
                 client,
                 cert,
@@ -1179,7 +1281,6 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
                 usuario.username,
                 pdfOriginal
             );
-
             await client.query(`
                 UPDATE fg_certificado_version
                 SET es_vigente = FALSE,
@@ -1187,7 +1288,6 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
                 WHERE certificado_id = $1
                   AND es_vigente = TRUE
             `, [cert.id]);
-
             const versionInsert = await client.query(`
                 INSERT INTO fg_certificado_version (
                     certificado_id, solicitud_id, numero_version, estado_version, es_vigente,
@@ -1228,10 +1328,8 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
                     pdfRectificado: pdfRectificado.enlace
                 })
             ])
-            ;
-
+                ;
             await aplicarSnapshotTecnico(client, cert.id, snapshotFinal, usuario.username);
-
             const resultadoTecnico = {
                 diferencias,
                 advertencias,
@@ -1246,17 +1344,17 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
                 sinCambiosFiscales: true
             };
             const solicitudActualizada = await client.query(`
-                UPDATE fg_solicitud_operacion
-                SET estado = 'COMPLETADA',
-                    usuario_ejecucion = $2,
-                    fecha_ejecucion = clock_timestamp(),
-                    idempotencia_ejecucion = $3,
-                    resultado_tecnico = $4::jsonb,
-                    fecha_modificacion = CURRENT_TIMESTAMP,
-                    version = version + 1
-                WHERE id = $1
-                RETURNING *
-            `, [
+    UPDATE fg_solicitud_operacion
+    SET estado = 'COMPLETADA',
+        usuario_ejecucion = $2::varchar,
+        fecha_ejecucion = clock_timestamp(),
+        idempotencia_ejecucion = $3,
+        resultado_tecnico = $4::jsonb,
+        fecha_modificacion = CURRENT_TIMESTAMP,
+        version = version + 1
+    WHERE id = $1
+    RETURNING *
+`, [
                 solicitud.id,
                 usuario.username,
                 normalizarUuid(entrada?.idempotenciaEjecucion || crypto.randomUUID()),
@@ -1273,7 +1371,6 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
                 'Rectificación técnica aplicada y PDF corregido generado.',
                 JSON.stringify(resultadoTecnico)
             ]);
-
             archivosGenerados.length = 0;
             return {
                 solicitud: mapearSolicitudRectificacion(solicitudActualizada.rows[0]),
@@ -1287,7 +1384,6 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
         throw error;
     }
 };
-
 const descargarPdfVersionRectificacion = async (certificadoId, versionId, userContext) => {
     const cid = enteroPositivo(certificadoId, 'CERTIFICADO_ID_INVALIDO');
     const vid = enteroPositivo(versionId, 'VERSION_ID_INVALIDO');
@@ -1295,12 +1391,6 @@ const descargarPdfVersionRectificacion = async (certificadoId, versionId, userCo
     const certRes = await db.query(consultaCertificadoBase(false), [cid]);
     if (certRes.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
     await validarAccesoPlanta(db, usuario, certRes.rows[0].planta_key);
-    const permisos = await obtenerPermisos(db, usuario.perfil_id);
-    if (!tienePermiso(permisos, PERMISOS_SOLICITUD.VER)
-        && !tienePermiso(permisos, PERMISOS_SOLICITUD.EJECUTAR_RECTIFICACION_CERTIFICADO)) {
-        throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { permiso: PERMISOS_SOLICITUD.VER });
-    }
-
     const versionRes = await db.query(`
         SELECT *
         FROM fg_certificado_version
@@ -1320,7 +1410,6 @@ const descargarPdfVersionRectificacion = async (certificadoId, versionId, userCo
         version: mapearVersion(version)
     };
 };
-
 const listarSolicitudesPendientesRectificacion = async (userContext, filtros = {}) => {
     const usuario = await obtenerUsuarioActual(db, userContext);
     const permisos = await obtenerPermisos(db, usuario.perfil_id);
@@ -1350,7 +1439,6 @@ const listarSolicitudesPendientesRectificacion = async (userContext, filtros = {
         fechaEmision: row.fecha_emision
     }));
 };
-
 module.exports = {
     TIPO_RECTIFICACION,
     obtenerContextoRectificacion,
@@ -1366,7 +1454,7 @@ module.exports = {
         texto,
         enteroPositivo,
         normalizarUuid,
-        exigirPermisoExplicito,
+        validarAccesoPlanta,
         motivosBloqueoRectificacion,
         cargarSnapshotTecnico,
         validarPropuestaParaTipo,

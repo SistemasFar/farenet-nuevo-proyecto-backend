@@ -28,6 +28,8 @@ const MENSAJES = {
     SOLICITUD_TIPO_NO_RECTIFICACION: 'La solicitud no corresponde a una rectificación de certificado.',
     SOLICITUD_VERSION_DESACTUALIZADA: 'La solicitud fue modificada por otro usuario. Actualice la información.',
     CERTIFICADO_MODIFICADO_DESDE_SOLICITUD: 'El certificado cambió desde que se creó la solicitud. Debe revisarse nuevamente.',
+    VERSION_BASE_INVALIDA: 'La versión base de la rectificación no es válida.',
+    VERSION_RECTIFICACION_DESACTUALIZADA: 'El certificado fue rectificado por otro usuario. Recargue los datos antes de continuar.',
     VERSION_CERTIFICADO_NO_ENCONTRADA: 'La versión solicitada no existe.',
     PDF_VERSION_NO_DISPONIBLE: 'El PDF histórico de esta versión no está disponible.',
     TEXTO_DEMASIADO_LARGO: 'Uno de los textos supera la longitud permitida.',
@@ -123,7 +125,7 @@ exports.ejecutarDirecta = async (req, res) => {
             certificadoId: req.params.id,
             mensaje: 'Se aplicó directamente la rectificación técnica y se generó una nueva versión del certificado.',
             datos: {
-                registroId: data?.solicitud?.id || null,
+                versionId: data?.version?.id || null,
                 version: data?.version?.numeroVersion || data?.resultado?.version || null,
                 enlacePdfVersion: data?.resultado?.enlacePdfVersion || null,
                 fechaEmisionOriginal: data?.resultado?.fechaEmisionOriginal || null,

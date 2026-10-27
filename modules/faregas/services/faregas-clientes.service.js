@@ -425,19 +425,17 @@ exports.buscarVehiculoPorPlaca = async (placa, opciones = {}) => {
         origen: resolucion.origen,
         completadoDesdeFarenet: resolucion.completadoDesdeFarenet
     };
-    const certificadoId = resolucion.snapshotLegacyId;
+    const certificadoId = resolucion.certificadoCompatibleId || resolucion.snapshotLegacyId;
 
     if (certificadoId) {
         
-        // Fetch adicionales - Titulares siempre del último certificado (sin importar tipo)
+        // Titulares y detalle técnico salen del mismo certificado compatible
+        // para no mezclar dueños/componentes de trámites históricos distintos.
         const titulares = await db.query('SELECT * FROM fg_certificado_titular WHERE certificado_id = $1 ORDER BY orden ASC', [certificadoId]);
         result.titularesFaregas = titulares.rows;
 
         // Fetch de información específica de trámites (GLP, GNV, Conformidad)
-        const { tipoCertificado, excludeCertificadoId } = opciones;
-        const certificadoEspecificoId = tipoCertificado
-            ? await vehiculosService.buscarCertificadoCompatiblePorPlaca(placa, tipoCertificado, excludeCertificadoId)
-            : certificadoId;
+        const certificadoEspecificoId = certificadoId;
 
         if (certificadoEspecificoId) {
             const glp = await db.query('SELECT * FROM fg_certificado_glp WHERE certificado_id = $1', [certificadoEspecificoId]);

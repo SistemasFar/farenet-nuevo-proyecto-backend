@@ -103,7 +103,13 @@ const buscarSnapshotLegacyPorPlaca = async (placa, excludeCertificadoId, executo
     return resultado.rows[0] || null;
 };
 
-const buscarCertificadoCompatiblePorPlaca = async (placa, tipoCertificado, excludeCertificadoId, executor = db) => {
+const buscarCertificadoCompatiblePorPlaca = async (
+    placa,
+    tipoCertificado,
+    excludeCertificadoId,
+    modalidad = null,
+    executor = db
+) => {
     const placaNormalizada = normalizarPlaca(placa);
     if (!placaNormalizada || !tipoCertificado) return null;
 
@@ -115,12 +121,31 @@ const buscarCertificadoCompatiblePorPlaca = async (placa, tipoCertificado, exclu
             c.fecha_creacion
         FROM fg_certificado_vehiculo v
         JOIN fg_certificado c ON c.id = v.certificado_id
+        LEFT JOIN fg_certificado_glp glp ON glp.certificado_id = c.id
+        LEFT JOIN fg_certificado_gnv gnv ON gnv.certificado_id = c.id
         WHERE UPPER(BTRIM(v.placa)) = $1
-          AND c.tipo_certificado_clave = $2
+          AND (
+              ($2 LIKE 'GLP%' AND c.tipo_certificado_clave LIKE 'GLP%')
+              OR ($2 LIKE 'GNV%' AND c.tipo_certificado_clave LIKE 'GNV%')
+              OR ($2 NOT LIKE 'GLP%' AND $2 NOT LIKE 'GNV%' AND c.tipo_certificado_clave = $2)
+          )
           AND ($3::BIGINT IS NULL OR c.id <> $3::BIGINT)
           AND (
+              CASE WHEN NULLIF(BTRIM(v.marca), '') IS NOT NULL THEN 1 ELSE 0 END +
+              CASE WHEN NULLIF(BTRIM(v.modelo), '') IS NOT NULL THEN 1 ELSE 0 END +
+              CASE WHEN NULLIF(BTRIM(v.anio_fabricacion), '') IS NOT NULL THEN 1 ELSE 0 END +
+              CASE WHEN NULLIF(BTRIM(v.numero_motor), '') IS NOT NULL THEN 1 ELSE 0 END +
+              CASE WHEN NULLIF(BTRIM(v.combustible), '') IS NOT NULL THEN 1 ELSE 0 END +
+              CASE WHEN NULLIF(BTRIM(v.vin), '') IS NOT NULL
+                        OR NULLIF(BTRIM(v.serie_chasis), '') IS NOT NULL THEN 1 ELSE 0 END +
+              CASE WHEN NULLIF(BTRIM(v.clase), '') IS NOT NULL THEN 1 ELSE 0 END +
+              CASE WHEN NULLIF(BTRIM(v.carroceria), '') IS NOT NULL THEN 1 ELSE 0 END +
+              CASE WHEN v.numero_ejes IS NOT NULL THEN 1 ELSE 0 END +
+              CASE WHEN v.numero_ruedas IS NOT NULL THEN 1 ELSE 0 END
+          ) >= 5
+          AND (
               c.estado = 'EMITIDO' OR (
-                  ($2 = 'CONFORMIDAD' AND EXISTS(
+                  (c.tipo_certificado_clave = 'CONFORMIDAD' AND EXISTS(
                       SELECT 1 FROM fg_certificado_conformidad 
                       WHERE certificado_id = c.id
                         AND NULLIF(BTRIM(tipo_conformidad), '') IS NOT NULL
@@ -129,29 +154,48 @@ const buscarCertificadoCompatiblePorPlaca = async (placa, tipoCertificado, exclu
                         AND NULLIF(BTRIM(motivo), '') IS NOT NULL
                         AND NULLIF(BTRIM(descripcion), '') IS NOT NULL
                   )) OR
-                  ($2 LIKE 'GLP%' AND EXISTS(
+                  (c.tipo_certificado_clave LIKE 'GLP%' AND EXISTS(
                       SELECT 1 FROM fg_certificado_glp 
                       WHERE certificado_id = c.id
                         AND taller_autorizado_id IS NOT NULL
                         AND vigencia_hasta IS NOT NULL
                         AND NULLIF(BTRIM(expediente_tecnico), '') IS NOT NULL
                   )) OR
-                  ($2 LIKE 'GNV%' AND EXISTS(
+                  (c.tipo_certificado_clave LIKE 'GNV%' AND EXISTS(
                       SELECT 1 FROM fg_certificado_gnv 
                       WHERE certificado_id = c.id
                         AND taller_autorizado_id IS NOT NULL
                         AND vigencia_hasta IS NOT NULL
                   )) OR
-                  ($2 NOT LIKE 'GLP%' AND $2 NOT LIKE 'GNV%' AND $2 <> 'CONFORMIDAD')
+                  (c.tipo_certificado_clave NOT LIKE 'GLP%'
+                      AND c.tipo_certificado_clave NOT LIKE 'GNV%'
+                      AND c.tipo_certificado_clave <> 'CONFORMIDAD')
               )
           )
         ORDER BY
+            CASE WHEN c.tipo_certificado_clave = $2 THEN 0 ELSE 1 END,
+            CASE
+                WHEN NULLIF(BTRIM($4::TEXT), '') IS NULL THEN 0
+                WHEN UPPER(COALESCE(glp.modalidad, gnv.modalidad, '')) = UPPER(BTRIM($4::TEXT)) THEN 0
+                ELSE 1
+            END,
             CASE WHEN c.estado = 'EMITIDO' THEN 0 ELSE 1 END,
             CASE WHEN c.estado = 'EMITIDO' THEN c.fecha_emision END DESC NULLS LAST,
             c.fecha_creacion DESC
         LIMIT 1
-    `, [placaNormalizada, tipoCertificado, excludeCertificadoId || null]);
+    `, [placaNormalizada, tipoCertificado, excludeCertificadoId || null, modalidad || null]);
     return resultado.rows[0]?.id || null;
+};
+
+const buscarSnapshotPorCertificadoId = async (certificadoId, executor = db) => {
+    if (!certificadoId) return null;
+    const resultado = await executor.query(`
+        SELECT *
+        FROM fg_certificado_vehiculo
+        WHERE certificado_id = $1
+        LIMIT 1
+    `, [certificadoId]);
+    return resultado.rows[0] || null;
 };
 
 
@@ -183,10 +227,13 @@ const combinarVehiculos = (vehiculoFaregas, vehiculoFarenet) => {
     };
 };
 
-const resolverVehiculoPorPlaca = async (placa, { excludeCertificadoId = null } = {}) => {
+const resolverVehiculoPorPlaca = async (
+    placa,
+    { excludeCertificadoId = null, tipoCertificado = null, modalidad = null } = {}
+) => {
     vehicleLookupDebug.log('FG_VEHICULO_START');
     vehicleLookupDebug.log('SNAPSHOT_START');
-    const [maestro, snapshotLegacy] = await Promise.all([
+    const [maestro, snapshotLegacy, certificadoCompatibleId] = await Promise.all([
         buscarMaestroPorPlaca(placa).then((value) => {
             vehicleLookupDebug.log('FG_VEHICULO_RESULT', { found: Boolean(value) });
             return value;
@@ -200,8 +247,24 @@ const resolverVehiculoPorPlaca = async (placa, { excludeCertificadoId = null } =
         }, (error) => {
             vehicleLookupDebug.logError('SNAPSHOT_ERROR', error);
             throw error;
-        })
+        }),
+        tipoCertificado
+            ? buscarCertificadoCompatiblePorPlaca(
+                placa,
+                tipoCertificado,
+                excludeCertificadoId,
+                modalidad
+            )
+            : Promise.resolve(null)
     ]);
+
+    // Para un trámite específico (por ejemplo GLP INICIAL), el snapshot del
+    // certificado compatible es más coherente que el maestro post-conversión.
+    // El maestro sigue siendo el fallback canónico cuando no hay antecedente
+    // del mismo flujo/modalidad.
+    const snapshotCompatible = certificadoCompatibleId
+        ? await buscarSnapshotPorCertificadoId(certificadoCompatibleId)
+        : null;
 
     let vehiculoFarenet = null;
     let errorFarenet = null;
@@ -214,14 +277,15 @@ const resolverVehiculoPorPlaca = async (placa, { excludeCertificadoId = null } =
         vehicleLookupDebug.logError('FARENET_ERROR', error);
     }
 
-    const filaFaregas = maestro || snapshotLegacy;
+    const filaFaregas = snapshotCompatible || maestro || snapshotLegacy;
     const combinado = combinarVehiculos(mapVehiculoFaregas(filaFaregas), vehiculoFarenet);
     if (!combinado.vehiculo && errorFarenet) throw errorFarenet;
 
     return {
         ...combinado,
         maestroEncontrado: Boolean(maestro),
-        snapshotLegacyId: snapshotLegacy?.certificado_id || null,
+        snapshotLegacyId: snapshotCompatible?.certificado_id || snapshotLegacy?.certificado_id || null,
+        certificadoCompatibleId,
         errorFarenet
     };
 };

@@ -141,10 +141,13 @@ exports.consultarVehiculoPorPlaca = async (req, res) => {
 
         const tipoCertificadoRaw = req.query.tipoCertificado;
         const tipoCertificado = tipoCertificadoRaw ? String(tipoCertificadoRaw).trim() : null;
+        const modalidadRaw = req.query.modalidad;
+        const modalidad = modalidadRaw ? String(modalidadRaw).trim().toUpperCase() : null;
 
         const vehiculo = await clientesService.buscarVehiculoPorPlaca(String(placa).trim(), {
             excludeCertificadoId,
-            tipoCertificado
+            tipoCertificado,
+            modalidad
         });
         vehicleLookupDebug.log('SERVICE_RESULT', { found: Boolean(vehiculo) });
         if (!vehiculo) {
