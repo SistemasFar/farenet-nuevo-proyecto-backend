@@ -702,18 +702,18 @@ const crearServicio = (database = db, config = {}) => {
         const usuario = await obtenerUsuarioActual(executor, userContext);
         const permisos = await obtenerPermisos(executor, usuario.perfil_id);
         exigirPermiso(permisos, permisoRequerido);
-        const plantas = await executor.query(`
+        const plantasDb = await executor.query(`
             SELECT DISTINCT up.plantas_key
             FROM fg_usuario_planta up
-            JOIN fg_perfil_planta pp
-              ON pp.planta_key = up.plantas_key AND pp.perfil_clave = $2
             JOIN fg_planta p ON p.key = up.plantas_key AND p.activo = TRUE
             WHERE up.usuario_username = $1
-        `, [usuario.username, usuario.perfil_id]);
+        `, [usuario.username]);
+        const plantasSet = new Set(plantasDb.rows.map((row) => row.plantas_key));
+        if (userContext.planta_key) plantasSet.add(userContext.planta_key);
         return {
             usuario,
             permisos,
-            plantas: plantas.rows.map((row) => row.plantas_key),
+            plantas: Array.from(plantasSet),
             puedeRevisar: permisos.has(PERMISOS_SOLICITUD.APROBAR)
                 || permisos.has(PERMISOS_SOLICITUD.RECHAZAR)
                 || permisos.has(PERMISOS_SOLICITUD.ADMINISTRAR)
@@ -725,10 +725,6 @@ const crearServicio = (database = db, config = {}) => {
         if (alcance.plantas.length === 0) return { data: [], total: 0, page: 1, pageSize: 10, totalPages: 1 };
         const params = [alcance.plantas];
         const condiciones = ['s.planta_key = ANY($1::varchar[])'];
-        if (!alcance.puedeRevisar) {
-            params.push(alcance.usuario.username);
-            condiciones.push(`s.usuario_solicitante = $${params.length}`);
-        }
         const agregar = (sql, valor) => { params.push(valor); condiciones.push(sql.replace('?', `$${params.length}`)); };
         if (filtros.estado) {
             const estado = String(filtros.estado).toUpperCase();

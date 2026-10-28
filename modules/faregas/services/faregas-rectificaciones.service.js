@@ -105,18 +105,17 @@ const exigirPermiso = (permisos, permiso) => {
         throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { permiso });
     }
 };
-const validarAccesoPlanta = async (executor, usuario, plantaKey) => {
+const validarAccesoPlanta = async (executor, usuario, plantaKey, plantaKeySesion) => {
     const acceso = await executor.query(`
         SELECT 1
-        FROM fg_usuario_planta up
-        JOIN fg_perfil_planta pp
-          ON pp.planta_key = up.plantas_key
-         AND pp.perfil_clave = $2
-        JOIN fg_planta p ON p.key = up.plantas_key AND p.activo = TRUE
-        WHERE up.usuario_username = $1
-          AND up.plantas_key = $3
+        FROM fg_planta p
+        WHERE p.key = $1 AND p.activo = TRUE
+          AND (
+              EXISTS (SELECT 1 FROM fg_usuario_planta up WHERE up.usuario_username = $2 AND up.plantas_key = $1)
+              OR $1 = $3
+          )
         LIMIT 1
-    `, [usuario.username, usuario.perfil_id, plantaKey]);
+    `, [plantaKey, usuario.username, plantaKeySesion]);
     if (acceso.rowCount === 0) throw errorNegocio('PLANTA_NO_AUTORIZADA', 403);
 };
 const conTransaccion = async (trabajo) => {
@@ -401,7 +400,7 @@ const obtenerContextoRectificacion = async (certificadoId, userContext) => {
     const certRes = await db.query(consultaCertificadoBase(false), [id]);
     if (certRes.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
     const cert = certRes.rows[0];
-    await validarAccesoPlanta(db, usuario, cert.planta_key);
+    await validarAccesoPlanta(db, usuario, cert.planta_key, userContext.planta_key);
     const versionBase = await obtenerVersionActual(db, id);
     const snapshot = await cargarSnapshotTecnico(db, cert, usuario.username, versionBase);
     const comprobante = await obtenerComprobanteAsociado(db, id);
@@ -426,7 +425,7 @@ const obtenerHistorialRectificacion = async (certificadoId, userContext) => {
     const certRes = await db.query(consultaCertificadoBase(false), [id]);
     if (certRes.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
     const cert = certRes.rows[0];
-    await validarAccesoPlanta(db, usuario, cert.planta_key);
+    await validarAccesoPlanta(db, usuario, cert.planta_key, userContext.planta_key);
     const [versiones, solicitudes, eventos] = await Promise.all([
         db.query(`SELECT * FROM fg_certificado_version WHERE certificado_id = $1 ORDER BY numero_version ASC`, [id]),
         db.query(`
@@ -509,7 +508,7 @@ const previsualizarRectificacion = async (certificadoId, datosPropuestos, userCo
     const certRes = await db.query(consultaCertificadoBase(false), [id]);
     if (certRes.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
     const cert = certRes.rows[0];
-    await validarAccesoPlanta(db, usuario, cert.planta_key);
+    await validarAccesoPlanta(db, usuario, cert.planta_key, userContext.planta_key);
     const activas = await obtenerSolicitudesActivas(db, id);
     await validarRectificacionElegible(db, cert, activas, { ignorarRectificacionActiva: true });
     const tipo = tipoEspecifico(cert.tipo_certificado_clave);
@@ -556,7 +555,7 @@ const crearSolicitudRectificacion = async (certificadoId, entrada, userContext) 
     const certRes = await client.query(consultaCertificadoBase(true), [id]);
     if (certRes.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
     const cert = certRes.rows[0];
-    await validarAccesoPlanta(client, usuario, cert.planta_key);
+    await validarAccesoPlanta(client, usuario, cert.planta_key, userContext.planta_key);
     const activas = await obtenerSolicitudesActivas(client, id);
     await validarRectificacionElegible(client, cert, activas);
     const tipo = tipoEspecifico(cert.tipo_certificado_clave);
@@ -663,7 +662,7 @@ const ejecutarRectificacionDirecta = async (certificadoId, entrada, userContext)
             const cert = certRes.rows[0];
             // La autorización del flujo directo depende exclusivamente de una
             // cuenta activa y del acceso efectivo a la sede del certificado.
-            await validarAccesoPlanta(client, usuario, cert.planta_key);
+            await validarAccesoPlanta(client, usuario, cert.planta_key, userContext.planta_key);
             const repetida = await client.query(`
                 SELECT *
                 FROM fg_certificado_version
@@ -1148,7 +1147,7 @@ const ejecutarRectificacionSolicitud = async (solicitudId, entrada, userContext)
             if (solicitud.tipo_operacion !== TIPO_RECTIFICACION) {
                 throw errorNegocio('SOLICITUD_TIPO_NO_RECTIFICACION', 409);
             }
-            await validarAccesoPlanta(client, usuario, solicitud.planta_key);
+            await validarAccesoPlanta(client, usuario, solicitud.planta_key, userContext.planta_key);
             if (solicitud.estado === 'COMPLETADA') {
                 return {
                     solicitud: mapearSolicitudRectificacion(solicitud),
@@ -1390,7 +1389,7 @@ const descargarPdfVersionRectificacion = async (certificadoId, versionId, userCo
     const usuario = await obtenerUsuarioActual(db, userContext);
     const certRes = await db.query(consultaCertificadoBase(false), [cid]);
     if (certRes.rowCount === 0) throw errorNegocio('CERTIFICADO_NO_ENCONTRADO', 404);
-    await validarAccesoPlanta(db, usuario, certRes.rows[0].planta_key);
+    await validarAccesoPlanta(db, usuario, certRes.rows[0].planta_key, userContext.planta_key);
     const versionRes = await db.query(`
         SELECT *
         FROM fg_certificado_version

@@ -574,13 +574,14 @@ test('SUPERVISOR, CAJERO y SISTEMAS tienen la misma validación de acceso por se
     for (const perfil of ['SUPERVISOR', 'CAJERO', 'SISTEMAS']) {
         const executor = {
             query: async (_sql, params) => {
-                assert.deepEqual(params, [`usuario_${perfil}`, perfil, 'SURCO']);
+                assert.deepEqual(params, ['SURCO', `usuario_${perfil}`, 'SURCO']);
                 return { rowCount: 1, rows: [{ acceso: 1 }] };
             }
         };
         await assert.doesNotReject(() => _private.validarAccesoPlanta(
             executor,
             { username: `usuario_${perfil}`, perfil_id: perfil },
+            'SURCO',
             'SURCO'
         ));
     }
