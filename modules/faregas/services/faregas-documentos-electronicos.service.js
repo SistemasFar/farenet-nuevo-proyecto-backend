@@ -16,6 +16,10 @@ const {
     resolverOperacionFiscal,
     RESULTADOS: RESULTADOS_RESOLUCION_FISCAL
 } = require('./faregas-anulacion-fiscal.resolver');
+const {
+    validarAnulacionCertificadoPorImporte,
+    esMotivoAnulacionNotaCredito
+} = require('./faregas-certificado-anulacion-policy.service');
 
 const TIPOS = Object.freeze({
     CREDITO: { tabla: 'fg_credito', fk: 'credito_id', comprobante: 3, prefijo: 'FGNC' },
@@ -79,6 +83,11 @@ const validarAccesoFacturacionOperacion = async (executor, operacionId, userCont
     const acceso = await validarAccesoPlanta(userContext.username, userContext.perfil_id, row.planta_key);
     if (!acceso) throw errorNegocio('PLANTA_NO_AUTORIZADA', 403);
     return row;
+};
+
+const validarImporteAnulacionCertificado = async (executor, facturacion, operacion) => {
+    if (!facturacion?.certificado_id) return;
+    await validarAnulacionCertificadoPorImporte(executor, facturacion.certificado_id, { operacion });
 };
 
 const validarSinAnulacionActiva = async (executor, facturacionId) => {
@@ -334,6 +343,14 @@ const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaI
             nota = update.rows[0];
         }
 
+        // Una nota de crédito por anulación también anula la operación del
+        // certificado. Debe respetar la regla de importe final antes de
+        // reservar serie o llamar a NubeFact. La nota de corrección (motivo 03)
+        // y la rectificación administrativa siguen disponibles.
+        if (tipo === 'CREDITO' && esMotivoAnulacionNotaCredito(nota.motivo_codigo)) {
+            await validarImporteAnulacionCertificado(client, facturacion, 'NOTA_CREDITO_ANULACION');
+        }
+
         const intento = Number(nota.intentos || 0) + 1;
         const payload = construirPayloadNota({ nota, facturacion, tipoNota: tipo });
         const operacionId = await registrarOperacion(client, {
@@ -578,6 +595,7 @@ const generarAnulacionConAcceso = async (referenciaId, data, userContext, depend
         const motivo = String(data.motivo || '').trim();
         if (!motivo || motivo.length > 100) throw errorNegocio('MOTIVO_ANULACION_INVALIDO');
         const facturacion = await validarAcceso(client, referenciaId, userContext, true);
+        await validarImporteAnulacionCertificado(client, facturacion, 'GENERAR_ANULACION_FISCAL');
         await validarSinAnulacionActiva(client, facturacion.id);
         const objetivo = await obtenerObjetivoAnulacion(client, facturacion, data.tipoDocumento, data.documentoId);
         // La ventana operativa FAREGAS sigue siendo de 24 h. La elegibilidad

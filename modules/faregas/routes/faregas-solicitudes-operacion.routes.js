@@ -22,6 +22,7 @@ router.post('/', controller.crear);
 router.get('/', controller.listar);
 router.get('/:id', controller.obtener);
 router.post('/:id/aprobar', controller.aprobar);
+router.post('/:id/aprobar-y-ejecutar-anulacion-total', controller.aprobarYEjecutarAnulacionTotal);
 router.post('/:id/rechazar', controller.rechazar);
 router.post('/:id/cancelar', controller.cancelar);
 router.post('/:id/ejecutar-anulacion-total', controller.ejecutarAnulacionTotal);

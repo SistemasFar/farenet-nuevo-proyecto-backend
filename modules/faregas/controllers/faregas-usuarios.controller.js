@@ -1,8 +1,25 @@
 const service = require('../services/faregas-usuarios.service');
+const auditoriaService = require('../services/faregas-auditoria.service');
+
+const contextoAuditoria = (req) => auditoriaService.contextoRequest(req);
+
+const responderErrorPerfil = (res, e) => {
+    const status = Number(e?.statusCode) || 500;
+    if (status !== 500) {
+        return res.status(status).json({
+            success: false,
+            codigo: e.code,
+            message: e.message,
+            ...(e.detalles !== undefined ? { detalles: e.detalles } : {})
+        });
+    }
+    console.error(e);
+    return res.status(500).json({ message: 'Error interno del servidor' });
+};
 
 exports.obtenerUsuariosPaginado = async (req, res) => {
     try {
-        const resultado = await usuariosService.obtenerUsuariosPaginado({
+        const resultado = await service.obtenerUsuariosPaginado({
             buscar: req.query.buscar,
             perfil_id: req.query.perfil_id,
             estado: req.query.estado === 'true' ? true : req.query.estado === 'false' ? false : undefined,
@@ -146,22 +163,25 @@ exports.crearPerfil = async (req, res) => {
     try {
         const { clave, nombre } = req.body;
         if (!clave || !nombre) return res.status(400).json({ message: 'Clave y nombre requeridos' });
-        const result = await service.crearPerfil(req.body);
+        const result = await service.crearPerfil(req.body, req.user, contextoAuditoria(req));
         res.status(201).json(result);
     } catch (e) {
         if (e.code === '23505') return res.status(409).json({ message: 'La clave de perfil ya existe' });
-        console.error(e);
-        res.status(500).json({ message: 'Error interno del servidor' });
+        return responderErrorPerfil(res, e);
     }
 };
 
 exports.actualizarPerfil = async (req, res) => {
     try {
-        const result = await service.actualizarPerfil(req.params.clave, req.body);
+        const result = await service.actualizarPerfil(
+            req.params.clave,
+            req.body,
+            req.user,
+            contextoAuditoria(req)
+        );
         res.json(result);
     } catch (e) {
-        console.error(e);
-        res.status(500).json({ message: 'Error interno del servidor' });
+        return responderErrorPerfil(res, e);
     }
 };
 

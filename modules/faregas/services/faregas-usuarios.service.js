@@ -2,19 +2,13 @@ const db = require('../../../config/database');
 const bcrypt = require('bcryptjs');
 const paginacion = require('./faregas-paginacion.rules');
 const validacion = require('./faregas-usuarios-validacion.service');
-
-const PERMISOS_INICIO_ANULACIONES = Object.freeze([
-    'FAREGAS_SOLICITUD_CREAR',
-    'FAREGAS_SOLICITUD_VER',
-    'FAREGAS_SOLICITUD_APROBAR',
-    'FAREGAS_SOLICITUD_AUTOAPROBAR',
-    'FAREGAS_SOLICITUD_AUTOEJECUTAR',
-    'FAREGAS_SOLICITUD_RECHAZAR',
-    'FAREGAS_SOLICITUD_ADMINISTRAR',
-    'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR',
-    'FAREGAS_NOTA_CREDITO',
-    'FAREGAS_ANULAR_COMPROBANTE'
-]);
+const permisosSensiblesService = require('./faregas-permisos-sensibles.service');
+const {
+    PERMISOS_SENSIBLES,
+    PERMISOS_SENSIBLES_SET,
+    PERMISOS_OBSOLETOS_SET,
+    PERMISOS_FAREGAS_GESTIONABLES
+} = require('./faregas-permisos-sensibles.constants');
 
 // El trim de los campos vive en `faregas-usuarios-validacion.service`, que es
 // quien devuelve los valores ya normalizados y validados. Aquí no se normaliza
@@ -358,16 +352,40 @@ exports.obtenerPerfiles = async () => {
         FROM fg_perfil p
         ORDER BY p.clave
     `);
-    return result.rows;
+    return result.rows.map((perfil) => ({
+        ...perfil,
+        permisos: Array.isArray(perfil.permisos)
+            ? perfil.permisos.filter((clave) => !PERMISOS_OBSOLETOS_SET.has(clave))
+            : []
+    }));
 };
 
-exports.crearPerfil = async (data) => {
-    const { clave, nombre, visible, sedes, permisos } = data;
+exports.crearPerfil = async (data, actor = null, contexto = {}) => {
+    const { clave, nombre, visible, sedes, permisos, permisosSensibles } = data;
     const isVisible = visible === true || visible === 'true';
     const client = await db.connect();
     
     try {
         await client.query('BEGIN');
+
+        // La autorización se comprueba dentro de la transacción y contra la BD:
+        // administrar perfiles exige MENU_USUARIOS, el mismo permiso que protege
+        // la ruta. No hay una segunda autorización para permisos sensibles.
+        const actorAutorizado = await permisosSensiblesService.verificarAutorizacionPerfiles({
+            executor: client,
+            actor,
+            contexto,
+            perfilClave: clave
+        });
+
+        // Se valida contra el catálogo ANTES de escribir cualquier fila. La
+        // lista completa `permisos` incluye también las claves sensibles.
+        const validados = await permisosSensiblesService.validarPermisosGestionables({
+            executor: client,
+            permisos,
+            permisosSensibles,
+            perfilClave: clave
+        });
         
         await client.query(`
             INSERT INTO fg_perfil (clave, nombre, visible)
@@ -380,22 +398,25 @@ exports.crearPerfil = async (data) => {
             }
         }
 
-        if (Array.isArray(permisos) && permisos.length > 0) {
-            const permisosExclusivosSistemas = new Set([
-                'FAREGAS_SOLICITUD_APROBAR',
-                'FAREGAS_SOLICITUD_AUTOAPROBAR',
-                'FAREGAS_SOLICITUD_AUTOEJECUTAR',
-                'FAREGAS_SOLICITUD_RECHAZAR',
-                'FAREGAS_SOLICITUD_ADMINISTRAR',
-                'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR'
-            ]);
-            for (const p of permisos) {
-                if (clave !== 'SISTEMAS' && permisosExclusivosSistemas.has(p)) {
-                    continue;
-                }
-                await client.query('INSERT INTO fg_perfil_permiso (perfil_clave, permiso_clave) VALUES ($1, $2)', [clave, p]);
-            }
+        // Los permisos sensibles pasan por el servicio dedicado para auditar
+        // cada concesión. Los demás se insertan directamente.
+        const permisosNoSensibles = (validados.permisosGestionables || [])
+            .filter((permiso) => !PERMISOS_SENSIBLES_SET.has(permiso));
+        for (const permiso of permisosNoSensibles) {
+            await client.query(
+                'INSERT INTO fg_perfil_permiso (perfil_clave, permiso_clave) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+                [clave, permiso]
+            );
         }
+
+        await permisosSensiblesService.aplicarPermisosSensibles({
+            executor: client,
+            perfilClave: clave,
+            permisosSensibles: validados.permisosSensibles,
+            actor,
+            actorAutorizado,
+            contexto
+        });
 
         await client.query('COMMIT');
         return { clave };
@@ -407,13 +428,44 @@ exports.crearPerfil = async (data) => {
     }
 };
 
-exports.actualizarPerfil = async (clave, data) => {
-    const { nombre, visible, sedes, permisos } = data;
+exports.actualizarPerfil = async (clave, data, actor = null, contexto = {}) => {
+    const { nombre, visible, sedes, permisos, permisosSensibles } = data;
     const isVisible = visible === true || visible === 'true';
     const client = await db.connect();
 
     try {
         await client.query('BEGIN');
+
+        // Bloqueo de la fila del perfil: dos administradores que guarden a la
+        // vez no pueden calcular el diff sobre estados distintos ni dejar
+        // permisos sensibles a medio escribir.
+        const perfilActual = await client.query(
+            'SELECT 1 FROM fg_perfil WHERE clave = $1 FOR UPDATE',
+            [clave]
+        );
+        if (perfilActual.rowCount === 0) {
+            throw permisosSensiblesService._private.errorNegocio(
+                'PERFIL_NO_ENCONTRADO',
+                404,
+                'El perfil no existe.'
+            );
+        }
+
+        // Autorización única para editar perfiles. Se evalúa con los permisos
+        // efectivos de la BD y dentro de la misma transacción que la escritura.
+        const actorAutorizado = await permisosSensiblesService.verificarAutorizacionPerfiles({
+            executor: client,
+            actor,
+            contexto,
+            perfilClave: clave
+        });
+
+        const validados = await permisosSensiblesService.validarPermisosGestionables({
+            executor: client,
+            permisos,
+            permisosSensibles,
+            perfilClave: clave
+        });
 
         await client.query(`
             UPDATE fg_perfil
@@ -438,33 +490,42 @@ exports.actualizarPerfil = async (clave, data) => {
               )
         `, [clave]);
 
-        await client.query(`
-            DELETE FROM fg_perfil_permiso 
-            WHERE perfil_clave = $1
-              AND permiso_clave IN (
-                  SELECT clave
-                  FROM fg_permiso
-                  WHERE modulo = 'MENU'
-                     OR clave = ANY($2::varchar[])
-              )
-        `, [clave, PERMISOS_INICIO_ANULACIONES]);
-        
-        if (Array.isArray(permisos) && permisos.length > 0) {
-            const permisosExclusivosSistemas = new Set([
-                'FAREGAS_SOLICITUD_APROBAR',
-                'FAREGAS_SOLICITUD_AUTOAPROBAR',
-                'FAREGAS_SOLICITUD_AUTOEJECUTAR',
-                'FAREGAS_SOLICITUD_RECHAZAR',
-                'FAREGAS_SOLICITUD_ADMINISTRAR',
-                'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR'
-            ]);
-            for (const p of permisos) {
-                if (clave !== 'SISTEMAS' && permisosExclusivosSistemas.has(p)) {
-                    continue;
-                }
-                await client.query('INSERT INTO fg_perfil_permiso (perfil_clave, permiso_clave) VALUES ($1, $2) ON CONFLICT DO NOTHING', [clave, p]);
+        if (Array.isArray(validados.permisosGestionables)) {
+            // Se reemplazan los permisos gestionables no sensibles. Los
+            // sensibles se aplican después con el diff auditado, de modo que
+            // marcar o desmarcar cualquiera de ellos persiste exactamente lo
+            // que envió el editor. Los permisos fuera del catálogo no se tocan:
+            // se conservan tal como estaban.
+            await client.query(`
+                DELETE FROM fg_perfil_permiso
+                WHERE perfil_clave = $1
+                  AND permiso_clave IN (
+                      SELECT clave
+                      FROM fg_permiso
+                      WHERE modulo = 'MENU'
+                         OR clave = ANY($2::varchar[])
+                  )
+                  AND NOT (permiso_clave = ANY($3::varchar[]))
+            `, [clave, PERMISOS_FAREGAS_GESTIONABLES, PERMISOS_SENSIBLES]);
+
+            const permisosNoSensibles = validados.permisosGestionables
+                .filter((permiso) => !PERMISOS_SENSIBLES_SET.has(permiso));
+            for (const permiso of permisosNoSensibles) {
+                await client.query(
+                    'INSERT INTO fg_perfil_permiso (perfil_clave, permiso_clave) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+                    [clave, permiso]
+                );
             }
         }
+
+        await permisosSensiblesService.aplicarPermisosSensibles({
+            executor: client,
+            perfilClave: clave,
+            permisosSensibles: validados.permisosSensibles,
+            actor,
+            actorAutorizado,
+            contexto
+        });
 
         await client.query('COMMIT');
         return { clave };
@@ -503,7 +564,7 @@ exports.obtenerPermisos = async () => {
               OR clave = ANY($1::varchar[])
           )
         ORDER BY modulo, nombre
-    `, [PERMISOS_INICIO_ANULACIONES]);
+    `, [PERMISOS_FAREGAS_GESTIONABLES]);
     return result.rows;
 };
 

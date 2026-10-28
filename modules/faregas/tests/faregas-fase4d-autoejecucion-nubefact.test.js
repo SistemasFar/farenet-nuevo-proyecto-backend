@@ -52,6 +52,10 @@ const crearMockDb = ({
         datos_originales_comprobante: facturacionOverrides !== null ? { numero: 'BBB1-00000228' } : null,
         datos_propuestos: null,
         fecha_emision_original: '2026-10-26',
+        precio_certificado: 118.00,
+        importe_total: facturacionOverrides !== null
+            ? (facturacionOverrides?.importe_total ?? 118.00)
+            : null,
         resultado_tecnico: null,
         resultado_fiscal: null,
         idempotencia_clave: '11111111-1111-4111-8111-111111111111',
@@ -74,7 +78,10 @@ const crearMockDb = ({
         planta_key: 'PLANTA_SURCO',
         empresa_key: 'FAREGAS',
         estado: 'EMITIDO',
-        fecha_emision: '2026-10-26'
+        fecha_emision: '2026-10-26',
+        precio_certificado: 118.00,
+        precio_chip: 0,
+        producto_chip_id: null
     };
 
     const facturacion = facturacionOverrides !== null ? {
@@ -246,7 +253,7 @@ test('1. SISTEMAS con permiso de autoejecución ejecuta su propia solicitud apro
     const resultado = await ejecutar(db, docs);
 
     assert.equal(docs.llamadas.bajas, 1);
-    assert.equal(resultado.resultadoFiscal.estado, 'ACEPTADO');
+    assert.equal(resultado.resultadoFiscal.estado, 'BAJA_ACEPTADA');
     assert.equal(resultado.resultadoFiscal.tipoOperacion, 'COMUNICACION_BAJA');
     assert.equal(db.getSolicitud().autorizacion_autoejecucion, true);
     assert.equal(db.getSolicitud().usuario_ejecucion, 'sistemas_user');
@@ -334,22 +341,19 @@ test('4b. La autoejecución exige simultáneamente los cuatro permisos', async (
     assert.equal(docsSinEjecutar.llamadas.bajas, 0);
 });
 
-test('5. OPERADOR sin perfil SISTEMAS queda bloqueado', async () => {
+test('5. OPERADOR con los permisos efectivos puede autoejecutar sin depender del perfil', async () => {
     const db = crearMockDb({
         perfilUsuario: 'OPERADOR',
         facturacionOverrides: { estado: 'ACEPTADO', enPlazo: true }
     });
-    const docs = crearDocsMock();
+    const docs = crearDocsMock({ baja: 'ACEPTADO' });
 
-    await assert.rejects(
-        () => ejecutar(db, docs),
-        (err) => {
-            assert.equal(err.code, 'SOLICITUD_PERMISO_DENEGADO');
-            assert.equal(err.statusCode, 403);
-            return true;
-        }
-    );
-    assert.equal(docs.llamadas.bajas, 0);
+    const resultado = await ejecutar(db, docs);
+
+    assert.equal(docs.llamadas.bajas, 1);
+    assert.equal(resultado.resultadoFiscal.estado, 'BAJA_ACEPTADA');
+    assert.equal(db.getSolicitud().autorizacion_autoejecucion, true);
+    assert.equal(db.getSolicitud().usuario_ejecucion, 'sistemas_user');
 });
 
 test('6. Una solicitud no aprobada no se ejecuta', async () => {
@@ -380,8 +384,8 @@ test('7. Boleta PENDIENTE_SUNAT sin evidencia de plazo se sincroniza y no envía
     assert.equal(resultado.resultadoFiscal.estado, 'PENDIENTE_SUNAT');
     assert.equal(resultado.resultadoFiscal.resolucionFiscal.resultado, 'PENDIENTE_VERIFICACION');
     assert.equal(resultado.resultadoFiscal.sincronizacion.consultado, true);
-    assert.equal(resultado.resultadoTecnico.estado, 'BLOQUEADO_NORMATIVA');
-    assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
+    assert.equal(resultado.resultadoTecnico.estado, 'BLOQUEADO_POR_FISCAL');
+    assert.equal(resultado.solicitud.estado, 'EN_EJECUCION');
 });
 
 test('7b. Boleta no informada PENDIENTE_SUNAT dentro de 7 días envía comunicación de baja', async () => {
@@ -395,7 +399,7 @@ test('7b. Boleta no informada PENDIENTE_SUNAT dentro de 7 días envía comunicac
     assert.equal(docs.llamadas.notas, 0);
     assert.equal(resultado.resultadoFiscal.tipoOperacion, 'COMUNICACION_BAJA');
     assert.equal(resultado.resultadoFiscal.resolucionFiscal.resultado, 'BAJA_ELEGIBLE');
-    assert.equal(resultado.resultadoFiscal.estado, 'PENDIENTE');
+    assert.equal(resultado.resultadoFiscal.estado, 'BAJA_FISCAL_PENDIENTE');
     assert.equal(resultado.resultadoFiscal.resuelto, false);
 });
 
@@ -410,7 +414,7 @@ test('8. PENDIENTE_SUNAT que sincroniza a ACEPTADO continúa con la baja fiscal'
 
     assert.equal(docs.llamadas.consultas, 1);
     assert.equal(docs.llamadas.bajas, 1);
-    assert.equal(resultado.resultadoFiscal.estado, 'ACEPTADO');
+    assert.equal(resultado.resultadoFiscal.estado, 'BAJA_ACEPTADA');
     assert.equal(resultado.resultadoFiscal.tipoOperacion, 'COMUNICACION_BAJA');
 });
 
@@ -446,20 +450,20 @@ test('11. Respuesta pendiente conserva la operación sin emitir un duplicado', a
     const resultado = await ejecutar(db, docs);
 
     assert.equal(docs.llamadas.bajas, 1);
-    assert.equal(resultado.resultadoFiscal.estado, 'PENDIENTE');
+    assert.equal(resultado.resultadoFiscal.estado, 'BAJA_FISCAL_PENDIENTE');
     assert.equal(resultado.resultadoFiscal.resuelto, false);
-    assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
+    assert.equal(resultado.solicitud.estado, 'EN_EJECUCION');
 });
 
-test('12. Respuesta rechazada no se declara resuelta y queda para intervención', async () => {
+test('12. Respuesta rechazada no se declara resuelta y expone BAJA_RECHAZADA', async () => {
     const db = crearMockDb({ facturacionOverrides: { estado: 'ACEPTADO', enPlazo: true } });
     const docs = crearDocsMock({ baja: 'RECHAZADO' });
 
     const resultado = await ejecutar(db, docs);
 
-    assert.equal(resultado.resultadoFiscal.estado, 'RECHAZADO');
+    assert.equal(resultado.resultadoFiscal.estado, 'BAJA_RECHAZADA');
     assert.equal(resultado.resultadoFiscal.resuelto, false);
-    assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
+    assert.equal(resultado.solicitud.estado, 'ERROR');
 });
 
 test('13. Error de conexión se registra sin inventar una anulación', async () => {
@@ -471,7 +475,7 @@ test('13. Error de conexión se registra sin inventar una anulación', async () 
     assert.equal(resultado.resultadoFiscal.estado, 'NUBEFACT_TIMEOUT');
     assert.equal(resultado.resultadoFiscal.resuelto, false);
     assert.equal(resultado.resultadoFiscal.error, 'Timeout de conexión con el proveedor');
-    assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
+    assert.equal(resultado.solicitud.estado, 'ERROR');
 });
 
 test('14. Timeout previo con operación en trámite no se reenvía (recuperación idempotente)', async () => {
@@ -485,7 +489,7 @@ test('14. Timeout previo con operación en trámite no se reenvía (recuperació
     const resultado = await ejecutar(db, docs);
 
     assert.equal(docs.llamadas.bajas, 0);
-    assert.equal(resultado.resultadoFiscal.estado, 'EN_TRAMITE');
+    assert.equal(resultado.resultadoFiscal.estado, 'BAJA_FISCAL_PENDIENTE');
     assert.equal(resultado.resultadoFiscal.resuelto, false);
 });
 

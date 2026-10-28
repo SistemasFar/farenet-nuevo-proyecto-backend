@@ -2,6 +2,9 @@ const cron = require('node-cron');
 const pool = require('./config/database');
 const { reconciliarPendientesSunat } = require('./modules/faregas/services/faregas-nubefact-cron.service');
 const { reconciliarNotasPendientesSunat } = require('./modules/faregas/services/faregas-nubefact-notas-cron.service');
+const { reconciliarAnulacionesPendientes } = require('./modules/faregas/services/faregas-solicitudes-operacion.service');
+
+let reconciliacionAnulacionesEnCurso = false;
 
 // Se ejecuta todos los d�as a las 3:00 AM
 const startCronJobs = () => {
@@ -42,6 +45,21 @@ const startCronJobs = () => {
         console.log('[CRON] Reconciliador SUNAT Facturas/Boletas finalizado.', resultado);
       } catch (error) {
         console.error('[CRON] Fallo no controlado en reconciliador SUNAT Facturas/Boletas:', error.message);
+      }
+
+      // Se reutiliza el mismo ciclo de reconciliación fiscal. Este paso sólo
+      // consulta bajas ya creadas y nunca reenvía una comunicación de baja.
+      if (!reconciliacionAnulacionesEnCurso) {
+        reconciliacionAnulacionesEnCurso = true;
+        console.log('[CRON] Iniciando reconciliador de anulaciones FAREGAS...', new Date().toLocaleString());
+        try {
+          const resultadoAnulaciones = await reconciliarAnulacionesPendientes();
+          console.log('[CRON] Reconciliador de anulaciones FAREGAS finalizado.', resultadoAnulaciones);
+        } catch (error) {
+          console.error('[CRON] Fallo no controlado en reconciliador de anulaciones FAREGAS:', error.message);
+        } finally {
+          reconciliacionAnulacionesEnCurso = false;
+        }
       }
     }
 

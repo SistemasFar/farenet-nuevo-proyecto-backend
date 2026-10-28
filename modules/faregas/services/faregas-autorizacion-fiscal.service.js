@@ -87,9 +87,6 @@ const validarSolicitudAprobada = async ({
     if (result.rowCount === 0) throw errorNegocio('FAREGAS_SOLICITUD_FISCAL_NO_ENCONTRADA', 404);
     const row = result.rows[0];
     if (!row.usuario_activo) throw errorNegocio('USUARIO_INACTIVO', 403);
-    if (row.perfil_id !== 'SISTEMAS') {
-        throw errorNegocio('FAREGAS_EJECUCION_FISCAL_NO_AUTORIZADA', 403, { perfilRequerido: 'SISTEMAS' });
-    }
     if (!row.tiene_permiso) throw errorNegocio('FAREGAS_EJECUCION_FISCAL_NO_AUTORIZADA', 403, { permiso: permisoRequerido });
     if (!row.tiene_sede) throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
     if (row.usuario_solicitante === username) throw errorNegocio('SOLICITUD_SEPARACION_FUNCIONES_REQUERIDA', 403);

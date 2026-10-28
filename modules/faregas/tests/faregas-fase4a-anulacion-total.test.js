@@ -33,7 +33,10 @@ const crearDb = ({
         nro_comprobante: facturacion?.numero || null,
         facturacion_estado: facturacion?.estado || null,
         fecha_documento: facturacion?.fecha || null,
-        importe_total: facturacion?.total || null,
+        importe_total: facturacion ? (facturacion.total ?? null) : null,
+        precio_certificado: facturacion?.precioCertificado ?? 100,
+        precio_chip: 0,
+        producto_chip_id: null,
         tipo_documento_cliente: facturacion?.tipoDocumento || null,
         aceptada_sunat: facturacion?.aceptadaSunat ?? null,
         proveedor: facturacion?.proveedor || null,
@@ -103,6 +106,38 @@ test('Paso A: OPERADOR crea únicamente ANULAR_AMBOS sin ejecutar documentos', a
     assert.equal(respuesta.solicitud.estado, 'PENDIENTE_APROBACION');
     assert.equal(respuesta.solicitud.facturacionId, null);
     assert.equal(db.eventos.length, 1);
+});
+
+test('Paso A: un certificado con importe final S/ 0.00 no genera solicitud de anulación', async () => {
+    const db = crearDb({
+        facturacion: {
+            id: 20,
+            total: 0,
+            tipo: 'BOLETA',
+            numero: 'BBB1-00000001',
+            estado: 'ACEPTADO',
+            aceptadaSunat: true,
+            entorno: 'DEMO',
+            proveedor: 'NUBEFACT',
+            serie: 'BBB1',
+            correlativo: 1,
+            pdf: 'https://example.test/comprobante.pdf'
+        }
+    });
+    const servicio = _private.crearServicio(db);
+
+    await assert.rejects(
+        () => servicio.crearAnulacionTotal({
+            certificadoId: 10,
+            tipoOperacion: 'ANULAR_AMBOS',
+            motivo: 'Intento de anulación de un certificado gratuito',
+            idempotenciaClave: UUID
+        }, { username: 'operador' }),
+        (error) => error.code === 'CERTIFICADO_IMPORTE_CERO_NO_ANULABLE'
+            && error.statusCode === 409
+            && error.detalles.importeFinal === 0
+    );
+    assert.equal(db.eventos.length, 0, 'no debe registrar eventos ni crear la solicitud');
 });
 
 test('Paso A: comprobante ausente o pendiente no se inventa como baja fiscal aceptada', async () => {

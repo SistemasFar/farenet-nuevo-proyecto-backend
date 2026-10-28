@@ -36,6 +36,8 @@ const filaSolicitudRectificacion = (overrides = {}) => ({
     datos_originales_comprobante: { id: 20, numero: 'BBB1-00000216', estado: 'ACEPTADO' },
     datos_propuestos: { placa: 'ABC-124', modelo: 'HILUX 4X4' },
     fecha_emision_original: '2026-10-22',
+    precio_certificado: 100,
+    importe_total: 100,
     resultado_tecnico: null,
     resultado_fiscal: null,
     idempotencia_clave: UUID_1,
@@ -60,6 +62,9 @@ const crearDbSimuladaFase3 = (opciones = {}) => {
             empresa_key: opciones.empresaCertificado || 'FAREGAS',
             cliente_id: 5,
             observaciones: 'Inspeccion inicial conforme',
+            precio_certificado: 100,
+            precio_chip: 0,
+            producto_chip_id: null,
         }]).map((c) => ({ ...c })),
         vehiculos: (opciones.vehiculos || [{
             certificado_id: 10,
@@ -291,6 +296,16 @@ const crearDbSimuladaFase3 = (opciones = {}) => {
                 if (params[2]) veh.modelo = params[2];
             }
             return resultado(veh ? [veh] : []);
+        }
+
+        if (normal.startsWith('UPDATE fg_certificado') && normal.includes("SET estado = 'ANULADO'")) {
+            const cert = estado.certificados.find((c) => Number(c.id) === Number(params[3]));
+            if (!cert || cert.estado !== 'EMITIDO') return resultado([]);
+            cert.estado = 'ANULADO';
+            cert.solicitud_anulacion_id = params[1];
+            cert.motivo_anulacion = params[0];
+            cert.usuario_anulacion = params[2];
+            return resultado([cert]);
         }
 
         if (normal.startsWith('UPDATE fg_solicitud_operacion')) {

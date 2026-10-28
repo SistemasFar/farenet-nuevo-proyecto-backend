@@ -41,6 +41,10 @@ const crearMockDb = ({
         datos_originales_comprobante: facturacionOverrides !== null ? { numero: 'F001-0000100' } : null,
         datos_propuestos: null,
         fecha_emision_original: '2026-10-23',
+        precio_certificado: 118.00,
+        importe_total: facturacionOverrides !== null
+            ? (facturacionOverrides?.importe_total ?? 118.00)
+            : null,
         resultado_tecnico: null,
         resultado_fiscal: null,
         idempotencia_clave: '11111111-1111-4111-8111-111111111111',
@@ -63,6 +67,9 @@ const crearMockDb = ({
         empresa_key: 'FAREGAS',
         estado: 'EMITIDO',
         fecha_emision: '2026-10-23',
+        precio_certificado: 118.00,
+        precio_chip: 0,
+        producto_chip_id: null,
         ...certificadoOverrides
     };
 
@@ -226,21 +233,18 @@ test('1. FASE 4B: Falla al ejecutar solicitud que no está APROBADA', async () =
     );
 });
 
-// 2. Ejecución por OPERADOR, incluso si un checkbox dejó el permiso asignado
-test('2. FASE 4B/4C: OPERADOR no ejecuta aunque conserve el permiso sensible', async () => {
+// 2. Ejecución por OPERADOR con el permiso efectivo (ya no depende del perfil)
+test('2. FASE 4B/4C: OPERADOR con el permiso sensible puede ejecutar', async () => {
     const db = crearMockDb({
         perfilUsuario: 'OPERADOR',
         permisos: ['FAREGAS_SOLICITUD_CREAR', 'FAREGAS_SOLICITUD_VER', 'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR']
     });
     const servicio = _private.crearServicio(db);
-    await assert.rejects(
-        async () => servicio.ejecutarAnulacionTotal(50, {}, { username: 'operador_otro' }),
-        (err) => {
-            assert.equal(err.code, 'SOLICITUD_PERMISO_DENEGADO');
-            assert.equal(err.statusCode, 403);
-            return true;
-        }
-    );
+    const resultado = await servicio.ejecutarAnulacionTotal(50, {}, { username: 'operador_otro' });
+
+    assert.equal(resultado.resultadoFiscal.estado, 'NO_REQUERIDA');
+    assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
+    assert.equal(db.getSolicitud().usuario_ejecucion, 'operador_otro');
 });
 
 // 3. Ejecución por el propio solicitante (auto-ejecución prohibida)
@@ -275,7 +279,7 @@ test('4. FASE 4B: Bloquea petición si la solicitud ya está EN_EJECUCION', asyn
 });
 
 // 5. Comprobante pendiente SUNAT (no declarar resuelto, comprobar trámite y no generar bajas ficticias)
-test('5. FASE 4B: Comprobante PENDIENTE_SUNAT no se declara resuelto, detecta trámite y mantiene REQUIERE_INTERVENCION sin llamar a NubeFact', async () => {
+test('5. FASE 4B: Comprobante PENDIENTE_SUNAT permanece EN_EJECUCION sin exigir intervención ni llamar a NubeFact', async () => {
     let llamadasNubeFact = 0;
     const mockDocsService = {
         generarAnulacion: async () => { llamadasNubeFact++; throw new Error('No debe invocarse'); },
@@ -296,7 +300,7 @@ test('5. FASE 4B: Comprobante PENDIENTE_SUNAT no se declara resuelto, detecta tr
     assert.match(resultado.resultadoFiscal.motivo, /emisión en trámite ante SUNAT/i);
     // Técnica bloqueada por defecto
     assert.equal(resultado.resultadoTecnico.resuelto, false);
-    assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
+    assert.equal(resultado.solicitud.estado, 'EN_EJECUCION');
     assert.equal(resultado.completada, false);
 });
 
@@ -325,7 +329,7 @@ test('5c. FASE 4B: con anulación técnica habilitada, un fiscal pendiente no ma
     assert.equal(resultado.resultadoTecnico.estado, 'BLOQUEADO_POR_FISCAL');
     assert.equal(resultado.resultadoTecnico.estadoFiscal, 'PENDIENTE_SUNAT');
     assert.equal(db.getCertificado().estado, 'EMITIDO');
-    assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
+    assert.equal(resultado.solicitud.estado, 'EN_EJECUCION');
     assert.equal(resultado.completada, false);
 });
 
@@ -388,7 +392,7 @@ test('6. FASE 4B: Certificado sin comprobante fiscal resuelve componente fiscal 
 });
 
 // 7. Respuesta fiscal rechazada por SUNAT
-test('7. FASE 4B: Respuesta fiscal rechazada no completa la solicitud y marca REQUIERE_INTERVENCION', async () => {
+test('7. FASE 4B: Respuesta fiscal rechazada no completa la solicitud y marca ERROR', async () => {
     const mockDocsService = {
         generarAnulacion: async () => {
             const err = new Error('Rechazado por SUNAT: comprobante no existe en padrón');
@@ -406,7 +410,7 @@ test('7. FASE 4B: Respuesta fiscal rechazada no completa la solicitud y marca RE
 
     assert.equal(resultado.resultadoFiscal.resuelto, false);
     assert.equal(resultado.resultadoFiscal.estado, 'NUBEFACT_ERROR');
-    assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
+    assert.equal(resultado.solicitud.estado, 'ERROR');
     assert.equal(resultado.completada, false);
 });
 
@@ -428,9 +432,9 @@ test('8. FASE 4B: HTTP 200 con ticket pendiente no asume aceptación definitiva'
     const resultado = await servicio.ejecutarAnulacionTotal(50, {}, { username: 'sistemas_user' });
 
     assert.equal(resultado.resultadoFiscal.resuelto, false);
-    assert.equal(resultado.resultadoFiscal.estado, 'PENDIENTE');
+    assert.equal(resultado.resultadoFiscal.estado, 'BAJA_FISCAL_PENDIENTE');
     assert.equal(resultado.resultadoFiscal.ticketSunat, 'TICKET-99999');
-    assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
+    assert.equal(resultado.solicitud.estado, 'EN_EJECUCION');
     assert.equal(resultado.completada, false);
 });
 
@@ -453,7 +457,7 @@ test('9. FASE 4B: Fiscal aceptada pero técnica bloqueada conserva certificado E
     const resultado = await servicio.ejecutarAnulacionTotal(50, {}, { username: 'sistemas_user' });
 
     assert.equal(resultado.resultadoFiscal.resuelto, true);
-    assert.equal(resultado.resultadoFiscal.estado, 'ACEPTADO');
+    assert.equal(resultado.resultadoFiscal.estado, 'BAJA_ACEPTADA');
     assert.equal(resultado.resultadoTecnico.resuelto, false);
     assert.equal(resultado.resultadoTecnico.estado, 'BLOQUEADO_NORMATIVA');
     assert.equal(db.getCertificado().estado, 'EMITIDO'); // Certificado no alterado
@@ -602,13 +606,13 @@ test('13. Aprobación inicia una sola ejecución automática en NubeFact DEMO co
     assert.equal(llamadasFiscales, 1);
     assert.equal(resultado.ejecucionAutomatica.iniciada, true);
     assert.equal(resultado.ejecucionAutomatica.completada, false);
-    assert.equal(resultado.ejecucionAutomatica.resultadoFiscal.estado, 'PENDIENTE');
-    assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
+    assert.equal(resultado.ejecucionAutomatica.resultadoFiscal.estado, 'BAJA_FISCAL_PENDIENTE');
+    assert.equal(resultado.solicitud.estado, 'EN_EJECUCION');
     assert.equal(db.getCertificado().numero_certificado, 'DG-41-000500');
     assert.equal(db.getCertificado().estado, 'EMITIDO');
 });
 
-test('14. Autoaprobación conserva APROBADA y exige un ejecutor SISTEMAS distinto', async () => {
+test('14. Autoaprobación conserva APROBADA y exige un ejecutor distinto', async () => {
     let consultasProveedor = 0;
     const db = crearMockDb({
         solicitudOverrides: {
@@ -665,9 +669,9 @@ test('15. Reintento con baja previa no terminal no crea una segunda operación f
     const resultado = await servicio.ejecutarAnulacionTotal(50, {}, { username: 'sistemas_user' });
 
     assert.equal(llamadasFiscales, 0);
-    assert.equal(resultado.resultadoFiscal.estado, 'EN_TRAMITE');
+    assert.equal(resultado.resultadoFiscal.estado, 'BAJA_FISCAL_PENDIENTE');
     assert.equal(resultado.resultadoFiscal.anulacionId, 902);
-    assert.equal(resultado.solicitud.estado, 'REQUIERE_INTERVENCION');
+    assert.equal(resultado.solicitud.estado, 'EN_EJECUCION');
 });
 
 test('16. Producción exige autorización expresa y reconciliación de bajas y notas', () => {

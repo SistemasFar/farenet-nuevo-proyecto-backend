@@ -116,8 +116,17 @@ const TRANSICIONES_ADMINISTRATIVAS = Object.freeze({
 });
 
 const CONFIG_ANULACION_TECNICA = Object.freeze({
-    habilitadoPorDefecto: false,
-    tiposPermitidosLocal: Object.freeze([])
+    // La anulación local sólo se ejecuta después de que el componente fiscal
+    // quede confirmado y sobre tipos cuyo estado técnico se administra en
+    // fg_certificado. No borra el DG, PDF, pagos ni el comprobante original.
+    habilitadoPorDefecto: true,
+    tiposPermitidosLocal: Object.freeze([
+        'CONFORMIDAD',
+        'GLP_ANUAL',
+        'GNV_ANUAL',
+        'TALLER_GLP',
+        'TALLER_GNV'
+    ])
 });
 
 const CONFIG_RECTIFICACION_TECNICA = Object.freeze({

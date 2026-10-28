@@ -5,6 +5,14 @@ const defaultDocumentosService = require('./faregas-documentos-electronicos.serv
 const defaultNubefactConfigService = require('./faregas-nubefact-config.service');
 const { esDocumentoBaseOperable } = require('./faregas-comprobante-operabilidad.service');
 const {
+    MENSAJE_IMPORTE_CERO,
+    SQL_CAMPOS_IMPORTE_FINAL_CONTEXTO,
+    SQL_JOINS_IMPORTE_FINAL_CONTEXTO,
+    evaluarImporteFinalCertificado,
+    exigirAnulacionPermitidaPorImporte,
+    tieneOperacionFiscalIniciada
+} = require('./faregas-certificado-anulacion-policy.service');
+const {
     resolverOperacionFiscal,
     RESULTADOS: RESULTADOS_RESOLUCION_FISCAL,
     OPERACIONES: OPERACIONES_RESOLUCION_FISCAL
@@ -42,7 +50,7 @@ const evaluarActivacionEjecucionAutomatica = ({ solicitud, estadoProveedor, conf
         return {
             habilitada: false,
             codigo: 'EJECUTOR_DISTINTO_REQUERIDO',
-            motivo: 'La solicitud fue autoaprobada y debe ser ejecutada por otro usuario SISTEMAS autorizado.'
+            motivo: 'La solicitud fue autoaprobada y debe ser ejecutada por otro usuario autorizado.'
         };
     }
     if (!esVerdadero(configuracion.enabled)) {
@@ -255,6 +263,7 @@ const consultaContextoCertificado = (bloquear = false) => `
         f.entorno_facturador,
         f.enlace_pdf,
         f.enlace_xml,
+        ${SQL_CAMPOS_IMPORTE_FINAL_CONTEXTO},
         emision_fiscal.fecha_emision_fiscal,
         (clock_timestamp() >= emision_fiscal.fecha_emision_fiscal
          AND clock_timestamp() < emision_fiscal.fecha_emision_fiscal + INTERVAL '24 hours')
@@ -271,6 +280,7 @@ const consultaContextoCertificado = (bloquear = false) => `
         ORDER BY fact.id DESC
         LIMIT 1
     ) f ON TRUE
+    ${SQL_JOINS_IMPORTE_FINAL_CONTEXTO}
     LEFT JOIN LATERAL (
         SELECT MIN(COALESCE(fi.fecha_finalizacion, fi.fecha_creacion) AT TIME ZONE 'America/Lima')
             AS fecha_emision_fiscal
@@ -439,7 +449,9 @@ const validarContextoParaTipo = (row, tipo, opciones = {}) => {
     }
 };
 
-const mapearSolicitud = (row) => ({
+const mapearSolicitud = (row) => {
+    const importeFinal = evaluarImporteFinalCertificado(row);
+    return {
     id: Number(row.id),
     tipoOperacion: row.tipo_operacion,
     certificadoId: row.certificado_id === null ? null : Number(row.certificado_id),
@@ -472,19 +484,28 @@ const mapearSolicitud = (row) => ({
     numeroCertificado: row.numero_certificado || row.datos_originales_certificado?.numero || null,
     tipoCertificado: row.tipo_certificado_nombre || row.datos_originales_certificado?.tipo || null,
     nroComprobante: row.nro_comprobante || row.datos_originales_comprobante?.numero || null,
-    placa: row.placa || row.datos_originales_certificado?.placa || null
-});
+    placa: row.placa || row.datos_originales_certificado?.placa || null,
+    importeFinal: importeFinal.determinable ? importeFinal.importeFinal : null,
+    monedaImporteFinal: importeFinal.moneda || null,
+    anulacionImporteCero: importeFinal.determinable === true && importeFinal.esCero === true,
+    anulacionImporteNoDeterminable: importeFinal.determinable !== true
+    };
+};
 
 const SELECT_SOLICITUD = `
     SELECT s.*, p.nombre AS planta_nombre, e.nombre AS empresa_nombre,
            c.numero_certificado, tc.nombre AS tipo_certificado_nombre,
-           f.nro_comprobante, v.placa
+           f.nro_comprobante, f.importe_total AS facturacion_importe_total,
+           f.moneda_key AS facturacion_moneda,
+           ${SQL_CAMPOS_IMPORTE_FINAL_CONTEXTO},
+           v.placa
     FROM fg_solicitud_operacion s
     JOIN fg_planta p ON p.key = s.planta_key
     JOIN fg_empresa e ON e.key = s.empresa_key
     LEFT JOIN fg_certificado c ON c.id = s.certificado_id
     LEFT JOIN fg_tipo_certificado tc ON tc.clave = c.tipo_certificado_clave
     LEFT JOIN fg_facturacion f ON f.id = s.facturacion_id
+    ${SQL_JOINS_IMPORTE_FINAL_CONTEXTO}
     LEFT JOIN fg_certificado_vehiculo v ON v.certificado_id = c.id
 `;
 
@@ -540,9 +561,21 @@ const crearServicio = (database = db, config = {}) => {
         const disponibilidadComprobante = estadoSolicitudComprobante(row);
         const camposTecnicos = camposRectificablesCertificado(row.tipo_certificado_clave);
         const tiposDisponibles = ['ANULAR_AMBOS', 'RECTIFICAR_CERTIFICADO'];
+        const importeFinal = evaluarImporteFinalCertificado(row);
+        const bloqueoImporte = importeFinal.determinable !== true || importeFinal.esCero === true;
 
         return {
-            certificado: snapshotCertificado(row),
+            certificado: {
+                ...snapshotCertificado(row),
+                importeFinal: importeFinal.determinable ? importeFinal.importeFinal : null,
+                monedaImporteFinal: importeFinal.moneda || null,
+                anulacionImporteCero: importeFinal.determinable === true && importeFinal.esCero === true,
+                anulacionImporteNoDeterminable: importeFinal.determinable !== true
+            },
+            puedeSolicitarAnulacionTotal: !bloqueoImporte,
+            motivoBloqueoAnulacion: bloqueoImporte
+                ? (importeFinal.esCero === true ? MENSAJE_IMPORTE_CERO : 'No se pudo determinar el importe final del certificado; la anulación está bloqueada.')
+                : null,
             comprobante: snapshotComprobante(row),
             empresa: { key: row.empresa_key, nombre: row.empresa_nombre },
             planta: { key: row.planta_key, nombre: row.planta_nombre },
@@ -596,6 +629,17 @@ const crearServicio = (database = db, config = {}) => {
                 throw errorNegocio('IDEMPOTENCIA_REUTILIZADA', 409);
             }
             return { solicitud: mapearSolicitud(existente), creada: false };
+        }
+
+        // Regla transversal: un certificado cuyo importe final de operación es
+        // S/ 0.00 no admite ninguna solicitud que lo anule. Se evalúa antes de
+        // crear la solicitud para que ni la UI ni una llamada directa a la API
+        // puedan dejar un trámite pendiente que después sea irreversible.
+        if (afectaCertificado(tipo) && !String(tipo).startsWith('RECTIFICAR')) {
+            exigirAnulacionPermitidaPorImporte(
+                evaluarImporteFinalCertificado(contexto),
+                { certificadoId, operacion: tipo }
+            );
         }
 
         const facturacionId = requiereComprobante(tipo) && contexto.facturacion_id
@@ -733,6 +777,13 @@ const crearServicio = (database = db, config = {}) => {
         const permisos = alcance.permisos;
         const esPropia = row.usuario_solicitante === alcance.usuario.username;
         const esRectificacion = row.tipo_operacion === 'RECTIFICAR_CERTIFICADO';
+        const importeFinalSolicitud = evaluarImporteFinalCertificado(row);
+        const bloqueoImporte = !esRectificacion && (
+            importeFinalSolicitud.determinable !== true || importeFinalSolicitud.esCero === true
+        );
+        const mensajeBloqueoImporte = importeFinalSolicitud.determinable !== true
+            ? 'No se pudo determinar el importe final del certificado; la anulación está bloqueada hasta regularizar el importe.'
+            : MENSAJE_IMPORTE_CERO;
         const permisosAutoejecucion = [
             PERMISOS_SOLICITUD.APROBAR,
             PERMISOS_SOLICITUD.AUTOAPROBAR,
@@ -747,18 +798,18 @@ const crearServicio = (database = db, config = {}) => {
             : PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO;
         const tienePermisoEjecucion = permisos.has(permisoEjecucion)
             || permisos.has(PERMISOS_SOLICITUD.ADMINISTRAR);
-        const esSistemas = alcance.usuario.perfil_id === 'SISTEMAS';
         // La rectificación se ejecuta exclusivamente con la solicitud aprobada.
         // La anulación fiscal conserva sus estados de recuperación.
         const estadoEjecutable = esRectificacion
             ? row.estado === 'APROBADA'
             : ['APROBADA', 'REQUIERE_INTERVENCION', 'ERROR'].includes(row.estado);
         let puedeEjecutar = estadoEjecutable && tienePermisoEjecucion
-            && (esRectificacion || (esSistemas && (!esPropia || permisosFaltantes.length === 0)));
+            && (esRectificacion || !esPropia || permisosFaltantes.length === 0)
+            && !bloqueoImporte;
 
         let motivoBloqueo = null;
-        if (!tienePermisoEjecucion) motivoBloqueo = `Falta el permiso ${permisoEjecucion}.`;
-        else if (!esRectificacion && !esSistemas) motivoBloqueo = 'Sólo un usuario SISTEMAS puede ejecutar la anulación total.';
+        if (bloqueoImporte && ['APROBADA', 'REQUIERE_INTERVENCION', 'ERROR'].includes(row.estado)) motivoBloqueo = mensajeBloqueoImporte;
+        else if (!tienePermisoEjecucion) motivoBloqueo = `Falta el permiso ${permisoEjecucion}.`;
         else if (!esRectificacion && esPropia && permisosFaltantes.length > 0) motivoBloqueo = `La autoejecución exige los permisos: ${permisosFaltantes.join(', ')}.`;
         else if (row.estado === 'PENDIENTE_APROBACION') motivoBloqueo = 'La solicitud aún no está aprobada.';
         else if (['RECHAZADA', 'CANCELADA'].includes(row.estado)) motivoBloqueo = `La solicitud está ${row.estado}.`;
@@ -862,14 +913,63 @@ const crearServicio = (database = db, config = {}) => {
             }
         }
 
+        // Elegibilidad administrativa calculada con las mismas reglas que aplica
+        // decidir()/aprobarYEjecutarAnulacionTotal(). La UI no debe inferir
+        // permisos por su cuenta ni ofrecer una acción que el backend rechazará.
+        const esAutoaprobacion = esPropia;
+        const puedeAprobarSolicitud = row.estado === 'PENDIENTE_APROBACION'
+            && ['ANULAR_AMBOS', 'RECTIFICAR_CERTIFICADO'].includes(row.tipo_operacion)
+            && permisos.has(PERMISOS_SOLICITUD.APROBAR)
+            && (!esAutoaprobacion || permisos.has(PERMISOS_SOLICITUD.AUTOAPROBAR))
+            && !bloqueoImporte;
+        const puedeAprobarYEjecutar = puedeAprobarSolicitud
+            && !esRectificacion
+            && permisos.has(PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO)
+            && (!esAutoaprobacion || permisos.has(PERMISOS_SOLICITUD.AUTOEJECUTAR))
+            && !bloqueoImporte;
+
+        let motivoBloqueoAprobacion = null;
+        if (!puedeAprobarSolicitud) {
+            if (bloqueoImporte && row.estado === 'PENDIENTE_APROBACION') {
+                motivoBloqueoAprobacion = mensajeBloqueoImporte;
+            } else if (row.estado !== 'PENDIENTE_APROBACION') {
+                motivoBloqueoAprobacion = `La solicitud está en estado ${row.estado}; no admite aprobación.`;
+            } else if (!['ANULAR_AMBOS', 'RECTIFICAR_CERTIFICADO'].includes(row.tipo_operacion)) {
+                motivoBloqueoAprobacion = 'El tipo de solicitud se conserva únicamente como historial.';
+            } else if (!permisos.has(PERMISOS_SOLICITUD.APROBAR)) {
+                motivoBloqueoAprobacion = `Falta el permiso ${PERMISOS_SOLICITUD.APROBAR}.`;
+            } else if (!permisos.has(PERMISOS_SOLICITUD.AUTOAPROBAR)) {
+                motivoBloqueoAprobacion = `La autoaprobación exige el permiso ${PERMISOS_SOLICITUD.AUTOAPROBAR}.`;
+            }
+        } else if (!esRectificacion && !puedeAprobarYEjecutar) {
+            motivoBloqueoAprobacion = !permisos.has(PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO)
+                ? `Falta el permiso ${PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO} para ejecutar la anulación total.`
+                : `La autoejecución exige el permiso ${PERMISOS_SOLICITUD.AUTOEJECUTAR}.`;
+        }
+
         return {
             ...solicitud,
+            importeFinal: importeFinalSolicitud.determinable ? importeFinalSolicitud.importeFinal : null,
+            monedaImporteFinal: importeFinalSolicitud.moneda || null,
+            anulacionImporteCero: importeFinalSolicitud.determinable === true && importeFinalSolicitud.esCero === true,
+            anulacionImporteNoDeterminable: importeFinalSolicitud.determinable !== true,
             autorizacionAutoejecucion: row.autorizacion_autoejecucion === true,
             detalle: {
                 estadoAdministrativo: row.estado,
+                bloqueoImporte: bloqueoImporte ? {
+                    codigo: importeFinalSolicitud.determinable !== true
+                        ? 'CERTIFICADO_IMPORTE_FINAL_NO_DETERMINABLE'
+                        : 'CERTIFICADO_IMPORTE_CERO_NO_ANULABLE',
+                    motivo: mensajeBloqueoImporte,
+                    importeFinal: importeFinalSolicitud.determinable ? importeFinalSolicitud.importeFinal : null
+                } : null,
                 estadoFiscalActual,
                 resolucionFiscal,
                 estadoTecnico: row.resultado_tecnico || null,
+                puedeAprobar: puedeAprobarSolicitud,
+                puedeAprobarYEjecutar,
+                esAutoaprobacion,
+                motivoBloqueoAprobacion,
                 ejecucion: {
                     puedeEjecutar,
                     esAutoejecucion: esPropia,
@@ -904,9 +1004,6 @@ const crearServicio = (database = db, config = {}) => {
         if (!['ANULAR_AMBOS', 'RECTIFICAR_CERTIFICADO'].includes(row.tipo_operacion)) {
             throw errorNegocio('SOLICITUD_TIPO_HISTORICO_SOLO_LECTURA', 409);
         }
-        if (alcance.usuario.perfil_id !== 'SISTEMAS') {
-            throw errorNegocio('SOLICITUD_DECISION_EXCLUSIVA_SISTEMAS', 403);
-        }
         if (row.estado !== transicion.desde) throw errorNegocio('SOLICITUD_NO_DECIDIBLE', 409, { estado: row.estado });
         const esAutoaprobacion = accion === 'APROBAR'
             && row.usuario_solicitante === alcance.usuario.username;
@@ -929,6 +1026,12 @@ const crearServicio = (database = db, config = {}) => {
         );
         const version = enteroPositivo(entrada?.version, 'VERSION_SOLICITUD_INVALIDA');
         if (version !== Number(row.version)) throw errorNegocio('SOLICITUD_VERSION_DESACTUALIZADA', 409);
+        if (accion === 'APROBAR' && row.tipo_operacion === 'ANULAR_AMBOS') {
+            exigirAnulacionPermitidaPorImporte(
+                evaluarImporteFinalCertificado(row),
+                { certificadoId: row.certificado_id, operacion: 'APROBAR_ANULACION_TOTAL' }
+            );
+        }
         const actualizada = await client.query(`
             UPDATE fg_solicitud_operacion
             SET estado = $1, usuario_decision = $2, fecha_decision = CURRENT_TIMESTAMP,
@@ -1107,6 +1210,16 @@ const crearServicio = (database = db, config = {}) => {
         if (cert.estado === 'ANULADO') throw errorNegocio('CERTIFICADO_YA_ANULADO', 409);
         if (cert.estado !== 'EMITIDO') throw errorNegocio('CERTIFICADO_NO_EMITIDO', 409, { estadoActual: cert.estado });
         if (!cert.numero_certificado) throw errorNegocio('CERTIFICADO_SIN_NUMERO_DG', 409);
+
+        exigirAnulacionPermitidaPorImporte(
+            evaluarImporteFinalCertificado({
+                ...row,
+                precio_certificado: row.precio_certificado ?? cert.precio_certificado,
+                precio_chip: row.precio_chip ?? cert.precio_chip,
+                producto_chip_id: row.producto_chip_id ?? cert.producto_chip_id
+            }),
+            { certificadoId: cert.id, operacion: 'ANULACION_TECNICA' }
+        );
 
         // Verificación de integración / procedimiento externo
         if (!esTipoPermitidoParaAnulacionLocal(cert.tipo_certificado_clave)) {
@@ -1535,28 +1648,77 @@ const crearServicio = (database = db, config = {}) => {
         });
     };
 
-    const ejecutarResolucionFiscal = async ({ resolucion, factInfo, certInfo, solPrevia, userContext }) => {
+    const motivoProveedorBaja = (baja) => {
+        const respuesta = baja?.respuesta || baja?.respuesta_proveedor || {};
+        return respuesta.sunat_description
+            || respuesta.errors
+            || respuesta.error
+            || baja?.sunat_description
+            || baja?.error
+            || null;
+    };
+
+    const mapearResultadoBaja = (baja, resolucion) => {
+        const estadoProveedor = String(baja?.estado || 'PENDIENTE').trim().toUpperCase();
+        const motivoProveedor = motivoProveedorBaja(baja);
+        const base = {
+            tipoOperacion: 'COMUNICACION_BAJA',
+            anulacionId: baja?.id ? Number(baja.id) : null,
+            ticketSunat: baja?.ticketSunat || baja?.ticket_sunat || null,
+            respuesta: baja?.respuesta || baja?.respuesta_proveedor || null,
+            resolucionFiscal: resolucion
+        };
+        if (estadoProveedor === 'ACEPTADO') {
+            return {
+                ...base,
+                resuelto: true,
+                estado: 'BAJA_ACEPTADA',
+                motivo: motivoProveedor || 'Baja aceptada por SUNAT.'
+            };
+        }
+        if (['RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO'].includes(estadoProveedor)) {
+            return {
+                ...base,
+                resuelto: false,
+                estado: 'BAJA_RECHAZADA',
+                estadoProveedor,
+                motivo: motivoProveedor || 'La baja fue rechazada por el proveedor fiscal.'
+            };
+        }
+        return {
+            ...base,
+            resuelto: false,
+            enTramite: true,
+            estado: 'BAJA_FISCAL_PENDIENTE',
+            estadoProveedor,
+            motivo: 'Baja fiscal enviada y pendiente de confirmación de NubeFact/SUNAT.'
+        };
+    };
+
+    const ejecutarResolucionFiscal = async ({ resolucion, factInfo, certInfo, solPrevia, userContext, anulacionExistente }) => {
         const docsService = config?.documentosService || defaultDocumentosService;
         const ctxEjecutor = { ...userContext, solicitudId: solPrevia.id };
         try {
             if (resolucion.operacion === OPERACIONES_RESOLUCION_FISCAL.COMUNICACION_BAJA) {
-                const resBaja = await docsService.generarAnulacion(
-                    certInfo.id,
-                    { tipoDocumento: 'FACTURACION', motivo: solPrevia.motivo, solicitudId: solPrevia.id },
-                    ctxEjecutor,
-                    config?.dependencies || {}
-                );
-                const aceptada = resBaja.estado === 'ACEPTADO';
-                return {
-                    resuelto: aceptada,
-                    estado: resBaja.estado || 'PENDIENTE',
-                    tipoOperacion: 'COMUNICACION_BAJA',
-                    anulacionId: resBaja.id,
-                    ticketSunat: resBaja.ticketSunat || null,
-                    respuesta: resBaja.respuesta || null,
-                    motivo: aceptada ? 'Baja aceptada por SUNAT.' : 'Baja enviada; ticket pendiente de resolución definitiva en SUNAT.',
-                    resolucionFiscal: resolucion
-                };
+                let resBaja = anulacionExistente || null;
+                const estadoExistente = String(resBaja?.estado || '').trim().toUpperCase();
+                if (resBaja && !['ACEPTADO', 'RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO'].includes(estadoExistente)
+                    && typeof docsService.consultarAnulacion === 'function') {
+                    resBaja = await docsService.consultarAnulacion(
+                        certInfo.id,
+                        Number(resBaja.id),
+                        ctxEjecutor,
+                        config?.dependencies || {}
+                    );
+                } else if (!resBaja) {
+                    resBaja = await docsService.generarAnulacion(
+                        certInfo.id,
+                        { tipoDocumento: 'FACTURACION', motivo: solPrevia.motivo, solicitudId: solPrevia.id },
+                        ctxEjecutor,
+                        config?.dependencies || {}
+                    );
+                }
+                return mapearResultadoBaja(resBaja, resolucion);
             }
 
             if (resolucion.operacion === OPERACIONES_RESOLUCION_FISCAL.NOTA_CREDITO) {
@@ -1594,6 +1756,19 @@ const crearServicio = (database = db, config = {}) => {
                 resolucionFiscal: resolucion
             };
         } catch (errFiscal) {
+            if (anulacionExistente) {
+                const estadoExistente = String(anulacionExistente.estado || '').toUpperCase();
+                if (!['ACEPTADO', 'RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO'].includes(estadoExistente)) {
+                    return {
+                        ...mapearResultadoBaja(anulacionExistente, resolucion),
+                        sincronizacion: {
+                            consultado: false,
+                            codigo: errFiscal.code || 'ERROR_CONSULTA_BAJA',
+                            mensaje: errFiscal.message || String(errFiscal)
+                        }
+                    };
+                }
+            }
             return {
                 resuelto: false,
                 estado: errFiscal.code || 'ERROR_OPERACION_FISCAL',
@@ -1607,9 +1782,6 @@ const crearServicio = (database = db, config = {}) => {
     const ejecutarAnulacionTotalCore = async (id, entrada, userContext) => {
         const solicitudId = enteroPositivo(id, 'SOLICITUD_ID_INVALIDO');
         const usuario = await obtenerUsuarioActual(database, userContext);
-        if (usuario.perfil_id !== 'SISTEMAS') {
-            throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { perfilRequerido: 'SISTEMAS' });
-        }
         const permisos = await obtenerPermisos(database, usuario.perfil_id);
         exigirPermiso(permisos, PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO);
 
@@ -1618,6 +1790,8 @@ const crearServicio = (database = db, config = {}) => {
         let certInfo;
         let factInfo = null;
         let idempotenciaEjecucion;
+        const esSincronizacion = entrada?.soloSincronizar === true;
+        let anulacionImporteCero = false;
 
         const client1 = await database.connect();
         try {
@@ -1647,10 +1821,13 @@ const crearServicio = (database = db, config = {}) => {
                 if (faltantes.length > 0) {
                     throw errorNegocio('SOLICITUD_AUTODECISION_PROHIBIDA', 403, { permisosRequeridos: faltantes });
                 }
-                if (entrada?.confirmarAutoejecucion !== true) {
+                const autorizacionPrevia = row.autorizacion_autoejecucion === true;
+                if (entrada?.confirmarAutoejecucion !== true && !autorizacionPrevia) {
                     throw errorNegocio('SOLICITUD_AUTOEJECUCION_CONFIRMACION_REQUERIDA', 400);
                 }
-                justificacionAutoejecucion = texto(entrada?.justificacion, 1000, true);
+                justificacionAutoejecucion = autorizacionPrevia
+                    ? (entrada?.justificacion ? texto(entrada.justificacion, 1000, false) : null)
+                    : texto(entrada?.justificacion, 1000, true);
                 autorizacionAutoejecucion = true;
             }
 
@@ -1674,10 +1851,10 @@ const crearServicio = (database = db, config = {}) => {
             if (row.estado === 'PENDIENTE_APROBACION') throw errorNegocio('SOLICITUD_NO_APROBADA', 409);
             if (row.estado === 'RECHAZADA') throw errorNegocio('SOLICITUD_RECHAZADA', 409);
             if (row.estado === 'CANCELADA') throw errorNegocio('SOLICITUD_CANCELADA', 409);
-            if (row.estado === 'EN_EJECUCION') {
+            if (row.estado === 'EN_EJECUCION' && !esSincronizacion) {
                 throw errorNegocio('SOLICITUD_EJECUCION_EN_CURSO', 409);
             }
-            if (!['APROBADA', 'REQUIERE_INTERVENCION', 'ERROR'].includes(row.estado)) {
+            if (!['APROBADA', 'EN_EJECUCION', 'REQUIERE_INTERVENCION', 'ERROR'].includes(row.estado)) {
                 throw errorNegocio('SOLICITUD_ESTADO_INVALIDO', 409, { estado: row.estado });
             }
 
@@ -1723,6 +1900,42 @@ const crearServicio = (database = db, config = {}) => {
                 }
             }
 
+            // Regla transversal de importe final. La sincronización de una
+            // operación fiscal ya iniciada sigue permitida para conservar el
+            // historial, pero nunca puede generar una baja/nota nueva ni
+            // completar la anulación de un certificado gratuito.
+            const evaluacionImporte = evaluarImporteFinalCertificado({
+                ...row,
+                precio_certificado: row.precio_certificado ?? cert.precio_certificado,
+                precio_chip: row.precio_chip ?? cert.precio_chip,
+                producto_chip_id: row.producto_chip_id ?? cert.producto_chip_id,
+                facturacion_importe_total: factInfo?.importe_total ?? row.facturacion_importe_total,
+                facturacion_moneda: factInfo?.moneda_key ?? row.facturacion_moneda
+            });
+            if (evaluacionImporte.determinable !== true) {
+                exigirAnulacionPermitidaPorImporte(evaluacionImporte, {
+                    certificadoId: cert.id,
+                    operacion: 'EJECUTAR_ANULACION_TOTAL'
+                });
+            } else if (evaluacionImporte.esCero === true) {
+                if (!esSincronizacion) {
+                    exigirAnulacionPermitidaPorImporte(evaluacionImporte, {
+                        certificadoId: cert.id,
+                        operacion: 'EJECUTAR_ANULACION_TOTAL'
+                    });
+                }
+                const existeOperacionFiscal = await tieneOperacionFiscalIniciada(client1, {
+                    facturacionId: factInfo?.id || row.facturacion_id
+                });
+                if (!existeOperacionFiscal) {
+                    exigirAnulacionPermitidaPorImporte(evaluacionImporte, {
+                        certificadoId: cert.id,
+                        operacion: 'SINCRONIZAR_ANULACION_TOTAL'
+                    });
+                }
+                anulacionImporteCero = true;
+            }
+
             idempotenciaEjecucion = entrada?.idempotenciaClave
                 ? normalizarUuid(entrada.idempotenciaClave)
                 : (row.idempotencia_ejecucion || crypto.randomUUID());
@@ -1745,27 +1958,35 @@ const crearServicio = (database = db, config = {}) => {
 
             await registrarEvento(client1, {
                 solicitudId: row.id,
-                tipoEvento: autorizacionAutoejecucion
+                tipoEvento: esSincronizacion
+                    ? 'SINCRONIZACION_FISCAL_INICIADA'
+                    : autorizacionAutoejecucion
                     ? 'AUTOEJECUCION_EXCEPCIONAL_AUTORIZADA'
                     : 'EJECUCION_INICIADA',
                 estadoAnterior: row.estado,
                 estadoPosterior: 'EN_EJECUCION',
                 username: usuario.username,
-                comentario: autorizacionAutoejecucion
-                    ? 'Autoejecución excepcional autorizada por el propio solicitante SISTEMAS con permiso dedicado.'
+                comentario: esSincronizacion
+                    ? 'Consulta idempotente del estado de la operación fiscal existente.'
+                    : autorizacionAutoejecucion
+                    ? 'Autoejecución excepcional autorizada por el propio solicitante con permiso dedicado.'
                     : 'Inicio de ejecución de anulación total autorizada.',
                 metadatos: {
                     idempotenciaEjecucion,
                     certificadoId: cert.id,
                     facturacionId: factInfo?.id || null,
-                    origenEjecucion: entrada?.origenEjecucion === 'AUTOMATICA_POST_APROBACION'
-                        ? 'AUTOMATICA_POST_APROBACION'
+                    origenEjecucion: [
+                        'AUTOMATICA_POST_APROBACION',
+                        'RECONCILIACION_AUTOMATICA'
+                    ].includes(entrada?.origenEjecucion)
+                        ? entrada.origenEjecucion
                         : 'MANUAL',
                     identidadProceso: entrada?.identidadProceso || null,
                     usuarioAprobador: row.usuario_decision || null,
                     usuarioEjecutor: usuario.username,
                     autoejecucionAutorizada: autorizacionAutoejecucion,
-                    justificacionAutoejecucion
+                    justificacionAutoejecucion,
+                    anulacionImporteCero
                 }
             });
 
@@ -1845,6 +2066,15 @@ const crearServicio = (database = db, config = {}) => {
             `, [factInfo.id]);
 
             const operacionEnTramite = opTramite.rowCount > 0;
+            const bajaPrevia = await database.query(`
+                SELECT id, estado, ticket_sunat, sunat_description,
+                       respuesta_proveedor, fecha_creacion, fecha_modificacion
+                FROM fg_documento_anulacion
+                WHERE facturacion_id = $1
+                ORDER BY id DESC
+                LIMIT 1
+            `, [factInfo.id]);
+            const anulacionExistente = bajaPrevia.rows[0] || null;
             const resolucion = await resolverFiscalFacturacion(factInfo);
 
             if ([
@@ -1856,7 +2086,8 @@ const crearServicio = (database = db, config = {}) => {
                     factInfo,
                     certInfo,
                     solPrevia,
-                    userContext
+                    userContext,
+                    anulacionExistente
                 });
             } else if (resolucion.resultado === RESULTADOS_RESOLUCION_FISCAL.YA_ANULADO) {
                 resultadoFiscal = {
@@ -1964,7 +2195,20 @@ const crearServicio = (database = db, config = {}) => {
                     ORDER BY id DESC
                 `, [factInfo.id]);
 
-                if (notasPendientes.rowCount > 0 || bajasPendientes.rowCount > 0) {
+                if (bajasPendientes.rowCount > 0 && notasPendientes.rowCount === 0) {
+                    resultadoFiscal = await ejecutarResolucionFiscal({
+                        resolucion: {
+                            resultado: RESULTADOS_RESOLUCION_FISCAL.BAJA_ELEGIBLE,
+                            operacion: OPERACIONES_RESOLUCION_FISCAL.COMUNICACION_BAJA,
+                            motivo: 'Reconciliación de la comunicación de baja existente.'
+                        },
+                        factInfo,
+                        certInfo,
+                        solPrevia,
+                        userContext,
+                        anulacionExistente: bajasPendientes.rows[0]
+                    });
+                } else if (notasPendientes.rowCount > 0) {
                     resultadoFiscal = {
                         resuelto: false,
                         estado: 'EN_TRAMITE',
@@ -1973,7 +2217,16 @@ const crearServicio = (database = db, config = {}) => {
                         notaId: notasPendientes.rows[0]?.id || null,
                         anulacionId: bajasPendientes.rows[0]?.id || null
                     };
-                } else if (notasFallidas.rowCount > 0 || bajasFallidas.rowCount > 0) {
+                } else if (bajasFallidas.rowCount > 0 && notasFallidas.rowCount === 0) {
+                    resultadoFiscal = mapearResultadoBaja(
+                        bajasFallidas.rows[0],
+                        {
+                            resultado: RESULTADOS_RESOLUCION_FISCAL.NO_ELEGIBLE,
+                            operacion: OPERACIONES_RESOLUCION_FISCAL.COMUNICACION_BAJA,
+                            motivo: 'La comunicación de baja existente terminó con rechazo o error.'
+                        }
+                    );
+                } else if (notasFallidas.rowCount > 0) {
                     resultadoFiscal = {
                         resuelto: false,
                         estado: 'ERROR_OPERACION_FISCAL_PREVIA',
@@ -2046,7 +2299,29 @@ const crearServicio = (database = db, config = {}) => {
         let resultadoTecnico = null;
         const habilitadoTecnico = esTipoPermitidoParaAnulacionLocal(certInfo.tipo_certificado_clave);
 
-        if (!habilitadoTecnico) {
+        if (anulacionImporteCero) {
+            resultadoTecnico = {
+                resuelto: false,
+                estado: 'BLOQUEADO_IMPORTE_CERO',
+                motivo: MENSAJE_IMPORTE_CERO,
+                importeFinal: 0,
+                tipoCertificado: certInfo.tipo_certificado_clave,
+                numeroCertificado: certInfo.numero_certificado,
+                estadoCertificado: certInfo.estado
+            };
+        } else if (resultadoFiscal?.resuelto !== true) {
+            // Una espera fiscal normal no es una intervención técnica. El
+            // certificado permanece EMITIDO hasta la confirmación de la baja.
+            resultadoTecnico = {
+                resuelto: false,
+                estado: 'BLOQUEADO_POR_FISCAL',
+                motivo: 'La anulación técnica queda en espera hasta que la baja fiscal tenga un resultado definitivo.',
+                tipoCertificado: certInfo.tipo_certificado_clave,
+                numeroCertificado: certInfo.numero_certificado,
+                estadoCertificado: certInfo.estado,
+                estadoFiscal: resultadoFiscal?.estado || null
+            };
+        } else if (!habilitadoTecnico) {
             // Protección técnica: el certificado emitido permanece en EMITIDO intacto.
             // Se conserva el correlativo DG, fecha original, pagos, trazabilidad y PDF.
             resultadoTecnico = {
@@ -2056,19 +2331,6 @@ const crearServicio = (database = db, config = {}) => {
                 tipoCertificado: certInfo.tipo_certificado_clave,
                 numeroCertificado: certInfo.numero_certificado,
                 estadoCertificado: certInfo.estado
-            };
-        } else if (resultadoFiscal?.resuelto !== true) {
-            // La anulación técnica no puede adelantarse a la resolución fiscal:
-            // marcar el certificado como ANULADO mientras el comprobante sigue
-            // pendiente o en trámite produciría una inconsistencia tributaria.
-            resultadoTecnico = {
-                resuelto: false,
-                estado: 'BLOQUEADO_POR_FISCAL',
-                motivo: 'La anulación técnica del certificado queda bloqueada hasta que la operación fiscal (baja o nota de crédito) quede resuelta. El certificado permanece EMITIDO.',
-                tipoCertificado: certInfo.tipo_certificado_clave,
-                numeroCertificado: certInfo.numero_certificado,
-                estadoCertificado: certInfo.estado,
-                estadoFiscal: resultadoFiscal?.estado || null
             };
         } else {
             // Procedimiento oficial validado
@@ -2097,7 +2359,30 @@ const crearServicio = (database = db, config = {}) => {
             const rowActual = solResult2.rows[0];
 
             const ambosResueltos = (resultadoFiscal?.resuelto === true) && (resultadoTecnico?.resuelto === true);
-            const nuevoEstado = ambosResueltos ? 'COMPLETADA' : 'REQUIERE_INTERVENCION';
+            const estadoFiscalNormalizado = String(resultadoFiscal?.estado || '').toUpperCase();
+            const fiscalPendiente = resultadoFiscal?.enTramite === true || [
+                'PENDIENTE',
+                'PENDIENTE_SUNAT',
+                'EN_TRAMITE',
+                'BAJA_FISCAL_PENDIENTE'
+            ].includes(estadoFiscalNormalizado);
+            const fiscalRechazadoOError = [
+                'RECHAZADO',
+                'BAJA_RECHAZADA',
+                'ERROR',
+                'ERROR_DEFINITIVO',
+                'ERROR_OPERACION_FISCAL',
+                'ERROR_OPERACION_FISCAL_PREVIA'
+            ].includes(estadoFiscalNormalizado)
+                || estadoFiscalNormalizado.startsWith('ERROR_')
+                || Boolean(resultadoFiscal?.error);
+            const nuevoEstado = ambosResueltos
+                ? 'COMPLETADA'
+                : fiscalPendiente
+                    ? 'EN_EJECUCION'
+                    : fiscalRechazadoOError
+                        ? 'ERROR'
+                        : 'REQUIERE_INTERVENCION';
 
             const actResult = await client2.query(`
                 UPDATE fg_solicitud_operacion
@@ -2114,7 +2399,11 @@ const crearServicio = (database = db, config = {}) => {
 
             const tipoEvento = ambosResueltos
                 ? 'ANULACION_TOTAL_COMPLETADA'
-                : (resultadoFiscal?.resuelto ? 'EJECUCION_PARCIAL_REQUIERE_INTERVENCION' : 'EJECUCION_FALLIDA_REQUIERE_INTERVENCION');
+                : fiscalPendiente
+                    ? 'BAJA_FISCAL_PENDIENTE_CONFIRMACION'
+                    : fiscalRechazadoOError
+                        ? 'BAJA_FISCAL_RECHAZADA_O_ERROR'
+                        : 'EJECUCION_PARCIAL_REQUIERE_INTERVENCION';
 
             await registrarEvento(client2, {
                 solicitudId: rowActual.id,
@@ -2124,7 +2413,11 @@ const crearServicio = (database = db, config = {}) => {
                 username: usuario.username,
                 comentario: ambosResueltos
                     ? 'Anulación total completada satisfactoriamente.'
-                    : `Ejecución finalizada con estado ${nuevoEstado}. Fiscal: ${resultadoFiscal?.estado}, Técnico: ${resultadoTecnico?.estado}.`,
+                    : fiscalPendiente
+                        ? 'Baja fiscal pendiente de confirmación. No requiere intervención manual mientras NubeFact/SUNAT procesa la operación.'
+                        : fiscalRechazadoOError
+                            ? `Baja fiscal rechazada o con error: ${resultadoFiscal?.motivo || resultadoFiscal?.estado}.`
+                            : `Se requiere una acción técnica manual: ${resultadoTecnico?.motivo || resultadoTecnico?.estado}.`,
                 metadatos: {
                     resultadoFiscal,
                     resultadoTecnico,
@@ -2150,6 +2443,108 @@ const crearServicio = (database = db, config = {}) => {
         };
     };
 
+    /**
+     * Retoma únicamente anulaciones fiscales que ya cuentan con un registro en
+     * fg_documento_anulacion. No crea ni reenvía bajas: consulta el mismo
+     * registro y, si el proveedor lo confirmó, deja que el motor idempotente
+     * complete la anulación técnica y cierre la solicitud.
+     */
+    const reconciliarAnulacionesPendientes = async (opciones = {}) => {
+        const limiteSolicitado = Number(opciones.limite || opciones.limit || 25);
+        const limite = Number.isInteger(limiteSolicitado) && limiteSolicitado > 0
+            ? Math.min(limiteSolicitado, 100)
+            : 25;
+        const logger = opciones.logger || console;
+        const permitirTodos = config?.permitirTodosLosTiposLocal === true;
+        const tiposPermitidos = Array.isArray(config?.tiposPermitidosLocal)
+            ? config.tiposPermitidosLocal.filter(Boolean)
+            : [];
+
+        if (config?.habilitarAnulacionTecnica !== true
+            || (!permitirTodos && tiposPermitidos.length === 0)) {
+            return { candidatos: 0, procesados: 0, completados: 0, pendientes: 0, rechazados: 0, errores: 0, omitidos: 0 };
+        }
+
+        const filtroTipo = permitirTodos
+            ? ''
+            : 'AND c.tipo_certificado_clave = ANY($2::text[])';
+        const parametros = permitirTodos ? [limite] : [limite, tiposPermitidos];
+        const candidatos = await database.query(`
+            /* FAREGAS_RECONCILIAR_ANULACIONES_EXISTENTES */
+            SELECT s.id,
+                   s.estado,
+                   s.version,
+                   s.usuario_solicitante,
+                   s.autorizacion_autoejecucion,
+                   COALESCE(s.usuario_ejecucion, s.usuario_decision) AS usuario_reconciliacion,
+                   c.tipo_certificado_clave,
+                   baja.id AS anulacion_id,
+                   baja.estado AS estado_anulacion
+            FROM fg_solicitud_operacion s
+            JOIN fg_certificado c ON c.id = s.certificado_id
+            JOIN LATERAL (
+                SELECT a.id, a.estado
+                FROM fg_documento_anulacion a
+                WHERE a.facturacion_id = s.facturacion_id
+                ORDER BY a.id DESC
+                LIMIT 1
+            ) baja ON TRUE
+            WHERE s.tipo_operacion = 'ANULAR_AMBOS'
+              AND s.estado IN ('EN_EJECUCION', 'REQUIERE_INTERVENCION')
+              AND COALESCE(s.usuario_ejecucion, s.usuario_decision) IS NOT NULL
+              AND (
+                    s.usuario_solicitante <> COALESCE(s.usuario_ejecucion, s.usuario_decision)
+                    OR s.autorizacion_autoejecucion = TRUE
+                  )
+              ${filtroTipo}
+            ORDER BY s.fecha_modificacion ASC, s.id ASC
+            LIMIT $1
+        `, parametros);
+
+        const resumen = {
+            candidatos: candidatos.rowCount,
+            procesados: 0,
+            completados: 0,
+            pendientes: 0,
+            rechazados: 0,
+            errores: 0,
+            omitidos: 0
+        };
+
+        for (const fila of candidatos.rows) {
+            if (!esTipoPermitidoParaAnulacionLocal(fila.tipo_certificado_clave)) {
+                resumen.omitidos += 1;
+                continue;
+            }
+            try {
+                const resultado = await ejecutarAnulacionTotalCore(
+                    fila.id,
+                    {
+                        soloSincronizar: true,
+                        origenEjecucion: 'RECONCILIACION_AUTOMATICA',
+                        identidadProceso: 'faregas:reconciliacion-anulaciones-existentes'
+                    },
+                    { username: fila.usuario_reconciliacion }
+                );
+                resumen.procesados += 1;
+                const estadoSolicitud = String(resultado?.solicitud?.estado || '').toUpperCase();
+                const estadoFiscal = String(resultado?.resultadoFiscal?.estado || '').toUpperCase();
+                if (estadoSolicitud === 'COMPLETADA') resumen.completados += 1;
+                else if (estadoSolicitud === 'EN_EJECUCION') resumen.pendientes += 1;
+                else if (estadoSolicitud === 'ERROR' || estadoFiscal.includes('RECHAZ')) resumen.rechazados += 1;
+                else resumen.omitidos += 1;
+            } catch (error) {
+                resumen.errores += 1;
+                logger.error(
+                    `[FAREGAS ANULACIONES] No se pudo reconciliar la solicitud ${fila.id}:`,
+                    error?.code || error?.message || String(error)
+                );
+            }
+        }
+
+        return resumen;
+    };
+
     const registrarEsperaEjecucion = async (solicitud, userContext, evaluacion) => conTransaccion(async (client) => {
         await registrarEvento(client, {
             solicitudId: solicitud.id,
@@ -2167,7 +2562,13 @@ const crearServicio = (database = db, config = {}) => {
         return evaluacion;
     });
 
-    const marcarErrorEjecucionAutomatica = async (solicitudId, userContext, error) => conTransaccion(async (client) => {
+    /**
+     * Marca un fallo controlado de ejecución conservando la trazabilidad.
+     * Si el proceso alcanzó EN_EJECUCION, lo deja en ERROR para que pueda
+     * reintentarse sin duplicar operaciones fiscales. Si aún estaba en
+     * APROBADA (el fallo ocurrió antes de iniciar el motor) conserva el estado.
+     */
+    const marcarErrorEjecucion = async (solicitudId, userContext, error, opciones = {}) => conTransaccion(async (client) => {
         const actual = await client.query(`
             SELECT id, estado
             FROM fg_solicitud_operacion
@@ -2181,8 +2582,8 @@ const crearServicio = (database = db, config = {}) => {
         if (estadoAnterior === 'EN_EJECUCION') {
             const resultado = {
                 resuelto: false,
-                estado: error?.code || 'ERROR_EJECUCION_AUTOMATICA',
-                motivo: error?.message || 'Fallo controlado durante la ejecución automática.'
+                estado: error?.code || opciones.codigoErrorDefecto || 'ERROR_EJECUCION_AUTOMATICA',
+                motivo: error?.message || 'Fallo controlado durante la ejecución.'
             };
             await client.query(`
                 UPDATE fg_solicitud_operacion
@@ -2197,19 +2598,27 @@ const crearServicio = (database = db, config = {}) => {
 
         await registrarEvento(client, {
             solicitudId,
-            tipoEvento: 'EJECUCION_AUTOMATICA_ERROR',
+            tipoEvento: opciones.tipoEvento || 'EJECUCION_AUTOMATICA_ERROR',
             estadoAnterior,
             estadoPosterior,
             username: userContext?.username || null,
-            comentario: 'La ejecución automática no pudo concluir y quedó registrada para recuperación segura.',
+            comentario: opciones.comentario
+                || 'La ejecución no pudo concluir y quedó registrada para recuperación segura.',
             metadatos: {
-                codigo: error?.code || 'ERROR_EJECUCION_AUTOMATICA',
+                codigo: error?.code || opciones.codigoErrorDefecto || 'ERROR_EJECUCION_AUTOMATICA',
                 mensaje: error?.message || String(error),
-                identidadProceso: 'faregas:anulacion-total-post-aprobacion'
+                identidadProceso: opciones.identidadProceso || 'faregas:anulacion-total-post-aprobacion'
             }
         });
         return estadoPosterior;
     });
+
+    const marcarErrorEjecucionAutomatica = (solicitudId, userContext, error) => marcarErrorEjecucion(
+        solicitudId,
+        userContext,
+        error,
+        { identidadProceso: 'faregas:anulacion-total-post-aprobacion' }
+    );
 
     const aprobarYCoordinarEjecucion = async (id, entrada, userContext) => {
         const solicitud = await decidir(id, 'APROBAR', entrada, userContext);
@@ -2291,6 +2700,144 @@ const crearServicio = (database = db, config = {}) => {
 
     const ejecutarAnulacionTotal = (id, entrada, userContext) => ejecutarAnulacionTotalCore(id, entrada, userContext);
 
+    /**
+     * Operación unificada: aprueba la solicitud y ejecuta la anulación total en una
+     * sola acción iniciada explícitamente por el usuario.
+     *
+     * Diferencia clave respecto a aprobarYCoordinarEjecucion:
+     *   - No está sujeta a la bandera FAREGAS_ANULACION_AUTOMATICA_ENABLED.
+     *   - Es una acción intencional del operador, no una ejecución automática silenciosa.
+     *   - Registra dos eventos distintos: la aprobación (decidir) y el inicio/fallo
+     *     de la ejecución (motor de anulación total).
+     *   - Valida los permisos de ejecución ANTES de aprobar: un usuario que no puede
+     *     ejecutar no deja la solicitud aprobada a medias.
+     *   - Si la ejecución falla después de aprobar, la aprobación queda persistida y
+     *     auditada; el fallo se registra y la solicitud queda recuperable.
+     */
+    const aprobarYEjecutarAnulacionTotal = async (id, entrada, userContext) => {
+        // Validación previa (sin escribir): tipo, estado, permisos y concurrencia.
+        // decidir() volverá a validarlos de forma atómica con la fila bloqueada.
+        const { row, alcance } = await obtener(id, userContext, database, false, PERMISOS_SOLICITUD.APROBAR);
+        const usuario = alcance.usuario;
+        const permisos = alcance.permisos;
+
+        if (entrada?.tipoOperacion && String(entrada.tipoOperacion).trim().toUpperCase() !== 'ANULAR_AMBOS') {
+            throw errorNegocio('TIPO_OPERACION_INVALIDO_PARA_EJECUCION', 409, { tipo: entrada.tipoOperacion });
+        }
+        if (row.tipo_operacion !== 'ANULAR_AMBOS') {
+            throw errorNegocio('TIPO_OPERACION_INVALIDO_PARA_EJECUCION', 409, { tipo: row.tipo_operacion });
+        }
+        if (row.estado === 'RECHAZADA') throw errorNegocio('SOLICITUD_RECHAZADA', 409);
+        if (row.estado === 'CANCELADA') throw errorNegocio('SOLICITUD_CANCELADA', 409);
+        if (row.estado === 'EN_EJECUCION') throw errorNegocio('SOLICITUD_EJECUCION_EN_CURSO', 409);
+        if (row.estado !== 'PENDIENTE_APROBACION') {
+            throw errorNegocio('SOLICITUD_NO_DECIDIBLE', 409, { estado: row.estado });
+        }
+
+        const esAutoaprobacion = row.usuario_solicitante === usuario.username;
+        if (esAutoaprobacion) {
+            if (!permisos.has(PERMISOS_SOLICITUD.APROBAR) || !permisos.has(PERMISOS_SOLICITUD.AUTOAPROBAR)) {
+                throw errorNegocio('SOLICITUD_AUTOAPROBACION_NO_AUTORIZADA', 403);
+            }
+            if (entrada?.confirmarAutoaprobacion !== true) {
+                throw errorNegocio('SOLICITUD_AUTOAPROBACION_CONFIRMACION_REQUERIDA', 400);
+            }
+            // La autoejecución exige simultáneamente los cuatro permisos y
+            // confirmación explícita; se valida antes de aprobar para no dejar
+            // una autoaprobación sin posibilidad real de ejecutarse.
+            const permisosExcepcion = [
+                PERMISOS_SOLICITUD.APROBAR,
+                PERMISOS_SOLICITUD.AUTOAPROBAR,
+                PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO,
+                PERMISOS_SOLICITUD.AUTOEJECUTAR
+            ];
+            const faltantes = permisosExcepcion.filter((permiso) => !permisos.has(permiso));
+            if (faltantes.length > 0) {
+                throw errorNegocio('SOLICITUD_AUTODECISION_PROHIBIDA', 403, { permisosRequeridos: faltantes });
+            }
+            if (entrada?.confirmarAutoejecucion !== true) {
+                throw errorNegocio('SOLICITUD_AUTOEJECUCION_CONFIRMACION_REQUERIDA', 400);
+            }
+            texto(entrada?.justificacion, 1000, true);
+        } else if (!permisos.has(PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO)) {
+            throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, {
+                permiso: PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO
+            });
+        }
+
+        // Concurrencia optimista: la versión enviada por el operador debe coincidir
+        // con la leída antes de registrar la aprobación.
+        const version = enteroPositivo(entrada?.version, 'VERSION_SOLICITUD_INVALIDA');
+        if (version !== Number(row.version)) throw errorNegocio('SOLICITUD_VERSION_DESACTUALIZADA', 409);
+
+        // FASE 1: Registrar la aprobación en una transacción corta y atómica.
+        // decidir() valida nuevamente permisos, separación de funciones y estado,
+        // y realiza el UPDATE + INSERT del evento SOLICITUD_APROBADA.
+        const solicitudAprobada = await decidir(id, 'APROBAR', entrada, userContext);
+
+        // FASE 2: Ejecutar la anulación total fuera de transacciones PostgreSQL.
+        // El motor fiscal ya distancia la reserva, la llamada a NubeFact y el
+        // cierre; aquí sólo se orquesta para que el operador no tenga un segundo paso.
+        try {
+            const resultadoEjecucion = await ejecutarAnulacionTotalCore(
+                solicitudAprobada.id,
+                {
+                    version: solicitudAprobada.version,
+                    justificacion: entrada?.justificacion,
+                    idempotenciaClave: entrada?.idempotenciaClave,
+                    origenEjecucion: 'MANUAL_UNIFICADO',
+                    identidadProceso: 'faregas:aprobar-y-ejecutar-anulacion-total',
+                    ...(esAutoaprobacion ? { confirmarAutoejecucion: true } : {})
+                },
+                userContext
+            );
+            return {
+                solicitud: resultadoEjecucion.solicitud,
+                aprobada: true,
+                ejecucionIniciada: true,
+                ejecucionFallida: false,
+                completada: resultadoEjecucion.completada,
+                requiereIntervencion: resultadoEjecucion.requiereIntervencion,
+                resultadoFiscal: resultadoEjecucion.resultadoFiscal,
+                resultadoTecnico: resultadoEjecucion.resultadoTecnico,
+                yaCompletada: resultadoEjecucion.yaCompletada || false
+            };
+        } catch (errorEjecucion) {
+            // La aprobación ya está persistida. Se registra el fallo, se libera
+            // cualquier EN_EJECUCION colgado y se devuelve el estado real para que
+            // el operador pueda reintentar sin duplicar la operación fiscal.
+            let estadoFinal = null;
+            try {
+                estadoFinal = await marcarErrorEjecucion(solicitudAprobada.id, userContext, errorEjecucion, {
+                    tipoEvento: 'EJECUCION_UNIFICADA_ERROR',
+                    identidadProceso: 'faregas:aprobar-y-ejecutar-anulacion-total',
+                    codigoErrorDefecto: 'ERROR_EJECUCION_UNIFICADA',
+                    comentario: 'La aprobación se registró, pero la ejecución unificada no pudo concluir. Queda disponible la recuperación controlada.'
+                });
+            } catch (_) {
+                // El fallo del registro de auditoría no debe ocultar el resultado
+                // original ni provocar un segundo intento fiscal automático.
+            }
+
+            let solicitudFinal = estadoFinal
+                ? { ...solicitudAprobada, estado: estadoFinal }
+                : solicitudAprobada;
+            try {
+                const fresco = await obtener(solicitudAprobada.id, userContext, database, false, PERMISOS_SOLICITUD.APROBAR);
+                solicitudFinal = fresco.solicitud;
+            } catch (_) { /* se conserva el estado conocido */ }
+
+            return {
+                solicitud: solicitudFinal,
+                aprobada: true,
+                ejecucionIniciada: false,
+                ejecucionFallida: true,
+                codigoError: errorEjecucion?.code || 'ERROR_EJECUCION_UNIFICADA',
+                mensajeError: errorEjecucion?.message || String(errorEjecucion)
+            };
+        }
+    };
+
     return {
         contextoCertificado,
         crear,
@@ -2300,16 +2847,21 @@ const crearServicio = (database = db, config = {}) => {
         obtenerDetalle,
         aprobar: (id, entrada, userContext) => decidir(id, 'APROBAR', entrada, userContext),
         aprobarYCoordinarEjecucion,
+        aprobarYEjecutarAnulacionTotal,
         rechazar: (id, entrada, userContext) => decidir(id, 'RECHAZAR', entrada, userContext),
         cancelar,
         historial,
         ejecutarAnulacionCertificado,
         ejecutarRectificacionCertificado,
-        ejecutarAnulacionTotal
+        ejecutarAnulacionTotal,
+        reconciliarAnulacionesPendientes
     };
 };
 
-const servicio = crearServicio();
+const servicio = crearServicio(db, {
+    habilitarAnulacionTecnica: CONFIG_ANULACION_TECNICA.habilitadoPorDefecto,
+    tiposPermitidosLocal: [...CONFIG_ANULACION_TECNICA.tiposPermitidosLocal]
+});
 
 module.exports = {
     ...servicio,

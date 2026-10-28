@@ -2,6 +2,7 @@ const { faregasFormatosService: formatosService } = require('./faregas-formatos.
 const db = require('../../../config/database');
 const integrationsConfig = require('../../../config/integrations.config');
 const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
+const { validarAnulacionCertificadoPorImporte } = require('./faregas-certificado-anulacion-policy.service');
 const { paraPlantilla } = require('../mappers/faregas-vehiculo.mapper');
 const tarifasService = require('./faregas-tarifas.service');
 const rangosService = require('./faregas-correlativos-rangos.service');
@@ -679,6 +680,10 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             COALESCE(s.nombre, t.nombre) AS "conceptoVehicular",
             op.estado AS "estadoPago",
             f.estado AS "estadoFacturacion",
+            importe_final.importe_final AS "importeFinal",
+            (importe_final.importe_final IS NOT NULL
+             AND ABS(importe_final.importe_final) < 0.005) AS "anulacionImporteCero",
+            (importe_final.importe_final IS NULL) AS "anulacionImporteNoDeterminable",
             f.aceptada_sunat AS "aceptadaSunat",
             f.entorno_facturador AS "entornoFacturador",
             f.enlace_pdf AS "enlacePdf",
@@ -705,6 +710,28 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
         LEFT JOIN fg_servicio s ON s.id = ta.servicio_id
         LEFT JOIN fg_orden_pago op ON op.certificado_id = c.id
         LEFT JOIN fg_facturacion f ON f.certificado_id = c.id
+        LEFT JOIN LATERAL (
+            SELECT dc.importe_final
+            FROM fg_descuentocomprobante dc
+            WHERE dc.certificado_id = c.id
+              AND dc.estado IN ('RESERVADO', 'APLICADO')
+            ORDER BY dc.id DESC
+            LIMIT 1
+        ) descuento ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT COALESCE(
+                op.importe_total,
+                f.importe_total,
+                CASE WHEN descuento.importe_final IS NOT NULL
+                     THEN descuento.importe_final + CASE WHEN c.producto_chip_id IS NOT NULL
+                         THEN COALESCE(c.precio_chip, 0) ELSE 0 END
+                     ELSE NULL END,
+                CASE WHEN c.precio_certificado IS NOT NULL
+                     THEN c.precio_certificado + CASE WHEN c.producto_chip_id IS NOT NULL
+                         THEN COALESCE(c.precio_chip, 0) ELSE 0 END
+                     ELSE NULL END
+            ) AS importe_final
+        ) importe_final ON TRUE
         LEFT JOIN LATERAL (
             SELECT MIN(COALESCE(fi.fecha_finalizacion, fi.fecha_creacion) AT TIME ZONE 'America/Lima') AS fecha_emision
             FROM fg_facturacion_intento fi
@@ -1212,7 +1239,8 @@ exports.anularCertificadoEmitido = async ({ client, certificadoId, justificacion
 
     // Comprobación defensiva obligatoria: la anulación técnica exige una solicitud administrativa autorizada
     const solCheck = await client.query(
-        `SELECT id, estado, tipo_operacion, certificado_id, usuario_solicitante
+        `SELECT id, estado, tipo_operacion, certificado_id, usuario_solicitante,
+                autorizacion_autoejecucion
          FROM fg_solicitud_operacion
          WHERE id = $1 FOR SHARE`,
         [sid]
@@ -1224,17 +1252,24 @@ exports.anularCertificadoEmitido = async ({ client, certificadoId, justificacion
     if (Number(sol.certificado_id) !== cid) {
         throw new Error('SOLICITUD_NO_CORRESPONDE_AL_CERTIFICADO');
     }
-    if (sol.tipo_operacion !== 'ANULAR_CERTIFICADO') {
+    if (!['ANULAR_CERTIFICADO', 'ANULAR_AMBOS'].includes(sol.tipo_operacion)) {
         throw new Error('TIPO_SOLICITUD_NO_PERMITE_ANULACION');
     }
     if (!['APROBADA', 'EN_EJECUCION', 'REQUIERE_INTERVENCION'].includes(sol.estado)) {
         throw new Error('SOLICITUD_NO_AUTORIZADA_PARA_EJECUCION');
     }
-    if (sol.usuario_solicitante === user) {
+    if (sol.usuario_solicitante === user && sol.autorizacion_autoejecucion !== true) {
         throw new Error('SEPARACION_FUNCIONES_VIOLADA');
     }
 
-    return client.query(
+    // Última barrera antes de cambiar el estado irreversible del certificado.
+    // Ningún flujo técnico puede omitir la regla de importe final, incluso si
+    // invoca este servicio directamente en lugar del motor de solicitudes.
+    await validarAnulacionCertificadoPorImporte(client, cid, {
+        operacion: 'ANULAR_CERTIFICADO_EMITIDO'
+    });
+
+    const resultado = await client.query(
         `UPDATE fg_certificado
          SET estado = 'ANULADO',
              fecha_anulacion = CURRENT_TIMESTAMP,
@@ -1246,6 +1281,21 @@ exports.anularCertificadoEmitido = async ({ client, certificadoId, justificacion
          WHERE id = $4 AND estado = 'EMITIDO'`,
         [just, sid, user, cid]
     );
+    if (resultado.rowCount > 0) return resultado;
+
+    // Recuperación idempotente: una reanudación posterior a una confirmación
+    // fiscal no vuelve a modificar un certificado ya anulado por esta solicitud.
+    const actual = await client.query(
+        `SELECT estado, solicitud_anulacion_id
+         FROM fg_certificado
+         WHERE id = $1`,
+        [cid]
+    );
+    if (actual.rows[0]?.estado === 'ANULADO'
+        && Number(actual.rows[0]?.solicitud_anulacion_id) === sid) {
+        return { rowCount: 0, rows: [], yaAnulado: true };
+    }
+    throw new Error('CERTIFICADO_NO_DISPONIBLE_PARA_ANULACION');
 };
 
 exports.obtenerSnapshotCompletoCertificado = async ({ client, certificadoId }) => {

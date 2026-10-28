@@ -3,6 +3,7 @@ const router = express.Router();
 const controller = require('../controllers/faregas-usuarios.controller');
 const jwt = require('jsonwebtoken');
 const db = require('../../../config/database');
+const { FAREGAS_PERMISO_ADMINISTRAR_PERFILES } = require('../services/faregas-permisos-sensibles.constants');
 
 const JWT_SECRET_FAREGAS = process.env.JWT_SECRET_FAREGAS;
 
@@ -35,18 +36,27 @@ const adminMiddleware = async (req, res, next) => {
             return res.status(403).json({ message: 'Usuario inactivo' });
         }
 
-        // Verificar permiso MENU_USUARIOS
-        const permisoDb = await db.query(
-            `SELECT 1 FROM fg_perfil_permiso 
-             WHERE perfil_clave = $1 AND permiso_clave = 'MENU_USUARIOS'`,
+        // MENU_USUARIOS es la única autorización para administrar usuarios y
+        // perfiles. Los permisos sensibles se gestionan desde este mismo editor.
+        const permisosDb = await db.query(
+            `SELECT pp.permiso_clave
+             FROM fg_perfil_permiso pp
+             JOIN fg_permiso p ON p.clave = pp.permiso_clave AND p.activo = TRUE
+             WHERE pp.perfil_clave = $1`,
             [user.perfil_id]
         );
+        const permisos = permisosDb.rows.map((row) => row.permiso_clave);
 
-        if (permisoDb.rowCount === 0) {
+        if (!permisos.includes(FAREGAS_PERMISO_ADMINISTRAR_PERFILES)) {
             return res.status(403).json({ message: 'No tiene permiso para administrar usuarios (MENU_USUARIOS)' });
         }
 
-        req.user = decoded;
+        req.user = {
+            ...decoded,
+            username: decoded.username,
+            perfil_id: user.perfil_id,
+            permisos
+        };
         next();
     } catch (e) {
         console.error('Error validando token FAREGAS en ADMIN', e);

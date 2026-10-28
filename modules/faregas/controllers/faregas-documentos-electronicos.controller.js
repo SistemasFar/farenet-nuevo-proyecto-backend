@@ -20,6 +20,8 @@ const mensajes = {
     MOTIVO_ANULACION_INVALIDO: 'Ingrese un motivo de anulación de hasta 100 caracteres.',
     TIPO_DOCUMENTO_ANULACION_INVALIDO: 'El tipo de documento a anular no es válido.',
     DOCUMENTO_NO_ANULABLE: 'El documento no está listo para anularse en el ambiente actual.',
+    CERTIFICADO_IMPORTE_CERO_NO_ANULABLE: 'Este certificado tiene un importe final de S/ 0.00 y no admite anulación.',
+    CERTIFICADO_IMPORTE_FINAL_NO_DETERMINABLE: 'No se pudo determinar el importe final del certificado. La anulación queda bloqueada hasta regularizar el importe.',
     PLAZO_ANULACION_VENCIDO: 'La anulación directa solo está disponible durante las 24 horas posteriores a la emisión. Para anular después, use una nota de crédito.',
     ANULACION_ACTIVA: 'Ya existe una solicitud de anulación en revisión para este comprobante.',
     ANULACION_NO_ENCONTRADA: 'La anulación solicitada no existe.',

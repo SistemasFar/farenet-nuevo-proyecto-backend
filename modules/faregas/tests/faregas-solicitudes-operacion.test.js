@@ -38,6 +38,8 @@ const filaSolicitud = (overrides = {}) => ({
     datos_originales_comprobante: { id: 20, numero: 'BBB1-1', estado: 'ACEPTADO' },
     datos_propuestos: null,
     fecha_emision_original: '2026-10-20',
+    precio_certificado: '90.00',
+    importe_total: '90.00',
     resultado_tecnico: null,
     resultado_fiscal: null,
     idempotencia_clave: UUID_1,
@@ -233,12 +235,11 @@ test('7. rechazo sin permiso responde fail-closed', async () => {
     assert.equal(await capturarCodigo(servicio.rechazar(1, { version: 1, justificacion: 'No corresponde' }, usuario('sinpermiso', 'SUPERVISOR'))), 'SOLICITUD_PERMISO_DENEGADO');
 });
 
-test('7b. JEFE_PLANTA no puede decidir incluso si conserva un permiso de sesión obsoleto', async () => {
+test('7b. JEFE_PLANTA con el permiso efectivo puede decidir sin depender del perfil', async () => {
     const servicio = _private.crearServicio(crearDbSimulada({ solicitudes: [filaSolicitud()] }));
-    assert.equal(
-        await capturarCodigo(servicio.aprobar(1, { version: 1 }, usuario('jefe', 'JEFE_PLANTA'))),
-        'SOLICITUD_DECISION_EXCLUSIVA_SISTEMAS'
-    );
+    const aprobada = await servicio.aprobar(1, { version: 1 }, usuario('jefe', 'JEFE_PLANTA'));
+    assert.equal(aprobada.estado, 'APROBADA');
+    assert.equal(aprobada.usuarioDecision, 'jefe');
 });
 
 test('8. una solicitud propia sin permiso especial permanece prohibida', async () => {

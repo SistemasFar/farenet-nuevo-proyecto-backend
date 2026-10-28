@@ -5539,12 +5539,12 @@ INSERT INTO public.fg_permiso (clave, nombre, modulo, descripcion, activo)
 VALUES
     ('FAREGAS_SOLICITUD_CREAR', 'Solicitar anulación total', 'FAREGAS', 'Permite a un perfil autorizado por RBAC solicitar la anulación total sin aprobarla ni ejecutarla.', TRUE),
     ('FAREGAS_SOLICITUD_VER', 'Consultar solicitudes de anulación', 'FAREGAS', 'Permite consultar solicitudes dentro del alcance autorizado.', TRUE),
-    ('FAREGAS_SOLICITUD_APROBAR', 'Aprobar anulaciones', 'FAREGAS', 'Permite a SISTEMAS aprobar solicitudes dentro del alcance autorizado.', TRUE),
-    ('FAREGAS_SOLICITUD_AUTOAPROBAR', 'Autoaprobar anulación excepcional', 'FAREGAS', 'Permite a SISTEMAS aprobar excepcionalmente una solicitud propia con justificación y confirmación explícitas. No habilita la ejecución fiscal.', TRUE),
-    ('FAREGAS_SOLICITUD_AUTOEJECUTAR', 'Autoejecución excepcional de anulación', 'FAREGAS', 'Permite a un usuario SISTEMAS ejecutar su propia solicitud de anulación previamente aprobada, con confirmación explícita, justificación obligatoria y auditoría inmutable. No se asigna automáticamente a ningún perfil.', TRUE),
-    ('FAREGAS_SOLICITUD_RECHAZAR', 'Rechazar anulaciones', 'FAREGAS', 'Permite a SISTEMAS rechazar solicitudes de otro usuario dentro del alcance autorizado.', TRUE),
+    ('FAREGAS_SOLICITUD_APROBAR', 'Aprobar anulaciones', 'FAREGAS', 'Permite aprobar solicitudes de anulación dentro del alcance autorizado.', TRUE),
+    ('FAREGAS_SOLICITUD_AUTOAPROBAR', 'Autoaprobar anulación excepcional', 'FAREGAS', 'Permite aprobar excepcionalmente una solicitud propia con justificación y confirmación explícitas. No habilita la ejecución fiscal.', TRUE),
+    ('FAREGAS_SOLICITUD_AUTOEJECUTAR', 'Autoejecución excepcional de anulación', 'FAREGAS', 'Permite ejecutar una solicitud propia previamente aprobada, con confirmación explícita, justificación obligatoria y auditoría inmutable.', TRUE),
+    ('FAREGAS_SOLICITUD_RECHAZAR', 'Rechazar anulaciones', 'FAREGAS', 'Permite rechazar solicitudes de otro usuario dentro del alcance autorizado.', TRUE),
     ('FAREGAS_SOLICITUD_ADMINISTRAR', 'Administrar solicitudes de anulación', 'FAREGAS', 'Permite administrar solicitudes sin omitir la separación de funciones.', TRUE),
-    ('FAREGAS_CERTIFICADO_ANULAR_EJECUTAR', 'Ejecutar anulación autorizada', 'FAREGAS', 'Permite a SISTEMAS iniciar la ejecución de una anulación total aprobada y ajena.', TRUE),
+    ('FAREGAS_CERTIFICADO_ANULAR_EJECUTAR', 'Ejecutar anulación autorizada', 'FAREGAS', 'Permite iniciar la ejecución de una anulación total aprobada y ajena dentro del alcance autorizado.', TRUE),
     ('FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR', 'Rectificar directamente un certificado', 'FAREGAS', 'Permite rectificar directamente un certificado emitido, con versionado y auditoría, sin alterar comprobantes, pagos, fecha original ni correlativo DG.', TRUE)
 ON CONFLICT (clave) DO UPDATE SET nombre = EXCLUDED.nombre, modulo = EXCLUDED.modulo, descripcion = EXCLUDED.descripcion, activo = EXCLUDED.activo;
 

@@ -29,7 +29,6 @@ const MENSAJES = {
     SOLICITUD_AUTOEJECUCION_CONFIRMACION_REQUERIDA: 'Confirme expresamente la autoejecución excepcional antes de continuar.',
     SOLICITUD_AUTOAPROBACION_NO_AUTORIZADA: 'La autoaprobación requiere los permisos explícitos de aprobación y autoaprobación.',
     SOLICITUD_AUTOAPROBACION_CONFIRMACION_REQUERIDA: 'Confirme expresamente la autoaprobación antes de continuar.',
-    SOLICITUD_DECISION_EXCLUSIVA_SISTEMAS: 'Sólo un usuario SISTEMAS puede aprobar o rechazar solicitudes de anulación total.',
     SOLICITUD_TIPO_HISTORICO_SOLO_LECTURA: 'Las solicitudes de tipos anteriores se conservan únicamente como historial y ya no admiten acciones.',
     SOLICITUD_NO_DECIDIBLE: 'La solicitud ya fue decidida o cancelada.',
     SOLICITUD_NO_CANCELABLE: 'La solicitud ya no puede cancelarse.',
@@ -44,6 +43,8 @@ const MENSAJES = {
     SOLICITUD_ESTADO_INVALIDO: 'El estado de la solicitud no permite la ejecución técnica.',
     TIPO_OPERACION_INVALIDO_PARA_EJECUCION: 'Esta acción solo corresponde a solicitudes de anulación de certificado.',
     CERTIFICADO_NO_EMITIDO: 'El certificado no se encuentra emitido.',
+    CERTIFICADO_IMPORTE_CERO_NO_ANULABLE: 'Este certificado tiene un importe final de S/ 0.00 y no admite anulación.',
+    CERTIFICADO_IMPORTE_FINAL_NO_DETERMINABLE: 'No se pudo determinar el importe final del certificado. La anulación queda bloqueada hasta regularizar el importe.',
     CERTIFICADO_YA_ANULADO: 'El certificado ya se encuentra anulado.',
     CERTIFICADO_SIN_NUMERO_DG: 'El certificado no cuenta con número correlativo DG asignado.',
     ANULACION_REQUIERE_VALIDACION_EXTERNA: 'Este tipo de certificado requiere confirmación previa de la entidad externa competente.',
@@ -208,7 +209,9 @@ exports.ejecutarAnulacionTotal = async (req, res) => {
                     ? 'Se ejecutó la autoejecución excepcional autorizada de la anulación total.'
                     : (resultado.completada
                         ? 'Se ejecutó la anulación total de certificado y comprobante.'
-                        : 'Se ejecutó la regularización autorizada (requiere intervención para conclusión técnica).')));
+                        : resultado.requiereIntervencion
+                            ? 'La ejecución fiscal terminó y existe una acción técnica manual pendiente.'
+                            : 'La baja fiscal quedó pendiente de confirmación del proveedor.')));
         return res.json({
             ok: true,
             data: resultado.solicitud,
@@ -216,6 +219,48 @@ exports.ejecutarAnulacionTotal = async (req, res) => {
             resultadoTecnico: resultado.resultadoTecnico,
             completada: resultado.completada,
             requiereIntervencion: resultado.requiereIntervencion,
+            yaCompletada: resultado.yaCompletada || false
+        });
+    } catch (error) { return responderError(res, error); }
+};
+
+exports.aprobarYEjecutarAnulacionTotal = async (req, res) => {
+    try {
+        const resultado = await solicitudesService.aprobarYEjecutarAnulacionTotal(
+            req.params.id,
+            req.body || {},
+            req.user
+        );
+
+        // Registrar evento de aprobación (siempre ocurre si no hay excepción)
+        await auditar(req, 'SOLICITUD_APROBADA', resultado.solicitud,
+            'Se aprobó la solicitud mediante la acción unificada aprobar-y-ejecutar.');
+
+        // Registrar evento de ejecución solo si se inició
+        if (resultado.ejecucionIniciada) {
+            await auditar(req, 'SOLICITUD_ANULACION_TOTAL_EJECUTADA', resultado.solicitud,
+                resultado.completada
+                    ? 'Anulación total completada mediante acción unificada.'
+                    : resultado.requiereIntervencion
+                        ? 'Anulación total ejecutada; requiere intervención para completar el procedimiento fiscal.'
+                        : 'Baja fiscal enviada; queda pendiente de confirmación del proveedor.');
+        } else if (resultado.ejecucionFallida) {
+            await auditar(req, 'SOLICITUD_ANULACION_TOTAL_ERROR', resultado.solicitud,
+                `Aprobación registrada. La ejecución no pudo completarse: ${resultado.codigoError || 'ERROR'}.`);
+        }
+
+        return res.json({
+            ok: true,
+            data: resultado.solicitud,
+            aprobada: resultado.aprobada,
+            ejecucionIniciada: resultado.ejecucionIniciada,
+            ejecucionFallida: resultado.ejecucionFallida || false,
+            codigoError: resultado.codigoError || null,
+            mensajeError: resultado.mensajeError || null,
+            resultadoFiscal: resultado.resultadoFiscal || null,
+            resultadoTecnico: resultado.resultadoTecnico || null,
+            completada: resultado.completada || false,
+            requiereIntervencion: resultado.requiereIntervencion || false,
             yaCompletada: resultado.yaCompletada || false
         });
     } catch (error) { return responderError(res, error); }
