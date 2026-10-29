@@ -130,10 +130,10 @@ test('Sin datos persistidos suficientes se bloquea por no determinable, no por c
 });
 
 test('Solo los motivos de anulación de nota de crédito quedan sujetos al bloqueo', () => {
-    ['01', '1', '02', '2', '06', '6'].forEach((codigo) => {
+    ['01', '1', '02', '2'].forEach((codigo) => {
         assert.equal(esMotivoAnulacionNotaCredito(codigo), true, codigo);
     });
-    ['03', '3', '', null].forEach((codigo) => {
+    ['03', '3', '06', '6', '', null].forEach((codigo) => {
         assert.equal(esMotivoAnulacionNotaCredito(codigo), false, String(codigo));
     });
 });

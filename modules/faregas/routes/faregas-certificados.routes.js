@@ -159,8 +159,10 @@ router.get('/borradores/:id/facturacion/preflight', facturacionController.prefli
 router.put('/borradores/:id/facturacion', facturacionController.guardar);
 router.post('/borradores/:id/facturacion/emitir', facturacionController.emitir);
 router.get('/borradores/:id/facturacion/documentos', documentosElectronicosController.listar);
+router.get('/borradores/:id/facturacion/notas/contexto', documentosElectronicosController.obtenerContextoNotaCredito);
 router.post('/borradores/:id/facturacion/consultar', documentosElectronicosController.consultarComprobante);
 router.post('/borradores/:id/facturacion/notas', documentosElectronicosController.emitirNota);
+router.post('/borradores/:id/facturacion/notas/:tipo/:notaId/consultar', documentosElectronicosController.consultarNota);
 router.post('/borradores/:id/facturacion/notas/:tipo/:notaId/emitir', documentosElectronicosController.reintentarNota);
 router.post('/borradores/:id/facturacion/anulaciones', documentosElectronicosController.generarAnulacion);
 router.post('/borradores/:id/facturacion/anulaciones/:anulacionId/consultar', documentosElectronicosController.consultarAnulacion);

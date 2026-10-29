@@ -2,8 +2,13 @@ const CODIGO_IMPORTE_CERO = 'CERTIFICADO_IMPORTE_CERO_NO_ANULABLE';
 const CODIGO_IMPORTE_NO_DETERMINABLE = 'CERTIFICADO_IMPORTE_FINAL_NO_DETERMINABLE';
 const MENSAJE_IMPORTE_CERO = 'Este certificado tiene un importe final de S/ 0.00 y no admite anulación.';
 const MENSAJE_IMPORTE_NO_DETERMINABLE = 'No se pudo determinar de forma confiable el importe final del certificado. La anulación queda bloqueada hasta regularizar el importe.';
+const {
+    CODIGOS_HISTORICOS_ANULACION,
+    SQL_CODIGOS_HISTORICOS_ANULACION,
+    esMotivoAnulacionNotaCredito
+} = require('./faregas-notas-credito.constants');
 
-const MOTIVOS_NOTA_ANULACION = new Set(['01', '1', '02', '2', '06', '6']);
+const MOTIVOS_NOTA_ANULACION = new Set(CODIGOS_HISTORICOS_ANULACION);
 
 const errorNegocio = (code, statusCode = 409, detalles) => {
     const error = new Error(code);
@@ -272,16 +277,12 @@ const tieneOperacionFiscalIniciada = async (executor, { facturacionId } = {}) =>
             OR EXISTS (
                 SELECT 1 FROM fg_credito
                 WHERE facturacion_id = $1
-                  AND motivo_codigo IN ('01', '1', '02', '2', '06', '6')
+                  AND motivo_codigo IN (${SQL_CODIGOS_HISTORICOS_ANULACION})
             )
         ) AS existe
     `, [facturacionId]);
     return result.rows[0]?.existe === true;
 };
-
-const esMotivoAnulacionNotaCredito = (motivoCodigo) => (
-    MOTIVOS_NOTA_ANULACION.has(String(motivoCodigo || '').trim())
-);
 
 module.exports = {
     CODIGO_IMPORTE_CERO,

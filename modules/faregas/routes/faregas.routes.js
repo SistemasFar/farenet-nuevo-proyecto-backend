@@ -4,6 +4,7 @@ const healthController = require('../controllers/health.controller');
 const auditoriaOperativaMiddleware = require('../middlewares/faregas-auditoria-operativa.middleware');
 
 const usuariosRoutes = require('./faregas-usuarios.routes');
+const notificacionesRoutes = require('./faregas-notificaciones.routes');
 
 // Registra cambios administrativos despuÃ©s de que cada submÃ³dulo autentica al usuario.
 router.use(auditoriaOperativaMiddleware);
@@ -13,6 +14,7 @@ router.get('/ping', healthController.ping);
 
 // MÃ³dulo de usuarios y perfiles
 router.use('/usuarios', usuariosRoutes);
+router.use('/notificaciones', notificacionesRoutes);
 
 // MÃ³dulo de auditorÃ­a
 const auditoriaRoutes = require('./faregas-auditoria.routes');

@@ -1,6 +1,11 @@
 const documentosService = require('../services/faregas-documentos-electronicos.service');
 const auditoriaService = require('../services/faregas-auditoria.service');
 const autorizacionFiscalService = require('../services/faregas-autorizacion-fiscal.service');
+const {
+    normalizarMotivoNotaCredito,
+    requiereSolicitudNotaCredito,
+    esMotivoCorreccionDescripcion
+} = require('../services/faregas-notas-credito.constants');
 
 const mensajes = {
     FACTURACION_FALTANTE: 'Primero debe guardar los datos de facturación.',
@@ -11,9 +16,22 @@ const mensajes = {
     MOTIVO_NOTA_INVALIDO: 'El código de motivo de la nota no es válido.',
     SUSTENTO_NOTA_INVALIDO: 'Ingrese un sustento de hasta 250 caracteres.',
     IMPORTES_NOTA_INVALIDOS: 'Los importes de la nota no son válidos.',
+    MOTIVO_NOTA_CREDITO_NO_PERMITIDO_O_INVALIDO: 'El motivo de nota de crédito no está habilitado.',
+    SNAPSHOT_FISCAL_NO_ENCONTRADO: 'No se encontró el snapshot fiscal original del comprobante.',
+    SNAPSHOT_FISCAL_INCOMPLETO: 'El snapshot fiscal original está incompleto y no permite emitir la nota de forma segura.',
+    SNAPSHOT_FISCAL_NO_CORRESPONDE: 'El snapshot fiscal no corresponde al comprobante seleccionado.',
+    SNAPSHOT_FISCAL_TOTALES_INCONSISTENTES: 'Los totales del snapshot fiscal original no son consistentes.',
+    FECHA_EMISION_ORIGINAL_INVALIDA: 'La fecha fiscal del comprobante original no es válida.',
+    DESCRIPCION_CORREGIDA_INVALIDA: 'Ingrese la descripción corregida que debe aparecer en la nota.',
+    ITEM_CORRECCION_REQUERIDO: 'Seleccione la línea cuya descripción debe corregirse.',
+    ITEM_CORRECCION_INVALIDO: 'La línea seleccionada para corregir no existe.',
+    SOLICITUD_FACTURACION_NO_CORRESPONDE: 'La solicitud aprobada no corresponde al comprobante que se intenta corregir.',
     NOTA_CREDITO_EXCEDE_COMPROBANTE: 'La nota de crédito supera el total del comprobante original.',
     NOTA_NO_ENCONTRADA: 'La nota electrónica no existe.',
     NOTA_NO_REINTENTABLE: 'Esta nota no se puede volver a emitir en su estado actual.',
+    NOTA_RESULTADO_INCIERTO_CONSULTAR: 'La nota tiene un resultado incierto. Consulte su estado antes de intentar emitir nuevamente.',
+    NOTA_SIN_NUMERO: 'La nota no tiene serie y número reservados.',
+    PAYLOAD_NOTA_NO_RECUPERABLE: 'No se pudo recuperar el payload fiscal original de la nota.',
     SERIE_NOTA_NO_CONFIGURADA: 'La sede no tiene una serie configurada para este tipo de nota.',
     SERIE_NOTA_INVALIDA: 'La serie o el correlativo de la nota no es válido.',
     NUBEFACT_NOTA_NO_ACEPTADA: 'Nubefact o SUNAT no aceptaron la nota electrónica.',
@@ -88,6 +106,13 @@ exports.listar = async (req, res) => {
     } catch (error) { return responderError(res, error); }
 };
 
+exports.obtenerContextoNotaCredito = async (req, res) => {
+    try {
+        const data = await documentosService.obtenerContextoNotaCredito(Number(req.params.id), req.user);
+        return res.json({ ok: true, data });
+    } catch (error) { return responderError(res, error); }
+};
+
 exports.consultarComprobante = async (req, res) => {
     try {
         const data = await documentosService.consultarFacturacion(Number(req.params.id), req.user);
@@ -97,33 +122,33 @@ exports.consultarComprobante = async (req, res) => {
     } catch (error) { return responderError(res, error); }
 };
 
-const MOTIVOS_ANULACION_OPERACION = new Set(['01', '1', '02', '2', '06', '6']);
-
 exports.emitirNota = async (req, res) => {
     try {
         const tipo = String(req.body?.tipo || '').toUpperCase();
-        const motivoCodigo = String(req.body?.motivoCodigo || req.body?.motivo_codigo || '').trim();
-        const esAnulacionOperacion = tipo === 'CREDITO' && MOTIVOS_ANULACION_OPERACION.has(motivoCodigo);
+        const motivoEntrada = req.body?.motivoCodigo || req.body?.motivo_codigo;
+        const motivoCodigo = tipo === 'CREDITO'
+            ? normalizarMotivoNotaCredito(motivoEntrada)
+            : String(motivoEntrada || '').trim();
+        if (tipo === 'CREDITO' && !motivoCodigo) {
+            return res.status(400).json({
+                ok: false,
+                codigo: 'MOTIVO_NOTA_CREDITO_NO_PERMITIDO_O_INVALIDO',
+                message: mensajes.MOTIVO_NOTA_CREDITO_NO_PERMITIDO_O_INVALIDO
+            });
+        }
 
-        if (esAnulacionOperacion || req.body?.solicitudId) {
+        if (tipo === 'CREDITO' && requiereSolicitudNotaCredito(motivoCodigo)) {
             if (!req.body?.solicitudId) {
                 return res.status(403).json({
                     ok: false,
                     codigo: 'NOTA_CREDITO_ANULACION_REQUIERE_SOLICITUD',
-                    message: 'Las notas de crédito que anulan la operación o invalidan el comprobante requieren una solicitud administrativa previa aprobada por Sistemas.'
+                    message: 'Los motivos 01 y 02 requieren una solicitud administrativa previa aprobada.'
                 });
             }
-            await autorizacionFiscalService.validarSolicitudAprobada({
-                solicitudId: req.body?.solicitudId,
-                certificadoId: Number(req.params.id),
-                operacion: 'NOTA_CORRECTIVA',
-                userContext: req.user
-            });
-        } else {
-            // Motivos no anulatorios (ej. 03 corrección de descripción):
-            // Requieren justificación funcional explícita
+        } else if (tipo === 'CREDITO' && esMotivoCorreccionDescripcion(motivoCodigo)) {
             const sustento = String(req.body?.sustento || '').trim();
-            if (!sustento || sustento.length < 5 || sustento === 'CORRECCIÓN DE DESCRIPCIÓN') {
+            const descripcion = String(req.body?.descripcionCorregida || req.body?.descripcion || sustento).trim();
+            if (!sustento || descripcion.length < 5) {
                 return res.status(400).json({
                     ok: false,
                     codigo: 'SUSTENTO_NOTA_INVALIDO',
@@ -143,9 +168,25 @@ exports.reintentarNota = async (req, res) => {
     try {
         const tipo = String(req.params.tipo || '').toUpperCase();
         const notaId = Number(req.params.notaId);
-        const data = await documentosService.reintentarNota(Number(req.params.id), tipo, notaId, req.user);
+        const data = await documentosService.reintentarNota(
+            Number(req.params.id), tipo, notaId, req.user, req.body || {}
+        );
         await auditar(req, `NOTA_${tipo}_REINTENTADA`, tipo === 'CREDITO' ? 'fg_credito' : 'fg_debito', data.id,
             'Se reintentó la emisión de una nota electrónica.', { estado: data.estado, comprobante: data.nroComprobante });
+        return res.json({ ok: true, data });
+    } catch (error) { return responderError(res, error); }
+};
+
+exports.consultarNota = async (req, res) => {
+    try {
+        const tipo = String(req.params.tipo || '').toUpperCase();
+        const notaId = Number(req.params.notaId);
+        const data = await documentosService.consultarNota(Number(req.params.id), tipo, notaId, req.user);
+        await auditar(req, `NOTA_${tipo}_CONSULTADA`, tipo === 'CREDITO' ? 'fg_credito' : 'fg_debito', data.id,
+            'Se consultó el estado de una nota electrónica sin reenviarla.', {
+                estado: data.estado,
+                comprobante: data.nroComprobante
+            });
         return res.json({ ok: true, data });
     } catch (error) { return responderError(res, error); }
 };

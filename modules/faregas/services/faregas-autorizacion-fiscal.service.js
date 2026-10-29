@@ -34,7 +34,9 @@ const validarSolicitudAprobada = async ({
     certificadoId,
     operacion,
     userContext,
-    executor = db
+    executor = db,
+    permitirDocumentoExistente = false,
+    permitirResultadoExistente = false
 }) => {
     if (solicitudId === undefined || solicitudId === null || solicitudId === '') {
         throw errorNegocio('FAREGAS_SOLICITUD_FISCAL_REQUERIDA', 403);
@@ -51,6 +53,7 @@ const validarSolicitudAprobada = async ({
     const result = await executor.query(`
         SELECT s.id, s.tipo_operacion, s.estado, s.certificado_id, s.facturacion_id,
                s.empresa_key, s.planta_key, s.usuario_solicitante, s.resultado_fiscal,
+               s.motivo AS solicitud_motivo,
                c.estado AS certificado_estado, c.numero_certificado,
                f.estado AS facturacion_estado, f.nro_comprobante, f.aceptada_sunat,
                f.entorno_facturador, f.proveedor, f.serie, f.numero,
@@ -96,7 +99,9 @@ const validarSolicitudAprobada = async ({
     if (!tiposCompatibles.has(row.tipo_operacion)) {
         throw errorNegocio('SOLICITUD_TIPO_INCOMPATIBLE', 409, { tipoOperacion: row.tipo_operacion });
     }
-    if (row.resultado_fiscal) throw errorNegocio('SOLICITUD_FISCAL_YA_PROCESADA', 409);
+    if (row.resultado_fiscal && !permitirResultadoExistente) {
+        throw errorNegocio('SOLICITUD_FISCAL_YA_PROCESADA', 409);
+    }
     if (!row.facturacion_id || !esDocumentoBaseOperable({
         estado: row.facturacion_estado,
         aceptada_sunat: row.aceptada_sunat,
@@ -111,20 +116,22 @@ const validarSolicitudAprobada = async ({
         throw errorNegocio('SOLICITUD_COMPROBANTE_NO_EMITIDO', 409, { estado: row.facturacion_estado });
     }
 
-    const tablaConflicto = operacion === 'ANULACION_COMPROBANTE' ? 'fg_documento_anulacion' : 'fg_credito';
-    const conflicto = await executor.query(`
-        SELECT id, estado
-        FROM ${tablaConflicto}
-        WHERE facturacion_id = $1
-          AND estado NOT IN ('RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO')
-        ORDER BY id DESC
-        LIMIT 1
-    `, [row.facturacion_id]);
-    if (conflicto.rowCount > 0) {
-        throw errorNegocio('DOCUMENTO_FISCAL_CORRECTIVO_EXISTENTE', 409, {
-            documentoId: Number(conflicto.rows[0].id),
-            estado: conflicto.rows[0].estado
-        });
+    if (!permitirDocumentoExistente) {
+        const tablaConflicto = operacion === 'ANULACION_COMPROBANTE' ? 'fg_documento_anulacion' : 'fg_credito';
+        const conflicto = await executor.query(`
+            SELECT id, estado
+            FROM ${tablaConflicto}
+            WHERE facturacion_id = $1
+              AND estado NOT IN ('RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO')
+            ORDER BY id DESC
+            LIMIT 1
+        `, [row.facturacion_id]);
+        if (conflicto.rowCount > 0) {
+            throw errorNegocio('DOCUMENTO_FISCAL_CORRECTIVO_EXISTENTE', 409, {
+                documentoId: Number(conflicto.rows[0].id),
+                estado: conflicto.rows[0].estado
+            });
+        }
     }
 
     return {
@@ -134,7 +141,9 @@ const validarSolicitudAprobada = async ({
         tipoOperacion: row.tipo_operacion,
         empresaKey: row.empresa_key,
         plantaKey: row.planta_key,
-        usuarioEjecutor: username
+        usuarioEjecutor: username,
+        motivo: row.solicitud_motivo,
+        resultadoFiscal: row.resultado_fiscal || null
     };
 };
 

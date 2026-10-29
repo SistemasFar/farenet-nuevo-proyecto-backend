@@ -319,69 +319,113 @@ const construirPayloadNubefact = ({
     };
 };
 
-const construirPayloadNota = ({ nota, facturacion, tipoNota }) => {
-      const esCredito = tipoNota === 'CREDITO';
-      const tipoDocumentoModificado = facturacion.tipo_comprobante === 'FACTURA' ? 1 : 2;
-      const tipoDocumentoCliente = facturacion.tipo_documento_cliente === 'RUC' ? 6 : 1;
-      
-      const isMotivo03 = esCredito && (nota.motivo_codigo === '3' || nota.motivo_codigo === '03');
-      
-      let descripcionGeneral = '';
-      let descripcionItem = '';
-      
-      if (isMotivo03) {
-          descripcionGeneral = 'CORRECCION DE DESCRIPCION';
-          descripcionItem = String(nota.sustento).trim().slice(0, 250);
-      } else {
-          descripcionGeneral = String(nota.sustento || (esCredito ? 'NOTA DE CREDITO' : 'NOTA DE DEBITO')).trim().slice(0, 250);
-          descripcionItem = descripcionGeneral;
-      }
+const construirPayloadNotaDebitoLegacy = ({ nota, facturacion }) => {
+    const descripcion = String(nota.sustento || 'NOTA DE DEBITO').trim().slice(0, 250);
+    return {
+        operacion: 'generar_comprobante',
+        tipo_de_comprobante: 4,
+        serie: nota.serie,
+        numero: Number(nota.numero),
+        sunat_transaction: 1,
+        cliente_tipo_de_documento: facturacion.tipo_documento_cliente === 'RUC' ? 6 : 1,
+        cliente_numero_de_documento: facturacion.nro_documento,
+        cliente_denominacion: facturacion.nombre_razon_social,
+        cliente_direccion: facturacion.direccion,
+        cliente_email: facturacion.email || '',
+        fecha_de_emision: fechaPeru(),
+        moneda: 1,
+        porcentaje_de_igv: 18,
+        total_gravada: dosDecimales(nota.base_imponible),
+        total_inafecta: 0,
+        total_exonerada: 0,
+        total_igv: dosDecimales(nota.igv),
+        total_gratuita: 0,
+        total_otros_cargos: 0,
+        total: dosDecimales(nota.importe_total),
+        observaciones: descripcion,
+        documento_que_se_modifica_tipo: facturacion.tipo_comprobante === 'FACTURA' ? 1 : 2,
+        documento_que_se_modifica_serie: facturacion.serie,
+        documento_que_se_modifica_numero: Number(facturacion.numero),
+        tipo_de_nota_de_credito: '',
+        tipo_de_nota_de_debito: Number(nota.motivo_codigo),
+        enviar_automaticamente_a_la_sunat: config.nubefact.enviarSunat,
+        enviar_automaticamente_al_cliente: Boolean(config.nubefact.enviarCliente && facturacion.email),
+        codigo_unico: nota.codigo_unico,
+        condiciones_de_pago: 'CONTADO',
+        cancelado: true,
+        items: [construirItem({
+            unidad_snapshot: 'ZZ',
+            codigo_sku_snapshot: 'FAREGAS-ND',
+            descripcion_snapshot: descripcion,
+            cantidad: 1,
+            valor_unitario: dosDecimales(nota.base_imponible),
+            precio_unitario: dosDecimales(nota.importe_total),
+            base_imponible: dosDecimales(nota.base_imponible),
+            igv: dosDecimales(nota.igv),
+            importe_total: dosDecimales(nota.importe_total),
+            afectacion_igv_snapshot: '10'
+        })]
+    };
+};
 
-      return {
-          operacion: 'generar_comprobante',
-          tipo_de_comprobante: esCredito ? 3 : 4,
-          serie: nota.serie,
-          numero: Number(nota.numero),
-          sunat_transaction: 1,
-          cliente_tipo_de_documento: tipoDocumentoCliente,
-          cliente_numero_de_documento: facturacion.nro_documento,
-          cliente_denominacion: facturacion.nombre_razon_social,
-          cliente_direccion: facturacion.direccion,
-          cliente_email: facturacion.email || '',
-          fecha_de_emision: fechaPeru(),
-          moneda: 1,
-          porcentaje_de_igv: 18,
-          total_gravada: dosDecimales(nota.base_imponible),
-          total_inafecta: 0,
-          total_exonerada: 0,
-          total_igv: dosDecimales(nota.igv),
-          total_gratuita: 0,
-          total_otros_cargos: 0,
-          total: dosDecimales(nota.importe_total),
-          observaciones: descripcionGeneral,
-          documento_que_se_modifica_tipo: tipoDocumentoModificado,
-          documento_que_se_modifica_serie: facturacion.serie,
-          documento_que_se_modifica_numero: Number(facturacion.numero),
-          tipo_de_nota_de_credito: esCredito ? Number(nota.motivo_codigo) : '',
-          tipo_de_nota_de_debito: esCredito ? '' : Number(nota.motivo_codigo),
-          enviar_automaticamente_a_la_sunat: config.nubefact.enviarSunat,
-          enviar_automaticamente_al_cliente: Boolean(config.nubefact.enviarCliente && facturacion.email),
-          codigo_unico: nota.codigo_unico,
-          condiciones_de_pago: 'CONTADO',
-          cancelado: true,
-          items: [construirItem({
-              unidad_snapshot: 'ZZ',
-              codigo_sku_snapshot: esCredito ? 'FAREGAS-NC' : 'FAREGAS-ND',
-              descripcion_snapshot: descripcionItem,
-              cantidad: 1,
-              valor_unitario: dosDecimales(nota.base_imponible),
-              precio_unitario: dosDecimales(nota.importe_total),
-              base_imponible: dosDecimales(nota.base_imponible),
-              igv: dosDecimales(nota.igv),
-              importe_total: dosDecimales(nota.importe_total),
-              afectacion_igv_snapshot: '10',
-          })]
-      };
+const construirPayloadNota = ({ nota, facturacion, tipoNota, snapshotFiscal, datosFiscales }) => {
+    if (tipoNota !== 'CREDITO') {
+        return construirPayloadNotaDebitoLegacy({ nota, facturacion });
+    }
+    if (!snapshotFiscal || !datosFiscales || !Array.isArray(datosFiscales.items)) {
+        const error = new Error('SNAPSHOT_FISCAL_INCOMPLETO');
+        error.code = 'SNAPSHOT_FISCAL_INCOMPLETO';
+        error.statusCode = 409;
+        throw error;
+    }
+
+    const sustento = String(nota.sustento || '').trim().slice(0, 250);
+    return {
+        operacion: 'generar_comprobante',
+        tipo_de_comprobante: 3,
+        serie: nota.serie,
+        numero: Number(nota.numero),
+        sunat_transaction: 1,
+        cliente_tipo_de_documento: Number(snapshotFiscal.cliente_tipo_de_documento),
+        cliente_numero_de_documento: snapshotFiscal.cliente_numero_de_documento,
+        cliente_denominacion: snapshotFiscal.cliente_denominacion,
+        cliente_direccion: snapshotFiscal.cliente_direccion || '',
+        cliente_email: snapshotFiscal.cliente_email || '',
+        cliente_email_1: snapshotFiscal.cliente_email_1 || '',
+        cliente_email_2: snapshotFiscal.cliente_email_2 || '',
+        fecha_de_emision: fechaPeru(),
+        moneda: Number(snapshotFiscal.moneda || 1),
+        tipo_de_cambio: snapshotFiscal.tipo_de_cambio || '',
+        porcentaje_de_igv: Number(snapshotFiscal.porcentaje_de_igv || 18),
+        total_descuento: dosDecimales(snapshotFiscal.total_descuento || 0),
+        total_anticipo: dosDecimales(snapshotFiscal.total_anticipo || 0),
+        total_gravada: dosDecimales(snapshotFiscal.total_gravada || 0),
+        total_inafecta: dosDecimales(snapshotFiscal.total_inafecta || 0),
+        total_exonerada: dosDecimales(snapshotFiscal.total_exonerada || 0),
+        total_igv: dosDecimales(snapshotFiscal.total_igv || 0),
+        total_gratuita: dosDecimales(snapshotFiscal.total_gratuita || 0),
+        total_otros_cargos: dosDecimales(snapshotFiscal.total_otros_cargos || 0),
+        total: dosDecimales(snapshotFiscal.total),
+        observaciones: sustento,
+        documento_que_se_modifica_tipo: Number(snapshotFiscal.tipo_de_comprobante),
+        documento_que_se_modifica_serie: snapshotFiscal.serie,
+        documento_que_se_modifica_numero: Number(snapshotFiscal.numero),
+        tipo_de_nota_de_credito: Number(nota.motivo_codigo),
+        tipo_de_nota_de_debito: '',
+        enviar_automaticamente_a_la_sunat: config.nubefact.enviarSunat,
+        enviar_automaticamente_al_cliente: Boolean(
+            config.nubefact.enviarCliente && snapshotFiscal.cliente_email
+        ),
+        codigo_unico: nota.codigo_unico,
+        condiciones_de_pago: 'CONTADO',
+        forma_de_pago: 'Contado',
+        medio_de_pago: '',
+        cancelado: true,
+        items: datosFiscales.items.map(item => ({ ...item })),
+        leyendas: Array.isArray(snapshotFiscal.leyendas)
+            ? snapshotFiscal.leyendas.map(leyenda => ({ ...leyenda }))
+            : []
+    };
 };
 
 module.exports = {

@@ -9,6 +9,7 @@ const documentosService = require('../services/faregas-documentos-electronicos.s
 const certificadosService = require('../services/faregas-certificados.service');
 const authService = require('../services/faregas-auth.service');
 const db = require('../../../config/database');
+const { derivarDatosNotaCredito } = require('../services/faregas-notas-credito-fiscal.service');
 
 const { validarDatosNota, validarPermisoAnulacionComprobante, validarPermisoNotaCredito } = documentosService._private;
 
@@ -41,16 +42,40 @@ test('la nota de crédito también exige su permiso efectivo', async () => {
 });
 
 test('la nota de crédito sólo admite motivos 01, 02 y 03 y debe ser total', () => {
-    const facturacion = { fecha_emision: new Date(), importe_total: 118 };
-    const datos = { motivoCodigo: '01', sustento: 'Anulación solicitada', baseImponible: 100, igv: 18, importeTotal: 118 };
-    assert.equal(validarDatosNota('CREDITO', datos, facturacion, 0).importeTotal, 118);
+    const snapshot = {
+        tipo_de_comprobante: 2,
+        serie: 'BBB1',
+        numero: 10,
+        fecha_de_emision: '22-10-2026',
+        cliente_tipo_de_documento: 1,
+        cliente_numero_de_documento: '74045612',
+        cliente_denominacion: 'CLIENTE DE PRUEBA',
+        moneda: 1,
+        total_gravada: 100,
+        total_inafecta: 0,
+        total_exonerada: 0,
+        total_igv: 18,
+        total_otros_cargos: 0,
+        total_gratuita: 0,
+        total_descuento: 0,
+        total: 118,
+        items: [{
+            unidad_de_medida: 'ZZ', codigo: '0391', descripcion: 'CERTIFICADO', cantidad: 1,
+            valor_unitario: 100, precio_unitario: 118, descuento: 0, subtotal: 100,
+            tipo_de_igv: 1, igv: 18, total: 118
+        }]
+    };
+    const facturacion = { tipo_comprobante: 'BOLETA', serie: 'BBB1', numero: 10, importe_total: 118 };
+    const datos = { motivoCodigo: '01', sustento: 'Anulación solicitada' };
+    const fiscales = derivarDatosNotaCredito({ snapshot, ...datos });
+    assert.equal(validarDatosNota('CREDITO', datos, facturacion, fiscales, 0).importeTotal, 118);
     assert.throws(
-        () => validarDatosNota('CREDITO', { ...datos, motivoCodigo: '04' }, facturacion, 0),
+        () => validarDatosNota('CREDITO', { ...datos, motivoCodigo: '04' }, facturacion, fiscales, 0),
         (error) => error.code === 'MOTIVO_NOTA_CREDITO_NO_PERMITIDO_O_INVALIDO'
     );
     assert.throws(
-        () => validarDatosNota('CREDITO', { ...datos, baseImponible: 50, igv: 9, importeTotal: 59 }, facturacion, 0),
-        (error) => error.code === 'NOTA_CREDITO_DEBE_SER_TOTAL'
+        () => validarDatosNota('CREDITO', datos, facturacion, fiscales, 118),
+        (error) => error.code === 'NOTA_CREDITO_EXCEDE_COMPROBANTE'
     );
 });
 

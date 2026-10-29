@@ -18,6 +18,9 @@ const {
     OPERACIONES: OPERACIONES_RESOLUCION_FISCAL
 } = require('./faregas-anulacion-fiscal.resolver');
 const {
+    SQL_CODIGOS_HISTORICOS_ANULACION
+} = require('./faregas-notas-credito.constants');
+const {
     TIPOS_SOLICITUD,
     ESTADOS_SOLICITUD,
     ESTADOS_QUE_BLOQUEAN,
@@ -34,6 +37,7 @@ const {
     TRANSICIONES_ADMINISTRATIVAS,
     CONFIG_ANULACION_TECNICA
 } = require('./faregas-solicitudes-operacion.constants');
+const notificacionesService = require('./faregas-notificaciones.service');
 
 const errorNegocio = (code, statusCode = 400, detalles) => {
     const error = new Error(code);
@@ -695,6 +699,17 @@ const crearServicio = (database = db, config = {}) => {
             comentario: motivo,
             metadatos: { tipoOperacion: tipo, version: 1 }
         });
+        // Notificar a usuarios autorizados para aprobar/rechazar en la planta de la solicitud.
+        try {
+            await notificacionesService.crearParaSolicitud(client, solicitud, {
+                eventoClave: 'SOLICITUD_CREADA',
+                tipo: 'SOLICITUD_PENDIENTE_APROBACION',
+                titulo: 'Nueva solicitud pendiente de aprobación',
+                mensaje: `Se ha creado una solicitud ${tipo} pendiente de su aprobación.`
+            });
+        } catch (_notificacionError) {
+            // No fallar la creación de la solicitud por un error en notificaciones.
+        }
         return { solicitud: mapearSolicitud(solicitud), creada: true };
     });
 
@@ -1050,6 +1065,20 @@ const crearServicio = (database = db, config = {}) => {
                 autoaprobacion: esAutoaprobacion
             }
         });
+
+        // Notificar al usuario solicitante de la decisión (aprobación o rechazo).
+        try {
+            const tipoEvento = accion === 'APROBAR' ? 'SOLICITUD_APROBADA' : 'SOLICITUD_RECHAZADA';
+            await notificacionesService.crearParaSolicitante(client, row, tipoEvento,
+                accion === 'APROBAR' ? 'Solicitud aprobada' : 'Solicitud rechazada',
+                accion === 'APROBAR'
+                    ? `Su solicitud ${row.tipo_operacion} ha sido aprobada.`
+                    : `Su solicitud ${row.tipo_operacion} ha sido rechazada.`,
+                alcance.usuario.username);
+        } catch (_notificacionError) {
+            // No fallar la decisión por un error en notificaciones.
+        }
+
         return mapearSolicitud(actualizada.rows[0]);
     });
 
@@ -1724,9 +1753,6 @@ const crearServicio = (database = db, config = {}) => {
                     {
                         motivoCodigo: '01',
                         sustento: solPrevia.motivo,
-                        baseImponible: Number(factInfo.base_imponible),
-                        igv: Number(factInfo.igv),
-                        importeTotal: Number(factInfo.importe_total),
                         solicitudId: solPrevia.id
                     },
                     ctxEjecutor,
@@ -2132,10 +2158,10 @@ const crearServicio = (database = db, config = {}) => {
             };
         } else if (factInfo.estado === 'ACEPTADO') {
             // Caso F: Comprobante formalmente aceptado en SUNAT
-            // 1. Recuperación idempotente: verificar si ya existe nota de crédito 01/02/06 aceptada o baja aceptada previa
+            // 1. Recuperación idempotente: verificar si ya existe nota de crédito 01/02 aceptada o baja aceptada previa
             const notasAceptadas = await database.query(`
                 SELECT * FROM fg_credito
-                WHERE facturacion_id = $1 AND motivo_codigo IN ('01', '1', '02', '2', '06', '6') AND estado = 'ACEPTADO'
+                WHERE facturacion_id = $1 AND motivo_codigo IN (${SQL_CODIGOS_HISTORICOS_ANULACION}) AND estado = 'ACEPTADO'
             `, [factInfo.id]);
             const bajasAceptadas = await database.query(`
                 SELECT * FROM fg_documento_anulacion
@@ -2166,7 +2192,7 @@ const crearServicio = (database = db, config = {}) => {
                 const notasPendientes = await database.query(`
                     SELECT * FROM fg_credito
                     WHERE facturacion_id = $1
-                      AND motivo_codigo IN ('01', '1', '02', '2', '06', '6')
+                      AND motivo_codigo IN (${SQL_CODIGOS_HISTORICOS_ANULACION})
                       AND estado NOT IN ('ACEPTADO', 'RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO')
                     ORDER BY id DESC
                 `, [factInfo.id]);
@@ -2180,7 +2206,7 @@ const crearServicio = (database = db, config = {}) => {
                 const notasFallidas = await database.query(`
                     SELECT * FROM fg_credito
                     WHERE facturacion_id = $1
-                      AND motivo_codigo IN ('01', '1', '02', '2', '06', '6')
+                      AND motivo_codigo IN (${SQL_CODIGOS_HISTORICOS_ANULACION})
                       AND estado IN ('RECHAZADO', 'ERROR', 'ERROR_DEFINITIVO')
                     ORDER BY id DESC
                 `, [factInfo.id]);
