@@ -29,9 +29,8 @@ async function resolverPlantasAutorizadas(req) {
     );
     const permisos = rPerms.rows.map(r => r.permiso_clave);
     
-    const esSupervisor = perfil_id === 'SUPERVISOR';
-    const tieneGlobal = permisos.includes('DASHBOARD_GLOBAL') || perfil_id === 'SISTEMAS' || esSupervisor;
-    const tieneSede = permisos.includes('DASHBOARD_SEDE') || tieneGlobal || esSupervisor;
+    const tieneGlobal = permisos.includes('DASHBOARD_GLOBAL');
+    const tieneSede = permisos.includes('DASHBOARD_SEDE') || tieneGlobal;
     
     if (!tieneGlobal && !tieneSede) {
         const error = new Error('No tiene permisos para acceder al Dashboard.');
@@ -321,7 +320,7 @@ exports.obtenerExportacion = async (req, res) => {
             'SELECT 1 FROM fg_perfil_permiso WHERE perfil_clave = $1 AND permiso_clave = \'DASHBOARD_EXPORTAR\'',
             [req.user.perfil_id]
         );
-        const puedeExportar = rPerms.rowCount > 0 || req.user.perfil_id === 'SISTEMAS' || req.user.perfil_id === 'SUPERVISOR';
+        const puedeExportar = rPerms.rowCount > 0;
         if (!puedeExportar) {
             return res.status(403).json({ success: false, message: 'No tiene permiso para exportar reportes del Dashboard.' });
         }

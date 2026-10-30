@@ -18,7 +18,9 @@ const {
     OPERACIONES: OPERACIONES_RESOLUCION_FISCAL
 } = require('./faregas-anulacion-fiscal.resolver');
 const {
-    SQL_CODIGOS_HISTORICOS_ANULACION
+    SQL_CODIGOS_HISTORICOS_ANULACION,
+    normalizarMotivoNotaCredito,
+    requiereSolicitudNotaCredito
 } = require('./faregas-notas-credito.constants');
 const {
     TIPOS_SOLICITUD,
@@ -38,6 +40,8 @@ const {
     CONFIG_ANULACION_TECNICA
 } = require('./faregas-solicitudes-operacion.constants');
 const notificacionesService = require('./faregas-notificaciones.service');
+const accesoSedesService = require('./faregas-acceso-sedes.service');
+const notasCreditoWorker = require('./faregas-notas-credito-worker.service');
 
 const errorNegocio = (code, statusCode = 400, detalles) => {
     const error = new Error(code);
@@ -48,6 +52,18 @@ const errorNegocio = (code, statusCode = 400, detalles) => {
 };
 
 const esVerdadero = (valor) => valor === true || String(valor || '').trim().toLowerCase() === 'true';
+
+const etiquetaEstadoNotaCreditoBackend = (estado) => {
+  switch (String(estado || '').trim().toUpperCase()) {
+    case 'PENDIENTE': return 'PENDIENTE';
+    case 'PENDIENTE_SUNAT': return 'PENDIENTE_SUNAT';
+    case 'ACEPTADA': return 'ACEPTADA';
+    case 'RECHAZADA': return 'RECHAZADA';
+    case 'ERROR': return 'ERROR';
+    case 'INCERTA': return 'INCERTA';
+    default: return String(estado || 'DESCONOCIDO');
+  }
+};
 
 const evaluarActivacionEjecucionAutomatica = ({ solicitud, estadoProveedor, configuracion = {} }) => {
     if (solicitud?.usuarioSolicitante === solicitud?.usuarioDecision) {
@@ -149,6 +165,41 @@ const camposPermitidosParaTipo = (tipo, camposCertificado = CAMPOS_RECTIFICABLES
 };
 
 const validarDatosPropuestos = (tipo, valor, camposCertificado = CAMPOS_RECTIFICABLES_PERMITIDOS) => {
+    if (tipo === 'EMITIR_NOTA_CREDITO') {
+        if (!valor || typeof valor !== 'object' || Array.isArray(valor)) {
+            throw errorNegocio('DATOS_PROPUESTOS_REQUERIDOS');
+        }
+        const claves = Object.keys(valor);
+        const clavesPermitidas = ['motivoCodigo', 'itemIndice', 'descripcionCorregida', 'descripcionOriginal', 'codigoProducto'];
+        if (claves.some((clave) => !clavesPermitidas.includes(clave))) {
+            throw errorNegocio('DATO_PROPUESTO_PROHIBIDO', 400, { campo: claves.find((clave) => !clavesPermitidas.includes(clave)) });
+        }
+        const motivoCodigo = normalizarMotivoNotaCredito(valor.motivoCodigo);
+        if (!motivoCodigo || !requiereSolicitudNotaCredito(motivoCodigo)) {
+            throw errorNegocio('MOTIVO_NOTA_CREDITO_AUTORIZACION_INVALIDO', 400);
+        }
+        // Para motivo 03, validar que itemIndice y descripcionCorregida estén presentes
+        if (motivoCodigo === '03') {
+            const itemIndice = valor.itemIndice;
+            if (itemIndice === undefined || itemIndice === null || isNaN(Number(itemIndice))) {
+                throw errorNegocio('ITEM_INDICE_REQUERIDO', 400, {
+                    message: 'El índice de la línea a corregir es obligatorio para el motivo 03.'
+                });
+            }
+            const descripcionCorregida = String(valor.descripcionCorregida || '').trim();
+            if (!descripcionCorregida || descripcionCorregida.length < 5) {
+                throw errorNegocio('DESCRIPCION_CORREGIDA_REQUERIDA', 400, {
+                    message: 'La descripción corregida debe tener al menos 5 caracteres.'
+                });
+            }
+            return {
+                motivoCodigo,
+                itemIndice: Number(itemIndice),
+                descripcionCorregida
+            };
+        }
+        return { motivoCodigo };
+    }
     if (!TIPOS_RECTIFICACION.has(tipo)) return null;
     if (!valor || typeof valor !== 'object' || Array.isArray(valor) || Object.keys(valor).length === 0) {
         throw errorNegocio('DATOS_PROPUESTOS_REQUERIDOS');
@@ -272,8 +323,9 @@ const consultaContextoCertificado = (bloquear = false) => `
         (clock_timestamp() >= emision_fiscal.fecha_emision_fiscal
          AND clock_timestamp() < emision_fiscal.fecha_emision_fiscal + INTERVAL '24 hours')
             AS anulacion_directa_en_plazo,
-        fd.descripcion_servicio
-    FROM fg_certificado c
+         fd.descripcion_servicio,
+         EXISTS (SELECT 1 FROM fg_credito cr WHERE cr.facturacion_id = f.id) AS tiene_nota_credito
+     FROM fg_certificado c
     JOIN fg_planta p ON p.key = c.planta_key
     JOIN fg_empresa e ON e.key = p.empresa_key
     LEFT JOIN fg_tipo_certificado tc ON tc.clave = c.tipo_certificado_clave
@@ -328,38 +380,28 @@ const obtenerPermisos = async (executor, perfilId) => {
 };
 
 const exigirPermiso = (permisos, requerido) => {
-    if (!permisos.has(requerido) && !permisos.has(PERMISOS_SOLICITUD.ADMINISTRAR)) {
-        throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { permiso: requerido });
+    const requeridos = Array.isArray(requerido) ? requerido : [requerido];
+    if (!requeridos.some((permiso) => permisos.has(permiso))
+        && !permisos.has(PERMISOS_SOLICITUD.ADMINISTRAR)) {
+        throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { permiso: requeridos.join(' | ') });
     }
 };
 
 const validarAccesoPlanta = async (executor, usuario, plantaKey, empresaKey = null) => {
-    const acceso = await executor.query(`
-        SELECT 1
-        FROM fg_usuario_planta up
-        JOIN fg_perfil_planta pp
-          ON pp.planta_key = up.plantas_key
-         AND pp.perfil_clave = $2
-        JOIN fg_planta p ON p.key = up.plantas_key AND p.activo = TRUE
-        WHERE up.usuario_username = $1
-          AND up.plantas_key = $3
-          AND ($4::varchar IS NULL OR p.empresa_key = $4)
-        LIMIT 1
-    `, [usuario.username, usuario.perfil_id, plantaKey, empresaKey]);
-    if (acceso.rowCount > 0) return;
+    const acceso = await accesoSedesService.obtenerAccesoPlanta(executor, {
+        username: usuario.username,
+        perfilId: usuario.perfil_id,
+        plantaKey,
+        empresaKey
+    });
+    if (acceso) return;
     if (empresaKey) {
-        const accesoSede = await executor.query(`
-            SELECT 1
-            FROM fg_usuario_planta up
-            JOIN fg_perfil_planta pp
-              ON pp.planta_key = up.plantas_key
-             AND pp.perfil_clave = $2
-            JOIN fg_planta p ON p.key = up.plantas_key AND p.activo = TRUE
-            WHERE up.usuario_username = $1
-              AND up.plantas_key = $3
-            LIMIT 1
-        `, [usuario.username, usuario.perfil_id, plantaKey]);
-        if (accesoSede.rowCount > 0) throw errorNegocio('SOLICITUD_EMPRESA_NO_AUTORIZADA', 403);
+        const accesoOtraEmpresa = await accesoSedesService.obtenerAccesoPlanta(executor, {
+            username: usuario.username,
+            perfilId: usuario.perfil_id,
+            plantaKey
+        });
+        if (accesoOtraEmpresa) throw errorNegocio('SOLICITUD_EMPRESA_NO_AUTORIZADA', 403);
     }
     throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
 };
@@ -406,7 +448,8 @@ const snapshotComprobante = (row) => row.facturacion_id ? ({
     entorno: row.entorno_facturador || null,
     aceptadaSunat: row.aceptada_sunat,
     sunatCodigo: row.sunat_responsecode || null,
-    sunatDescripcion: row.sunat_description || null
+    sunatDescripcion: row.sunat_description || null,
+    tieneNotaCredito: row.tiene_nota_credito === true
 }) : null;
 
 const datosFiscalesActuales = (row) => row.facturacion_id ? ({
@@ -450,6 +493,12 @@ const validarContextoParaTipo = (row, tipo, opciones = {}) => {
         if (!disponibilidad.disponible) {
             throw errorNegocio(disponibilidad.codigo, 409, { motivo: disponibilidad.motivo });
         }
+    }
+    // Bloquear rectificación cuando el comprobante ya tiene una nota de crédito
+    if (TIPOS_RECTIFICACION.has(tipo) && row.tiene_nota_credito === true) {
+        throw errorNegocio('RECTIFICACION_BLOQUEADA_POR_NOTA_CREDITO', 409, {
+            motivo: 'No se puede rectificar este certificado porque su comprobante ya tiene una nota de crédito emitida.'
+        });
     }
 };
 
@@ -529,6 +578,7 @@ const registrarEvento = async (executor, {
 };
 
 const crearServicio = (database = db, config = {}) => {
+    const workerNotasCredito = config.notasCreditoWorker || notasCreditoWorker;
     const conTransaccion = async (operacion) => {
         const client = await database.connect();
         try {
@@ -564,7 +614,7 @@ const crearServicio = (database = db, config = {}) => {
         } catch (_) {}
         const disponibilidadComprobante = estadoSolicitudComprobante(row);
         const camposTecnicos = camposRectificablesCertificado(row.tipo_certificado_clave);
-        const tiposDisponibles = ['ANULAR_AMBOS', 'RECTIFICAR_CERTIFICADO'];
+        const tiposDisponibles = ['ANULAR_AMBOS', 'EMITIR_NOTA_CREDITO', 'RECTIFICAR_CERTIFICADO'];
         const importeFinal = evaluarImporteFinalCertificado(row);
         const bloqueoImporte = importeFinal.determinable !== true || importeFinal.esCero === true;
 
@@ -616,6 +666,50 @@ const crearServicio = (database = db, config = {}) => {
         validarContextoParaTipo(contexto, tipo, {
             permitirComprobanteNoEmitido: opciones.flujoAnulacionTotal === true
         });
+
+        // Exclusión mutua fiscal: verificar operaciones incompatibles para el mismo comprobante.
+        if (contexto.facturacion_id) {
+            if (tipo === 'EMITIR_NOTA_CREDITO') {
+                // No permitir nota de crédito si hay una baja fiscal en trámite o aceptada
+                const bajaActiva = await client.query(`
+                    SELECT id FROM fg_documento_anulacion
+                    WHERE facturacion_id = $1
+                      AND estado IN ('BORRADOR', 'PENDIENTE', 'ACEPTADO')
+                    LIMIT 1
+                `, [contexto.facturacion_id]);
+                if (bajaActiva.rowCount > 0) {
+                    throw errorNegocio('OPERACION_FISCAL_INCOMPATIBLE', 409, {
+                        motivo: 'No se puede solicitar una nota de crédito porque el comprobante ya tiene una baja fiscal en trámite o aceptada.'
+                    });
+                }
+                // No permitir nota de crédito si hay una nota pendiente o aceptada
+                const notaActiva = await client.query(`
+                    SELECT id FROM fg_credito
+                    WHERE facturacion_id = $1
+                      AND estado IN ('PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADA', 'ERROR')
+                    LIMIT 1
+                `, [contexto.facturacion_id]);
+                if (notaActiva.rowCount > 0) {
+                    throw errorNegocio('NOTA_CREDITO_YA_EXISTE', 409, {
+                        motivo: 'Ya existe una nota de crédito pendiente o aceptada para este comprobante.'
+                    });
+                }
+            }
+            if (tipo === 'ANULAR_AMBOS') {
+                // No permitir anulación si hay una nota de crédito en trámite o aceptada
+                const notaActiva = await client.query(`
+                    SELECT id FROM fg_credito
+                    WHERE facturacion_id = $1
+                      AND estado IN ('PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADA', 'ERROR')
+                    LIMIT 1
+                `, [contexto.facturacion_id]);
+                if (notaActiva.rowCount > 0) {
+                    throw errorNegocio('OPERACION_FISCAL_INCOMPATIBLE', 409, {
+                        motivo: 'No se puede solicitar una anulación porque el comprobante ya tiene una nota de crédito en trámite o aceptada.'
+                    });
+                }
+            }
+        }
         const datosPropuestos = validarDatosPropuestos(
             tipo,
             entrada?.datosPropuestos,
@@ -663,6 +757,22 @@ const crearServicio = (database = db, config = {}) => {
                 estado: activa.rows[0].estado
             });
         }
+
+        // Regla transversal: si ya existe una nota de crédito para este comprobante
+        // con estado PENDIENTE, ACEPTADA, RECHAZADA, ERROR o INCERTA, no se permite
+        // crear una nueva solicitud fiscal incompatible (anulación o nueva nota).
+        const estadoNota = String(contexto.estadoNotaCredito || '').trim().toUpperCase();
+        if (contexto.notaCreditoId && (
+            estadoNota === 'PENDIENTE' || estadoNota === 'PENDIENTE_SUNAT'
+            || estadoNota === 'ACEPTADA' || estadoNota === 'RECHAZADA'
+            || estadoNota === 'ERROR' || estadoNota === 'INCERTA'
+        )) {
+            throw errorNegocio('NOTA_CREDITO_YA_EXISTE', 409, {
+                notaCreditoId: Number(contexto.notaCreditoId),
+                estado: estadoNota,
+                mensaje: `Ya existe una nota de crédito (${etiquetaEstadoNotaCreditoBackend(estadoNota)}) para este comprobante. No se puede crear una operación fiscal incompatible.`
+            });
+        }
         validarVentanaAnulacionDirecta(contexto, tipo);
 
         let insertada;
@@ -701,12 +811,21 @@ const crearServicio = (database = db, config = {}) => {
         });
         // Notificar a usuarios autorizados para aprobar/rechazar en la planta de la solicitud.
         try {
-            await notificacionesService.crearParaSolicitud(client, solicitud, {
-                eventoClave: 'SOLICITUD_CREADA',
-                tipo: 'SOLICITUD_PENDIENTE_APROBACION',
-                titulo: 'Nueva solicitud pendiente de aprobación',
-                mensaje: `Se ha creado una solicitud ${tipo} pendiente de su aprobación.`
-            });
+            if (tipo === 'EMITIR_NOTA_CREDITO') {
+                await notificacionesService.crearParaAutorizacionNotaCredito(client, solicitud, {
+                    eventoClave: 'SOLICITUD_CREADA',
+                    tipo: 'SOLICITUD_PENDIENTE_APROBACION',
+                    titulo: 'Nueva solicitud de autorización de nota de crédito',
+                    mensaje: `Solicitado por: ${solicitud.usuario_solicitante} | Operación: Emitir nota de crédito | Certificado: ${solicitud.numero_certificado || 'N/A'} | Comprobante: ${solicitud.nro_comprobante || 'N/A'} | Sede: ${solicitud.planta_key} | Solicitud: #${solicitud.id}`
+                });
+            } else {
+                await notificacionesService.crearParaSolicitud(client, solicitud, {
+                    eventoClave: 'SOLICITUD_CREADA',
+                    tipo: 'SOLICITUD_PENDIENTE_APROBACION',
+                    titulo: 'Nueva solicitud pendiente de aprobación',
+                    mensaje: `Solicitado por: ${solicitud.usuario_solicitante} | Operación: ${tipo} | Certificado: ${solicitud.numero_certificado || 'N/A'} | Comprobante: ${solicitud.nro_comprobante || 'N/A'} | Sede: ${solicitud.planta_key} | Solicitud: #${solicitud.id}`
+                });
+            }
         } catch (_notificacionError) {
             // No fallar la creación de la solicitud por un error en notificaciones.
         }
@@ -717,14 +836,11 @@ const crearServicio = (database = db, config = {}) => {
         const usuario = await obtenerUsuarioActual(executor, userContext);
         const permisos = await obtenerPermisos(executor, usuario.perfil_id);
         exigirPermiso(permisos, permisoRequerido);
-        const plantasDb = await executor.query(`
-            SELECT DISTINCT up.plantas_key
-            FROM fg_usuario_planta up
-            JOIN fg_planta p ON p.key = up.plantas_key AND p.activo = TRUE
-            WHERE up.usuario_username = $1
-        `, [usuario.username]);
-        const plantasSet = new Set(plantasDb.rows.map((row) => row.plantas_key));
-        if (userContext.planta_key) plantasSet.add(userContext.planta_key);
+        const plantasDb = await accesoSedesService.obtenerPlantasAutorizadas(executor, {
+            username: usuario.username,
+            perfilId: usuario.perfil_id
+        });
+        const plantasSet = new Set(plantasDb.map((row) => row.key));
         return {
             usuario,
             permisos,
@@ -784,12 +900,23 @@ const crearServicio = (database = db, config = {}) => {
     };
 
     const obtenerDetalle = async (id, userContext) => {
-        const { row, alcance, solicitud } = await obtener(id, userContext);
+        const { row, alcance, solicitud } = await obtener(
+            id,
+            userContext,
+            database,
+            false,
+            [
+                PERMISOS_SOLICITUD.VER,
+                PERMISOS_SOLICITUD.APROBAR,
+                PERMISOS_SOLICITUD.RECHAZAR
+            ]
+        );
         const permisos = alcance.permisos;
         const esPropia = row.usuario_solicitante === alcance.usuario.username;
         const esRectificacion = row.tipo_operacion === 'RECTIFICAR_CERTIFICADO';
+        const esAutorizacionNota = row.tipo_operacion === 'EMITIR_NOTA_CREDITO';
         const importeFinalSolicitud = evaluarImporteFinalCertificado(row);
-        const bloqueoImporte = !esRectificacion && (
+        const bloqueoImporte = row.tipo_operacion === 'ANULAR_AMBOS' && (
             importeFinalSolicitud.determinable !== true || importeFinalSolicitud.esCero === true
         );
         const mensajeBloqueoImporte = importeFinalSolicitud.determinable !== true
@@ -801,7 +928,7 @@ const crearServicio = (database = db, config = {}) => {
             PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO,
             PERMISOS_SOLICITUD.AUTOEJECUTAR
         ];
-        const permisosFaltantes = esPropia && !esRectificacion
+        const permisosFaltantes = esPropia && row.tipo_operacion === 'ANULAR_AMBOS'
             ? permisosAutoejecucion.filter((permiso) => !permisos.has(permiso))
             : [];
         const permisoEjecucion = esRectificacion
@@ -814,12 +941,15 @@ const crearServicio = (database = db, config = {}) => {
         const estadoEjecutable = esRectificacion
             ? row.estado === 'APROBADA'
             : ['APROBADA', 'REQUIERE_INTERVENCION', 'ERROR'].includes(row.estado);
-        let puedeEjecutar = estadoEjecutable && tienePermisoEjecucion
+        let puedeEjecutar = !esAutorizacionNota && estadoEjecutable && tienePermisoEjecucion
             && (esRectificacion || !esPropia || permisosFaltantes.length === 0)
             && !bloqueoImporte;
 
         let motivoBloqueo = null;
-        if (bloqueoImporte && ['APROBADA', 'REQUIERE_INTERVENCION', 'ERROR'].includes(row.estado)) motivoBloqueo = mensajeBloqueoImporte;
+        if (esAutorizacionNota) motivoBloqueo = row.estado === 'APROBADA'
+            ? 'Autorización aprobada. La emisión automática se procesa mediante la cola fiscal persistente.'
+            : 'Esta solicitud sólo autoriza la emisión; no ejecuta una anulación técnica.';
+        else if (bloqueoImporte && ['APROBADA', 'REQUIERE_INTERVENCION', 'ERROR'].includes(row.estado)) motivoBloqueo = mensajeBloqueoImporte;
         else if (!tienePermisoEjecucion) motivoBloqueo = `Falta el permiso ${permisoEjecucion}.`;
         else if (!esRectificacion && esPropia && permisosFaltantes.length > 0) motivoBloqueo = `La autoejecución exige los permisos: ${permisosFaltantes.join(', ')}.`;
         else if (row.estado === 'PENDIENTE_APROBACION') motivoBloqueo = 'La solicitud aún no está aprobada.';
@@ -917,7 +1047,7 @@ const crearServicio = (database = db, config = {}) => {
                 // La rectificación técnica no modifica el comprobante. Un
                 // estado fiscal desfavorable no debe impedir corregir el
                 // certificado ni debe sugerir una operación tributaria.
-                if (bloqueoFiscal && !esRectificacion) {
+                if (bloqueoFiscal && row.tipo_operacion === 'ANULAR_AMBOS') {
                     puedeEjecutar = false;
                     if (!motivoBloqueo) motivoBloqueo = resolucionFiscal.motivo;
                 }
@@ -928,12 +1058,17 @@ const crearServicio = (database = db, config = {}) => {
         // decidir()/aprobarYEjecutarAnulacionTotal(). La UI no debe inferir
         // permisos por su cuenta ni ofrecer una acción que el backend rechazará.
         const esAutoaprobacion = esPropia;
+        const autoaprobacionNotaPermitida = !esAutorizacionNota
+            || !esAutoaprobacion
+            || permisos.has(PERMISOS_SOLICITUD.AUTOEJECUTAR);
         const puedeAprobarSolicitud = row.estado === 'PENDIENTE_APROBACION'
-            && ['ANULAR_AMBOS', 'RECTIFICAR_CERTIFICADO'].includes(row.tipo_operacion)
+            && ['ANULAR_AMBOS', 'EMITIR_NOTA_CREDITO', 'RECTIFICAR_CERTIFICADO'].includes(row.tipo_operacion)
             && permisos.has(PERMISOS_SOLICITUD.APROBAR)
             && (!esAutoaprobacion || permisos.has(PERMISOS_SOLICITUD.AUTOAPROBAR))
+            && autoaprobacionNotaPermitida
             && !bloqueoImporte;
         const puedeAprobarYEjecutar = puedeAprobarSolicitud
+            && !esAutorizacionNota
             && !esRectificacion
             && permisos.has(PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO)
             && (!esAutoaprobacion || permisos.has(PERMISOS_SOLICITUD.AUTOEJECUTAR))
@@ -945,14 +1080,17 @@ const crearServicio = (database = db, config = {}) => {
                 motivoBloqueoAprobacion = mensajeBloqueoImporte;
             } else if (row.estado !== 'PENDIENTE_APROBACION') {
                 motivoBloqueoAprobacion = `La solicitud está en estado ${row.estado}; no admite aprobación.`;
-            } else if (!['ANULAR_AMBOS', 'RECTIFICAR_CERTIFICADO'].includes(row.tipo_operacion)) {
+            } else if (!['ANULAR_AMBOS', 'EMITIR_NOTA_CREDITO', 'RECTIFICAR_CERTIFICADO'].includes(row.tipo_operacion)) {
                 motivoBloqueoAprobacion = 'El tipo de solicitud se conserva únicamente como historial.';
             } else if (!permisos.has(PERMISOS_SOLICITUD.APROBAR)) {
                 motivoBloqueoAprobacion = `Falta el permiso ${PERMISOS_SOLICITUD.APROBAR}.`;
             } else if (!permisos.has(PERMISOS_SOLICITUD.AUTOAPROBAR)) {
                 motivoBloqueoAprobacion = `La autoaprobación exige el permiso ${PERMISOS_SOLICITUD.AUTOAPROBAR}.`;
+            } else if (esAutorizacionNota && esAutoaprobacion
+                && !permisos.has(PERMISOS_SOLICITUD.AUTOEJECUTAR)) {
+                motivoBloqueoAprobacion = `Emitir con una autorización propia exige el permiso ${PERMISOS_SOLICITUD.AUTOEJECUTAR}.`;
             }
-        } else if (!esRectificacion && !puedeAprobarYEjecutar) {
+        } else if (!esAutorizacionNota && !esRectificacion && !puedeAprobarYEjecutar) {
             motivoBloqueoAprobacion = !permisos.has(PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO)
                 ? `Falta el permiso ${PERMISOS_SOLICITUD.EJECUTAR_ANULACION_CERTIFICADO} para ejecutar la anulación total.`
                 : `La autoejecución exige el permiso ${PERMISOS_SOLICITUD.AUTOEJECUTAR}.`;
@@ -1007,27 +1145,89 @@ const crearServicio = (database = db, config = {}) => {
         });
     };
 
-    const decidir = async (id, accion, entrada, userContext) => conTransaccion(async (client) => {
+    const crearAutorizacionNotaCredito = async (entrada, userContext) => {
+        const tipo = String(entrada?.tipoOperacion || '').trim().toUpperCase();
+        if (tipo !== 'EMITIR_NOTA_CREDITO') throw errorNegocio('TIPO_SOLICITUD_NO_DISPONIBLE', 400);
+        const motivoCodigo = normalizarMotivoNotaCredito(entrada?.datosPropuestos?.motivoCodigo);
+        if (!motivoCodigo || !requiereSolicitudNotaCredito(motivoCodigo)) {
+            throw errorNegocio('MOTIVO_NOTA_CREDITO_AUTORIZACION_INVALIDO', 400);
+        }
+
+        // Para motivo 03, exigir itemIndice y descripcionCorregida
+        let datosPropuestos = { motivoCodigo };
+        if (motivoCodigo === '03') {
+            const itemIndice = entrada?.datosPropuestos?.itemIndice;
+            const descripcionCorregida = String(entrada?.datosPropuestos?.descripcionCorregida || '').trim();
+            if (itemIndice === undefined || itemIndice === null || isNaN(Number(itemIndice))) {
+                throw errorNegocio('ITEM_INDICE_REQUERIDO', 400, {
+                    message: 'El índice de la línea a corregir es obligatorio para el motivo 03.'
+                });
+            }
+            if (!descripcionCorregida || descripcionCorregida.length < 5) {
+                throw errorNegocio('DESCRIPCION_CORREGIDA_REQUERIDA', 400, {
+                    message: 'La descripción corregida debe tener al menos 5 caracteres.'
+                });
+            }
+            datosPropuestos = {
+                motivoCodigo,
+                itemIndice: Number(itemIndice),
+                descripcionCorregida
+            };
+        }
+
+        return crear({
+            ...entrada,
+            tipoOperacion: 'EMITIR_NOTA_CREDITO',
+            datosPropuestos
+        }, userContext);
+    };
+
+    const decidir = async (id, accion, entrada, userContext) => {
+        let plantaKeyEmitir = null;
+        let empresaKeyEmitir = null;
+        let trabajoNotaCreado = false;
+        const resultado = await conTransaccion(async (client) => {
         const transicion = TRANSICIONES_ADMINISTRATIVAS[accion];
         if (!transicion || accion === 'CANCELAR') throw errorNegocio('TRANSICION_SOLICITUD_INVALIDA');
-        const permiso = accion === 'APROBAR' ? PERMISOS_SOLICITUD.APROBAR : PERMISOS_SOLICITUD.RECHAZAR;
-        const { row, alcance } = await obtener(id, userContext, client, true, permiso);
-        if (!['ANULAR_AMBOS', 'RECTIFICAR_CERTIFICADO'].includes(row.tipo_operacion)) {
+        const { row, alcance } = await obtener(id, userContext, client, true, PERMISOS_SOLICITUD.VER);
+        plantaKeyEmitir = row.planta_key;
+        empresaKeyEmitir = row.empresa_key;
+        if (!['ANULAR_AMBOS', 'EMITIR_NOTA_CREDITO', 'RECTIFICAR_CERTIFICADO'].includes(row.tipo_operacion)) {
             throw errorNegocio('SOLICITUD_TIPO_HISTORICO_SOLO_LECTURA', 409);
         }
+        const permisoEspecifico = accion === 'APROBAR'
+            ? (row.tipo_operacion === 'EMITIR_NOTA_CREDITO'
+                ? PERMISOS_SOLICITUD.NOTA_CREDITO_APROBAR
+                : PERMISOS_SOLICITUD.APROBAR)
+            : (row.tipo_operacion === 'EMITIR_NOTA_CREDITO'
+                ? PERMISOS_SOLICITUD.NOTA_CREDITO_APROBAR
+                : PERMISOS_SOLICITUD.RECHAZAR);
+        exigirPermiso(alcance.permisos, permisoEspecifico);
         if (row.estado !== transicion.desde) throw errorNegocio('SOLICITUD_NO_DECIDIBLE', 409, { estado: row.estado });
         const esAutoaprobacion = accion === 'APROBAR'
             && row.usuario_solicitante === alcance.usuario.username;
+        const esAutoaprobacionNota = esAutoaprobacion
+            && row.tipo_operacion === 'EMITIR_NOTA_CREDITO';
         if (row.usuario_solicitante === alcance.usuario.username && !esAutoaprobacion) {
             throw errorNegocio('SOLICITUD_AUTODECISION_PROHIBIDA', 403);
         }
         if (esAutoaprobacion) {
-            if (!alcance.permisos.has(PERMISOS_SOLICITUD.APROBAR)
-                || !alcance.permisos.has(PERMISOS_SOLICITUD.AUTOAPROBAR)) {
-                throw errorNegocio('SOLICITUD_AUTOAPROBACION_NO_AUTORIZADA', 403);
-            }
-            if (entrada?.confirmarAutoaprobacion !== true) {
-                throw errorNegocio('SOLICITUD_AUTOAPROBACION_CONFIRMACION_REQUERIDA', 400);
+            if (esAutoaprobacionNota) {
+                if (!alcance.permisos.has(PERMISOS_SOLICITUD.NOTA_CREDITO_APROBAR)
+                    || !alcance.permisos.has(PERMISOS_SOLICITUD.NOTA_CREDITO_AUTOAPROBAR)) {
+                    throw errorNegocio('SOLICITUD_AUTOAPROBACION_NO_AUTORIZADA', 403);
+                }
+                if (entrada?.confirmarAutoaprobacion !== true) {
+                    throw errorNegocio('SOLICITUD_AUTOAPROBACION_CONFIRMACION_REQUERIDA', 400);
+                }
+            } else {
+                if (!alcance.permisos.has(PERMISOS_SOLICITUD.APROBAR)
+                    || !alcance.permisos.has(PERMISOS_SOLICITUD.AUTOAPROBAR)) {
+                    throw errorNegocio('SOLICITUD_AUTOAPROBACION_NO_AUTORIZADA', 403);
+                }
+                if (entrada?.confirmarAutoaprobacion !== true) {
+                    throw errorNegocio('SOLICITUD_AUTOAPROBACION_CONFIRMACION_REQUERIDA', 400);
+                }
             }
         }
         const justificacion = texto(
@@ -1047,10 +1247,11 @@ const crearServicio = (database = db, config = {}) => {
             UPDATE fg_solicitud_operacion
             SET estado = $1, usuario_decision = $2, fecha_decision = CURRENT_TIMESTAMP,
                 justificacion_decision = $3, version = version + 1,
+                autorizacion_autoejecucion = CASE WHEN $6 THEN TRUE ELSE autorizacion_autoejecucion END,
                 fecha_modificacion = CURRENT_TIMESTAMP
             WHERE id = $4 AND estado = 'PENDIENTE_APROBACION' AND version = $5
             RETURNING *
-        `, [transicion.hacia, alcance.usuario.username, justificacion, row.id, version]);
+        `, [transicion.hacia, alcance.usuario.username, justificacion, row.id, version, esAutoaprobacionNota]);
         if (actualizada.rowCount === 0) throw errorNegocio('SOLICITUD_DECISION_CONCURRENTE', 409);
         await registrarEvento(client, {
             solicitudId: row.id,
@@ -1062,9 +1263,25 @@ const crearServicio = (database = db, config = {}) => {
             metadatos: {
                 versionAnterior: version,
                 pendienteEjecucion: accion === 'APROBAR',
-                autoaprobacion: esAutoaprobacion
+                autoaprobacion: esAutoaprobacion,
+                autoejecucionNotaAutorizada: esAutoaprobacionNota
             }
         });
+
+        if (accion === 'APROBAR' && row.tipo_operacion === 'EMITIR_NOTA_CREDITO') {
+            try {
+                const trabajo = await workerNotasCredito.encolarAprobacion(
+                    client,
+                    actualizada.rows[0],
+                    alcance.usuario.username
+                );
+                trabajoNotaCreado = trabajo?.creada === true;
+            } catch (encoladoError) {
+                // No fallar la aprobación por un error en la cola fiscal.
+                // El trabajo puede crearse posteriormente mediante el worker de recuperación.
+                console.error('[FAREGAS] Error al encolar trabajo fiscal:', encoladoError?.message || encoladoError);
+            }
+        }
 
         // Notificar al usuario solicitante de la decisión (aprobación o rechazo).
         try {
@@ -1072,19 +1289,25 @@ const crearServicio = (database = db, config = {}) => {
             await notificacionesService.crearParaSolicitante(client, row, tipoEvento,
                 accion === 'APROBAR' ? 'Solicitud aprobada' : 'Solicitud rechazada',
                 accion === 'APROBAR'
-                    ? `Su solicitud ${row.tipo_operacion} ha sido aprobada.`
-                    : `Su solicitud ${row.tipo_operacion} ha sido rechazada.`,
+                    ? `Solicitado por: ${row.usuario_solicitante} | Autorizado por: ${alcance.usuario.username} | Operación: ${row.tipo_operacion} | Certificado: ${row.numero_certificado || 'N/A'} | Solicitud: #${row.id} | Fecha de aprobación: ${new Date().toISOString()}`
+                    : `Solicitado por: ${row.usuario_solicitante} | Rechazado por: ${alcance.usuario.username} | Operación: ${row.tipo_operacion} | Certificado: ${row.numero_certificado || 'N/A'} | Solicitud: #${row.id} | Fecha de rechazo: ${new Date().toISOString()}${justificacion ? ` | Motivo: ${justificacion}` : ''}`,
                 alcance.usuario.username);
         } catch (_notificacionError) {
             // No fallar la decisión por un error en notificaciones.
         }
 
         return mapearSolicitud(actualizada.rows[0]);
-    });
+        });
+        if (plantaKeyEmitir) {
+            notificacionesService.emitirNotificacionActualizada(plantaKeyEmitir, empresaKeyEmitir);
+        }
+        if (trabajoNotaCreado) workerNotasCredito.despertar();
+        return resultado;
+    };
 
     const cancelar = async (id, entrada, userContext) => conTransaccion(async (client) => {
         const { row, alcance } = await obtener(id, userContext, client, true);
-        if (!['ANULAR_AMBOS', 'RECTIFICAR_CERTIFICADO'].includes(row.tipo_operacion)) {
+        if (!['ANULAR_AMBOS', 'EMITIR_NOTA_CREDITO', 'RECTIFICAR_CERTIFICADO'].includes(row.tipo_operacion)) {
             throw errorNegocio('SOLICITUD_TIPO_HISTORICO_SOLO_LECTURA', 409);
         }
         if (row.estado !== 'PENDIENTE_APROBACION') throw errorNegocio('SOLICITUD_NO_CANCELABLE', 409, { estado: row.estado });
@@ -1117,7 +1340,17 @@ const crearServicio = (database = db, config = {}) => {
     });
 
     const historial = async (id, userContext) => {
-        const { row } = await obtener(id, userContext);
+        const { row } = await obtener(
+            id,
+            userContext,
+            database,
+            false,
+            [
+                PERMISOS_SOLICITUD.VER,
+                PERMISOS_SOLICITUD.APROBAR,
+                PERMISOS_SOLICITUD.RECHAZAR
+            ]
+        );
         const result = await database.query(`
             SELECT id, solicitud_id, tipo_evento, estado_anterior, estado_posterior,
                    usuario_responsable, fecha_evento, comentario, metadatos
@@ -1167,17 +1400,7 @@ const crearServicio = (database = db, config = {}) => {
         const row = solResult.rows[0];
 
         // Validación de sede del ejecutor
-        const plantasUsuario = await client.query(`
-            SELECT DISTINCT up.plantas_key
-            FROM fg_usuario_planta up
-            JOIN fg_perfil_planta pp ON pp.planta_key = up.plantas_key AND pp.perfil_clave = $2
-            JOIN fg_planta p ON p.key = up.plantas_key AND p.activo = TRUE
-            WHERE up.usuario_username = $1
-        `, [usuario.username, usuario.perfil_id]);
-        const plantasPermitidas = plantasUsuario.rows.map((r) => r.plantas_key);
-        if (!plantasPermitidas.includes(row.planta_key)) {
-            throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
-        }
+        await validarAccesoPlanta(client, usuario, row.planta_key, row.empresa_key);
 
         // Separación de funciones: el solicitante no puede ser el ejecutor
         if (row.usuario_solicitante === usuario.username) {
@@ -1384,17 +1607,7 @@ const crearServicio = (database = db, config = {}) => {
         const row = solResult.rows[0];
 
         // Validación de sede del ejecutor
-        const plantasUsuario = await client.query(`
-            SELECT DISTINCT up.plantas_key
-            FROM fg_usuario_planta up
-            JOIN fg_perfil_planta pp ON pp.planta_key = up.plantas_key AND pp.perfil_clave = $2
-            JOIN fg_planta p ON p.key = up.plantas_key AND p.activo = TRUE
-            WHERE up.usuario_username = $1
-        `, [usuario.username, usuario.perfil_id]);
-        const plantasPermitidas = plantasUsuario.rows.map((r) => r.plantas_key);
-        if (!plantasPermitidas.includes(row.planta_key)) {
-            throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
-        }
+        await validarAccesoPlanta(client, usuario, row.planta_key, row.empresa_key);
 
         // Separación de funciones
         if (row.usuario_solicitante === usuario.username) {
@@ -2864,6 +3077,7 @@ const crearServicio = (database = db, config = {}) => {
         contextoCertificado,
         crear,
         crearAnulacionTotal,
+        crearAutorizacionNotaCredito,
         listar,
         obtener: async (id, userContext) => (await obtener(id, userContext)).solicitud,
         obtenerDetalle,

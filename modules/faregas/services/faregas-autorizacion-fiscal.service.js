@@ -1,9 +1,10 @@
 const db = require('../../../config/database');
 const { esDocumentoBaseOperable } = require('./faregas-comprobante-operabilidad.service');
+const accesoSedesService = require('./faregas-acceso-sedes.service');
 
 const TIPOS_POR_OPERACION = Object.freeze({
     ANULACION_COMPROBANTE: new Set(['ANULAR_AMBOS']),
-    NOTA_CORRECTIVA: new Set(['ANULAR_AMBOS'])
+    NOTA_CORRECTIVA: new Set(['EMITIR_NOTA_CREDITO'])
 });
 
 const PERMISOS_POR_OPERACION = Object.freeze({
@@ -53,6 +54,7 @@ const validarSolicitudAprobada = async ({
     const result = await executor.query(`
         SELECT s.id, s.tipo_operacion, s.estado, s.certificado_id, s.facturacion_id,
                s.empresa_key, s.planta_key, s.usuario_solicitante, s.resultado_fiscal,
+               s.datos_propuestos, s.autorizacion_autoejecucion,
                s.motivo AS solicitud_motivo,
                c.estado AS certificado_estado, c.numero_certificado,
                f.estado AS facturacion_estado, f.nro_comprobante, f.aceptada_sunat,
@@ -65,16 +67,7 @@ const validarSolicitudAprobada = async ({
                    JOIN fg_permiso p ON p.clave = pp.permiso_clave AND p.activo = TRUE
                    WHERE pp.perfil_clave = u.perfil_id
                      AND pp.permiso_clave = $4
-               ) AS tiene_permiso,
-               EXISTS (
-                   SELECT 1
-                   FROM fg_usuario_planta up
-                   JOIN fg_perfil_planta pp
-                     ON pp.planta_key = up.plantas_key
-                    AND pp.perfil_clave = u.perfil_id
-                   WHERE up.usuario_username = u.username
-                     AND up.plantas_key = s.planta_key
-               ) AS tiene_sede
+               ) AS tiene_permiso
         FROM fg_solicitud_operacion s
         JOIN fg_certificado c ON c.id = s.certificado_id
         JOIN fg_planta p ON p.key = s.planta_key AND p.empresa_key = s.empresa_key
@@ -91,9 +84,20 @@ const validarSolicitudAprobada = async ({
     const row = result.rows[0];
     if (!row.usuario_activo) throw errorNegocio('USUARIO_INACTIVO', 403);
     if (!row.tiene_permiso) throw errorNegocio('FAREGAS_EJECUCION_FISCAL_NO_AUTORIZADA', 403, { permiso: permisoRequerido });
-    if (!row.tiene_sede) throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
-    if (row.usuario_solicitante === username) throw errorNegocio('SOLICITUD_SEPARACION_FUNCIONES_REQUERIDA', 403);
-    if (row.estado !== 'APROBADA' && row.estado !== 'EN_EJECUCION') {
+    const accesoSede = await accesoSedesService.obtenerAccesoPlanta(executor, {
+        username,
+        perfilId: row.perfil_id,
+        plantaKey: row.planta_key,
+        empresaKey: row.empresa_key
+    });
+    if (!accesoSede) throw errorNegocio('SOLICITUD_SEDE_NO_AUTORIZADA', 403);
+    if (row.usuario_solicitante === username && row.autorizacion_autoejecucion !== true) {
+        throw errorNegocio('SOLICITUD_SEPARACION_FUNCIONES_REQUERIDA', 403);
+    }
+    const estadosPermitidos = permitirResultadoExistente
+        ? ['APROBADA', 'EN_EJECUCION', 'ERROR']
+        : ['APROBADA', 'EN_EJECUCION'];
+    if (!estadosPermitidos.includes(row.estado)) {
         throw errorNegocio('SOLICITUD_NO_APROBADA', 409, { estado: row.estado });
     }
     if (!tiposCompatibles.has(row.tipo_operacion)) {
@@ -143,6 +147,7 @@ const validarSolicitudAprobada = async ({
         plantaKey: row.planta_key,
         usuarioEjecutor: username,
         motivo: row.solicitud_motivo,
+        motivoCodigoNota: row.datos_propuestos?.motivoCodigo || null,
         resultadoFiscal: row.resultado_fiscal || null
     };
 };

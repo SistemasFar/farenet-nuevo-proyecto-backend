@@ -102,13 +102,26 @@ const crearMockDb = ({
         }
 
         // Permisos
+        if (normal.includes('FROM fg_perfil_permiso pp') && normal.includes('pp.permiso_clave = $2')) {
+            return permisos.includes(params[1])
+                ? res([{ acceso_global: true, permiso_clave: params[1] }])
+                : res([]);
+        }
         if (normal.includes('FROM fg_perfil_permiso pp')) {
             return res(permisos.map((p) => ({ permiso_clave: p })));
         }
 
         // Sedes de usuario
+        if (normal.includes('SELECT DISTINCT p.key, p.nombre, p.empresa_key')
+            && normal.includes('FROM fg_usuario_planta up')) {
+            const permitida = plantasUsuario.includes(solicitud.planta_key);
+            return permitida ? res([{
+                key: solicitud.planta_key,
+                nombre: solicitud.planta_key,
+                empresa_key: solicitud.empresa_key
+            }]) : res([]);
+        }
         if (normal.includes('FROM fg_usuario_planta up')) {
-            const sede = params[2] || params[0];
             const permitida = plantasUsuario.includes(solicitud.planta_key);
             return permitida ? res([{ plantas_key: solicitud.planta_key }]) : res([]);
         }
@@ -509,18 +522,32 @@ test('11. FASE 4B: Emisión directa de nota de crédito 01/02 exige solicitud ap
     const mockExecutor = {
         query: async (sql, params) => {
             const normal = String(sql).replace(/\s+/g, ' ').trim();
+            if (normal.includes('FROM fg_perfil_permiso pp') && normal.includes('pp.permiso_clave = $2')) {
+                return {
+                    rowCount: 1,
+                    rows: [{ acceso_global: true, permiso_clave: params[1] }]
+                };
+            }
+            if (normal.includes('SELECT p.key, p.nombre, p.empresa_key') && normal.includes('FROM fg_planta p')) {
+                return {
+                    rowCount: 1,
+                    rows: [{ key: 'PLANTA_SURCO', nombre: 'SURCO', empresa_key: 'FAREGAS' }]
+                };
+            }
             if (normal.includes('FROM fg_solicitud_operacion s')) {
                 return {
                     rowCount: 1,
                     rows: [{
                         id: 50,
                         estado: 'APROBADA',
-                        tipo_operacion: 'ANULAR_AMBOS',
+                        tipo_operacion: 'EMITIR_NOTA_CREDITO',
                         certificado_id: 100,
                         facturacion_id: 200,
                         empresa_key: 'FAREGAS',
                         planta_key: 'PLANTA_SURCO',
                         usuario_solicitante: 'operador_user',
+                        datos_propuestos: { motivoCodigo: '01' },
+                        autorizacion_autoejecucion: false,
                         certificado_estado: 'EMITIDO',
                         numero_certificado: 'DG-41-000500',
                         facturacion_estado: 'ACEPTADO',
@@ -552,7 +579,8 @@ test('11. FASE 4B: Emisión directa de nota de crédito 01/02 exige solicitud ap
         executor: mockExecutor
     });
     assert.equal(resValidacion.solicitudId, 50);
-    assert.equal(resValidacion.tipoOperacion, 'ANULAR_AMBOS');
+    assert.equal(resValidacion.tipoOperacion, 'EMITIR_NOTA_CREDITO');
+    assert.equal(resValidacion.motivoCodigoNota, '01');
 });
 
 // 12. Aislamiento multiempresa y multisede

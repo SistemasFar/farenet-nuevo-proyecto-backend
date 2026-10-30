@@ -7,11 +7,14 @@ process.env.NODE_ENV = 'test';
 const crearDbMock = () => {
     const notificaciones = [];
     const destinatarios = [];
+    const solicitudes = [];
+    const consultas = [];
     let queryCallCount = 0;
 
     const query = async (sql, params = []) => {
         queryCallCount++;
         const texto = String(sql);
+        consultas.push({ texto, params });
 
         // INSERT INTO fg_notificacion ... ON CONFLICT (evento_clave) DO NOTHING RETURNING id
         if (texto.includes('INSERT INTO fg_notificacion') && texto.includes('ON CONFLICT') && texto.includes('RETURNING id')) {
@@ -85,13 +88,23 @@ const crearDbMock = () => {
         }
 
         // SELECT ... FROM fg_notificacion n JOIN fg_notificacion_destinatario d ... WHERE d.usuario_id = $1
-        if (texto.includes('fg_notificacion_destinatario') && texto.includes('WHERE d.usuario_id = $1')) {
+        // (listar - excluir consultas COUNT que van a contarNoLeidas)
+        if ((texto.includes('fg_notificacion_destinatario') || texto.includes('fg_solicitud_operacion')) && texto.includes('WHERE d.usuario_id = $1') && !texto.includes('COUNT(*)')) {
             const usuarioId = params[0];
             const rows = destinatarios
                 .filter((d) => d.usuario_id === usuarioId)
                 .map((d) => {
-                    const n = notificaciones.find((notif) => notif.id === d.notificacion_id);
-                    return {
+            const n = notificaciones.find((notif) => notif.id === d.notificacion_id);
+            // La campanita solo muestra notificaciones de tipo SOLICITUD_PENDIENTE_APROBACION
+            // cuya solicitud sigue en PENDIENTE_APROBACION
+            if (n.tipo !== 'SOLICITUD_PENDIENTE_APROBACION' || n.entidad_tipo !== 'SOLICITUD_OPERACION') {
+                return null;
+            }
+            const solicitud = solicitudes.find((s) => s.id === n.entidad_id);
+            if (!solicitud || solicitud.estado !== 'PENDIENTE_APROBACION') {
+                return null;
+            }
+            return {
                         id: n.id,
                         evento_clave: n.evento_clave,
                         tipo: n.tipo,
@@ -106,14 +119,29 @@ const crearDbMock = () => {
                         leida: d.leida,
                         fecha_lectura: d.fecha_lectura
                     };
-                });
+                }).filter(Boolean);
             return { rowCount: rows.length, rows };
         }
 
         // SELECT COUNT(*) ... WHERE usuario_id = $1 AND leida = FALSE
-        if (texto.includes('COUNT(*)') && texto.includes('leida = FALSE')) {
+        if ((texto.includes('COUNT(*)') && texto.includes('leida = FALSE')) ||
+            (texto.includes('fg_solicitud_operacion') && texto.includes('leida = FALSE'))) {
             const usuarioId = params[0];
-            const count = destinatarios.filter((d) => d.usuario_id === usuarioId && !d.leida).length;
+            let count = 0;
+            for (const d of destinatarios) {
+                const n = notificaciones.find((notif) => notif.id === d.notificacion_id);
+                // La campanita solo cuenta notificaciones de tipo SOLICITUD_PENDIENTE_APROBACION
+                // cuya solicitud sigue en PENDIENTE_APROBACION
+                if (n.tipo !== 'SOLICITUD_PENDIENTE_APROBACION' || n.entidad_tipo !== 'SOLICITUD_OPERACION') {
+                    continue;
+                }
+                const solicitud = solicitudes.find((s) => s.id === n.entidad_id);
+                if (!solicitud || solicitud.estado !== 'PENDIENTE_APROBACION') {
+                    continue;
+                }
+                if (d.usuario_id !== usuarioId || d.leida) continue;
+                count++;
+            }
             return { rowCount: 1, rows: [{ c: count }] };
         }
 
@@ -162,6 +190,8 @@ const crearDbMock = () => {
         query,
         getNotificaciones: () => notificaciones,
         getDestinatarios: () => destinatarios,
+        getSolicitudes: () => solicitudes,
+        getConsultas: () => consultas,
         getQueryCallCount: () => queryCallCount
     };
 };
@@ -238,19 +268,27 @@ test('listar devuelve solo notificaciones del usuario autenticado', async () => 
     const service = await import('../services/faregas-notificaciones.service.js');
     const { crear, listar } = service;
 
-    // Crear notificaciones para dos usuarios diferentes
+    // Simular solicitudes pendientes para que las notificaciones sean visibles en la campanita
+    dbMock.getSolicitudes().push({ id: 1, estado: 'PENDIENTE_APROBACION' });
+    dbMock.getSolicitudes().push({ id: 2, estado: 'PENDIENTE_APROBACION' });
+
+    // Crear notificaciones de tipo SOLICITUD_PENDIENTE_APROBACION para dos usuarios diferentes
     await crear(dbMock, {
         eventoClave: 'EVT_1',
-        tipo: 'TIPO_1',
+        tipo: 'SOLICITUD_PENDIENTE_APROBACION',
         titulo: 'Título 1',
-        mensaje: 'Mensaje 1'
+        mensaje: 'Mensaje 1',
+        entidadTipo: 'SOLICITUD_OPERACION',
+        entidadId: 1
     }, ['usuario_aprobador_1']);
 
     await crear(dbMock, {
         eventoClave: 'EVT_2',
-        tipo: 'TIPO_2',
+        tipo: 'SOLICITUD_PENDIENTE_APROBACION',
         titulo: 'Título 2',
-        mensaje: 'Mensaje 2'
+        mensaje: 'Mensaje 2',
+        entidadTipo: 'SOLICITUD_OPERACION',
+        entidadId: 2
     }, ['usuario_aprobador_2']);
 
     const paraUsuario1 = await listar('usuario_aprobador_1', dbMock);
@@ -267,18 +305,25 @@ test('contarNoLeidas cuenta solo las no leídas del usuario', async () => {
     const service = await import('../services/faregas-notificaciones.service.js');
     const { crear, contarNoLeidas, marcarLeida } = service;
 
+    dbMock.getSolicitudes().push({ id: 1, estado: 'PENDIENTE_APROBACION' });
+    dbMock.getSolicitudes().push({ id: 2, estado: 'PENDIENTE_APROBACION' });
+
     await crear(dbMock, {
         eventoClave: 'EVT_3',
-        tipo: 'TIPO_3',
+        tipo: 'SOLICITUD_PENDIENTE_APROBACION',
         titulo: 'Título 3',
-        mensaje: 'Mensaje 3'
+        mensaje: 'Mensaje 3',
+        entidadTipo: 'SOLICITUD_OPERACION',
+        entidadId: 1
     }, ['usuario_aprobador_1']);
 
     await crear(dbMock, {
         eventoClave: 'EVT_4',
-        tipo: 'TIPO_4',
+        tipo: 'SOLICITUD_PENDIENTE_APROBACION',
         titulo: 'Título 4',
-        mensaje: 'Mensaje 4'
+        mensaje: 'Mensaje 4',
+        entidadTipo: 'SOLICITUD_OPERACION',
+        entidadId: 2
     }, ['usuario_aprobador_1']);
 
     let count = await contarNoLeidas('usuario_aprobador_1', dbMock);
@@ -297,11 +342,15 @@ test('marcarLeida no modifica notificaciones de otro usuario', async () => {
     const service = await import('../services/faregas-notificaciones.service.js');
     const { crear, marcarLeida, contarNoLeidas } = service;
 
+    dbMock.getSolicitudes().push({ id: 1, estado: 'PENDIENTE_APROBACION' });
+
     await crear(dbMock, {
         eventoClave: 'EVT_5',
-        tipo: 'TIPO_5',
+        tipo: 'SOLICITUD_PENDIENTE_APROBACION',
         titulo: 'Título 5',
-        mensaje: 'Mensaje 5'
+        mensaje: 'Mensaje 5',
+        entidadTipo: 'SOLICITUD_OPERACION',
+        entidadId: 1
     }, ['usuario_aprobador_1']);
 
     const notifs = dbMock.getNotificaciones();
@@ -349,6 +398,27 @@ test('obtenerDestinatariosPorPlanta devuelve usuarios con permiso y acceso a la 
     assert.equal(destinatarios.length, 2);
     assert.ok(destinatarios.includes('usuario_aprobador_1'));
     assert.ok(destinatarios.includes('usuario_aprobador_2'));
+});
+
+test('destinatarios combinan permiso operativo con sede individual o acceso global configurable', async () => {
+    const dbMock = crearDbMock();
+    const service = await import('../services/faregas-notificaciones.service.js');
+    await service.obtenerDestinatariosPorPlanta(dbMock, '98', 'FAREGAS');
+
+    const consulta = dbMock.getConsultas().find(({ texto }) => (
+        texto.includes('SELECT DISTINCT u.username')
+    ));
+    assert.ok(consulta);
+    assert.match(consulta.texto, /pp\.permiso_clave = ANY/);
+    assert.match(consulta.texto, /global_pp\.permiso_clave = \$4/);
+    assert.match(consulta.texto, /FROM fg_usuario_planta up/);
+    assert.match(consulta.texto, /perfil_planta\.perfil_clave = u\.perfil_id/);
+    assert.deepEqual(consulta.params, [
+        '98',
+        ['FAREGAS_SOLICITUD_APROBAR', 'FAREGAS_SOLICITUD_ADMINISTRAR'],
+        'FAREGAS',
+        'FAREGAS_ACCESO_GLOBAL_SEDES'
+    ]);
 });
 
 test('crear rechaza si faltan datos requeridos', async () => {
@@ -482,6 +552,84 @@ test('evento repetido no duplica notificación ni destinatarios', async () => {
     assert.equal(entradasNotif1.length, 2, 'Cada destinatario debe tener una sola entrada');
 });
 
+// --- NUEVAS PRUEBAS: ocultar notificaciones de solicitudes atendidas ---
+
+test('listar excluye notificaciones pendientes cuando la solicitud ya no está en PENDIENTE_APROBACION', async () => {
+    const dbMock = crearDbMock();
+    const service = await import('../services/faregas-notificaciones.service.js');
+    const { crear, listar, contarNoLeidas } = service;
+
+    // Simular solicitud ya aprobada
+    dbMock.getSolicitudes().push({ id: 501, estado: 'APROBADA' });
+
+    // Crear notificación pendiente de aprobación para esa solicitud
+    await crear(dbMock, {
+        eventoClave: 'SOLICITUD_501_SOLICITUD_CREADA',
+        tipo: 'SOLICITUD_PENDIENTE_APROBACION',
+        titulo: 'Nueva solicitud pendiente de aprobación',
+        mensaje: 'Solicitud de anulación pendiente.',
+        entidadTipo: 'SOLICITUD_OPERACION',
+        entidadId: 501
+    }, ['usuario_aprobador_1']);
+
+    const paraUsuario1 = await listar('usuario_aprobador_1', dbMock);
+    assert.equal(paraUsuario1.length, 0, 'La notificación de solicitud aprobada no debe aparecer');
+
+    const count = await contarNoLeidas('usuario_aprobador_1', dbMock);
+    assert.equal(count, 0, 'El conteo no debe incluir solicitudes atendidas');
+});
+
+test('listar conserva notificaciones pendientes cuando la solicitud sigue en PENDIENTE_APROBACION', async () => {
+    const dbMock = crearDbMock();
+    const service = await import('../services/faregas-notificaciones.service.js');
+    const { crear, listar, contarNoLeidas } = service;
+
+    // Simular solicitud aún pendiente
+    dbMock.getSolicitudes().push({ id: 502, estado: 'PENDIENTE_APROBACION' });
+
+    await crear(dbMock, {
+        eventoClave: 'SOLICITUD_502_SOLICITUD_CREADA',
+        tipo: 'SOLICITUD_PENDIENTE_APROBACION',
+        titulo: 'Nueva solicitud pendiente de aprobación',
+        mensaje: 'Solicitud de anulación pendiente.',
+        entidadTipo: 'SOLICITUD_OPERACION',
+        entidadId: 502
+    }, ['usuario_aprobador_1']);
+
+    const paraUsuario1 = await listar('usuario_aprobador_1', dbMock);
+    assert.equal(paraUsuario1.length, 1, 'La notificación de solicitud pendiente debe aparecer');
+
+    const count = await contarNoLeidas('usuario_aprobador_1', dbMock);
+    assert.equal(count, 1, 'El conteo debe incluir solicitudes pendientes');
+});
+
+test('listar no muestra notificaciones informativas (solo historial), contarNoLeidas las excluye', async () => {
+    const dbMock = crearDbMock();
+    const service = await import('../services/faregas-notificaciones.service.js');
+    const { crearParaSolicitante, listar, contarNoLeidas } = service;
+
+    // Simular solicitud ya rechazada
+    dbMock.getSolicitudes().push({ id: 503, estado: 'RECHAZADA' });
+
+    // Crear notificación informativa al solicitante (tipo diferente)
+    await crearParaSolicitante(
+        dbMock,
+        { id: 503, tipo_operacion: 'ANULAR_AMBOS', planta_key: 'SURCO', empresa_key: 'EMP001', usuario_solicitante: 'usuario_solicitante' },
+        'SOLICITUD_RECHAZADA',
+        'Solicitud rechazada',
+        'Su solicitud ha sido rechazada.',
+        'usuario_aprobador_1'
+    );
+
+    // La campanita NO muestra notificaciones informativas
+    const paraUsuario1 = await listar('usuario_solicitante', dbMock);
+    assert.equal(paraUsuario1.length, 0, 'Las notificaciones informativas no deben aparecer en la campanita');
+
+    // El conteo NO incluye notificaciones informativas
+    const count = await contarNoLeidas('usuario_solicitante', dbMock);
+    assert.equal(count, 0, 'El conteo no debe incluir notificaciones informativas');
+});
+
 // Mock que lanza error SQL en el INSERT de fg_notificacion
 const crearDbMockConErrorSQL = () => {
     const notificaciones = [];
@@ -550,5 +698,53 @@ test('error SQL en notificación no aborta la transacción (SAVEPOINT rollback)'
     }, ['usuario_aprobador_1']);
     // Este también fallará porque el mock siempre lanza en INSERT de fg_notificacion
     assert.equal(resultado2, null);
+});
+
+test('historial enriquece usuarios, decisión y documento sin perder aislamiento por destinatario', async () => {
+    const consultas = [];
+    const executor = {
+        query: async (sql, params) => {
+            const texto = String(sql);
+            consultas.push({ texto, params });
+            if (texto.includes('COUNT(*)::int AS total')) {
+                return { rowCount: 1, rows: [{ total: 1 }] };
+            }
+            return {
+                rowCount: 1,
+                rows: [{
+                    id: 90,
+                    solicitud_id: 41,
+                    solicitante_username: 'gibarra',
+                    solicitante_nombre: 'Grace Ibarra',
+                    autorizador_username: 'gibarra',
+                    autorizador_nombre: 'Grace Ibarra',
+                    estado_solicitud: 'APROBADA',
+                    autoaprobacion_excepcional: true,
+                    certificado_numero: 'DG-41-000347',
+                    comprobante_numero: 'BBB1-00000266',
+                    motivo_nota_codigo: '02'
+                }]
+            };
+        }
+    };
+    const service = await import('../services/faregas-notificaciones.service.js');
+    const resultado = await service.listarHistorial('gibarra', executor, {
+        busqueda: 'Grace', fechaDesde: '2026-10-01', fechaHasta: '2026-10-30', pagina: 1, limite: 50
+    });
+
+    assert.equal(resultado.total, 1);
+    assert.equal(resultado.limite, 10, 'El backend debe imponer un máximo de 10 registros por página');
+    assert.equal(resultado.data[0].solicitante_nombre, 'Grace Ibarra');
+    assert.equal(resultado.data[0].autoaprobacion_excepcional, true);
+    assert.ok(consultas.every(({ params }) => params[0] === 'gibarra'));
+    const sql = consultas.map(({ texto }) => texto).join('\n');
+    assert.match(sql, /LEFT JOIN persona ps/);
+    assert.match(sql, /LEFT JOIN persona pd/);
+    assert.match(sql, /pl\.nombre ILIKE/);
+    assert.match(sql, /fecha_creacion >= .*America\/Lima/);
+    assert.match(sql, /fecha_creacion < .*America\/Lima/);
+    assert.match(sql, /justificacion_decision AS justificacion_decision/);
+    assert.match(sql, /metadatos ->> 'autoaprobacion' = 'true'/);
+    assert.match(sql, /d\.usuario_id = \$1/);
 });
 

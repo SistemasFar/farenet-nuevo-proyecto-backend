@@ -136,7 +136,8 @@ const respuestaPublica = (row, cuotas = []) => {
         fechaUltimoIntento: row.fecha_ultimo_intento,
         fechaAceptacion: row.fecha_aceptacion,
         anulacionEnPlazo: row.anulacion_en_plazo === true,
-        anulacionHastaMs: row.anulacion_hasta_ms == null ? null : Number(row.anulacion_hasta_ms)
+        anulacionHastaMs: row.anulacion_hasta_ms == null ? null : Number(row.anulacion_hasta_ms),
+        tieneNotaCredito: row.tiene_nota_credito === true
     };
 };
 
@@ -146,7 +147,8 @@ exports.obtenerFacturacion = async (certificadoId, userContext) => {
         SELECT f.*, op.fecha_inicio_credito,
                (clock_timestamp() >= emision.fecha_emision
                 AND clock_timestamp() < emision.fecha_emision + INTERVAL '24 hours') AS anulacion_en_plazo,
-               (EXTRACT(EPOCH FROM (emision.fecha_emision + INTERVAL '24 hours')::timestamptz) * 1000) AS anulacion_hasta_ms
+               (EXTRACT(EPOCH FROM (emision.fecha_emision + INTERVAL '24 hours')::timestamptz) * 1000) AS anulacion_hasta_ms,
+               EXISTS (SELECT 1 FROM fg_credito cr WHERE cr.facturacion_id = f.id) AS tiene_nota_credito
         FROM fg_facturacion f
         LEFT JOIN fg_orden_pago op ON op.certificado_id = f.certificado_id
         LEFT JOIN LATERAL (

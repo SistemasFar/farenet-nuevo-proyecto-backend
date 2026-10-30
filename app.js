@@ -415,12 +415,44 @@ const io = new Server(server, {
     }
 });
 
+// Autenticar conexiones Socket.IO mediante el token JWT existente.
+io.use((socket, next) => {
+    try {
+        const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.replace('Bearer ', '');
+        if (!token) {
+            return next(new Error('Token de autenticación requerido'));
+        }
+        const jwt = require('jsonwebtoken');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'faregas-secret-dev');
+        socket.data.user = decoded;
+        next();
+    } catch (err) {
+        next(new Error('Token inválido o expirado'));
+    }
+});
+
 io.on('connection', (socket) => {
     console.log('?? Cliente conectado a Socket.io:', socket.id);
+    const username = socket.data.user?.username;
+    const plantaKey = socket.data.user?.plantaKey;
+    const empresaKey = socket.data.user?.empresaKey;
+    if (username) {
+        socket.join(`usuario:${username}`);
+    }
+    if (plantaKey) {
+        socket.join(`planta:${plantaKey}`);
+    }
+    if (empresaKey) {
+        socket.join(`empresa:${empresaKey}`);
+    }
     socket.on('disconnect', () => {
         console.log('? Cliente desconectado:', socket.id);
     });
 });
+
+// Inyectar la instancia de Socket.IO en el servicio de notificaciones.
+const notificacionesService = require('./modules/faregas/services/faregas-notificaciones.service');
+notificacionesService.setSocketIO(io);
 
 async function setupPostgresListen() {
     try {

@@ -1,5 +1,6 @@
 const faregasAuthService = require('../services/faregas-auth.service');
 const faregasAuditoriaService = require('../services/faregas-auditoria.service');
+const { PERMISO_ACCESO_GLOBAL_SEDES } = require('../services/faregas-acceso-sedes.service');
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET_FAREGAS = process.env.JWT_SECRET_FAREGAS;
@@ -206,6 +207,7 @@ exports.confirmarPlanta = async (req, res) => {
             },
             plantaSeleccionada: planta,
             esSistemas: currentPerfilId === 'SISTEMAS',
+            accesoGlobalSedes: permisos.includes(PERMISO_ACCESO_GLOBAL_SEDES),
             accessToken: finalToken
         });
 
@@ -327,6 +329,7 @@ exports.cambiarPlanta = async (req, res) => {
             },
             plantaSeleccionada: planta,
             esSistemas: currentPerfilId === 'SISTEMAS',
+            accesoGlobalSedes: permisos.includes(PERMISO_ACCESO_GLOBAL_SEDES),
             accessToken: finalToken
         });
 
@@ -439,6 +442,7 @@ exports.refrescarSesion = async (req, res) => {
             plantaSeleccionada: planta,
             plantas,
             esSistemas: sesion.perfil_id === 'SISTEMAS',
+            accesoGlobalSedes: permisos.includes(PERMISO_ACCESO_GLOBAL_SEDES),
             accessToken
         });
     } catch (error) {

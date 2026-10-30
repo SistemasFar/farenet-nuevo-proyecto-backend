@@ -8,7 +8,8 @@ process.env.NODE_ENV = 'test';
 const {
     MOTIVOS_NOTA_CREDITO,
     normalizarMotivoNotaCredito,
-    requiereSolicitudNotaCredito
+    requiereSolicitudNotaCredito,
+    esMotivoImplementado
 } = require('../services/faregas-notas-credito.constants');
 const {
     normalizarSnapshotFiscal,
@@ -77,13 +78,17 @@ const notaBase = (motivo = '01') => ({
     importe_total: 118
 });
 
-test('catálogo central habilita únicamente 01, 02 y 03', () => {
-    assert.deepEqual(Object.keys(MOTIVOS_NOTA_CREDITO), ['01', '02', '03']);
+test('catálogo central tiene 13 motivos, solo 01/02/03 implementados', () => {
+    const codigos = Object.keys(MOTIVOS_NOTA_CREDITO).sort();
+    assert.deepEqual(codigos, ['01','02','03','04','05','06','07','08','09','10','11','12','13']);
     assert.equal(normalizarMotivoNotaCredito('1'), '01');
-    assert.equal(normalizarMotivoNotaCredito('06'), null);
+    assert.equal(normalizarMotivoNotaCredito('06'), '06');
     assert.equal(requiereSolicitudNotaCredito('01'), true);
     assert.equal(requiereSolicitudNotaCredito('02'), true);
-    assert.equal(requiereSolicitudNotaCredito('03'), false);
+    assert.equal(requiereSolicitudNotaCredito('03'), true);
+    assert.equal(esMotivoImplementado('03'), true);
+    assert.equal(esMotivoImplementado('04'), false);
+    assert.equal(esMotivoImplementado('13'), false);
 });
 
 test('snapshot antiguo válido no es rechazado por un plazo legal inventado', () => {
@@ -264,7 +269,41 @@ test('el formulario obtiene el contexto fiscal desde un endpoint de solo lectura
     assert.match(routes, /borradores\/:id\/facturacion\/notas\/contexto/);
     assert.match(service, /exports\.obtenerContextoNotaCredito = async/);
     assert.match(service, /obtenerSnapshotFiscalOriginal\(db, facturacion\)/);
+    assert.match(service, /puedeEmitir: true/);
+    assert.match(service, /tipo_operacion = 'EMITIR_NOTA_CREDITO'/);
     assert.match(service, /items: snapshot\.items\.map/);
+});
+
+test('la autorización de nota es independiente de la anulación total', () => {
+    const constantes = fs.readFileSync(path.join(__dirname, '../services/faregas-solicitudes-operacion.constants.js'), 'utf8');
+    const autorizacion = fs.readFileSync(path.join(__dirname, '../services/faregas-autorizacion-fiscal.service.js'), 'utf8');
+    assert.match(constantes, /'EMITIR_NOTA_CREDITO'/);
+    assert.match(autorizacion, /NOTA_CORRECTIVA: new Set\(\['EMITIR_NOTA_CREDITO'\]\)/);
+    assert.match(autorizacion, /motivoCodigoNota/);
+});
+
+test('la migración incremental habilita el nuevo tipo sin modificar documentos fiscales', () => {
+    const migration = fs.readFileSync(path.join(
+        __dirname,
+        '../database/migrations_history/20261029_faregas_autorizacion_nota_credito.sql'
+    ), 'utf8');
+    assert.match(migration, /^BEGIN;/m);
+    assert.match(migration, /'EMITIR_NOTA_CREDITO'/);
+    assert.match(migration, /ck_fg_solicitud_tipo/);
+    assert.match(migration, /ck_fg_solicitud_documentos/);
+    assert.doesNotMatch(migration, /\b(?:DELETE|TRUNCATE|UPDATE|INSERT)\b/i);
+    assert.match(migration, /COMMIT;/);
+});
+
+test('la reserva fiscal enlaza la nota con la solicitud antes de llamar al proveedor', () => {
+    const service = fs.readFileSync(path.join(__dirname, '../services/faregas-documentos-electronicos.service.js'), 'utf8');
+    const indiceReserva = service.indexOf("NOTA_CREDITO_RESERVADA");
+    const indiceCommit = service.indexOf("await client.query('COMMIT');", indiceReserva);
+    const indiceProveedor = service.indexOf('proveedor.emitirComprobante', indiceCommit);
+    assert.ok(indiceReserva > 0);
+    assert.ok(indiceCommit > indiceReserva);
+    assert.ok(indiceProveedor > indiceCommit);
+    assert.match(service, /SET estado = 'EN_EJECUCION',[\s\S]*?resultado_fiscal = \$2::jsonb/);
 });
 
 test('la idempotencia 01 y 02 usa el sustento autorizado, no el texto del navegador', () => {
@@ -272,4 +311,20 @@ test('la idempotencia 01 y 02 usa el sustento autorizado, no el texto del navega
     assert.match(service, /const sustentoFiscal = autorizacion\?\.motivo \|\| data\.sustento/);
     assert.match(service, /buscarNotaIdempotente\([\s\S]*?facturacion\.id,[\s\S]*?motivoCodigo,[\s\S]*?sustentoFiscal/);
     assert.match(service, /derivarDatosNotaCredito\([\s\S]*?sustento: sustentoFiscal/);
+});
+
+test('la descarga de la nota es de solo lectura y valida certificado, nota y facturación', () => {
+    const routes = fs.readFileSync(path.join(__dirname, '../routes/faregas-certificados.routes.js'), 'utf8');
+    const controller = fs.readFileSync(path.join(__dirname, '../controllers/faregas-documentos-electronicos.controller.js'), 'utf8');
+    const service = fs.readFileSync(path.join(__dirname, '../services/faregas-documentos-electronicos.service.js'), 'utf8');
+
+    assert.match(routes, /router\.get\('\/borradores\/:id\/facturacion\/notas\/credito\/:notaId\/pdf'/);
+    assert.match(controller, /obtenerNotaCreditoParaDescarga/);
+    assert.match(controller, /descargarPdfNubefact\(nota\.enlace_pdf\)/);
+    assert.doesNotMatch(controller.match(/exports\.descargarPdfNotaCredito[\s\S]*?exports\.generarAnulacion/)?.[0] || '', /emitirNota|reservarSerie/);
+    const funcion = service.match(/exports\.obtenerNotaCreditoParaDescarga[\s\S]*?\n};/)?.[0] || '';
+    assert.match(funcion, /validarAccesoFacturacion\(db, certificado, userContext\)/);
+    assert.match(funcion, /WHERE id = \$1 AND facturacion_id = \$2/);
+    assert.match(funcion, /PDF_NOTA_CREDITO_NO_DISPONIBLE/);
+    assert.doesNotMatch(funcion, /emitirComprobante|consultarComprobante|UPDATE|INSERT/);
 });

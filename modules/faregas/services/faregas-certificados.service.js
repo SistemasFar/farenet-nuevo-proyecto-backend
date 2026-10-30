@@ -55,6 +55,36 @@ const tituloInspeccionTaller = (tipoCertificadoClave, modalidad, fallback = '') 
     return `CERTIFICADO DE INSPECCIÓN DE TALLER ${combustible} ${variante}`;
 };
 
+/**
+ * Calcula la fecha de vigencia automática: exactamente un año calendario
+ * después de la fecha actual en zona horaria America/Lima.
+ * Maneja años bisiestos: 29 de febrero → 28 de febrero en año no bisiesto.
+ * Retorna cadena YYYY-MM-DD.
+ */
+const calcularVigenciaHasta = () => {
+    const hoyPeruStr = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Lima',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    }).format(new Date());
+
+    const [year, month, day] = hoyPeruStr.split('-').map(Number);
+    const anioSiguiente = year + 1;
+
+    let diaFinal = day;
+    let mesFinal = month;
+
+    if (month === 2 && day === 29) {
+        const esBisiesto = (anioSiguiente % 4 === 0 && anioSiguiente % 100 !== 0) || anioSiguiente % 400 === 0;
+        if (!esBisiesto) {
+            diaFinal = 28;
+        }
+    }
+
+    return `${String(anioSiguiente).padStart(4, '0')}-${String(mesFinal).padStart(2, '0')}-${String(diaFinal).padStart(2, '0')}`;
+};
+
 const tituloCertificadoDinamico = ({ tipoFlujo, tipoCertificadoClave, modalidad, fallback }) => (
     tipoFlujo === 'TALLER_INSPECCION'
         ? tituloInspeccionTaller(tipoCertificadoClave, modalidad, fallback)
@@ -698,10 +728,12 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             nota_credito.id AS "notaCreditoId",
             nota_credito.estado AS "estadoNotaCredito",
             nota_credito.nro_comprobante AS "nroNotaCredito",
+            (nota_credito.enlace_pdf IS NOT NULL AND BTRIM(nota_credito.enlace_pdf) <> '') AS "notaCreditoPdfDisponible",
             solicitud."solicitudOperacionId" AS "solicitudOperacionId",
             solicitud."solicitudOperacionEstado" AS "solicitudOperacionEstado",
             solicitud."solicitudOperacionTipo" AS "solicitudOperacionTipo",
-            solicitud."solicitudOperacionMotivo" AS "solicitudOperacionMotivo"
+            solicitud."solicitudOperacionMotivo" AS "solicitudOperacionMotivo",
+            solicitud."solicitudOperacionResultadoFiscal" AS "solicitudOperacionResultadoFiscal"
         FROM fg_certificado c
         LEFT JOIN fg_certificado_vehiculo v ON c.id = v.certificado_id
         LEFT JOIN fg_certificado_titular tit ON c.id = tit.certificado_id AND tit.orden = 1
@@ -746,7 +778,7 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             LIMIT 1
         ) anulacion ON TRUE
         LEFT JOIN LATERAL (
-            SELECT nc.id, nc.estado, nc.nro_comprobante
+            SELECT nc.id, nc.estado, nc.nro_comprobante, nc.enlace_pdf
             FROM fg_credito nc
             WHERE nc.facturacion_id = f.id
             ORDER BY nc.id DESC
@@ -754,7 +786,8 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
         ) nota_credito ON TRUE
         LEFT JOIN LATERAL (
             SELECT s.id AS "solicitudOperacionId", s.estado AS "solicitudOperacionEstado",
-                   s.tipo_operacion AS "solicitudOperacionTipo", s.motivo AS "solicitudOperacionMotivo"
+                   s.tipo_operacion AS "solicitudOperacionTipo", s.motivo AS "solicitudOperacionMotivo",
+                   s.resultado_fiscal AS "solicitudOperacionResultadoFiscal"
             FROM fg_solicitud_operacion s
             WHERE s.certificado_id = c.id
             ORDER BY (s.estado = ANY(ARRAY['PENDIENTE_APROBACION','APROBADA','EN_EJECUCION','REQUIERE_INTERVENCION'])) DESC,
@@ -2089,9 +2122,10 @@ exports.guardarGNV = async (id, data, userContext) => {
             }
         }
 
-        const qModActual = `SELECT modalidad FROM fg_certificado_gnv WHERE certificado_id = $1 FOR UPDATE`;
+        const qModActual = `SELECT modalidad, vigencia_hasta FROM fg_certificado_gnv WHERE certificado_id = $1 FOR UPDATE`;
         const rModActual = await client.query(qModActual, [id]);
         const modalidadAnterior = rModActual.rowCount > 0 ? rModActual.rows[0].modalidad : null;
+        const vigenciaExistente = rModActual.rowCount > 0 ? rModActual.rows[0].vigencia_hasta : null;
 
         if (modalidadAnterior && modalidadGNV && modalidadAnterior !== modalidadGNV) {
             if (modalidadAnterior === 'INICIAL' && modalidadGNV === 'ANUAL') {
@@ -2140,6 +2174,9 @@ exports.guardarGNV = async (id, data, userContext) => {
 
         const tieneObservacionesExplicitas = data.observaciones !== undefined;
 
+        // Resolver vigencia_hasta: valor explícito del frontend > valor existente en BD > auto-cálculo
+        const vigenciaHastaResuelta = data.vigenciaHasta || vigenciaExistente || calcularVigenciaHasta();
+
         const qUpd = `
             INSERT INTO fg_certificado_gnv (
                 certificado_id, taller_autorizado_id, taller_planta_key, vigencia_hasta, taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion, modalidad, numero_chip,
@@ -2164,7 +2201,7 @@ exports.guardarGNV = async (id, data, userContext) => {
             id,
             snapshotTaller.id,
             snapshotTaller.planta_key,
-            data.vigenciaHasta || null,
+            vigenciaHastaResuelta,
             snapshotTaller.razon_social,
             snapshotTaller.sede,
             snapshotTaller.direccion,
@@ -2287,9 +2324,10 @@ exports.guardarGLP = async (id, data, userContext) => {
             throw new Error('MODALIDAD_GLP_INVALIDA');
         }
 
-        const qModActual = `SELECT modalidad FROM fg_certificado_glp WHERE certificado_id = $1 FOR UPDATE`;
+        const qModActual = `SELECT modalidad, vigencia_hasta FROM fg_certificado_glp WHERE certificado_id = $1 FOR UPDATE`;
         const rModActual = await client.query(qModActual, [id]);
         const modalidadAnterior = rModActual.rowCount > 0 ? rModActual.rows[0].modalidad : null;
+        const vigenciaExistenteGlp = rModActual.rowCount > 0 ? rModActual.rows[0].vigencia_hasta : null;
 
         if (modalidadAnterior && modalidadGLP && modalidadAnterior !== modalidadGLP) {
             if (modalidadAnterior === 'INICIAL' && modalidadGLP === 'ANUAL') {
@@ -2329,6 +2367,9 @@ exports.guardarGLP = async (id, data, userContext) => {
             }
         }
 
+        // Resolver vigencia_hasta: valor explícito del frontend > valor existente en BD > auto-cálculo
+        const vigenciaHastaResueltaGlp = data.vigenciaHasta || vigenciaExistenteGlp || calcularVigenciaHasta();
+
         const qUpd = `
             INSERT INTO fg_certificado_glp (
                 certificado_id, taller_autorizado_id, expediente_tecnico, vigencia_hasta, taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion, modalidad,
@@ -2356,7 +2397,7 @@ exports.guardarGLP = async (id, data, userContext) => {
             id,
             data.tallerAutorizadoId || null,
             requiereExpedienteTecnicoGlp(modalidadGLP) ? (data.expedienteTecnico || null) : null,
-            data.vigenciaHasta || null,
+            vigenciaHastaResueltaGlp,
             snapshotTaller ? snapshotTaller.razon_social : null,
             snapshotTaller ? snapshotTaller.sede : null,
             snapshotTaller ? snapshotTaller.direccion : null,

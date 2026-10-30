@@ -21,24 +21,22 @@ test('Migración 20261021 otorga permisos de Dashboard al perfil SUPERVISOR', ()
 
 test('Permisos dashboard en resolución lógica frontend', () => {
     function resolverPermisosDashboard(permisos = [], perfilId) {
-        const p = String(perfilId || '').trim().toUpperCase();
-        const esSistemas = p === 'SISTEMAS' || p === 'AMINISTRADOR' || p === 'ADMINISTRADOR';
-        const esSupervisor = p === 'SUPERVISOR';
+        void perfilId;
         return {
-            puedeVerGlobal: (permisos || []).includes('DASHBOARD_GLOBAL') || esSistemas || esSupervisor,
-            puedeExportar: (permisos || []).includes('DASHBOARD_EXPORTAR') || esSistemas || esSupervisor
+            puedeVerGlobal: (permisos || []).includes('DASHBOARD_GLOBAL'),
+            puedeExportar: (permisos || []).includes('DASHBOARD_EXPORTAR')
         };
     }
 
     // 1. Caso SUPERVISOR por perfilId exacto
-    const r1 = resolverPermisosDashboard([], 'SUPERVISOR');
+    const r1 = resolverPermisosDashboard(['DASHBOARD_GLOBAL', 'DASHBOARD_EXPORTAR'], 'SUPERVISOR');
     assert.equal(r1.puedeExportar, true);
     assert.equal(r1.puedeVerGlobal, true);
 
     // 2. Caso supervisor en minúsculas
     const r2 = resolverPermisosDashboard([], 'supervisor');
-    assert.equal(r2.puedeExportar, true);
-    assert.equal(r2.puedeVerGlobal, true);
+    assert.equal(r2.puedeExportar, false);
+    assert.equal(r2.puedeVerGlobal, false);
 
     // 3. Caso perfilId undefined pero con permiso DASHBOARD_EXPORTAR en array
     const r3 = resolverPermisosDashboard(['DASHBOARD_EXPORTAR'], undefined);
@@ -46,8 +44,8 @@ test('Permisos dashboard en resolución lógica frontend', () => {
 
     // 4. Caso SISTEMAS
     const r4 = resolverPermisosDashboard([], 'SISTEMAS');
-    assert.equal(r4.puedeExportar, true);
-    assert.equal(r4.puedeVerGlobal, true);
+    assert.equal(r4.puedeExportar, false);
+    assert.equal(r4.puedeVerGlobal, false);
 
     // 5. Caso OPERADOR sin permiso de exportación
     const r5 = resolverPermisosDashboard(['MENU_INICIO'], 'OPERADOR');

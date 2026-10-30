@@ -1,10 +1,12 @@
 const documentosService = require('../services/faregas-documentos-electronicos.service');
+const descargaNubefactService = require('../services/faregas-descarga-nubefact.service');
 const auditoriaService = require('../services/faregas-auditoria.service');
 const autorizacionFiscalService = require('../services/faregas-autorizacion-fiscal.service');
 const {
     normalizarMotivoNotaCredito,
     requiereSolicitudNotaCredito,
-    esMotivoCorreccionDescripcion
+    esMotivoCorreccionDescripcion,
+    esMotivoImplementado
 } = require('../services/faregas-notas-credito.constants');
 
 const mensajes = {
@@ -26,11 +28,17 @@ const mensajes = {
     ITEM_CORRECCION_REQUERIDO: 'Seleccione la línea cuya descripción debe corregirse.',
     ITEM_CORRECCION_INVALIDO: 'La línea seleccionada para corregir no existe.',
     SOLICITUD_FACTURACION_NO_CORRESPONDE: 'La solicitud aprobada no corresponde al comprobante que se intenta corregir.',
+    SOLICITUD_MOTIVO_NOTA_NO_CORRESPONDE: 'La solicitud fue aprobada para un motivo SUNAT diferente.',
+    PERMISO_DENEGADO_NOTA_CREDITO: 'No tiene permiso efectivo para emitir notas de crédito.',
     NOTA_CREDITO_EXCEDE_COMPROBANTE: 'La nota de crédito supera el total del comprobante original.',
     NOTA_NO_ENCONTRADA: 'La nota electrónica no existe.',
     NOTA_NO_REINTENTABLE: 'Esta nota no se puede volver a emitir en su estado actual.',
     NOTA_RESULTADO_INCIERTO_CONSULTAR: 'La nota tiene un resultado incierto. Consulte su estado antes de intentar emitir nuevamente.',
     NOTA_SIN_NUMERO: 'La nota no tiene serie y número reservados.',
+    PDF_NOTA_CREDITO_NO_DISPONIBLE: 'La nota de crédito todavía no tiene un PDF oficial disponible.',
+    ENLACE_NUBEFACT_INVALIDO: 'El enlace oficial del PDF de NubeFact no es válido.',
+    DESCARGA_NUBEFACT_FALLIDA: 'No se pudo descargar el PDF oficial desde NubeFact.',
+    PDF_NUBEFACT_INVALIDO: 'NubeFact no devolvió un archivo PDF válido.',
     PAYLOAD_NOTA_NO_RECUPERABLE: 'No se pudo recuperar el payload fiscal original de la nota.',
     SERIE_NOTA_NO_CONFIGURADA: 'La sede no tiene una serie configurada para este tipo de nota.',
     SERIE_NOTA_INVALIDA: 'La serie o el correlativo de la nota no es válido.',
@@ -137,6 +145,14 @@ exports.emitirNota = async (req, res) => {
             });
         }
 
+        if (tipo === 'CREDITO' && !esMotivoImplementado(motivoCodigo)) {
+            return res.status(400).json({
+                ok: false,
+                codigo: 'MOTIVO_NOTA_CREDITO_NO_IMPLEMENTADO',
+                message: `El motivo ${motivoCodigo} está pendiente de implementación fiscal.`
+            });
+        }
+
         if (tipo === 'CREDITO' && requiereSolicitudNotaCredito(motivoCodigo)) {
             if (!req.body?.solicitudId) {
                 return res.status(403).json({
@@ -188,6 +204,25 @@ exports.consultarNota = async (req, res) => {
                 comprobante: data.nroComprobante
             });
         return res.json({ ok: true, data });
+    } catch (error) { return responderError(res, error); }
+};
+
+exports.descargarPdfNotaCredito = async (req, res) => {
+    try {
+        const certificadoId = Number(req.params.id);
+        const notaId = Number(req.params.notaId);
+        const nota = await documentosService.obtenerNotaCreditoParaDescarga(
+            certificadoId,
+            notaId,
+            req.user
+        );
+        const pdf = await descargaNubefactService.descargarPdfNubefact(nota.enlace_pdf);
+        const referencia = String(nota.nro_comprobante || `${nota.serie || ''}-${nota.numero || ''}`)
+            .replace(/[^A-Za-z0-9_-]/g, '');
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="NOTA-CREDITO-NUBEFACT-${referencia || nota.id}.pdf"`);
+        res.setHeader('Cache-Control', 'private, no-store');
+        return res.send(pdf);
     } catch (error) { return responderError(res, error); }
 };
 

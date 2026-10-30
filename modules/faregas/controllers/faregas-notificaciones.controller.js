@@ -58,7 +58,35 @@ exports.marcarLeida = async (req, res) => {
 };
 
 /**
- * Marcar todas las notificaciones como leídas para el usuario autenticado.
+ * Historial completo de notificaciones del usuario autenticado.
+ * Soporta búsqueda por texto y filtro por fechas.
+ */
+exports.historial = async (req, res) => {
+    try {
+        const usuarioId = String(req.user?.username || '').trim();
+        if (!usuarioId) {
+            return responderJson(res, 401, { ok: false, codigo: 'USUARIO_NO_AUTENTICADO', message: 'Usuario no autenticado.' });
+        }
+        const busqueda = String(req.query.busqueda || '').trim();
+        const fechaDesde = req.query.fechaDesde || null;
+        const fechaHasta = req.query.fechaHasta || null;
+        const pagina = req.query.pagina || 1;
+        const limite = req.query.limite || 10;
+
+        const data = await notificacionesService.listarHistorial(usuarioId, db, {
+            busqueda,
+            fechaDesde,
+            fechaHasta,
+            pagina,
+            limite
+        });
+        return res.json({ ok: true, ...data });
+    } catch (error) {
+        return responderJson(res, error.statusCode || 500, { ok: false, codigo: error.code || 'ERROR_INTERNO', message: error.message || 'Error interno.' });
+    }
+};
+/**
+ * Marcar todas las notificaciones como leÃ­das para el usuario autenticado.
  */
 exports.marcarTodasLeidas = async (req, res) => {
     try {

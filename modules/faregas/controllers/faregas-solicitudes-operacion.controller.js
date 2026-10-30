@@ -8,8 +8,9 @@ const MENSAJES = {
     CERTIFICADO_ID_INVALIDO: 'El certificado indicado no es válido.',
     SOLICITUD_ID_INVALIDO: 'La solicitud indicada no es válida.',
     TIPO_SOLICITUD_INVALIDO: 'Seleccione un tipo de solicitud válido.',
-    TIPO_SOLICITUD_NO_DISPONIBLE: 'El único trámite disponible es la anulación total del certificado y su comprobante asociado.',
+    TIPO_SOLICITUD_NO_DISPONIBLE: 'El tipo de trámite solicitado no está disponible en esta operación.',
     DATOS_PROPUESTOS_NO_PERMITIDOS: 'La anulación total no admite cambios de datos técnicos ni fiscales.',
+    MOTIVO_NOTA_CREDITO_AUTORIZACION_INVALIDO: 'La autorización de nota de crédito sólo admite los motivos SUNAT 01 y 02.',
     ESTADO_SOLICITUD_INVALIDO: 'El estado de solicitud no es válido.',
     IDEMPOTENCIA_INVALIDA: 'No se pudo validar la operación. Actualice la página e intente nuevamente.',
     IDEMPOTENCIA_REUTILIZADA: 'La clave de control ya fue utilizada para otra solicitud.',
@@ -19,6 +20,10 @@ const MENSAJES = {
     CERTIFICADO_NO_ENCONTRADO: 'El certificado no existe.',
     SOLICITUD_CERTIFICADO_NO_EMITIDO: 'Solo se pueden crear solicitudes sobre certificados emitidos.',
     SOLICITUD_COMPROBANTE_REQUERIDO: 'Este tipo de solicitud requiere un comprobante relacionado.',
+    SOLICITUD_COMPROBANTE_NO_EMITIDO: 'El comprobante original no tiene un estado fiscal elegible. Debe estar aceptado por SUNAT o generado completamente en el ambiente de prueba.',
+    RECTIFICACION_BLOQUEADA_POR_NOTA_CREDITO: 'No se puede rectificar este certificado porque su comprobante ya tiene una nota de crédito emitida.',
+    OPERACION_FISCAL_INCOMPATIBLE: 'No se puede realizar esta operación porque el comprobante ya tiene una operación fiscal incompatible en trámite o aceptada.',
+    COMPROBANTE_NO_ACEPTADO: 'El comprobante original no está aceptado ni no cuenta con sus archivos fiscales.',
     SOLICITUD_INCOMPATIBLE_ACTIVA: 'Ya existe una solicitud activa o aprobada pendiente de ejecución para este documento.',
     SOLICITUD_FECHA_EMISION_FISCAL_NO_DISPONIBLE: 'No se pudo verificar la fecha y hora fiscal del comprobante. No se creó la solicitud.',
     SOLICITUD_ANULACION_PLAZO_VENCIDO: 'La ventana operativa de 24 horas para solicitar la anulación directa ya venció. Evalúe la regularización tributaria correspondiente.',
@@ -26,6 +31,7 @@ const MENSAJES = {
     SOLICITUD_PERMISO_DENEGADO: 'No tiene autorización para realizar esta acción.',
     SOLICITUD_SEDE_NO_AUTORIZADA: 'No tiene acceso a la sede de esta solicitud.',
     SOLICITUD_AUTODECISION_PROHIBIDA: 'El solicitante no puede aprobar ni rechazar su propia solicitud. La autoejecución exige el permiso excepcional FAREGAS_SOLICITUD_AUTOEJECUTAR.',
+    SOLICITUD_AUTOEJECUCION_NO_AUTORIZADA: 'Emitir con una autorización propia requiere el permiso excepcional FAREGAS_SOLICITUD_AUTOEJECUTAR.',
     SOLICITUD_AUTOEJECUCION_CONFIRMACION_REQUERIDA: 'Confirme expresamente la autoejecución excepcional antes de continuar.',
     SOLICITUD_AUTOAPROBACION_NO_AUTORIZADA: 'La autoaprobación requiere los permisos explícitos de aprobación y autoaprobación.',
     SOLICITUD_AUTOAPROBACION_CONFIRMACION_REQUERIDA: 'Confirme expresamente la autoaprobación antes de continuar.',
@@ -34,6 +40,8 @@ const MENSAJES = {
     SOLICITUD_NO_CANCELABLE: 'La solicitud ya no puede cancelarse.',
     SOLICITUD_VERSION_DESACTUALIZADA: 'La solicitud fue modificada por otro usuario. Actualice la información.',
     SOLICITUD_DECISION_CONCURRENTE: 'Otro usuario ya tomó una decisión sobre la solicitud.',
+    DESCRIPCION_CORREGIDA_REQUERIDA: 'La solicitud de nota de crédito requiere una descripción corregida de al menos 5 caracteres para el motivo 03.',
+    ITEM_INDICE_REQUERIDO: 'El índice de la línea a corregir es obligatorio para el motivo 03.',
     VERSION_SOLICITUD_INVALIDA: 'La versión de la solicitud no es válida.',
     USUARIO_NO_ENCONTRADO: 'La sesión ya no corresponde a un usuario válido.',
     USUARIO_INACTIVO: 'El usuario se encuentra inactivo.',
@@ -102,7 +110,10 @@ exports.contextoCertificado = async (req, res) => {
 
 exports.crear = async (req, res) => {
     try {
-        const resultado = await solicitudesService.crearAnulacionTotal(req.body || {}, req.user);
+        const tipo = String(req.body?.tipoOperacion || '').trim().toUpperCase();
+        const resultado = tipo === 'EMITIR_NOTA_CREDITO'
+            ? await solicitudesService.crearAutorizacionNotaCredito(req.body || {}, req.user)
+            : await solicitudesService.crearAnulacionTotal(req.body || {}, req.user);
         await auditar(req, resultado.creada ? 'SOLICITUD_CREADA' : 'SOLICITUD_IDEMPOTENTE', resultado.solicitud,
             resultado.creada ? 'Se registró una solicitud administrativa.' : 'Se recuperó una solicitud ya registrada.');
         return res.status(resultado.creada ? 201 : 200).json({ ok: true, data: resultado.solicitud, creada: resultado.creada });

@@ -54,7 +54,6 @@ router.use(authMiddleware);
 // quien lo tenía por esa vía. Lo que cambia es que MENU_FACTURACION a secas ya
 // no basta: hace falta el submódulo correspondiente.
 const facturacionAdminMiddleware = async (req, res, next) => {
-    if (req.user?.perfil_id === 'SISTEMAS') return next();
     // El endpoint de readiness es la pestaña PREPARACIÓN; el resto es COMPROBANTES.
     const esReadiness = req.path.endsWith('/readiness');
     const submodulo = esReadiness ? 'MENU_FACTURACION_PREPARACION' : 'MENU_FACTURACION_COMPROBANTES';
@@ -164,6 +163,7 @@ router.post('/borradores/:id/facturacion/consultar', documentosElectronicosContr
 router.post('/borradores/:id/facturacion/notas', documentosElectronicosController.emitirNota);
 router.post('/borradores/:id/facturacion/notas/:tipo/:notaId/consultar', documentosElectronicosController.consultarNota);
 router.post('/borradores/:id/facturacion/notas/:tipo/:notaId/emitir', documentosElectronicosController.reintentarNota);
+router.get('/borradores/:id/facturacion/notas/credito/:notaId/pdf', documentosElectronicosController.descargarPdfNotaCredito);
 router.post('/borradores/:id/facturacion/anulaciones', documentosElectronicosController.generarAnulacion);
 router.post('/borradores/:id/facturacion/anulaciones/:anulacionId/consultar', documentosElectronicosController.consultarAnulacion);
 router.get('/borradores/:id/facturacion/pdf', facturacionController.descargarPdfFaregas);

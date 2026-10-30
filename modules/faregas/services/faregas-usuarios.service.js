@@ -164,7 +164,7 @@ exports.crearUsuario = async (data, creadorUsername) => {
         `, [cleanUsername, hash, cleanPerfil, estadoBool, tipoUsr, nroDocumento || null]);
 
         // 3. Asignar sedes
-        if (cleanPerfil !== 'SISTEMAS' && Array.isArray(sedes) && sedes.length > 0) {
+        if (Array.isArray(sedes) && sedes.length > 0) {
             for (const planta_key of sedes) {
                 const check = await client.query('SELECT 1 FROM fg_perfil_planta WHERE perfil_clave = $1 AND planta_key = $2', [cleanPerfil, planta_key]);
                 if (check.rowCount === 0) {
@@ -263,7 +263,7 @@ exports.actualizarUsuario = async (oldUsername, data, modificadorUsername) => {
 
         // Actualizar plantas
         await client.query('DELETE FROM fg_usuario_planta WHERE usuario_username = $1', [newUsername]);
-        if (cleanPerfil !== 'SISTEMAS' && Array.isArray(sedes) && sedes.length > 0) {
+        if (Array.isArray(sedes) && sedes.length > 0) {
             for (const planta_key of sedes) {
                 const check = await client.query('SELECT 1 FROM fg_perfil_planta WHERE perfil_clave = $1 AND planta_key = $2', [cleanPerfil, planta_key]);
                 if (check.rowCount === 0) {

@@ -67,6 +67,7 @@ const crearDbSimulada = (opciones = {}) => {
             SISTEMAS: opciones.permisosSistemas || [PERMISOS_SOLICITUD.VER, PERMISOS_SOLICITUD.APROBAR, PERMISOS_SOLICITUD.RECHAZAR, PERMISOS_SOLICITUD.ADMINISTRAR],
             SUPERVISOR: [],
         },
+        perfilesGlobales: opciones.perfilesGlobales || [],
         plantas: {
             operador: opciones.plantasOperador || ['SURCO'],
             jefe: opciones.plantasJefe || ['SURCO'],
@@ -107,8 +108,31 @@ const crearDbSimulada = (opciones = {}) => {
             const usuario = estado.usuarios[params[0]];
             return resultado(usuario ? [usuario] : []);
         }
+        if (normal.includes('FROM fg_perfil_permiso pp') && normal.includes('pp.permiso_clave = $2')) {
+            return resultado(
+                estado.perfilesGlobales.includes(params[0])
+                    && params[1] === 'FAREGAS_ACCESO_GLOBAL_SEDES'
+                    ? [{
+                        acceso_global: true,
+                        permiso_clave: 'FAREGAS_ACCESO_GLOBAL_SEDES'
+                    }]
+                    : []
+            );
+        }
         if (normal.includes('FROM fg_perfil_permiso pp')) {
             return resultado((estado.permisos[params[0]] || []).map((permiso_clave) => ({ permiso_clave })));
+        }
+        if (normal.includes('SELECT p.key, p.nombre, p.empresa_key') && normal.includes('FROM fg_planta p')) {
+            const keys = [...new Set(Object.values(estado.plantas).flat())];
+            return resultado(keys.map((key) => ({ key, nombre: key, empresa_key: 'FAREGAS' })));
+        }
+        if (normal.includes('SELECT DISTINCT p.key, p.nombre, p.empresa_key') && normal.includes('FROM fg_usuario_planta up')) {
+            const username = params[0];
+            return resultado((estado.plantas[username] || []).map((key) => ({
+                key,
+                nombre: key,
+                empresa_key: 'FAREGAS'
+            })));
         }
         if (normal.includes('FROM fg_usuario_planta up')) {
             const username = params[0];
@@ -149,6 +173,12 @@ const crearDbSimulada = (opciones = {}) => {
             estado.eventos.push(evento);
             return resultado([]);
         }
+        if (normal.includes('FROM fg_credito') && normal.includes('WHERE facturacion_id = $1')) {
+            return resultado([]);
+        }
+        if (normal.includes('FROM fg_documento_anulacion') && normal.includes('WHERE facturacion_id = $1')) {
+            return resultado([]);
+        }
         if (normal.includes('FROM fg_solicitud_operacion s') && normal.includes('WHERE s.id = $1')) {
             return resultado(estado.solicitudes.filter((item) => Number(item.id) === Number(params[0])).map((item) => ({
                 ...item, planta_nombre: item.planta_key, empresa_nombre: item.empresa_key,
@@ -168,6 +198,7 @@ const crearDbSimulada = (opciones = {}) => {
             item.estado = cancelacion ? 'CANCELADA' : params[0];
             item.usuario_decision = cancelacion ? params[0] : params[1];
             item.justificacion_decision = cancelacion ? params[1] : params[2];
+            if (!cancelacion && params[5] === true) item.autorizacion_autoejecucion = true;
             item.fecha_decision = new Date(); item.version += 1; item.fecha_modificacion = new Date();
             return resultado([{ ...item }]);
         }
@@ -223,6 +254,37 @@ test('4. rechaza certificado de otra sede', async () => {
 test('5. permite al operador autorizado solicitar en su sede', async () => {
     const servicio = _private.crearServicio(crearDbSimulada());
     assert.equal((await servicio.crear(entradaValida(), usuario('operador', 'OPERADOR'))).solicitud.usuarioSolicitante, 'operador');
+});
+
+test('5b. crea una autorización de nota 01 vinculada al comprobante sin anular documentos', async () => {
+    const db = crearDbSimulada();
+    const servicio = _private.crearServicio(db);
+    const respuesta = await servicio.crearAutorizacionNotaCredito(entradaValida({
+        tipoOperacion: 'EMITIR_NOTA_CREDITO',
+        motivo: 'El cliente solicita anular la operación.',
+        datosPropuestos: { motivoCodigo: '01' },
+    }), usuario('operador', 'OPERADOR'));
+
+    assert.equal(respuesta.creada, true);
+    assert.equal(respuesta.solicitud.tipoOperacion, 'EMITIR_NOTA_CREDITO');
+    assert.equal(respuesta.solicitud.facturacionId, 20);
+    assert.deepEqual(respuesta.solicitud.datosPropuestos, { motivoCodigo: '01' });
+    assert.equal(respuesta.solicitud.estado, 'PENDIENTE_APROBACION');
+    assert.equal(db.estado.eventos[0].tipo_evento, 'SOLICITUD_CREADA');
+});
+
+test('5c. la autorización administrativa acepta el motivo 03 con solicitud de autorización', async () => {
+    const db = crearDbSimulada();
+    const servicio = _private.crearServicio(db);
+    const respuesta = await servicio.crearAutorizacionNotaCredito(entradaValida({
+        tipoOperacion: 'EMITIR_NOTA_CREDITO',
+        datosPropuestos: { motivoCodigo: '03', itemIndice: 0, descripcionCorregida: 'Descripción corregida válida' },
+    }), usuario('operador', 'OPERADOR'));
+    assert.equal(respuesta.creada, true);
+    assert.equal(respuesta.solicitud.tipoOperacion, 'EMITIR_NOTA_CREDITO');
+    assert.deepEqual(respuesta.solicitud.datosPropuestos, { motivoCodigo: '03', itemIndice: 0, descripcionCorregida: 'Descripción corregida válida' });
+    assert.equal(respuesta.solicitud.estado, 'PENDIENTE_APROBACION');
+    assert.equal(db.estado.eventos[0].tipo_evento, 'SOLICITUD_CREADA');
 });
 
 test('6. aprobación sin permiso responde fail-closed', async () => {
@@ -299,6 +361,78 @@ test('8d. SISTEMAS con ambos permisos autoaprueba sin iniciar ejecución', async
     assert.equal(db.estado.eventos[0].metadatos.autoaprobacion, true);
 });
 
+test('8e. una autorización de nota propia exige autoaprobación y confirmación explícitas', async () => {
+    const propia = filaSolicitud({
+        tipo_operacion: 'EMITIR_NOTA_CREDITO',
+        usuario_solicitante: 'sistemas',
+        datos_propuestos: { motivoCodigo: '01' },
+    });
+    const permisosSinAutoaprobacion = [
+        PERMISOS_SOLICITUD.VER,
+        PERMISOS_SOLICITUD.APROBAR,
+        PERMISOS_SOLICITUD.NOTA_CREDITO_APROBAR,
+        PERMISOS_SOLICITUD.AUTOAPROBAR,
+    ];
+    const sinPermiso = _private.crearServicio(crearDbSimulada({
+        solicitudes: [propia],
+        permisosSistemas: permisosSinAutoaprobacion,
+    }));
+    assert.equal(await capturarCodigo(sinPermiso.aprobar(1, {
+        version: 1,
+        justificacion: 'Excepción fiscal sustentada',
+        confirmarAutoaprobacion: true,
+    }, usuario('sistemas', 'SISTEMAS'))), 'SOLICITUD_AUTOAPROBACION_NO_AUTORIZADA');
+
+    const permisosCompletos = [...permisosSinAutoaprobacion, PERMISOS_SOLICITUD.NOTA_CREDITO_AUTOAPROBAR];
+    const sinConfirmacion = _private.crearServicio(crearDbSimulada({
+        solicitudes: [propia],
+        permisosSistemas: permisosCompletos,
+    }));
+    assert.equal(await capturarCodigo(sinConfirmacion.aprobar(1, {
+        version: 1,
+        justificacion: 'Excepción fiscal sustentada',
+    }, usuario('sistemas', 'SISTEMAS'))), 'SOLICITUD_AUTOAPROBACION_CONFIRMACION_REQUERIDA');
+});
+
+test('8f. la autoaprobación excepcional de nota deja evidencia para emitirla desde FAREGAS', async () => {
+    const db = crearDbSimulada({
+        solicitudes: [filaSolicitud({
+            tipo_operacion: 'EMITIR_NOTA_CREDITO',
+            usuario_solicitante: 'sistemas',
+            datos_propuestos: { motivoCodigo: '02' },
+        })],
+        permisosSistemas: [
+            PERMISOS_SOLICITUD.VER,
+            PERMISOS_SOLICITUD.APROBAR,
+            PERMISOS_SOLICITUD.AUTOAPROBAR,
+            PERMISOS_SOLICITUD.NOTA_CREDITO_APROBAR,
+            PERMISOS_SOLICITUD.NOTA_CREDITO_AUTOAPROBAR,
+        ],
+    });
+    const trabajos = [];
+    const servicio = _private.crearServicio(db, {
+        notasCreditoWorker: {
+            encolarAprobacion: async (_executor, solicitud, username) => {
+                trabajos.push({ solicitud, username });
+                return { id: 50, creada: true };
+            },
+            despertar: () => null,
+        },
+    });
+    const aprobada = await servicio.aprobar(1, {
+        version: 1,
+        justificacion: 'Excepción fiscal sustentada',
+        confirmarAutoaprobacion: true,
+        confirmarAutoejecucion: true,
+    }, usuario('sistemas', 'SISTEMAS'));
+
+    assert.equal(aprobada.estado, 'APROBADA');
+    assert.equal(aprobada.autorizacionAutoejecucion, true);
+    assert.equal(db.estado.eventos[0].metadatos.autoejecucionNotaAutorizada, true);
+    assert.equal(trabajos.length, 1);
+    assert.equal(trabajos[0].solicitud.estado, 'APROBADA');
+});
+
 test('9. otro usuario autorizado aprueba sin ejecutar la operación', async () => {
     const db = crearDbSimulada({ solicitudes: [filaSolicitud()] }); const servicio = _private.crearServicio(db);
     const aprobada = await servicio.aprobar(1, { version: 1, justificacion: 'Conforme' }, usuario('sistemas', 'SISTEMAS'));
@@ -345,6 +479,27 @@ test('15. empresa y sede se resuelven desde el certificado, no desde React', asy
 test('16. un revisor no puede cruzar sedes', async () => {
     const servicio = _private.crearServicio(crearDbSimulada({ solicitudes: [filaSolicitud()], plantasSistemas: ['SURQUILLO'] }));
     assert.equal(await capturarCodigo(servicio.aprobar(1, { version: 1 }, usuario('sistemas', 'SISTEMAS'))), 'SOLICITUD_SEDE_NO_AUTORIZADA');
+});
+
+test('16b. un aprobador global puede abrir la solicitud desde la notificación sin permiso VER', async () => {
+    const servicio = _private.crearServicio(crearDbSimulada({
+        solicitudes: [filaSolicitud()],
+        plantasSistemas: [],
+        perfilesGlobales: ['SISTEMAS'],
+        permisosSistemas: [PERMISOS_SOLICITUD.APROBAR]
+    }));
+    await assert.doesNotReject(() => servicio.historial(1, usuario('sistemas', 'SISTEMAS')));
+});
+
+test('16c. el acceso global sin permiso operativo no permite consultar la solicitud', async () => {
+    const servicio = _private.crearServicio(crearDbSimulada({
+        solicitudes: [filaSolicitud()],
+        perfilesGlobales: ['SUPERVISOR']
+    }));
+    assert.equal(
+        await capturarCodigo(servicio.historial(1, usuario('sinpermiso', 'SUPERVISOR'))),
+        'SOLICITUD_PERMISO_DENEGADO'
+    );
 });
 
 test('17. el solicitante puede cancelar mientras está pendiente', async () => {
@@ -464,7 +619,8 @@ test('29. esquema maestro y migración incremental contienen tablas, estados e �
     }
 });
 
-test('30. catálogos centralizados contienen seis tipos, ocho estados y bloqueo administrativo', () => {
-    assert.equal(TIPOS_SOLICITUD.length, 6); assert.equal(ESTADOS_SOLICITUD.length, 8);
+test('30. catálogos centralizados contienen siete tipos, ocho estados y bloqueo administrativo', () => {
+    assert.equal(TIPOS_SOLICITUD.length, 7); assert.equal(ESTADOS_SOLICITUD.length, 8);
+    assert.ok(TIPOS_SOLICITUD.includes('EMITIR_NOTA_CREDITO'));
     assert.deepEqual(ESTADOS_QUE_BLOQUEAN, ['PENDIENTE_APROBACION', 'APROBADA', 'EN_EJECUCION', 'REQUIERE_INTERVENCION']);
 });

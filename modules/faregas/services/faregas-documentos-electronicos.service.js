@@ -25,7 +25,8 @@ const {
     MOTIVOS_NOTA_CREDITO,
     normalizarMotivoNotaCredito,
     requiereSolicitudNotaCredito,
-    esMotivoCorreccionDescripcion
+    esMotivoCorreccionDescripcion,
+    esMotivoImplementado
 } = require('./faregas-notas-credito.constants');
 const {
     obtenerSnapshotFiscalOriginal,
@@ -307,6 +308,18 @@ const resolverAccionReintentoNota = (estado) => {
     throw errorNegocio('NOTA_NO_REINTENTABLE', 409, { estado: normalizado });
 };
 
+const esMarcadorColaNotaSinDocumento = (resultadoFiscal) => {
+    if (!resultadoFiscal || typeof resultadoFiscal !== 'object' || resultadoFiscal.notaId) return false;
+    if (String(resultadoFiscal.tipoOperacion || '').trim().toUpperCase() !== 'NOTA_CREDITO') return false;
+    return [
+        'AUTORIZADA_EN_COLA',
+        'ESPERANDO_COMPROBANTE',
+        'EMITIENDO',
+        'ERROR',
+        'BLOQUEADA'
+    ].includes(String(resultadoFiscal.estado || '').trim().toUpperCase());
+};
+
 const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaId = null) => {
     const tipo = normalizarTipoNota(tipoEntrada);
     const meta = TIPOS[tipo];
@@ -333,6 +346,11 @@ const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaI
             if (tipo === 'CREDITO') {
                 const motivoCodigo = normalizarMotivoNotaCredito(data.motivoCodigo || data.motivo_codigo);
                 if (!motivoCodigo) throw errorNegocio('MOTIVO_NOTA_CREDITO_NO_PERMITIDO_O_INVALIDO');
+                if (!esMotivoImplementado(motivoCodigo)) {
+                    throw errorNegocio('MOTIVO_NOTA_CREDITO_NO_IMPLEMENTADO', 400, {
+                        message: `El motivo ${motivoCodigo} está pendiente de implementación fiscal.`
+                    });
+                }
                 if (requiereSolicitudNotaCredito(motivoCodigo)) {
                     autorizacion = await autorizacionFiscalService.validarSolicitudAprobada({
                         solicitudId: data.solicitudId,
@@ -345,6 +363,12 @@ const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaI
                     });
                     if (Number(autorizacion.facturacionId) !== Number(facturacion.id)) {
                         throw errorNegocio('SOLICITUD_FACTURACION_NO_CORRESPONDE', 409);
+                    }
+                    if (String(autorizacion.motivoCodigoNota || '') !== motivoCodigo) {
+                        throw errorNegocio('SOLICITUD_MOTIVO_NOTA_NO_CORRESPONDE', 409, {
+                            motivoAutorizado: autorizacion.motivoCodigoNota,
+                            motivoSolicitado: motivoCodigo
+                        });
                     }
                 }
                 const sustentoFiscal = autorizacion?.motivo || data.sustento;
@@ -362,6 +386,7 @@ const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaI
                             meta,
                             nota: idempotente,
                             facturacion,
+                            solicitudId: autorizacion?.solicitudId || null,
                             yaExistente: true
                         };
                     }
@@ -388,11 +413,13 @@ const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaI
                             meta,
                             nota: idempotente,
                             facturacion,
+                            solicitudId: autorizacion?.solicitudId || null,
                             yaExistente: true
                         };
                     }
                 }
-                if (autorizacion?.resultadoFiscal) {
+                if (autorizacion?.resultadoFiscal
+                    && !esMarcadorColaNotaSinDocumento(autorizacion.resultadoFiscal)) {
                     throw errorNegocio('SOLICITUD_FISCAL_YA_PROCESADA', 409);
                 }
             }
@@ -444,6 +471,39 @@ const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaI
             await client.query(`UPDATE ${meta.tabla} SET estado = 'PENDIENTE', intentos = $2,
                 fecha_ultimo_intento = CURRENT_TIMESTAMP, usuario_modificacion = $3,
                 fecha_modificacion = CURRENT_TIMESTAMP WHERE id = $1`, [nota.id, intento, userContext.username]);
+            if (autorizacion?.solicitudId) {
+                const resultadoReserva = {
+                    tipoOperacion: 'NOTA_CREDITO',
+                    notaId: Number(nota.id),
+                    nroComprobante: nota.nro_comprobante || null,
+                    motivoCodigo: normalizada.motivoCodigo,
+                    estado: 'PENDIENTE',
+                    aceptadaSunat: null
+                };
+                await client.query(`
+                    UPDATE fg_solicitud_operacion
+                    SET estado = 'EN_EJECUCION',
+                        resultado_fiscal = $2::jsonb,
+                        usuario_ejecucion = COALESCE(usuario_ejecucion, $3),
+                        fecha_ejecucion = COALESCE(fecha_ejecucion, CURRENT_TIMESTAMP),
+                        version = version + 1,
+                        fecha_modificacion = CURRENT_TIMESTAMP
+                    WHERE id = $1
+                      AND tipo_operacion = 'EMITIR_NOTA_CREDITO'
+                      AND estado IN ('APROBADA', 'EN_EJECUCION', 'ERROR')
+                `, [autorizacion.solicitudId, JSON.stringify(resultadoReserva), userContext.username]);
+                await client.query(`
+                    INSERT INTO fg_solicitud_operacion_evento (
+                        solicitud_id, tipo_evento, estado_anterior, estado_posterior,
+                        usuario_responsable, comentario, metadatos
+                    ) VALUES ($1, 'NOTA_CREDITO_RESERVADA', 'APROBADA', 'EN_EJECUCION', $2, $3, $4::jsonb)
+                `, [
+                    autorizacion.solicitudId,
+                    userContext.username,
+                    'Se reservó la nota de crédito y se iniciará el envío fiscal.',
+                    JSON.stringify(resultadoReserva)
+                ]);
+            }
             await client.query('COMMIT');
             return {
                 tipo,
@@ -453,7 +513,8 @@ const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaI
                 payload,
                 intento,
                 operacionId,
-                credentials: configuracion.credentials
+                credentials: configuracion.credentials,
+                solicitudId: autorizacion?.solicitudId || null
             };
         }
 
@@ -478,8 +539,41 @@ const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaI
         await client.query(`UPDATE ${meta.tabla} SET estado = 'PENDIENTE', intentos = $2,
             fecha_ultimo_intento = CURRENT_TIMESTAMP, usuario_modificacion = $3,
             fecha_modificacion = CURRENT_TIMESTAMP WHERE id = $1`, [nota.id, intento, userContext.username]);
+        if (data.solicitudIdValidada) {
+            const resultadoReintento = {
+                tipoOperacion: 'NOTA_CREDITO',
+                notaId: Number(nota.id),
+                nroComprobante: nota.nro_comprobante || null,
+                motivoCodigo: nota.motivo_codigo,
+                estado: 'PENDIENTE',
+                aceptadaSunat: null,
+                reintento: true
+            };
+            await client.query(`
+                UPDATE fg_solicitud_operacion
+                SET estado = 'EN_EJECUCION',
+                    resultado_fiscal = $2::jsonb,
+                    usuario_ejecucion = COALESCE(usuario_ejecucion, $3),
+                    fecha_ejecucion = COALESCE(fecha_ejecucion, CURRENT_TIMESTAMP),
+                    version = version + 1,
+                    fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE id = $1
+                  AND tipo_operacion = 'EMITIR_NOTA_CREDITO'
+                  AND estado IN ('APROBADA', 'EN_EJECUCION', 'ERROR')
+            `, [data.solicitudIdValidada, JSON.stringify(resultadoReintento), userContext.username]);
+        }
         await client.query('COMMIT');
-        return { tipo, meta, nota, facturacion, payload, intento, operacionId, credentials: configuracion.credentials };
+        return {
+            tipo,
+            meta,
+            nota,
+            facturacion,
+            payload,
+            intento,
+            operacionId,
+            credentials: configuracion.credentials,
+            solicitudId: data.solicitudIdValidada || null
+        };
     } catch (error) {
         await client.query('ROLLBACK');
         throw error;
@@ -520,6 +614,51 @@ const completarNota = async (reserva, resultado, userContext, opciones = {}) => 
             JSON.stringify(respuesta), userContext.username
         ]);
         await finalizarOperacion(client, reserva.operacionId, resultado, respuesta);
+        if (reserva.solicitudId) {
+            const estadoSolicitud = estado === 'ACEPTADO'
+                ? 'COMPLETADA'
+                : estado === 'PENDIENTE'
+                    ? 'EN_EJECUCION'
+                    : 'ERROR';
+            const resultadoFiscal = {
+                tipoOperacion: 'NOTA_CREDITO',
+                notaId: Number(reserva.nota.id),
+                nroComprobante: reserva.nota.nro_comprobante || null,
+                motivoCodigo: reserva.nota.motivo_codigo,
+                estado,
+                aceptadaSunat: mapearAceptacionSunat(resultado),
+                sunatDescription: respuesta.sunat_description || respuesta.errors || resultado.reason || null
+            };
+            const solicitudActualizada = await client.query(`
+                UPDATE fg_solicitud_operacion
+                SET estado = $2,
+                    resultado_fiscal = $3::jsonb,
+                    usuario_ejecucion = COALESCE(usuario_ejecucion, $4),
+                    fecha_ejecucion = COALESCE(fecha_ejecucion, CURRENT_TIMESTAMP),
+                    version = version + 1,
+                    fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE id = $1
+                  AND tipo_operacion = 'EMITIR_NOTA_CREDITO'
+                  AND estado IN ('APROBADA', 'EN_EJECUCION', 'REQUIERE_INTERVENCION', 'ERROR')
+                RETURNING id
+            `, [reserva.solicitudId, estadoSolicitud, JSON.stringify(resultadoFiscal), userContext.username]);
+            if (solicitudActualizada.rowCount > 0) {
+                await client.query(`
+                    INSERT INTO fg_solicitud_operacion_evento (
+                        solicitud_id, tipo_evento, estado_anterior, estado_posterior,
+                        usuario_responsable, comentario, metadatos
+                    ) VALUES ($1, 'NOTA_CREDITO_PROCESADA', NULL, $2, $3, $4, $5::jsonb)
+                `, [
+                    reserva.solicitudId,
+                    estadoSolicitud,
+                    userContext.username,
+                    estado === 'ACEPTADO'
+                        ? 'La nota de crédito fue aceptada.'
+                        : 'La nota de crédito quedó pendiente o con error fiscal.',
+                    JSON.stringify(resultadoFiscal)
+                ]);
+            }
+        }
         await client.query('COMMIT');
     } catch (error) {
         await client.query('ROLLBACK');
@@ -567,6 +706,7 @@ exports.reintentarNota = async (certificadoId, tipo, notaId, userContext, data =
     if (accion === 'CONSULTAR') {
         return exports.consultarNota(certificadoId, tipoNormalizado, notaId, userContext, dependencies);
     }
+    let solicitudIdValidada = null;
     if (tipoNormalizado === 'CREDITO' && requiereSolicitudNotaCredito(actual.rows[0].motivo_codigo)) {
         const autorizacion = await autorizacionFiscalService.validarSolicitudAprobada({
             solicitudId: data.solicitudId,
@@ -579,9 +719,16 @@ exports.reintentarNota = async (certificadoId, tipo, notaId, userContext, data =
         if (Number(autorizacion.facturacionId) !== Number(facturacion.id)) {
             throw errorNegocio('SOLICITUD_FACTURACION_NO_CORRESPONDE', 409);
         }
+        if (String(autorizacion.motivoCodigoNota || '') !== String(actual.rows[0].motivo_codigo || '').padStart(2, '0')) {
+            throw errorNegocio('SOLICITUD_MOTIVO_NOTA_NO_CORRESPONDE', 409, {
+                motivoAutorizado: autorizacion.motivoCodigoNota,
+                motivoSolicitado: actual.rows[0].motivo_codigo
+            });
+        }
+        solicitudIdValidada = autorizacion.solicitudId;
     }
 
-    const reserva = await reservarNota(certificadoId, tipoNormalizado, {}, userContext, notaId);
+    const reserva = await reservarNota(certificadoId, tipoNormalizado, { solicitudIdValidada }, userContext, notaId);
     const proveedor = dependencies.nubefactService || nubefactService;
     let resultado = await proveedor.emitirComprobante(reserva.payload, { credentials: reserva.credentials });
     resultado = await recuperarResultadoIncierto({
@@ -623,6 +770,17 @@ const prepararConsultaNota = async (certificadoId, tipoEntrada, notaId, userCont
         solicitud: payload,
         username: userContext.username
     });
+    const solicitudRelacionada = tipo === 'CREDITO' ? await db.query(`
+        SELECT id
+        FROM fg_solicitud_operacion
+        WHERE tipo_operacion = 'EMITIR_NOTA_CREDITO'
+          AND CASE
+                WHEN COALESCE(resultado_fiscal ->> 'notaId', '') ~ '^[0-9]+$'
+                THEN (resultado_fiscal ->> 'notaId')::bigint
+              END = $1
+        ORDER BY id DESC
+        LIMIT 1
+    `, [nota.id]) : { rows: [] };
     return {
         tipo,
         meta,
@@ -630,7 +788,8 @@ const prepararConsultaNota = async (certificadoId, tipoEntrada, notaId, userCont
         facturacion,
         payload,
         operacionId,
-        credentials: configuracion.credentials
+        credentials: configuracion.credentials,
+        solicitudId: solicitudRelacionada.rows[0]?.id ? Number(solicitudRelacionada.rows[0].id) : null
     };
 };
 
@@ -669,6 +828,17 @@ exports.reconciliarNotaPendiente = async (notaId, dependencies = {}) => {
         solicitud: payload,
         username
     });
+    const solicitudRelacionada = await db.query(`
+        SELECT id
+        FROM fg_solicitud_operacion
+        WHERE tipo_operacion = 'EMITIR_NOTA_CREDITO'
+          AND CASE
+                WHEN COALESCE(resultado_fiscal ->> 'notaId', '') ~ '^[0-9]+$'
+                THEN (resultado_fiscal ->> 'notaId')::bigint
+              END = $1
+        ORDER BY id DESC
+        LIMIT 1
+    `, [nota.id]);
     const proveedor = dependencies.nubefactService || nubefactService;
     const resultado = await proveedor.consultarComprobante(payload, {
         credentials: configuracion.credentials
@@ -678,7 +848,8 @@ exports.reconciliarNotaPendiente = async (notaId, dependencies = {}) => {
         meta: TIPOS.CREDITO,
         nota,
         payload,
-        operacionId
+        operacionId,
+        solicitudId: solicitudRelacionada.rows[0]?.id ? Number(solicitudRelacionada.rows[0].id) : null
     }, resultado, { username }, { lanzarError: false });
 };
 
@@ -715,6 +886,32 @@ exports.listarDocumentos = async (certificadoId, userContext) => {
     };
 };
 
+// Recupera exclusivamente una nota ya persistida y vinculada al comprobante del
+// certificado. No consulta al proveedor, no reserva correlativos y no emite.
+exports.obtenerNotaCreditoParaDescarga = async (certificadoId, notaId, userContext) => {
+    const certificado = Number(certificadoId);
+    const creditoId = Number(notaId);
+    if (!Number.isInteger(certificado) || certificado <= 0
+        || !Number.isInteger(creditoId) || creditoId <= 0) {
+        throw errorNegocio('NOTA_NO_ENCONTRADA', 404);
+    }
+
+    const facturacion = await validarAccesoFacturacion(db, certificado, userContext);
+    const result = await db.query(`
+        SELECT id, facturacion_id, serie, numero, nro_comprobante, estado,
+               empresa_key, planta_key, enlace_pdf
+        FROM fg_credito
+        WHERE id = $1 AND facturacion_id = $2
+    `, [creditoId, facturacion.id]);
+    if (result.rowCount === 0) throw errorNegocio('NOTA_NO_ENCONTRADA', 404);
+
+    const nota = result.rows[0];
+    if (!String(nota.enlace_pdf || '').trim()) {
+        throw errorNegocio('PDF_NOTA_CREDITO_NO_DISPONIBLE', 404);
+    }
+    return nota;
+};
+
 const tipoDocumentoCliente = (codigo) => ({
     0: 'SIN DOCUMENTO',
     1: 'DNI',
@@ -729,18 +926,24 @@ exports.obtenerContextoNotaCredito = async (certificadoId, userContext) => {
     if (!esDocumentoBaseOperable(facturacion)) throw errorNegocio('COMPROBANTE_NO_ACEPTADO', 409);
     const snapshot = await obtenerSnapshotFiscalOriginal(db, facturacion);
     const solicitudes = await db.query(`
-        SELECT id, tipo_operacion, estado, motivo, observaciones,
+        SELECT id, tipo_operacion, estado, motivo, observaciones, datos_propuestos,
+               autorizacion_autoejecucion,
                usuario_solicitante, usuario_decision, fecha_solicitud, fecha_decision
         FROM fg_solicitud_operacion
         WHERE certificado_id = $1
           AND facturacion_id = $2
-          AND tipo_operacion = 'ANULAR_AMBOS'
+          AND tipo_operacion = 'EMITIR_NOTA_CREDITO'
           AND estado IN ('APROBADA', 'EN_EJECUCION')
           AND resultado_fiscal IS NULL
         ORDER BY fecha_decision DESC NULLS LAST, id DESC
     `, [certificadoId, facturacion.id]);
 
     return {
+        // Si se llegó hasta aquí, validarPermisoNotaCredito ya comprobó el
+        // permiso efectivo del perfil. Se expone de forma explícita para que
+        // el frontend no lo infiera erróneamente desde las autorizaciones
+        // administrativas, que son un requisito independiente para 01 y 02.
+        puedeEmitir: true,
         motivos: Object.values(MOTIVOS_NOTA_CREDITO).map((motivo) => ({ ...motivo })),
         comprobante: {
             id: Number(facturacion.id),
@@ -798,7 +1001,9 @@ exports.obtenerContextoNotaCredito = async (certificadoId, userContext) => {
             usuarioDecision: row.usuario_decision,
             fechaSolicitud: row.fecha_solicitud,
             fechaDecision: row.fecha_decision,
+            motivoCodigo: row.datos_propuestos?.motivoCodigo || null,
             ejecutablePorUsuario: row.usuario_solicitante !== userContext.username
+                || row.autorizacion_autoejecucion === true
         }))
     };
 };
@@ -1063,6 +1268,7 @@ exports._private = {
     recuperarResultadoIncierto,
     buscarNotaIdempotente,
     resolverAccionReintentoNota,
+    esMarcadorColaNotaSinDocumento,
     esResultadoInciertoProveedor,
     completarNota,
     validarSinAnulacionActiva,

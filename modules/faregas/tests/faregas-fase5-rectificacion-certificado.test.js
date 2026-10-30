@@ -573,9 +573,14 @@ test('el esquema garantiza una sola versión vigente por certificado', () => {
 test('SUPERVISOR, CAJERO y SISTEMAS tienen la misma validación de acceso por sede', async () => {
     for (const perfil of ['SUPERVISOR', 'CAJERO', 'SISTEMAS']) {
         const executor = {
-            query: async (_sql, params) => {
-                assert.deepEqual(params, ['SURCO', `usuario_${perfil}`, 'SURCO']);
-                return { rowCount: 1, rows: [{ acceso: 1 }] };
+            query: async (sql, params) => {
+                const texto = String(sql);
+                if (texto.includes('pp.permiso_clave = $2')) {
+                    assert.deepEqual(params, [perfil, 'FAREGAS_ACCESO_GLOBAL_SEDES']);
+                    return { rowCount: 0, rows: [] };
+                }
+                assert.deepEqual(params, [`usuario_${perfil}`, perfil, null]);
+                return { rowCount: 1, rows: [{ key: 'SURCO', nombre: 'SURCO', empresa_key: 'FAREGAS' }] };
             }
         };
         await assert.doesNotReject(() => _private.validarAccesoPlanta(
@@ -610,6 +615,37 @@ test('un usuario sin acceso a la sede continúa bloqueado', async () => {
         ),
         (error) => error.code === 'PLANTA_NO_AUTORIZADA' && error.statusCode === 403
     );
+});
+
+test('rectificación acepta un perfil no SISTEMAS con acceso global configurable', async () => {
+    const executor = {
+        query: async (sql, params) => {
+            const texto = String(sql);
+            if (texto.includes('pp.permiso_clave = $2')) {
+                assert.deepEqual(params, ['CENTRAL', 'FAREGAS_ACCESO_GLOBAL_SEDES']);
+                return {
+                    rowCount: 1,
+                    rows: [{
+                        acceso_global: true,
+                        permiso_clave: 'FAREGAS_ACCESO_GLOBAL_SEDES'
+                    }]
+                };
+            }
+            if (texto.includes('FROM fg_planta p')) {
+                return {
+                    rowCount: 1,
+                    rows: [{ key: 'SURCO', nombre: 'SURCO', empresa_key: 'FAREGAS' }]
+                };
+            }
+            throw new Error('No debe consultar asignaciones individuales para un perfil global');
+        }
+    };
+
+    await assert.doesNotReject(() => _private.validarAccesoPlanta(
+        executor,
+        { username: 'central1', perfil_id: 'CENTRAL' },
+        'SURCO'
+    ));
 });
 
 test('la ejecución directa persiste la versión corregida vigente sin solicitud ni escritura fiscal', async () => {
@@ -661,8 +697,11 @@ test('la ejecución directa persiste la versión corregida vigente sin solicitud
             if (limpio.includes('FROM fg_usuario') && !limpio.includes('fg_usuario_planta')) {
                 return { rowCount: 1, rows: [{ username: 'cajero', perfil_id: 'CAJERO', estado: true }] };
             }
+            if (limpio.includes('pp.permiso_clave = $2')) return { rowCount: 0, rows: [] };
             if (limpio.includes('FROM fg_certificado c')) return { rowCount: 1, rows: [cert] };
-            if (limpio.includes('FROM fg_usuario_planta')) return { rowCount: 1, rows: [{ acceso: 1 }] };
+            if (limpio.includes('FROM fg_usuario_planta')) {
+                return { rowCount: 1, rows: [{ key: 'SURCO', nombre: 'SURCO', empresa_key: 'FAREGAS' }] };
+            }
             if (limpio.includes("metadatos->>'idempotenciaClave'")) return { rowCount: 0, rows: [] };
             if (limpio.includes('FROM fg_solicitud_operacion')) return { rowCount: 0, rows: [] };
             if (limpio.includes('COALESCE(MAX(numero_version)')) return { rowCount: 1, rows: [{ ultima: 0 }] };

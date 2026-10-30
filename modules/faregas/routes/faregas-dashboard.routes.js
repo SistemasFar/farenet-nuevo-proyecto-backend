@@ -7,8 +7,6 @@ const db = require('../../../config/database');
 const verificarAccesoDashboard = async (req, res, next) => {
     try {
         const perfilId = req.user?.perfil_id;
-        if (perfilId === 'SISTEMAS') return next();
-
         const r = await db.query(
             `SELECT 1 FROM fg_perfil_permiso 
              WHERE perfil_clave = $1 

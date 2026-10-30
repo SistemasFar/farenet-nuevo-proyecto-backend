@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const bcrypt = require('bcryptjs');
+const accesoSedesService = require('./faregas-acceso-sedes.service');
 
 const normalizarTexto = (valor) => {
     return String(valor || '').trim();
@@ -58,39 +59,18 @@ exports.validarFaregas = async (username, password) => {
 };
 
 exports.getPlantasPorUsuario = async (username, perfilId) => {
-    if (perfilId === 'SISTEMAS') {
-        const result = await db.query('SELECT key, nombre FROM fg_planta WHERE activo = true ORDER BY nombre');
-        return result.rows;
-    } else {
-        const query = `
-            SELECT p.key, p.nombre 
-            FROM fg_usuario_planta up
-            JOIN fg_perfil_planta pp ON up.plantas_key = pp.planta_key
-            JOIN fg_planta p ON p.key = up.plantas_key
-            WHERE up.usuario_username = $1 AND pp.perfil_clave = $2 AND p.activo = true
-            ORDER BY p.nombre
-        `;
-        const result = await db.query(query, [username, perfilId]);
-        return result.rows;
-    }
+    return accesoSedesService.obtenerPlantasAutorizadas(db, {
+        username,
+        perfilId
+    });
 };
 
 exports.validarAccesoPlanta = async (username, perfilId, plantaKey) => {
-    if (perfilId === 'SISTEMAS') {
-        const r = await db.query('SELECT key, nombre FROM fg_planta WHERE key = $1 LIMIT 1', [plantaKey]);
-        return r.rows.length > 0 ? r.rows[0] : null;
-    } else {
-        const query = `
-            SELECT p.key, p.nombre 
-            FROM fg_usuario_planta up
-            JOIN fg_perfil_planta pp ON up.plantas_key = pp.planta_key
-            JOIN fg_planta p ON p.key = up.plantas_key
-            WHERE up.usuario_username = $1 AND pp.perfil_clave = $2 AND p.key = $3
-            LIMIT 1
-        `;
-        const r = await db.query(query, [username, perfilId, plantaKey]);
-        return r.rows.length > 0 ? r.rows[0] : null;
-    }
+    return accesoSedesService.obtenerAccesoPlanta(db, {
+        username,
+        perfilId,
+        plantaKey
+    });
 };
 
 exports.getPermisosPorPerfil = async (perfilId) => {

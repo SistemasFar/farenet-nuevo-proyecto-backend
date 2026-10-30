@@ -118,8 +118,22 @@ const crearMockDb = ({
         if (normal.includes('FROM fg_usuario') && normal.includes('WHERE username = $1')) {
             return res([{ username: params[0], perfil_id: perfilUsuario, estado: true }]);
         }
+        if (normal.includes('FROM fg_perfil_permiso pp') && normal.includes('pp.permiso_clave = $2')) {
+            return permisos.includes(params[1])
+                ? res([{ acceso_global: true, permiso_clave: params[1] }])
+                : res([]);
+        }
         if (normal.includes('FROM fg_perfil_permiso pp')) {
             return res(permisos.map((p) => ({ permiso_clave: p })));
+        }
+        if (normal.includes('SELECT DISTINCT p.key, p.nombre, p.empresa_key')
+            && normal.includes('FROM fg_usuario_planta up')) {
+            return plantasUsuario.includes(solicitud.planta_key)
+                ? res([{
+                    key: solicitud.planta_key,
+                    nombre: solicitud.planta_key,
+                    empresa_key: solicitud.empresa_key
+                }]) : res([]);
         }
         if (normal.includes('FROM fg_usuario_planta up')) {
             return plantasUsuario.includes(solicitud.planta_key)

@@ -2,9 +2,11 @@ const cron = require('node-cron');
 const pool = require('./config/database');
 const { reconciliarPendientesSunat } = require('./modules/faregas/services/faregas-nubefact-cron.service');
 const { reconciliarNotasPendientesSunat } = require('./modules/faregas/services/faregas-nubefact-notas-cron.service');
+const notasCreditoWorker = require('./modules/faregas/services/faregas-notas-credito-worker.service');
 const { reconciliarAnulacionesPendientes } = require('./modules/faregas/services/faregas-solicitudes-operacion.service');
 
 let reconciliacionAnulacionesEnCurso = false;
+let emisionNotasEnCurso = false;
 
 // Se ejecuta todos los d�as a las 3:00 AM
 const startCronJobs = () => {
@@ -32,6 +34,27 @@ const startCronJobs = () => {
       client.release();
     }
     console.log('[CRON] Recolector de basura finalizado.');
+  });
+
+  // Recupera trabajos persistentes después de un reinicio. La bandera es
+  // independiente de la conciliación: una nota autorizada se emite una sola
+  // vez y los resultados inciertos se consultan antes de cualquier reintento.
+  cron.schedule('* * * * *', async () => {
+    const integrationsConfig = require('./config/integrations.config');
+    if (!integrationsConfig.nubefact.enabled
+        || !integrationsConfig.nubefact.notasAutoEmissionEnabled
+        || emisionNotasEnCurso) return;
+    emisionNotasEnCurso = true;
+    try {
+      const resultado = await notasCreditoWorker.procesarPendientes();
+      if (resultado.reclamados > 0) {
+        console.log('[CRON] Trabajos de notas de crédito procesados.', resultado);
+      }
+    } catch (error) {
+      console.error('[CRON] Fallo en la cola de notas de crédito:', error.message);
+    } finally {
+      emisionNotasEnCurso = false;
+    }
   });
 
   // Se ejecuta cada 10 minutos

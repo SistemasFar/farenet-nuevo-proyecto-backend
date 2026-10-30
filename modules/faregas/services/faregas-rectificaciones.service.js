@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const db = require('../../../config/database');
 const certificadosService = require('./faregas-certificados.service');
 const pdfVersionService = require('./faregas-rectificacion-pdf.service');
+const accesoSedesService = require('./faregas-acceso-sedes.service');
 const {
     PERMISOS_SOLICITUD,
     ESTADOS_QUE_BLOQUEAN
@@ -105,18 +106,13 @@ const exigirPermiso = (permisos, permiso) => {
         throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { permiso });
     }
 };
-const validarAccesoPlanta = async (executor, usuario, plantaKey, plantaKeySesion) => {
-    const acceso = await executor.query(`
-        SELECT 1
-        FROM fg_planta p
-        WHERE p.key = $1 AND p.activo = TRUE
-          AND (
-              EXISTS (SELECT 1 FROM fg_usuario_planta up WHERE up.usuario_username = $2 AND up.plantas_key = $1)
-              OR $1 = $3
-          )
-        LIMIT 1
-    `, [plantaKey, usuario.username, plantaKeySesion]);
-    if (acceso.rowCount === 0) throw errorNegocio('PLANTA_NO_AUTORIZADA', 403);
+const validarAccesoPlanta = async (executor, usuario, plantaKey) => {
+    const acceso = await accesoSedesService.obtenerAccesoPlanta(executor, {
+        username: usuario.username,
+        perfilId: usuario.perfil_id,
+        plantaKey
+    });
+    if (!acceso) throw errorNegocio('PLANTA_NO_AUTORIZADA', 403);
 };
 const conTransaccion = async (trabajo) => {
     const client = await db.connect();
@@ -1417,21 +1413,22 @@ const listarSolicitudesPendientesRectificacion = async (userContext, filtros = {
         throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403, { permiso: PERMISOS_SOLICITUD.VER });
     }
     const estados = filtros.estado ? [String(filtros.estado).toUpperCase()] : ['PENDIENTE_APROBACION', 'APROBADA'];
+    const plantas = await accesoSedesService.obtenerPlantasAutorizadas(db, {
+        username: usuario.username,
+        perfilId: usuario.perfil_id
+    });
+    const plantasKeys = plantas.map((planta) => planta.key);
+    if (plantasKeys.length === 0) return [];
     const result = await db.query(`
         SELECT s.*, c.numero_certificado, c.fecha_emision
         FROM fg_solicitud_operacion s
         JOIN fg_certificado c ON c.id = s.certificado_id
-        JOIN fg_usuario_planta up
-          ON up.plantas_key = s.planta_key
-         AND up.usuario_username = $1
-        JOIN fg_perfil_planta pp
-          ON pp.planta_key = s.planta_key
-         AND pp.perfil_clave = $2
-        WHERE s.tipo_operacion = $3
-          AND s.estado = ANY($4::varchar[])
+        WHERE s.planta_key = ANY($1::varchar[])
+          AND s.tipo_operacion = $2
+          AND s.estado = ANY($3::varchar[])
         ORDER BY s.fecha_solicitud DESC
         LIMIT 100
-    `, [usuario.username, usuario.perfil_id, TIPO_RECTIFICACION, estados]);
+    `, [plantasKeys, TIPO_RECTIFICACION, estados]);
     return result.rows.map((row) => ({
         ...mapearSolicitudRectificacion(row),
         numeroCertificado: row.numero_certificado,
