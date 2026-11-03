@@ -22,7 +22,19 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
         ? titulares.map(t => t.nombre_razon_social).join(' / ')
         : (cert.cliente_nombre || '-');
 
-    const tallerDisplay = 'CHARING S.A.C. Calle San Pedro N° 745 Surquillo Lima';
+const tallerDisplay = 'CHARING S.A.C. Calle San Pedro N° 745 Surquillo Lima';
+
+    // Identifica si el certificado pertenece al flujo TALLER_INSPECCION para aplicar
+    // la normalización de observaciones: "NINGUNA" si viene vacío, o el texto exacto si hay observación.
+    const esTaller = cert && cert.servicio_tipo_flujo === 'TALLER_INSPECCION';
+    let observacionesMostrar;
+    if (esTaller) {
+        const obsRaw = cert.observaciones || '';
+        observacionesMostrar = String(obsRaw.trim()) || 'NINGUNA';
+    } else {
+        // Sin transformación: el campo opcional mantiene su valor original.
+        observacionesMostrar = cert.observaciones;
+    }
 
     // Verificaciones 1-7 GLP INICIAL
     const verifMap = {};
@@ -371,13 +383,15 @@ function generateGlpInicialHtml(data, options = { modo: "PREVIEW" }) {
         Conste por el presente documento que el sistema de combustión a Gas Licuado de Petróleo-GLP del vehículo antes referido, no afecta negativamente la seguridad del mismo, el tránsito terrestre, el medio ambiente o incumple con las condiciones técnicas establecidas en la normativa vigente en la materia, según consta en el expediente técnico <strong>N.º ${escapeHtml(numCertificado)}</strong> habilitándose al mismo para cargar Gas Licuado de Petróleo-GLP, hasta el <strong>${escapeHtml(vigenciaHastaFmt)}</strong>.
     </div>
 
-    <div class="obs-sec">
+<div class="obs-sec">
         <strong>Observaciones</strong>
-        <div>Este documento no es válido en caso de presentar cualquier tipo de alteración o enmendadura.</div>
-        <div>- Este documento es válido únicamente en original, con firma y sello del ingeniero supervisor.</div>
-        <div>- Las abreviaturas: S/V significa “Sin Versión”, NE significa “No Especificado en los documentos presentados”</div>
-        <div>- Las condiciones técnicas y de seguridad verificadas en el vehículo, corresponden a las expuestas en la Directiva No. 005-2007-MTC/15.</div>
-        <div>- El presente Certificado es emitido a solicitud del taller autorizado <strong>CHARING S.A.C. Calle San Pedro N° 745 Surquillo Lima</strong>.</div>
+        ${esTaller ? observacionesMostrar : (
+            `<div>- Este documento no es válido en caso de presentar cualquier tipo de alteración o enmendadura.</div>
+            <div>- Este documento es válido únicamente en original, con firma y sello del representante y del ingeniero supervisor.</div>
+            <div>- Las abreviaturas: S/V significa “Sin Versión”, NE significa “No Especificado en los documentos presentados”</div>
+            <div>- Las condiciones técnicas y de seguridad verificadas en el vehículo, corresponden a las expuestas en la Directiva No. 005-2007-MTC/15 y sus modificatorias.</div>
+            <div>- El presente Certificado es emitido a solicitud del taller autorizado <strong>CHARING S.A.C. Calle San Pedro N° 745 Surquillo Lima</strong>.</div>`
+        )}
     </div>
 
     <div class="footer-sec" style="margin-top: 10px; font-weight: bold; text-align: center;">

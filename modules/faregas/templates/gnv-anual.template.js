@@ -54,10 +54,18 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
     const lugarEmision = cert.lugar_emision || '-';
 
     // Observaciones del inspector (campo opcional).
-    // Si contiene texto válido, se muestra "OBSERVACIONES: <texto>".
-    // Si viene vacío, null, undefined o texto marcador ("NINGUNA", "N/A", "SIN OBSERVACIONES"),
-    // se renderiza "OBSERVACIONES:" seguido de 2 líneas punteadas para conservar el formato
-    // original del documento, sin imprimir null, undefined, N/A o NINGUNA.
+// Identifica el tipo de flujo mediante el servicio real, no mediante palabras en el nombre del certificado.
+const esTaller = cert && cert.servicio_tipo_flujo === 'TALLER_INSPECCION';
+
+// Para certificados de taller: si viene vacío/espacios → "NINGUNA", si hay texto → mostrarlo tal cual.
+// Para certificados normales: comportamiento existente.
+let observacionesMostrar;
+if (esTaller) {
+    // Taller: mostrar "NINGUNA" si viene vacío/espacios, o el texto exacto si hay observación
+    const obsRaw = (gnv && gnv.observaciones) || (cert && cert.observaciones) || '';
+    observacionesMostrar = String(obsRaw.trim()) || 'NINGUNA';
+} else {
+    // Normal: comportamiento existente
     const rawObservaciones = (gnv && gnv.observaciones) || (cert && cert.observaciones) || '';
     let cleanObservaciones = typeof rawObservaciones === 'string'
         ? rawObservaciones.trim().slice(0, 250)
@@ -65,9 +73,21 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
     if (['NULL', 'UNDEFINED', 'N/A', 'NA', 'SIN OBSERVACIONES', 'NINGUNA', 'NINGUNO', '-', 'VACÍO', 'VACIO', 'NONE'].includes(cleanObservaciones.toUpperCase())) {
         cleanObservaciones = '';
     }
+    observacionesMostrar = cleanObservaciones;
+}
 
-    const obsContentHtml = cleanObservaciones
-        ? `<strong>OBSERVACIONES:</strong> ${escapeHtml(cleanObservaciones).replace(/(?:\r\n|\r|\n)/g, '<br>')}`
+const obsContentHtml = esTaller
+    ? String(observacionesMostrar).trim() === 'NINGUNA'
+        ? `<div class="obs-sec">
+            <strong>Observaciones</strong>
+            <div>- Ninguna.</div>
+        </div>`
+        : `<div class="obs-sec">
+            <strong>Observaciones</strong>
+            <div>- ${escapeHtml(observacionesMostrar)}</div>
+        </div>`
+    : (observacionesMostrar
+        ? `<strong>OBSERVACIONES:</strong> ${escapeHtml(observacionesMostrar).replace(/(?:\r\n|\r|\n)/g, '<br>')}`
         : `<div class="obs-header-line">
             <span class="obs-label"><strong>OBSERVACIONES:</strong></span>
             <div class="obs-dots-container">
@@ -76,7 +96,7 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
         </div>
         <div class="obs-dots-full">
             <svg width="100%" height="8" style="display:block;"><line x1="0" y1="6" x2="100%" y2="6" stroke="#000" stroke-width="1.2" stroke-dasharray="1 3.5" stroke-linecap="round"/></svg>
-        </div>`;
+        </div>`);
 
     return `<!DOCTYPE html>
 <html lang="es">

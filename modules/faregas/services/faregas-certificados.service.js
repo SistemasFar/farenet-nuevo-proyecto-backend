@@ -1192,6 +1192,14 @@ exports.actualizarPasoBorrador = async (id, pasoActual, userContext) => {
         if (destino > actual + 1) throw new Error('TRANSICION_PASO_INVALIDA');
         if (destino > actual && destino > 0 && certificado.tipo_flujo === 'TALLER_INSPECCION') {
             const nombreTaller = certificado.formato_datos_snapshot?.taller?.nombre;
+            validarNombreTaller(nombreTaller, { permitirVacio: true });
+        } else if (certificado.tipo_flujo !== 'TALLER_INSPECCION') {
+            // Para certificados no-taller, el nombre del taller no es requerido
+            // en Datos Iniciales; la validación de placa se hará en el paso correspondiente
+            // (o si el frontend muestra el campo, este validación será permisiva).
+            // No ejecutar validación de nombre_taller para evitar error NOMBRE_TALLER_REQUERIDO.
+        } else {
+            const nombreTaller = certificado.formato_datos_snapshot?.taller?.nombre;
             validarNombreTaller(nombreTaller, { permitirVacio: false });
         }
         // Volver a revisar una pantalla no reduce el progreso persistido.

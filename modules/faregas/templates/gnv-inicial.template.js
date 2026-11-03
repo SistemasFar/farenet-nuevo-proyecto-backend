@@ -23,18 +23,30 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
         ? gnv.taller_razon_social
         : 'CONVERTIGAS S.A.C FAREGAS I';
 
-    // Observaciones del operador (campo opcional). Se extrae de data.gnv o data.cabecera.
-    // Si viene vacío o con marcadores ("null", "undefined", "-", "vacio"), no se imprime nada extra.
-    // Si contiene texto, se escapa contra HTML para evitar inyección y se preservan saltos de línea con <br>.
-    const rawObservaciones = gnv.observaciones || cert.observaciones || '';
-    let cleanObservaciones = typeof rawObservaciones === 'string'
-        ? rawObservaciones.trim().slice(0, 250)
-        : '';
-    if (['NULL', 'UNDEFINED', 'N/A', 'NA', 'SIN OBSERVACIONES', 'NINGUNA', 'NINGUNO', '-', 'VACÍO', 'VACIO', 'NONE'].includes(cleanObservaciones.toUpperCase())) {
-        cleanObservaciones = '';
+// Observaciones del operador (campo opcional). Identifica el tipo de flujo mediante el servicio real, no mediante palabras en el nombre del certificado.
+    // Si el certificado pertenece a taller (TALLER_INSPECCION):
+    //   - Si viene vacío o con solo espacios → mostrar "NINGUNA" en el certificado.
+    //   - Si hay texto → mostrarlo exactamente tal como fue ingresado.
+    // Para certificados normales: comportamiento existente.
+    const esTaller = cert && cert.servicio_tipo_flujo === 'TALLER_INSPECCION';
+    let observacionesMostrar;
+    if (esTaller) {
+        // Taller: mostrar "NINGUNA" si viene vacío/espacios, o el texto exacto si hay observación
+        const rawObservaciones = gnv.observaciones || cert.observaciones || '';
+        observacionesMostrar = String(rawObservaciones.trim()) || 'NINGUNA';
+    } else {
+        // Normal: comportamiento existente
+        const rawObservaciones = gnv.observaciones || cert.observaciones || '';
+        let cleanObservaciones = typeof rawObservaciones === 'string'
+            ? rawObservaciones.trim().slice(0, 250)
+            : '';
+        if (['NULL', 'UNDEFINED', 'N/A', 'NA', 'SIN OBSERVACIONES', 'NINGUNA', 'NINGUNO', '-', 'VACÍO', 'VACIO', 'NONE'].includes(cleanObservaciones.toUpperCase())) {
+            cleanObservaciones = '';
+        }
+        observacionesMostrar = cleanObservaciones;
     }
-    const observacionHtml = cleanObservaciones
-        ? `<div style="margin-bottom: 8px;">${escapeHtml(cleanObservaciones).replace(/(?:\r\n|\r|\n)/g, '<br>')}</div>`
+    const observacionHtml = observacionesMostrar
+        ? `<div style="margin-bottom: 8px;">${escapeHtml(observacionesMostrar).replace(/(?:\r\n|\r|\n)/g, '<br>')}</div>`
         : '';
 
     // Render components rows
