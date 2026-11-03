@@ -370,11 +370,11 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
 
     const qDescuento = await db.query(
         `SELECT dc.importe_descuento,
-                dcl.codigo AS codigo_real,
+                COALESCE(dcl.codigo, d.codigo) AS codigo_real,
                 d.nombre AS nombre_real
          FROM fg_descuentocomprobante dc
-         JOIN fg_descuentocliente dcl ON dcl.id = dc.descuento_cliente_id
-         JOIN fg_descuento d ON d.id = dcl.descuento_id
+         LEFT JOIN fg_descuentocliente dcl ON dcl.id = dc.descuento_cliente_id
+         LEFT JOIN fg_descuento d ON d.id = COALESCE(dc.descuento_id, dcl.descuento_id)
          WHERE dc.facturacion_id = $1 AND dc.estado = 'APLICADO'
          ORDER BY dc.id DESC
          LIMIT 1`,

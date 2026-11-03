@@ -53,6 +53,14 @@ const registrarAdministracion = (req, evento, mensaje, entidad, entidadId, datos
         datos
     }));
 
+exports.listarDescuentosDisponibles = async (req, res, next) => {
+    try {
+        const { certificadoId } = req.params;
+        const descuentos = await descuentosService.listarDescuentosDisponibles(certificadoId, req.user);
+        res.json({ success: true, descuentos });
+    } catch (error) { responderError(res, error); }
+};
+
 exports.consultarDescuento = async (req, res, next) => {
     try {
         const { codigo, certificadoId } = req.body;
@@ -67,11 +75,16 @@ exports.consultarDescuento = async (req, res, next) => {
 exports.aplicarDescuentoBorrador = async (req, res, next) => {
     try {
         const { certificadoId } = req.params;
-        const { codigo } = req.body;
-        if (!codigo || !certificadoId) {
-            return res.status(400).json({ codigo: 'DATOS_REQUERIDOS', message: 'Debe indicar el código y el certificado.' });
+        const { codigo, descuentoId } = req.body;
+        if (!codigo && !descuentoId) {
+            return res.status(400).json({ codigo: 'DATOS_REQUERIDOS', message: 'Debe indicar el descuento o código y el certificado.' });
         }
-        const resultado = await descuentosService.aplicarDescuentoBorrador(certificadoId, codigo, req.user);
+        let resultado;
+        if (descuentoId) {
+            resultado = await descuentosService.aplicarDescuentoDirectoBorrador(certificadoId, Number(descuentoId), req.user);
+        } else {
+            resultado = await descuentosService.aplicarDescuentoBorrador(certificadoId, codigo, req.user);
+        }
         await auditoriaService.registrarEventoCertificado(auditoriaService.contextoRequest(req, {
             certificado_id: Number(certificadoId),
             categoria: 'DESCUENTO',
@@ -185,6 +198,11 @@ exports.eliminarDescuento = async (req, res) => {
 
 exports.guardarReglasDescuento = async (req, res) => {
     try {
+        // Verificar protección DESCUENTO_TALLER antes de permitir modificaciones
+        const convenioProtegido = await descuentosService.consultarConvenioProtegidoAdmin(req.params.id);
+        if (convenioProtegido) {
+            throw errorNegocio('CONVENIO_GRATUIDAD_PROTEGIDO', 409);
+        }
         const resultado = await descuentosService.guardarReglasDescuento(req.params.id, req.body, req.user);
         await registrarAdministracion(req, 'REGLAS_DESCUENTO_GUARDADAS',
             'Guardó el alcance y beneficio de un descuento.', 'fg_descuento', req.params.id,

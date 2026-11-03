@@ -66,15 +66,17 @@ const calcularImpactoEnTransaccion = async (client, descuentoId, descuentoPrevio
         servicio_id: row.servicio_id === null ? null : Number(row.servicio_id)
     }));
 
-    const usosResult = codigoIds.length > 0 ? await client.query(`
-        SELECT u.id, u.descuento_cliente_id, u.certificado_id, u.facturacion_id,
+    const usosResult = await client.query(`
+        SELECT u.id, u.descuento_cliente_id, u.descuento_id, u.certificado_id, u.facturacion_id,
                u.orden_pago_id, u.importe_original, u.importe_descuento, u.importe_final,
-               u.estado, c.codigo AS codigo_campana
+               u.estado, COALESCE(c.codigo, d.nombre) AS codigo_campana
         FROM fg_descuentocomprobante u
         LEFT JOIN fg_descuentocliente c ON c.id = u.descuento_cliente_id
-        WHERE u.descuento_cliente_id = ANY($1::bigint[])
+        LEFT JOIN fg_descuento d ON d.id = COALESCE(u.descuento_id, c.descuento_id)
+        WHERE (cardinality($1::bigint[]) > 0 AND u.descuento_cliente_id = ANY($1::bigint[]))
+           OR u.descuento_id = $2
         ORDER BY u.id
-    `, [codigoIds]) : { rows: [] };
+    `, [codigoIds, descuentoId]);
 
     const serviciosPreservados = await client.query(`
         SELECT DISTINCT s.id, s.codigo, s.nombre
@@ -155,13 +157,10 @@ const eliminarDescuentoConDependencias = async (client, impacto) => {
 
     // 1. Usos de prueba: se borra sólo el registro del descuento. Los
     //    certificados, facturaciones, órdenes y operaciones se conservan.
-    let usosEliminados = { rowCount: 0 };
-    if (codigoIds.length > 0) {
-        usosEliminados = await client.query(
-            'DELETE FROM fg_descuentocomprobante WHERE descuento_cliente_id = ANY($1::bigint[])',
-            [codigoIds]
-        );
-    }
+    const usosEliminados = await client.query(
+        'DELETE FROM fg_descuentocomprobante WHERE (cardinality($1::bigint[]) > 0 AND descuento_cliente_id = ANY($1::bigint[])) OR descuento_id = $2',
+        [codigoIds, descuentoId]
+    );
 
     // 2. Configuración de servicios y alcances: se borra la relación, el
     //    servicio del catálogo permanece intacto.

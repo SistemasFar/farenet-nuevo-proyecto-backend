@@ -2424,6 +2424,43 @@ exports.guardarGLPComponentes = async (id, componentes, userContext) => {
         await client.query('BEGIN');
         await obtenerYValidarBorrador(client, id, 'GLP_ANUAL', userContext);
 
+        // Asegurar que exista el registro padre en fg_certificado_glp antes de insertar componentes.
+        // La constraint fk_cert_glp_comp_cert referencia fg_certificado_glp(certificado_id),
+        // no fg_certificado(id). Si el padre no existe (p. ej. el frontend aún no guardó la
+        // cabecera GLP), se crea en esta misma transacción usando el cliente existente,
+        // evitando deadlocks por conexiones anidadas.
+        const rGlpParent = await client.query(
+            'SELECT 1 FROM fg_certificado_glp WHERE certificado_id = $1 LIMIT 1',
+            [id]
+        );
+        if (rGlpParent.rowCount === 0) {
+            const resTaller = await client.query("SELECT id, razon_social, sede, direccion, codigo_autorizacion FROM fg_taller_autorizado WHERE sede = 'SURQUILLO' AND estado = true LIMIT 1");
+            if (resTaller.rowCount === 0) throw new Error("TALLER_SURQUILLO_NOT_FOUND");
+            const taller = resTaller.rows[0];
+            const vigenciaHasta = calcularVigenciaHasta();
+            await client.query(`
+                INSERT INTO fg_certificado_glp (
+                    certificado_id, taller_autorizado_id, expediente_tecnico, vigencia_hasta,
+                    taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion,
+                    modalidad, combustible_posterior, peso_neto_posterior, carga_util_posterior
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                ON CONFLICT (certificado_id) DO NOTHING
+            `, [
+                id,
+                taller.id,
+                null,
+                vigenciaHasta,
+                taller.razon_social,
+                taller.sede,
+                taller.direccion,
+                taller.codigo_autorizacion,
+                null,
+                null,
+                null,
+                null
+            ]);
+        }
+
         await client.query('DELETE FROM fg_certificado_glp_componente WHERE certificado_id = $1', [id]);
 
         if (componentes && componentes.length > 0) {
@@ -2454,6 +2491,38 @@ exports.guardarGLPVerificaciones = async (id, verificaciones, userContext) => {
     try {
         await client.query('BEGIN');
         await obtenerYValidarBorrador(client, id, 'GLP_ANUAL', userContext);
+
+        const rGlpParent = await client.query(
+            'SELECT 1 FROM fg_certificado_glp WHERE certificado_id = $1 LIMIT 1',
+            [id]
+        );
+        if (rGlpParent.rowCount === 0) {
+            const resTaller = await client.query("SELECT id, razon_social, sede, direccion, codigo_autorizacion FROM fg_taller_autorizado WHERE sede = 'SURQUILLO' AND estado = true LIMIT 1");
+            if (resTaller.rowCount === 0) throw new Error("TALLER_SURQUILLO_NOT_FOUND");
+            const taller = resTaller.rows[0];
+            const vigenciaHasta = calcularVigenciaHasta();
+            await client.query(`
+                INSERT INTO fg_certificado_glp (
+                    certificado_id, taller_autorizado_id, expediente_tecnico, vigencia_hasta,
+                    taller_razon_social, taller_sede, taller_direccion, taller_codigo_autorizacion,
+                    modalidad, combustible_posterior, peso_neto_posterior, carga_util_posterior
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                ON CONFLICT (certificado_id) DO NOTHING
+            `, [
+                id,
+                taller.id,
+                null,
+                vigenciaHasta,
+                taller.razon_social,
+                taller.sede,
+                taller.direccion,
+                taller.codigo_autorizacion,
+                null,
+                null,
+                null,
+                null
+            ]);
+        }
 
         await client.query('DELETE FROM fg_certificado_glp_verificacion WHERE certificado_id = $1', [id]);
 

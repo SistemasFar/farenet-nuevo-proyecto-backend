@@ -19,6 +19,7 @@ const requireAdministrar = async (req, res, next) => {
 
 // Operativo - Nuevo Certificado
 router.post('/consultar', controller.consultarDescuento);
+router.get('/borradores/:certificadoId/disponibles', controller.listarDescuentosDisponibles);
 router.get('/borradores/:certificadoId', controller.obtenerDescuentoBorrador);
 router.put('/borradores/:certificadoId/aplicar', controller.aplicarDescuentoBorrador);
 router.delete('/borradores/:certificadoId/aplicar', controller.quitarDescuentoBorrador);

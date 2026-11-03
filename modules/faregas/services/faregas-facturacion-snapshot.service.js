@@ -30,9 +30,10 @@ const capturarSnapshotFacturacion = async ({
             codigo_descuento_snapshot = COALESCE(
                 f.codigo_descuento_snapshot,
                 (
-                    SELECT dc.codigo
+                    SELECT COALESCE(dc.codigo, d.nombre)
                     FROM fg_descuentocomprobante cmp
-                    JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id
+                    LEFT JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id
+                    LEFT JOIN fg_descuento d ON d.id = COALESCE(cmp.descuento_id, dc.descuento_id)
                     WHERE cmp.certificado_id = c.id
                       AND cmp.estado = 'APLICADO'
                     ORDER BY cmp.id DESC

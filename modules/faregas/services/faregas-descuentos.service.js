@@ -242,9 +242,243 @@ const consultarDescuentoCore = async (client, codigo, certificadoId, userContext
     };
 };
 
+const consultarDescuentoDirectoCore = async (client, descuentoId, certificadoId, userContext, isReserva = false) => {
+    const certificado = await obtenerCertificado(client, certificadoId, userContext);
+    
+    if (!certificado.tarifa_codigo) {
+        throw errorNegocio('CERTIFICADO_SIN_TARIFA', 409);
+    }
+    
+    const tarifaOp = await tarifasService.obtenerTarifaOperativaPorCodigo(
+        certificado.planta_key,
+        certificado.tarifa_codigo,
+        client
+    );
+    const tarifaValida = tarifasService.validarTarifaCertificacion(tarifaOp);
+    const tarifaOriginal = Number(tarifaValida.precio);
+    const servicioId = tarifaValida.servicio_id;
+
+    // Buscar descuento y bloquear si es reserva
+    const sql = `
+        SELECT d.id AS descuento_id, d.codigo, d.nombre, d.tipo, d.empresa_aliada_nombre,
+               d.fecha_inicio AS d_inicio, d.fecha_fin AS d_fin, d.activo AS d_activo
+        FROM fg_descuento d
+        WHERE d.id = $1
+        ${isReserva ? 'FOR UPDATE OF d' : ''}
+    `;
+    const resDesc = await client.query(sql, [descuentoId]);
+    if (resDesc.rowCount === 0) throw errorNegocio('DESCUENTO_NO_ENCONTRADO', 404);
+    const ds = resDesc.rows[0];
+
+    if (Number(ds.descuento_id) === 17) throw errorNegocio('DESCUENTO_NO_DISPONIBLE', 403);
+
+    if (!ds.d_activo) throw errorNegocio('DESCUENTO_INACTIVO', 409);
+    
+    const ahora = new Date();
+    if (ahora < new Date(ds.d_inicio) || ahora > new Date(ds.d_fin)) {
+        throw errorNegocio('DESCUENTO_VENCIDO', 422);
+    }
+
+    // Regla de sede y servicio en fg_descuentodetalle
+    const sqlDet = `
+        SELECT tipo_calculo, valor, valor_contado, valor_credito, activo
+        FROM fg_descuentodetalle
+        WHERE descuento_id = $1 AND descuento_cliente_id IS NULL
+          AND planta_key = $2 AND servicio_id = $3
+    `;
+    const resDet = await client.query(sqlDet, [ds.descuento_id, certificado.planta_key, servicioId]);
+    if (resDet.rowCount === 0 || !resDet.rows[0].activo) {
+        const sedeConfigurada = await client.query(`
+            SELECT 1 FROM fg_descuentodetalle
+            WHERE descuento_id = $1 AND descuento_cliente_id IS NULL
+              AND planta_key = $2 AND activo = TRUE LIMIT 1
+        `, [ds.descuento_id, certificado.planta_key]);
+        throw errorNegocio(sedeConfigurada.rowCount ? 'DESCUENTO_NO_APLICA_SERVICIO' : 'DESCUENTO_NO_APLICA_SEDE', 422);
+    }
+    const det = resDet.rows[0];
+
+    // Calcular importe
+    const tipoCalculoFinal = det.tipo_calculo;
+    const formaPago = 'CONTADO';
+    const valorFinal = Number(tipoCalculoFinal === 'FLAT'
+        ? (formaPago === 'CREDITO' ? det.valor_credito : det.valor_contado)
+        : det.valor);
+
+    if (!['FLAT', 'MONTO', 'PORCENTAJE'].includes(tipoCalculoFinal) || !Number.isFinite(valorFinal) || valorFinal <= 0) {
+        throw errorNegocio('REGLA_DESCUENTO_NO_CONFIGURADA', 409);
+    }
+    
+    let importeDescuento = 0;
+    if (tipoCalculoFinal === 'FLAT') {
+        importeDescuento = tarifaOriginal - valorFinal;
+    } else if (tipoCalculoFinal === 'MONTO') {
+        importeDescuento = valorFinal;
+    } else {
+        importeDescuento = (tarifaOriginal * valorFinal) / 100;
+    }
+    importeDescuento = Math.round(importeDescuento * 100) / 100;
+
+    if (importeDescuento <= 0 || importeDescuento > tarifaOriginal) {
+        throw errorNegocio('IMPORTE_DESCUENTO_INVALIDO', 409);
+    }
+
+    const importeFinal = Math.round((tarifaOriginal - importeDescuento) * 100) / 100;
+
+    // Verificar si es el convenio protegido de taller (DESCUENTO_TALLER)
+    const convenioProtegido = await consultarConvenioProtegido(client, ds.descuento_id, false);
+    const esAutorizacionGratuita = Boolean(convenioProtegido);
+
+    if (esAutorizacionGratuita && !esFlujoTaller(certificado.servicio_tipo_flujo)) {
+        throw errorNegocio('DESCUENTO_NO_APLICA_SERVICIO', 422);
+    }
+    if (esAutorizacionGratuita && Math.abs(importeFinal) > 0.01) {
+        throw errorNegocio('GRATUIDAD_TALLER_CONFIGURACION_INVALIDA', 409);
+    }
+    if (!esAutorizacionGratuita && Math.abs(importeFinal) <= 0.01) {
+        throw errorNegocio('OPERACION_CERO_REQUIERE_AUTORIZACION_GRATUITA', 409);
+    }
+
+    // Validar que no haya otra reserva de OTRO descuento en el mismo certificado
+    const sqlRes = `
+        SELECT cmp.descuento_id, cmp.descuento_cliente_id
+        FROM fg_descuentocomprobante cmp
+        WHERE cmp.certificado_id = $1 AND cmp.estado IN ('RESERVADO', 'APLICADO')
+        AND (cmp.descuento_id IS NOT NULL AND cmp.descuento_id != $2)
+    `;
+    const resReservaActiva = await client.query(sqlRes, [certificadoId, ds.descuento_id]);
+    if (resReservaActiva.rowCount > 0) {
+        throw errorNegocio('DESCUENTO_YA_RESERVADO', 409);
+    }
+
+    let beneficio = '';
+    if (tipoCalculoFinal === 'PORCENTAJE') {
+        beneficio = `${valorFinal}% (-S/ ${importeDescuento.toFixed(2)})`;
+    } else if (tipoCalculoFinal === 'MONTO') {
+        beneficio = `Fijo -S/ ${importeDescuento.toFixed(2)}`;
+    } else {
+        beneficio = `Tarifa plana S/ ${valorFinal.toFixed(2)} (-S/ ${importeDescuento.toFixed(2)})`;
+    }
+
+    return {
+        descuentoId: ds.descuento_id,
+        descuentoClienteId: null,
+        codigo: esAutorizacionGratuita ? 'DESCUENTO_TALLER' : ds.nombre,
+        nombre: ds.nombre,
+        tipo: ds.tipo,
+        empresaAliada: ds.empresa_aliada_nombre,
+        tipoCalculo: tipoCalculoFinal,
+        valor: valorFinal,
+        formaPago,
+        tarifaOriginal,
+        importeDescuento,
+        importeFinal,
+        fechaFin: ds.d_fin,
+        beneficio,
+        autorizaGratuidad: esAutorizacionGratuita,
+        certificado
+    };
+};
+
 // ----------------------------------------------------------------------
 // EXPORTS OPERATIVOS
 // ----------------------------------------------------------------------
+
+exports.listarDescuentosDisponibles = async (certificadoId, userContext) => {
+    const client = await db.connect();
+    try {
+        const certificado = await obtenerCertificado(client, certificadoId, userContext);
+        if (!certificado.tarifa_codigo) {
+            return [];
+        }
+        const tarifaOp = await tarifasService.obtenerTarifaOperativaPorCodigo(
+            certificado.planta_key,
+            certificado.tarifa_codigo,
+            client
+        );
+        if (!tarifaOp) return [];
+        const tarifaValida = tarifasService.validarTarifaCertificacion(tarifaOp);
+        const tarifaOriginal = Number(tarifaValida.precio);
+        const servicioId = tarifaValida.servicio_id;
+
+        const sql = `
+            SELECT d.id, d.codigo, d.nombre, d.tipo, d.empresa_aliada_nombre,
+                   d.fecha_inicio, d.fecha_fin,
+                   dd.tipo_calculo, dd.valor, dd.valor_contado, dd.valor_credito
+            FROM fg_descuento d
+            JOIN fg_descuentodetalle dd ON dd.descuento_id = d.id AND dd.descuento_cliente_id IS NULL
+            WHERE d.activo = TRUE
+              AND d.id <> 17
+              AND CURRENT_TIMESTAMP >= d.fecha_inicio AND CURRENT_TIMESTAMP <= d.fecha_fin
+              AND dd.activo = TRUE
+              AND dd.planta_key = $1
+              AND dd.servicio_id = $2
+            ORDER BY d.nombre
+        `;
+        const res = await client.query(sql, [certificado.planta_key, servicioId]);
+
+        const disponibles = [];
+        for (const row of res.rows) {
+            const tipoCalculo = row.tipo_calculo;
+            const valorFinal = Number(tipoCalculo === 'FLAT' ? row.valor_contado : row.valor);
+            if (!['FLAT', 'MONTO', 'PORCENTAJE'].includes(tipoCalculo) || !Number.isFinite(valorFinal) || valorFinal <= 0) {
+                continue;
+            }
+
+            let importeDescuento = 0;
+            if (tipoCalculo === 'FLAT') {
+                importeDescuento = tarifaOriginal - valorFinal;
+            } else if (tipoCalculo === 'MONTO') {
+                importeDescuento = valorFinal;
+            } else {
+                importeDescuento = (tarifaOriginal * valorFinal) / 100;
+            }
+            importeDescuento = Math.round(importeDescuento * 100) / 100;
+
+            if (importeDescuento <= 0 || importeDescuento > tarifaOriginal) continue;
+            const importeFinal = Math.round((tarifaOriginal - importeDescuento) * 100) / 100;
+
+            const convenioProtegido = await consultarConvenioProtegido(client, row.id, false);
+            const esAutorizacionGratuita = Boolean(convenioProtegido);
+
+            if (esAutorizacionGratuita && !esFlujoTaller(certificado.servicio_tipo_flujo)) {
+                continue;
+            }
+            if (esAutorizacionGratuita && Math.abs(importeFinal) > 0.01) {
+                continue;
+            }
+            if (!esAutorizacionGratuita && Math.abs(importeFinal) <= 0.01) {
+                continue;
+            }
+
+            let beneficio = '';
+            if (tipoCalculo === 'PORCENTAJE') {
+                beneficio = `${valorFinal}% (-S/ ${importeDescuento.toFixed(2)})`;
+            } else if (tipoCalculo === 'MONTO') {
+                beneficio = `Fijo -S/ ${importeDescuento.toFixed(2)}`;
+            } else {
+                beneficio = `Tarifa plana S/ ${valorFinal.toFixed(2)} (-S/ ${importeDescuento.toFixed(2)})`;
+            }
+
+            disponibles.push({
+                id: Number(row.id),
+                nombre: row.nombre,
+                tipo: row.tipo,
+                empresaAliada: row.empresa_aliada_nombre,
+                tipoCalculo,
+                valor: valorFinal,
+                tarifaOriginal,
+                importeDescuento,
+                importeFinal,
+                beneficio,
+                autorizaGratuidad: esAutorizacionGratuita
+            });
+        }
+
+        return disponibles;
+    } finally {
+        client.release();
+    }
+};
 
 exports.consultarDescuento = async (codigo, certificadoId, userContext) => {
     const client = await db.connect();
@@ -252,6 +486,65 @@ exports.consultarDescuento = async (codigo, certificadoId, userContext) => {
         const resultado = await consultarDescuentoCore(client, codigo, certificadoId, userContext, false);
         delete resultado.certificado;
         return resultado;
+    } finally {
+        client.release();
+    }
+};
+
+exports.aplicarDescuentoDirectoBorrador = async (certificadoId, descuentoId, userContext) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        
+        await client.query(`
+            UPDATE fg_descuentocomprobante 
+            SET estado = 'LIBERADO', fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE estado = 'RESERVADO'
+              AND orden_pago_id IS NULL
+              AND reservado_hasta < CURRENT_TIMESTAMP
+        `);
+
+        const calculo = await consultarDescuentoDirectoCore(client, descuentoId, certificadoId, userContext, true);
+        
+        const sqlOrd = `SELECT 1 FROM fg_orden_pago WHERE certificado_id = $1`;
+        const resOrd = await client.query(sqlOrd, [certificadoId]);
+        if (resOrd.rowCount > 0) {
+            throw errorNegocio('ORDEN_PAGO_EXISTENTE', 409);
+        }
+
+        const sqlExiste = `
+            SELECT id FROM fg_descuentocomprobante 
+            WHERE certificado_id = $1 AND descuento_id = $2 AND estado IN ('RESERVADO', 'APLICADO')
+        `;
+        const resExiste = await client.query(sqlExiste, [certificadoId, calculo.descuentoId]);
+        
+        if (resExiste.rowCount === 0) {
+            await client.query(`
+                UPDATE fg_descuentocomprobante 
+                SET estado = 'LIBERADO', usuario_modificacion = $2, fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE certificado_id = $1 AND estado = 'RESERVADO'
+            `, [certificadoId, userContext.username]);
+
+            await client.query(`
+                INSERT INTO fg_descuentocomprobante (
+                    descuento_id, descuento_cliente_id, certificado_id, importe_original, importe_descuento, importe_final,
+                    estado, reservado_hasta, usuario_creacion
+                ) VALUES (
+                    $1, NULL, $2, $3, $4, $5, 'RESERVADO', CURRENT_TIMESTAMP + INTERVAL '24 hours', $6
+                )
+            `, [
+                calculo.descuentoId, certificadoId, calculo.tarifaOriginal, 
+                calculo.importeDescuento, calculo.importeFinal, userContext.username
+            ]);
+        }
+
+        await client.query('COMMIT');
+        calculo.plantaKey = calculo.certificado?.planta_key || null;
+        delete calculo.certificado;
+        return calculo;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
     } finally {
         client.release();
     }
@@ -299,13 +592,13 @@ exports.aplicarDescuentoBorrador = async (certificadoId, codigo, userContext) =>
             // Insertar nueva reserva (expira en 24 horas)
             await client.query(`
                 INSERT INTO fg_descuentocomprobante (
-                    descuento_cliente_id, certificado_id, importe_original, importe_descuento, importe_final,
+                    descuento_id, descuento_cliente_id, certificado_id, importe_original, importe_descuento, importe_final,
                     estado, reservado_hasta, usuario_creacion
                 ) VALUES (
-                    $1, $2, $3, $4, $5, 'RESERVADO', CURRENT_TIMESTAMP + INTERVAL '24 hours', $6
+                    $1, $2, $3, $4, $5, $6, 'RESERVADO', CURRENT_TIMESTAMP + INTERVAL '24 hours', $7
                 )
             `, [
-                calculo.descuentoClienteId, certificadoId, calculo.tarifaOriginal, 
+                calculo.descuentoId, calculo.descuentoClienteId, certificadoId, calculo.tarifaOriginal, 
                 calculo.importeDescuento, calculo.importeFinal, userContext.username
             ]);
         }
@@ -356,16 +649,23 @@ exports.obtenerDescuentoBorrador = async (certificadoId, userContext) => {
         await obtenerCertificado(client, certificadoId, userContext);
         
         const sql = `
-            SELECT dc.codigo 
+            SELECT cmp.descuento_id, cmp.descuento_cliente_id, dc.codigo 
             FROM fg_descuentocomprobante cmp
-            JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id
+            LEFT JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id
             WHERE cmp.certificado_id = $1 AND cmp.estado IN ('RESERVADO', 'APLICADO')
             AND cmp.reservado_hasta >= CURRENT_TIMESTAMP
+            ORDER BY cmp.id DESC LIMIT 1
         `;
         const res = await client.query(sql, [certificadoId]);
         if (res.rowCount === 0) return null;
         
-        return await consultarDescuentoCore(client, res.rows[0].codigo, certificadoId, userContext, false);
+        const row = res.rows[0];
+        if (row.descuento_id) {
+            return await consultarDescuentoDirectoCore(client, row.descuento_id, certificadoId, userContext, false);
+        } else if (row.codigo) {
+            return await consultarDescuentoCore(client, row.codigo, certificadoId, userContext, false);
+        }
+        return null;
     } catch (error) {
         if (error.code === 'DESCUENTO_NO_APLICA_SERVICIO' || error.code === 'DESCUENTO_NO_APLICA_PLACA' || error.code === 'CODIGO_VENCIDO') {
             return null; // Si ya no aplica, retornar nulo para que el frontend pida liberarlo
@@ -396,10 +696,15 @@ exports.obtenerResumenDescuentoCertificado = async (queryable, certificado) => {
     // La tarifa se valida antes de consultar descuentos para que un servicio
     // no certificable jamás avance hacia pago aunque no tenga descuento.
     const sql = `
-        SELECT cmp.*, dc.codigo
+        SELECT cmp.*,
+               COALESCE(dc.codigo, CASE WHEN d.id = 17 OR EXISTS (SELECT 1 FROM fg_descuentocliente dcp WHERE dcp.descuento_id = d.id AND UPPER(BTRIM(dcp.codigo)) = 'DESCUENTO_TALLER') THEN 'DESCUENTO_TALLER' ELSE d.codigo END) AS codigo,
+               COALESCE(dc.codigo, CASE WHEN d.id = 17 OR EXISTS (SELECT 1 FROM fg_descuentocliente dcp WHERE dcp.descuento_id = d.id AND UPPER(BTRIM(dcp.codigo)) = 'DESCUENTO_TALLER') THEN 'DESCUENTO_TALLER' ELSE d.codigo END) AS codigo_autorizacion,
+               d.nombre AS descuento_nombre
         FROM fg_descuentocomprobante cmp
-        JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id
+        LEFT JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id
+        LEFT JOIN fg_descuento d ON d.id = COALESCE(cmp.descuento_id, dc.descuento_id)
         WHERE cmp.certificado_id = $1 AND cmp.estado IN ('RESERVADO', 'APLICADO')
+        ORDER BY cmp.id DESC LIMIT 1
     `;
     const res = await queryable.query(sql, [certificado.id]);
 
@@ -441,7 +746,7 @@ exports.obtenerResumenDescuentoCertificado = async (queryable, certificado) => {
 exports.consumirDescuentoSiExiste = async (queryable, certificadoId, ordenPagoId, userContext) => {
     // Llamado desde el servicio de pagos CUANDO EL PAGO QUEDA 'PAGADO'.
     const sql = `
-        SELECT cmp.id, cmp.descuento_cliente_id, cmp.estado, cmp.reservado_hasta, cmp.orden_pago_id
+        SELECT cmp.id, cmp.descuento_id, cmp.descuento_cliente_id, cmp.estado, cmp.reservado_hasta, cmp.orden_pago_id
         FROM fg_descuentocomprobante cmp
         WHERE cmp.certificado_id = $1 AND cmp.estado IN ('RESERVADO', 'APLICADO')
         FOR UPDATE
@@ -457,13 +762,16 @@ exports.consumirDescuentoSiExiste = async (queryable, certificadoId, ordenPagoId
             [userContext.username, reserva.id]);
             return;
         }
-        await queryable.query('SELECT id FROM fg_descuentocliente WHERE id=$1 FOR UPDATE', [reserva.descuento_cliente_id]);
-        // Consumir
-        await queryable.query(`
-            UPDATE fg_descuentocliente 
-            SET usos_realizados = usos_realizados + 1, fecha_modificacion = CURRENT_TIMESTAMP, usuario_modificacion = $1
-            WHERE id = $2
-        `, [userContext.username, reserva.descuento_cliente_id]);
+
+        // Si tiene descuento_cliente_id (código), consumir en fg_descuentocliente
+        if (reserva.descuento_cliente_id) {
+            await queryable.query('SELECT id FROM fg_descuentocliente WHERE id=$1 FOR UPDATE', [reserva.descuento_cliente_id]);
+            await queryable.query(`
+                UPDATE fg_descuentocliente 
+                SET usos_realizados = usos_realizados + 1, fecha_modificacion = CURRENT_TIMESTAMP, usuario_modificacion = $1
+                WHERE id = $2
+            `, [userContext.username, reserva.descuento_cliente_id]);
+        }
 
         await queryable.query(`
             UPDATE fg_descuentocomprobante 
@@ -523,7 +831,7 @@ const obtenerOCrearEjecutivo = async (client, nombre, username) => {
 
 exports.listarDescuentos = async (filtros = {}) => {
     const params = [];
-    let where = 'WHERE 1=1';
+    let where = 'WHERE 1=1 AND d.id <> 17';
     if (filtros.estado === 'ACTIVOS') where += ' AND d.activo = TRUE AND d.fecha_fin >= CURRENT_TIMESTAMP';
     if (filtros.estado === 'INACTIVOS') where += ' AND d.activo = FALSE';
     if (filtros.estado === 'VENCIDOS') where += ' AND d.fecha_fin < CURRENT_TIMESTAMP';
@@ -1039,7 +1347,16 @@ const guardarReglasCampana = async (client, descuentoId, reglas, username) => {
     }
 };
 
+exports.consultarConvenioProtegidoAdmin = async (descuentoId) => {
+    return consultarConvenioProtegido(db, descuentoId, false);
+};
+
 exports.guardarReglasDescuento = async (descuentoId, data, userContext) => {
+    // Verificar protección DESCUENTO_TALLER antes de permitir modificaciones
+    const convenioProtegido = await exports.consultarConvenioProtegidoAdmin(descuentoId);
+    if (convenioProtegido) {
+        throw errorNegocio('CONVENIO_GRATUIDAD_PROTEGIDO', 409);
+    }
     const reglas = normalizarReglasCampana(data);
     validarReglasCampana(reglas);
     const client = await db.connect();
