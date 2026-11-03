@@ -270,7 +270,9 @@ const consultarDescuentoDirectoCore = async (client, descuentoId, certificadoId,
     if (resDesc.rowCount === 0) throw errorNegocio('DESCUENTO_NO_ENCONTRADO', 404);
     const ds = resDesc.rows[0];
 
-    if (Number(ds.descuento_id) === 17) throw errorNegocio('DESCUENTO_NO_DISPONIBLE', 403);
+    // Removed: explicit block for discount ID 17.
+    // Fiscal authorization is validated later at lines 327-339 via consultarConvenioProtegido.
+    // This allows the protected DESCUENTO_TALLER convention to be applied directly.
 
     if (!ds.d_activo) throw errorNegocio('DESCUENTO_INACTIVO', 409);
     
@@ -407,7 +409,7 @@ exports.listarDescuentosDisponibles = async (certificadoId, userContext) => {
             FROM fg_descuento d
             JOIN fg_descuentodetalle dd ON dd.descuento_id = d.id AND dd.descuento_cliente_id IS NULL
             WHERE d.activo = TRUE
-              AND d.id <> 17
+
               AND CURRENT_TIMESTAMP >= d.fecha_inicio AND CURRENT_TIMESTAMP <= d.fecha_fin
               AND dd.activo = TRUE
               AND dd.planta_key = $1
