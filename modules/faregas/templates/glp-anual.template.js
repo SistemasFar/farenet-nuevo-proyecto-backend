@@ -115,17 +115,34 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
     <title>Certificado GLP Anual - Previsualización</title>
     <style>
         @page { size: A4 portrait; margin: 0; }
+        html {
+            width: 210mm;
+            min-height: 297mm;
+        }
         body {
             font-family: Arial, Helvetica, sans-serif;
-            font-size: 10.5px;
+            font-size: 8pt;
             color: #000;
-            line-height: 1.3;
+            line-height: 1.15;
             margin: 0;
-            padding: 20px;
+            padding: 78pt 37.4pt 35.15pt 72pt;
+            box-sizing: border-box;
+            width: 210mm;
+            min-height: 297mm;
             background-color: #fff;
             position: relative;
-            overflow-wrap: anywhere;
-            word-break: break-word;
+            overflow-wrap: normal;
+            word-break: normal;
+        }
+        @media screen {
+            html {
+                width: 100%;
+                min-height: 100%;
+            }
+            body {
+                margin-left: auto;
+                margin-right: auto;
+            }
         }
         .watermark {
             position: fixed;
@@ -156,26 +173,29 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
         }
         .header {
             text-align: center;
-            margin-bottom: 10px;
+            margin: 0;
         }
         .header-sub {
-            font-size: 9px;
-            color: #333;
-            line-height: 1.25;
-            text-align: left;
+            width: 241.8pt;
+            margin-left: -43.75pt;
+            font-size: 8pt;
+            color: #000;
+            line-height: 1.15;
+            text-align: center;
         }
         .title {
-            font-size: 13.5px;
+            font-size: 13pt;
             font-weight: bold;
-            margin: 10px 0 4px 0;
+            line-height: 1.15;
+            margin: 0;
             text-align: center;
             text-transform: uppercase;
         }
         .cert-num {
-            font-size: 11.5px;
+            font-size: 10pt;
             font-weight: bold;
+            line-height: 1.2;
             text-align: right;
-            margin-bottom: 8px;
         }
         .certifica-hdr {
             text-align: center;
@@ -184,67 +204,100 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             margin: 8px 0 4px 0;
         }
         .certifica-p {
-            text-align: justify;
-            margin-bottom: 8px;
-            font-size: 10px;
+            text-align: left;
+            margin: 0 0 3pt 0;
+            font-size: 10pt;
+            line-height: 1.15;
         }
         table.data-table {
-            width: 100%;
+            width: 489.3pt;
             border-collapse: collapse;
-            margin-bottom: 10px;
-            font-size: 9.5px;
+            table-layout: fixed;
+            margin: 0;
+            font-size: 9pt;
+            line-height: 1.05;
         }
         table.data-table td {
-            border: 1px solid #000;
-            padding: 3px 5px;
+            border: 0.5pt solid #000;
+            padding: 0.75pt 3.5pt;
             vertical-align: middle;
         }
         table.data-table td.num {
-            width: 20px;
             text-align: center;
-            font-weight: bold;
+            font-weight: normal;
         }
         table.data-table td.val {
+            font-weight: normal;
+        }
+        table.data-table tr:first-child td.val,
+        table.data-table tr:nth-child(2) td:nth-child(3) {
             font-weight: bold;
         }
         .comp-title {
-            font-size: 10px;
-            margin: 6px 0;
+            font-size: 8pt;
+            line-height: 1.15;
+            margin: 0 0 9pt 0;
         }
         table.comp-table {
-            width: 100%;
+            width: 489.35pt;
             border-collapse: collapse;
-            margin-bottom: 8px;
-            font-size: 9.5px;
+            table-layout: fixed;
+            margin: 0;
+            font-size: 8pt;
+            line-height: 1.15;
         }
         table.comp-table th, table.comp-table td {
-            border: 1px solid #000;
-            padding: 3px 5px;
+            border: 0.5pt solid #000;
+            text-align: center;
+            vertical-align: middle;
         }
         table.comp-table th {
-            background-color: #f8fafc;
-            font-weight: bold;
+            background-color: #fff;
+            font-weight: normal;
+            padding: 4.5pt 3.5pt;
+        }
+        table.comp-table td {
+            padding: 3.5pt;
         }
         .verif-title {
-            font-weight: bold;
-            margin: 8px 0 4px 0;
-            font-size: 10px;
+            font-weight: normal;
+            margin: 0 0 8pt 0;
+            font-size: 8pt;
+            line-height: 1.15;
         }
         ol.verif-list {
             padding-left: 0;
             list-style: none;
-            margin: 0 0 8px 0;
+            margin: 0 0 10pt 0;
             text-align: justify;
-            font-size: 9.5px;
+            font-size: 8pt;
+            line-height: 1.15;
+        }
+        ol.verif-list li {
+            margin-bottom: 0 !important;
+            padding-left: 36pt;
+            text-indent: -18pt;
+        }
+        .conclusion {
+            padding-left: 35.4pt;
+            text-indent: 0;
+            text-align: justify;
+            font-size: 8pt;
+            line-height: 1.15;
+            margin: 0;
         }
         .obs-sec {
-            margin-top: 8px;
-            font-size: 9px;
-            line-height: 1.3;
+            margin-top: 0;
+            font-size: 8pt;
+            line-height: 1.15;
+        }
+        .obs-sec > div {
+            padding-left: 21pt;
         }
         .footer-sec {
-            margin-top: 14px;
-            font-size: 10px;
+            margin-top: 15pt;
+            font-size: 8pt;
+            line-height: 1.15;
         }
     </style>
 </head>
@@ -255,17 +308,17 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
     <div class="documento-certificado">
         <div class="cert-content">
             <div class="header">
-                <div class="header-sub" style="margin-bottom: 10px;">
+                <div class="header-sub" style="margin-bottom: 15pt;">
                     R.D. N° 0339-2024-MTC/17.03<br>
                     Domicilio Fiscal: Jr. Alberto Secada N°315 Prov.<br>
                     Const del Callao – Prov. Const del Callao.<br>
                     Celular: 966702160
                 </div>
-                <div class="title" style="margin-top: 10px; margin-bottom: 5px;">CERTIFICADO DE INSPECCION DEL VEHICULO A GLP</div>
-                <div class="cert-num" style="text-align: right; margin-bottom: 5px;">
+                <div class="title" style="margin-top: 0; margin-bottom: 7pt;" data-sistema-edicion="titulo">CERTIFICADO DE INSPECCION DEL VEHICULO A GLP</div>
+                <div class="cert-num" style="text-align: right; margin-bottom: 10pt;">
                     Certificado N° ${escapeHtml(numCertificado)}
                 </div>
-                <div style="font-weight: bold; font-size: 14px; margin-bottom: 10px; letter-spacing: 0.5px; text-align: center;">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
+                <div style="font-weight: bold; font-size: 10pt; line-height: 1.2; margin-bottom: 10pt; letter-spacing: 0; text-align: center;">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
             </div>
 
     <div class="certifica-p">
@@ -273,6 +326,14 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
     </div>
 
     <table class="data-table">
+        <colgroup>
+            <col style="width: 4.08%;">
+            <col style="width: 17.71%;">
+            <col style="width: 23.18%;">
+            <col style="width: 4.34%;">
+            <col style="width: 27.52%;">
+            <col style="width: 23.17%;">
+        </colgroup>
         <tr>
             <td class="num">1</td>
             <td style="width: 80px;">Propietario</td>
@@ -346,6 +407,13 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
 
     <div class="comp-title">Habiéndose instalado al mismo los siguientes componentes que permiten la combustión a GLP:</div>
     <table class="comp-table">
+        <colgroup>
+            <col style="width: 6.17%;">
+            <col style="width: 21.41%;">
+            <col style="width: 24.62%;">
+            <col style="width: 25.37%;">
+            <col style="width: 22.43%;">
+        </colgroup>
         <thead>
             <tr>
                 <th style="width: 30px;">Ítem</th>
@@ -359,14 +427,14 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
             ${compRowsHtml}
         </tbody>
     </table>
-    <div style="font-size: 8.5px; margin-bottom: 6px;">(*): En caso del cilindro de almacenamiento de GLP, indicar su capacidad en litros y año de fabricación.</div>
+    <div style="font-size: 8pt; line-height: 1.15; margin: 5pt 0 0 0;">(*): En caso del cilindro de almacenamiento de GLP, indicar su capacidad en litros y año de fabricación.</div>
 
     <div class="verif-title">Habiéndose verificado que:</div>
     <ol class="verif-list">
         ${verifHtml}
     </ol>
 
-    <div style="text-align: justify; font-size: 9.5px; margin-bottom: 8px;">
+    <div class="conclusion">
         Conste por el presente documento que el sistema de combustión a Gas Licuado de Petróleo-GLP del vehículo antes referido, no afecta negativamente la seguridad del mismo, el tránsito terrestre, el medio ambiente o incumplen con las condiciones técnicas establecidas en la normativa vigente en la materia, según consta en el expediente técnico <strong>N° ${escapeHtml(numCertificado)}</strong> habilitándose al mismo para cargar Gas Licuado de Petróleo-GLP, hasta el <strong>${escapeHtml(vigenciaHastaFmt)}</strong>.
     </div>
 
@@ -378,9 +446,9 @@ function generateGlpAnualHtml(data, options = { modo: "PREVIEW" }) {
         <div>- Las condiciones técnicas y de seguridad verificadas en el vehículo, corresponden a las expuestas en la Directiva No. 005-2007-MTC/15 y sus modificatorias.</div>
     </div>
 
-    <div class="footer-sec">
+    <div class="footer-sec" data-sistema-edicion="pie">
         <div>El presente Certificado es emitido a solicitud del taller autorizado <strong>${escapeHtml(tallerDisplay)}</strong>.</div>
-        <div style="margin-top: 4px;">Se expide el presente certificado en Lima a los <strong>${fechaImp.dia}</strong> días del mes de <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.</div>
+        <div style="margin-top: 9pt;">Se expide el presente certificado en Lima a los <strong>${fechaImp.dia}</strong> días del mes de <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.</div>
     </div>
         </div>
     </div>

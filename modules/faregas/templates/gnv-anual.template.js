@@ -44,7 +44,7 @@ function generateGnvAnualHtml(data, options = { modo: "PREVIEW" }) {
         } else {
             estadoLabel = ` <span style="color: #d97706; font-weight: bold;">[PENDIENTE DE EVALUACIÓN]</span>`;
         }
-        return `<li style="margin-bottom: 5px;"><strong>${v.code})</strong> ${escapeHtml(desc)}${estadoLabel}</li>`;
+        return `<li><strong class="verif-code">${v.code})</strong><span class="verif-text">${escapeHtml(desc)}${estadoLabel}</span></li>`;
     }).join('');
 
     const entNombre = cert.entidad_certificadora_nombre || '-';
@@ -105,27 +105,48 @@ const obsContentHtml = esTaller
     <title>Certificado GNV Anual - Previsualización</title>
     <style>
         @page { size: A4 portrait; margin: 0; }
-        body {
-            font-family: Arial, Helvetica, sans-serif;
-            margin: 0;
-            padding: 0;
-            background-color: #fff;
-            position: relative;
-            overflow-wrap: anywhere;
-            word-break: break-word;
-        }
-        .documento-certificado {
+        html {
             width: 210mm;
             min-height: 297mm;
+        }
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 9pt;
+            color: #000;
+            line-height: 13.65pt;
+            margin: 0;
+            padding: 88pt 55pt 35.15pt 55pt;
             box-sizing: border-box;
-            padding: 20mm 15mm 15mm 15mm;
-            margin: 0 auto;
+            width: 210mm;
+            min-height: 297mm;
+            background-color: #fff;
+            position: relative;
+            overflow-wrap: normal;
+            word-break: normal;
+        }
+        @media screen {
+            html {
+                width: 100%;
+                min-height: 100%;
+            }
+            body {
+                margin-left: auto;
+                margin-right: auto;
+            }
+        }
+        .documento-certificado {
+            width: 100%;
+            min-height: 297mm;
+            box-sizing: border-box;
+            padding: 0;
+            margin: 0;
             position: relative;
         }
         .cert-content {
-            font-size: 11px;
+            width: 100%;
+            font-size: 9pt;
             color: #000;
-            line-height: 1.35;
+            line-height: 13.65pt;
         }
         .watermark {
             position: fixed;
@@ -156,49 +177,72 @@ const obsContentHtml = esTaller
         }
         .header {
             text-align: center;
-            margin-bottom: 12px;
+            margin: 0;
             position: relative;
         }
         .header-sub {
-            font-size: 9.5px;
-            color: #333;
-            line-height: 1.3;
+            width: 241.8pt;
+            margin-left: -25pt;
+            margin-bottom: 36pt;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 8pt;
+            color: #000;
+            line-height: 10.5pt;
+            letter-spacing: 0;
+            text-align: center;
         }
         .title {
-            font-size: 14px;
+            font-size: 14pt;
             font-weight: bold;
-            margin: 12px 0 4px 0;
+            line-height: 16.8pt;
+            margin: 0;
             text-align: center;
             text-transform: uppercase;
         }
         .cert-num {
-            font-size: 12px;
+            font-size: 10.5pt;
             font-weight: bold;
+            line-height: 12.6pt;
             text-align: right;
-            margin-bottom: 10px;
+            margin-bottom: 8pt;
+        }
+        .company-name {
+            font-size: 10.5pt;
+            line-height: 12.6pt;
+            margin-bottom: 8pt;
+            letter-spacing: 0.05pt;
+            text-align: center;
         }
         .certifica-hdr {
             text-align: center;
             font-weight: bold;
-            font-size: 11px;
-            margin: 10px 0 6px 0;
-            letter-spacing: 1px;
+            font-size: 9.5pt;
+            line-height: 11pt;
+            margin: 8pt 0 5pt 0;
+            letter-spacing: 0;
         }
         .certifica-p {
             text-align: justify;
-            margin-bottom: 10px;
-            font-size: 10.5px;
+            margin: 0 0 5pt 0;
+            font-size: 9.5pt;
+            line-height: 14.25pt;
+            letter-spacing: 0.04pt;
+            word-spacing: 0.1pt;
         }
         table.data-table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 12px;
-            font-size: 10px;
+            table-layout: fixed;
+            margin: 0 0 7.5pt 0;
+            font-size: 8.5pt;
+            line-height: 10pt;
         }
         table.data-table td, table.data-table th {
-            border: 1px solid #000;
-            padding: 4px 6px;
+            border: 0.5pt solid #000;
+            height: 13.5pt;
+            padding: 1.25pt 3pt;
             vertical-align: middle;
+            overflow-wrap: anywhere;
         }
         table.data-table td.num {
             width: 22px;
@@ -213,21 +257,51 @@ const obsContentHtml = esTaller
         }
         .verif-title {
             font-weight: bold;
-            margin: 10px 0 4px 0;
+            margin: 0 0 3pt 0;
+            font-size: 9.5pt;
+            line-height: 12.5pt;
         }
         ol.verif-list {
-            padding-left: 0;
+            padding-left: 12pt;
             list-style: none;
-            margin: 0 0 10px 0;
+            margin: 0 0 6pt 0;
+            text-align: left;
+            font-size: 9.5pt;
+            line-height: 12.5pt;
+        }
+        ol.verif-list li {
+            display: grid;
+            grid-template-columns: 12pt minmax(0, 1fr);
+            column-gap: 6pt;
+            align-items: start;
+            padding: 0;
+            line-height: 12.5pt;
+            margin: 0 0 1.5pt 0;
+        }
+        .verif-code {
+            display: block;
+            text-align: left;
+        }
+        .verif-text {
+            display: block;
+            min-width: 0;
             text-align: justify;
-            font-size: 10px;
+            overflow-wrap: anywhere;
+        }
+        .conclusion {
+            padding-left: 18pt;
+            text-align: justify;
+            font-size: 9.5pt;
+            line-height: 14.25pt;
+            margin: 0 0 7pt 0;
         }
         .obs-sec {
-            margin-top: 10px;
-            font-size: 10px;
-            line-height: 1.35;
+            margin-top: 3pt;
+            font-size: 9.5pt;
+            line-height: 14.25pt;
             text-align: justify;
         }
+        .obs-sec > div:not(.obs-header-line):not(.obs-dots-full):not(.obs-sec) { padding-left: 21pt; }
         .obs-header-line {
             display: flex;
             align-items: baseline;
@@ -246,9 +320,52 @@ const obsContentHtml = esTaller
             margin-top: 4px;
         }
         .footer-date {
-            margin-top: 20px;
+            margin-top: 12pt;
             text-align: left;
-            font-size: 10.5px;
+            font-size: 9.5pt;
+            line-height: 14.25pt;
+        }
+
+        /* El diseño de sistema agrega reglas !important al final del head.
+           Estas reglas, limitadas a GNV_ANUAL, conservan la escala de impresión del modelo. */
+        html body {
+            padding: 88pt 55pt 35.15pt 55pt !important;
+            font-size: 9pt !important;
+            line-height: 13.65pt !important;
+        }
+        html body .documento-certificado {
+            width: 100% !important;
+            min-height: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+        }
+        html body .documento-certificado .cert-content {
+            width: 100% !important;
+            font-size: 9pt !important;
+            line-height: 13.65pt !important;
+        }
+        html body .documento-certificado .header .title[data-sistema-edicion="titulo"] {
+            font-size: 14pt !important;
+            line-height: 16.8pt !important;
+            margin-top: 10.5pt !important;
+            margin-bottom: 8pt !important;
+        }
+        html body table.data-table {
+            width: 100% !important;
+            font-size: 8.5pt !important;
+            line-height: 10pt !important;
+        }
+        html body table.data-table td,
+        html body table.data-table th {
+            height: 13.5pt !important;
+            padding: 1.25pt 3pt !important;
+            border-width: 0.5pt !important;
+        }
+        html body .documento-certificado .footer-date[data-sistema-edicion="pie"] {
+            font-size: 9.5pt !important;
+            line-height: 14.25pt !important;
+            margin-top: 12pt !important;
+            text-align: left !important;
         }
     </style>
 </head>
@@ -259,23 +376,31 @@ const obsContentHtml = esTaller
     <div class="documento-certificado">
         <div class="cert-content">
             <div class="header">
-                <div class="header-sub" style="text-align: left;">
+                <div class="header-sub">
                     R.D. N° 0296-2024 - MTC/17.03<br>
                     Domicilio Fiscal: Jr. Alberto Secada N°315 Prov.<br>
                     Const del Callao – Prov. Const del Callao<br>
                     Celular: 966702160
                 </div>
-                <div class="title" style="margin-top: 10px; margin-bottom: 10px;">CERTIFICADO DE INSPECCION ANUAL DEL VEHICULO A GNV</div>
+                <div class="title" style="margin-top: 10px; margin-bottom: 10px;" data-sistema-edicion="titulo">CERTIFICADO DE INSPECCION ANUAL DEL VEHICULO A GNV</div>
                 <div class="cert-num" style="text-align: right;">Certificado N° ${escapeHtml(numCertificado)}</div>
-                <div style="font-weight: bold; font-size: 14px; margin-bottom: 10px; letter-spacing: 0.5px; text-align: center;">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
+                <div class="company-name" style="font-weight: bold;">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
     </div>
 
-    <div class="certifica-hdr">CERTIFICA</div>
+    <div class="certifica-hdr" data-sistema-edicion="titulo-certifica">CERTIFICA</div>
     <div class="certifica-p">
         Haber efectuado la evaluación de las condiciones de seguridad respecto de la conversión del sistema de combustión a Gas Natural - GNV, efectuada por el Taller de Conversión Autorizado: ${escapeHtml(tallerNombre || '-')}, al siguiente vehículo:
     </div>
 
     <table class="data-table">
+        <colgroup>
+            <col style="width: 3.8%;">
+            <col style="width: 19.6%;">
+            <col style="width: 22.8%;">
+            <col style="width: 3.8%;">
+            <col style="width: 27.2%;">
+            <col style="width: 22.8%;">
+        </colgroup>
         <tr>
             <td class="num">1</td>
             <td class="label">Placa de Rodaje</td>
@@ -346,7 +471,7 @@ const obsContentHtml = esTaller
     <ol class="verif-list">
         ${verifHtml}
     </ol>
-    <div style="text-align: justify; font-size: 10px; margin-bottom: 10px;">
+    <div class="conclusion">
         Conste por el presente documento que el sistema de combustión a Gas Natural Vehicular – GNV del vehículo antes referido, no afecta negativamente la seguridad del mismo, el tránsito terrestre, el medio ambiente o incumplen las condiciones técnicas establecidas en la normativa vigente en la materia, habilitándose al mismo para cargar Gas Natural Vehicular – GNV hasta el <strong>${escapeHtml(vigenciaHastaFmt)}</strong>.
     </div>
 
@@ -354,7 +479,7 @@ const obsContentHtml = esTaller
         ${obsContentHtml}
     </div>
 
-    <div class="footer-date">
+    <div class="footer-date" data-sistema-edicion="pie">
         Se expide el presente certificado en Lima a los <strong>${fechaImp.dia}</strong> días del mes de <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.
     </div>
         </div>

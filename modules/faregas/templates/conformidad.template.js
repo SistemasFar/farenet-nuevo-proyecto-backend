@@ -211,7 +211,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             Distrito de Surquillo – Provincia y Departamento de Lima<br>
             Celular: 966702160
         </div>
-        <div class="title">CERTIFICADO DE CONFORMIDAD</div>
+        <div class="title" data-sistema-edicion="titulo">CERTIFICADO DE CONFORMIDAD</div>
         <div class="cert-num">Certificado N°${escapeHtml(numCertificado)}</div>
     </div>
 
@@ -234,7 +234,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         La empresa SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRÚAS S.A.C. Reconocida como Entidad Certificadora de Conformidad con RESOLUCIÓN DIRECTORAL N°282-2022 MTC/15.
     </div>
     <div class="certifica-p">
-        <strong>CERTIFICA:</strong> Haber realizado la inspección técnica del vehículo: <strong>${escapeHtml(veh.placa || cert.placa_nueva || '-')}</strong>
+        <strong data-sistema-edicion="titulo-certifica">CERTIFICA:</strong> Haber realizado la inspección técnica del vehículo: <strong>${escapeHtml(veh.placa || cert.placa_nueva || '-')}</strong>
     </div>
 
     <table class="owner-box">
@@ -348,7 +348,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         El vehículo originalmente diseñado y construido para transporte de <strong>${escapeHtml(conf.uso_original_vehiculo || '-')}</strong>.
     </div>
 
-    <div class="footer-date">
+    <div class="footer-date" data-sistema-edicion="pie">
         Lima, <strong>${fechaImp.dia}</strong> de <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.
     </div>
         </div>

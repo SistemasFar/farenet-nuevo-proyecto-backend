@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const db = require('../../../config/database');
 const { faregasFormatosService } = require('../services/faregas-formatos.service');
+const formatosSistemaVisualService = require('../services/faregas-formatos-sistema-visual.service');
 const { VARIABLES_CATALOG } = require('../services/faregas-formatos.variables');
 const { authFaregasMiddleware: verificarToken } = require('../middlewares/faregas-auth.middleware');
 
@@ -93,6 +94,12 @@ router.post('/:id/versiones/html', verificarToken, requireAdministrarFormatos, a
 
 router.post('/:id/versiones/protegido', verificarToken, requireAdministrarFormatos, async (req, res) => {
   try {
+    const formato = await db.query('SELECT codigo FROM fg_certificado_formato WHERE id = $1', [req.params.id]);
+    if (formatosSistemaVisualService.obtenerRegistroFormato(formato.rows[0]?.codigo)) {
+      return res.status(400).json({
+        message: `${formato.rows[0].codigo} se versiona exclusivamente mediante el diseñador visual de su certificado real.`
+      });
+    }
     const resultado = await faregasFormatosService.crearBorradorOficialProtegido(req.params.id);
     res.status(resultado.reutilizada ? 200 : 201).json({
       message: resultado.reutilizada
@@ -169,6 +176,57 @@ router.put('/:id/versiones/:versionId/activar', verificarToken, requireAdministr
   try {
     await faregasFormatosService.activarVersion(req.params.id, req.params.versionId);
     res.json({ message: 'Versión activada exitosamente.' });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// Diseñador controlado de los certificados SISTEMA registrados. Ninguna de
+// estas rutas acepta nombres de archivo ni lee o escribe código JavaScript.
+router.get('/:id/diseno-sistema', verificarToken, requireAdministrarFormatos, async (req, res) => {
+  try {
+    res.json(await formatosSistemaVisualService.obtenerEstadoDiseno(req.params.id));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+router.post('/:id/diseno-sistema/borrador', verificarToken, requireAdministrarFormatos, async (req, res) => {
+  try {
+    res.status(201).json(await formatosSistemaVisualService.crearBorrador(req.params.id));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+router.put('/:id/diseno-sistema/borrador/:versionId', verificarToken, requireAdministrarFormatos, async (req, res) => {
+  try {
+    const version = await formatosSistemaVisualService.guardarBorrador(
+      req.params.id,
+      req.params.versionId,
+      req.body?.diseno
+    );
+    res.json({ message: 'Diseño guardado en borrador.', version });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+router.post('/:id/diseno-sistema/preview', verificarToken, requireAdministrarFormatos, async (req, res) => {
+  try {
+    res.json(await formatosSistemaVisualService.generarPreview(req.params.id, {
+      versionId: req.body?.versionId || null,
+      diseno: req.body?.diseno ?? null
+    }));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+router.put('/:id/diseno-sistema/borrador/:versionId/activar', verificarToken, requireAdministrarFormatos, async (req, res) => {
+  try {
+    const version = await formatosSistemaVisualService.activarBorrador(req.params.id, req.params.versionId);
+    res.json({ message: 'Diseño visual activado para futuras emisiones.', version });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }

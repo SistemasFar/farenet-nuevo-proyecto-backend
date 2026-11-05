@@ -25,6 +25,12 @@ const {
 } = require('../templates/template-utils');
 const { extraerVariablesHtml } = require('./faregas-formatos-html');
 const { obtenerCatalogoVariables } = require('./faregas-formatos.variables');
+const {
+    aplicarDisenoAHtml,
+    esConfiguracionVisualSistema,
+    debeAplicarDisenoVisual,
+    disenoDesdeConfiguracion
+} = require('./faregas-formatos-sistema-visual.service');
 
 const VARIABLES_FORMATO_AUTOMATICAS = new Set([
     'certificado.numero',
@@ -1076,7 +1082,13 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
             };
         });
 
-    return {
+    const formatoDatosSnapshot = { ...(cert.formato_datos_snapshot || {}) };
+    const representacionHtmlEmitida = typeof formatoDatosSnapshot.__representacion_html_emitida === 'string'
+        ? formatoDatosSnapshot.__representacion_html_emitida
+        : null;
+    delete formatoDatosSnapshot.__representacion_html_emitida;
+
+    const respuesta = {
         id: cert.id,
         estado: cert.estado,
         pasoActual: cert.paso_actual,
@@ -1113,7 +1125,7 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
         domicilioFiscal: cert.domicilio_fiscal,
         telefonoCertificadora: cert.telefono_certificadora,
         lugarEmision: cert.lugar_emision,
-        formatoDatosSnapshot: cert.formato_datos_snapshot || {},
+        formatoDatosSnapshot,
         formatoVersionAsignadaId: cert.formato_version_id || null,
         formatoVersionId: cert.formato_version_resuelta_id || cert.formato_version_id || null,
         comercial: {
@@ -1128,10 +1140,12 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
         formatoFormulario: cert.servicio_formato_id && cert.formato_version_resuelta_id ? {
             formatoId: cert.servicio_formato_id,
             formatoNombre: cert.formato_nombre,
+            formatoCodigo: cert.formato_codigo,
             versionId: cert.formato_version_resuelta_id,
             version: cert.formato_version,
             versionEstado: cert.formato_version_estado,
             motor: cert.formato_version_motor,
+            configuracion: versionConfig,
             campos: camposFormato,
             valores: Object.fromEntries(camposFormato.map((campo) => [campo.key, campo.valor]))
         } : null,
@@ -1139,6 +1153,13 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
         titulares: resTit.rows,
         chipSeleccion
     };
+    // Se usa internamente para reimpresión histórica, pero no se serializa en
+    // las respuestas generales del wizard ni expone un HTML extenso al cliente.
+    Object.defineProperty(respuesta, 'representacionHtmlEmitida', {
+        value: representacionHtmlEmitida,
+        enumerable: false
+    });
+    return respuesta;
 };
 
 exports.obtenerChipBorrador = async (id, userContext) => {
@@ -3231,6 +3252,37 @@ exports.emitirCertificado = async (id, userContext) => {
 
         await client.query('COMMIT');
 
+        // Las futuras emisiones GLP_INICIAL que usen un diseño visual guardan
+        // el HTML final como snapshot inmutable. Así una modificación posterior
+        // del generador base no altera la reimpresión histórica.
+        try {
+            const emitido = await exports.obtenerBorradorCompleto(id, userContext);
+            if (esConfiguracionVisualSistema(emitido.formatoFormulario?.configuracion)) {
+                const representacion = await renderizarPrevisualizacionDesdeBorrador({
+                    borrador: emitido,
+                    id,
+                    userContext
+                });
+                await db.query(
+                    `UPDATE fg_certificado
+                     SET formato_datos_snapshot = jsonb_set(
+                       COALESCE(formato_datos_snapshot, '{}'::jsonb),
+                       '{__representacion_html_emitida}',
+                       to_jsonb($2::text),
+                       true
+                     )
+                     WHERE id = $1
+                       AND estado = 'EMITIDO'
+                       AND NOT (COALESCE(formato_datos_snapshot, '{}'::jsonb) ? '__representacion_html_emitida')`,
+                    [id, representacion.html]
+                );
+            }
+        } catch (errorSnapshot) {
+            // La emisión ya fue confirmada; un fallo de snapshot no debe
+            // consumir otro correlativo ni revertir el certificado emitido.
+            console.error('[FAREGAS_CERTIFICADO_SNAPSHOT_ERROR]', errorSnapshot.message);
+        }
+
         // Generar la representación impresa propia de FAREGAS de forma segura tras fijar el correlativo DG
         let enlacePdfFaregas = null;
         try {
@@ -3296,6 +3348,22 @@ const renderizarPrevisualizacionDesdeBorrador = async ({
         lugar_emision: borrador.lugarEmision
     };
 
+    const aplicarDisenoSistema = (html, codigoEsperado) => {
+        const formato = borrador.formatoFormulario;
+        if (formato?.motor !== 'SISTEMA' || formato.formatoCodigo !== codigoEsperado) return html;
+        const configuracionVisual = formato.configuracion;
+        const puedeAplicarDiseno = debeAplicarDisenoVisual({
+            estado: borrador.estado,
+            versionAsignadaId: borrador.formatoVersionAsignadaId,
+            versionResueltaId: borrador.formatoVersionId,
+            configuracion: configuracionVisual,
+            codigoFormato: codigoEsperado
+        });
+        return puedeAplicarDiseno
+            ? aplicarDisenoAHtml(html, disenoDesdeConfiguracion(configuracionVisual, codigoEsperado), codigoEsperado)
+            : html;
+    };
+
     // Una operación con formato HTML propio se renderiza desde su versión y su
     // snapshot dinámico, aunque reutilice una clave técnica base GNV/GLP para
     // correlativos. La clave base no debe imponerle el formulario vehicular.
@@ -3326,7 +3394,7 @@ const renderizarPrevisualizacionDesdeBorrador = async ({
                 || null
         };
         if (gnv.modalidad === 'INICIAL') {
-            const html = generateGnvInicialHtml({
+            let html = generateGnvInicialHtml({
                 cabecera: { ...cabeceraComun, observaciones: gnv.observaciones || null },
                 vehiculo: vehiculoPlantilla,
                 propietario: borrador.titulares && borrador.titulares.length > 0 ? borrador.titulares[0] : {},
@@ -3334,9 +3402,10 @@ const renderizarPrevisualizacionDesdeBorrador = async ({
                 componentes: dataGnv.componentes,
                 taller: gnv.tallerAutorizado ? { nombre: gnv.tallerAutorizado.nombre } : {}
             }, { modo: modoPlantilla });
-            return { html };
+            html = aplicarDisenoSistema(html, 'GNV_INICIAL');
+            return { html, tipo: 'GNV_INICIAL' };
         }
-        const html = generateGnvAnualHtml({
+        let html = generateGnvAnualHtml({
             // La plantilla GNV ANUAL imprime la observación en su sección
             // OBSERVACIONES a partir de `cabecera.observaciones`. Se alimenta
             // con el dato persistido en fg_certificado_gnv, nunca con el estado
@@ -3348,6 +3417,7 @@ const renderizarPrevisualizacionDesdeBorrador = async ({
             verificaciones: dataGnv.verificaciones || [],
             titulares: borrador.titulares || []
         }, { modo: modoPlantilla });
+        html = aplicarDisenoSistema(html, 'GNV_ANUAL');
         return { html, tipo: 'GNV_ANUAL' };
     } else if (tipoClave === 'GLP_ANUAL') {
         const dataGlp = datosEspecificos?.glp !== undefined
@@ -3369,15 +3439,17 @@ const renderizarPrevisualizacionDesdeBorrador = async ({
         let html;
         if (glp.modalidad === 'INICIAL') {
             html = generateGlpInicialHtml(templateData, { modo: modoPlantilla });
+            html = aplicarDisenoSistema(html, 'GLP_INICIAL');
         } else {
             html = generateGlpAnualHtml(templateData, { modo: modoPlantilla });
+            html = aplicarDisenoSistema(html, 'GLP_ANUAL');
         }
         return { html, tipo: 'GLP_ANUAL' };
     } else if (tipoClave === 'CONFORMIDAD') {
         const dataConf = datosEspecificos?.conformidad !== undefined
             ? datosEspecificos
             : await exports.obtenerConformidad(id, userContext);
-        const html = generateConformidadHtml({
+        let html = generateConformidadHtml({
             cabecera: {
                 ...cabeceraComun,
                 cliente_nombre: borrador.cliente?.nombreRazonSocial,
@@ -3386,6 +3458,7 @@ const renderizarPrevisualizacionDesdeBorrador = async ({
             conformidad: dataConf.conformidad || {},
             titulares: borrador.titulares || []
         }, { modo: modoPlantilla });
+        html = aplicarDisenoSistema(html, 'CONFORMIDAD');
         return { html, tipo: 'CONFORMIDAD' };
     } else {
         if (!borrador.formatoVersionId) {
@@ -3399,6 +3472,9 @@ const renderizarPrevisualizacionDesdeBorrador = async ({
 
 exports.obtenerPrevisualizacion = async (id, userContext) => {
     const borrador = await exports.obtenerBorradorCompleto(id, userContext);
+    if (borrador.estado === 'EMITIDO' && borrador.representacionHtmlEmitida) {
+        return { html: borrador.representacionHtmlEmitida, tipo: borrador.tipo?.clave || null };
+    }
     return renderizarPrevisualizacionDesdeBorrador({ borrador, id, userContext });
 };
 

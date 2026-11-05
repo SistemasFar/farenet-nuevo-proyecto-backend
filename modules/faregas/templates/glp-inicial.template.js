@@ -107,17 +107,34 @@ const tallerDisplay = 'CHARING S.A.C. Calle San Pedro N° 745 Surquillo Lima';
     <title>Certificado GLP Inicial - Previsualización</title>
     <style>
         @page { size: A4 portrait; margin: 0; }
+        html {
+            width: 210mm;
+            min-height: 297mm;
+        }
         body {
             font-family: Arial, Helvetica, sans-serif;
-            font-size: 10.5px;
+            font-size: 8pt;
             color: #000;
-            line-height: 1.3;
+            line-height: 1.15;
             margin: 0;
-            padding: 20px;
+            padding: 75pt 37.4pt 35.15pt 72pt;
+            box-sizing: border-box;
+            width: 210mm;
+            min-height: 297mm;
             background-color: #fff;
             position: relative;
-            overflow-wrap: anywhere;
-            word-break: break-word;
+            overflow-wrap: normal;
+            word-break: normal;
+        }
+        @media screen {
+            html {
+                width: 100%;
+                min-height: 100%;
+            }
+            body {
+                margin-left: auto;
+                margin-right: auto;
+            }
         }
         .watermark {
             position: fixed;
@@ -148,26 +165,29 @@ const tallerDisplay = 'CHARING S.A.C. Calle San Pedro N° 745 Surquillo Lima';
         }
         .header {
             text-align: center;
-            margin-bottom: 10px;
+            margin: 0;
         }
         .header-sub {
-            font-size: 9px;
-            color: #333;
-            line-height: 1.25;
-            text-align: left;
+            width: 257.35pt;
+            margin-left: -43.75pt;
+            font-size: 8pt;
+            color: #000;
+            line-height: 1.15;
+            text-align: center;
         }
         .title {
-            font-size: 13.5px;
+            font-size: 13pt;
             font-weight: bold;
-            margin: 10px 0 4px 0;
+            line-height: 1.15;
+            margin: 0;
             text-align: center;
             text-transform: uppercase;
         }
         .cert-num {
-            font-size: 11.5px;
+            font-size: 10pt;
             font-weight: bold;
+            line-height: 1.2;
             text-align: right;
-            margin-bottom: 8px;
         }
         .certifica-hdr {
             text-align: center;
@@ -177,67 +197,101 @@ const tallerDisplay = 'CHARING S.A.C. Calle San Pedro N° 745 Surquillo Lima';
         }
         .certifica-p {
             text-align: justify;
-            margin-bottom: 8px;
-            font-size: 10px;
+            margin: 0;
+            font-size: 9pt;
+            line-height: 11pt;
         }
         table.data-table {
-            width: 100%;
+            width: 489.3pt;
             border-collapse: collapse;
-            margin-bottom: 10px;
-            font-size: 9.5px;
+            table-layout: fixed;
+            margin: 0;
+            font-size: 9pt;
+            line-height: 1.05;
         }
         table.data-table td {
-            border: 1px solid #000;
-            padding: 3px 5px;
+            border: 0.5pt solid #000;
+            padding: 1.5pt 3.5pt;
             vertical-align: middle;
         }
+        table.main-data-table tr:first-child td {
+            padding-top: 4.25pt;
+            padding-bottom: 4.25pt;
+        }
         table.data-table td.num {
-            width: 20px;
             text-align: center;
-            font-weight: bold;
+            font-weight: normal;
         }
         table.data-table td.val {
-            font-weight: bold;
+            font-weight: normal;
             background-color: transparent;
         }
+        table.main-data-table tr:first-child td.val,
+        table.main-data-table tr:nth-child(2) td:nth-child(3) {
+            font-weight: bold;
+        }
         .comp-title {
-            font-size: 10px;
-            margin: 6px 0;
+            font-size: 8pt;
+            line-height: 1.15;
+            margin: 4pt 0 5pt 0;
         }
         table.comp-table {
-            width: 100%;
+            width: 489.3pt;
             border-collapse: collapse;
-            margin-bottom: 8px;
-            font-size: 9.5px;
+            table-layout: fixed;
+            margin: 0 0 4pt 0;
+            font-size: 9pt;
+            line-height: 1.05;
         }
         table.comp-table th, table.comp-table td {
-            border: 1px solid #000;
-            padding: 3px 5px;
+            border: 0.5pt solid #000;
+            padding: 1.75pt 3.5pt;
+            text-align: center;
+            vertical-align: middle;
         }
         table.comp-table th {
-            background-color: #f8fafc;
-            font-weight: bold;
+            background-color: #fff;
+            font-weight: normal;
+            padding-top: 1.25pt;
+            padding-bottom: 1.25pt;
         }
         .verif-title {
             font-weight: bold;
-            margin: 8px 0 4px 0;
-            font-size: 10px;
+            margin: 0;
+            font-size: 8pt;
+            line-height: 1.15;
         }
         ol.verif-list {
             padding-left: 0;
             list-style: none;
-            margin: 0 0 8px 0;
+            margin: 0;
             text-align: justify;
-            font-size: 9.5px;
+            font-size: 8pt;
+            line-height: 1.15;
+        }
+        ol.verif-list li {
+            margin-bottom: 0 !important;
+            padding-left: 9pt;
+            text-indent: -9pt;
+        }
+        .conclusion {
+            margin: 0;
+            text-align: justify;
+            font-size: 8pt;
+            line-height: 1.15;
         }
         .obs-sec {
-            margin-top: 8px;
-            font-size: 9px;
-            line-height: 1.3;
+            margin-top: 4pt;
+            font-size: 8pt;
+            line-height: 1.15;
+        }
+        .obs-sec > div:not(:first-of-type) {
+            padding-left: 21pt;
         }
         .footer-sec {
-            margin-top: 14px;
-            font-size: 10px;
+            margin-top: 5pt;
+            font-size: 8pt;
+            line-height: 1.15;
         }
     </style>
 </head>
@@ -248,26 +302,34 @@ const tallerDisplay = 'CHARING S.A.C. Calle San Pedro N° 745 Surquillo Lima';
     <div class="documento-certificado">
         <div class="cert-content">
             <div class="header">
-                <div class="header-sub" style="margin-bottom: 10px;">
+                <div class="header-sub" style="margin-bottom: 8.2pt;">
                     R.D. N.º 0339-2024-MTC/17.03<br>
                     Domicilio Fiscal: Jr. Alberto Secada N.°315 Prov.<br>
                     Const del Callao – Prov. Const del Callao.<br>
                     Celular: 966702160
                 </div>
-                <div class="title" style="margin-top: 10px; margin-bottom: 5px;">CERTIFICADO DE CONFORMIDAD DE CONVERSION GLP</div>
-                <div class="cert-num" style="text-align: right; margin-bottom: 5px;">
+                <div class="title" style="margin-top: 0; margin-bottom: 4pt;" data-sistema-edicion="titulo">CERTIFICADO DE CONFORMIDAD DE CONVERSION GLP</div>
+                <div class="cert-num" style="text-align: right; margin-bottom: 9.5pt;">
                     Certificado N°${escapeHtml(numCertificado)}
                 </div>
-                <div style="font-weight: bold; font-size: 14px; margin-bottom: 10px; letter-spacing: 0.5px; text-align: center;">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
+                <div style="font-weight: bold; font-size: 10pt; line-height: 1.2; margin-bottom: 14pt; letter-spacing: 0; text-align: center;">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
             </div>
             
-            <div style="text-align: center; font-weight: bold; font-size: 13px; margin-bottom: 10px;">CERTIFICA</div>
+            <div style="text-align: center; font-weight: bold; font-size: 9pt; line-height: 1.15; margin: 0;" data-sistema-edicion="titulo-certifica">CERTIFICA</div>
 
-    <div class="certifica-p">
+    <div class="certifica-p" data-sistema-edicion="descripcion-certifica">
         Haber efectuado la evaluación de las condiciones de seguridad respecto de la conversión del sistema de combustión a Gas Licuado de Petróleo - GLP efectuada por el Taller de Conversión a GLP Autorizado: <strong>CHARING S.A.C. - Calle San Pedro N° 745 Surquillo Lima</strong>, al siguiente vehículo:
     </div>
 
-    <table class="data-table">
+    <table class="data-table main-data-table">
+        <colgroup>
+            <col style="width: 3.71%;">
+            <col style="width: 17.91%;">
+            <col style="width: 24.66%;">
+            <col style="width: 3.59%;">
+            <col style="width: 29.76%;">
+            <col style="width: 20.37%;">
+        </colgroup>
         <tr>
             <td class="num">1</td>
             <td style="width: 80px;">Propietario</td>
@@ -341,6 +403,13 @@ const tallerDisplay = 'CHARING S.A.C. Calle San Pedro N° 745 Surquillo Lima';
 
     <div class="comp-title">Que cuenta con los siguientes componentes que permiten la combustión a GLP:</div>
     <table class="comp-table">
+        <colgroup>
+            <col style="width: 5.92%;">
+            <col style="width: 23.44%;">
+            <col style="width: 22.86%;">
+            <col style="width: 24.62%;">
+            <col style="width: 23.16%;">
+        </colgroup>
         <thead>
             <tr>
                 <th style="width: 30px;">Ítem</th>
@@ -355,8 +424,13 @@ const tallerDisplay = 'CHARING S.A.C. Calle San Pedro N° 745 Surquillo Lima';
         </tbody>
     </table>
 
-    <div class="comp-title" style="margin-top: 10px;">Como consecuencia de la conversión del sistema de combustión a GLP, las características originales del vehículo se han modificado<br>De la siguiente manera:</div>
-    <table class="data-table" style="margin-bottom: 8px;">
+    <div class="comp-title" style="margin-top: 0; margin-bottom: 5pt;">Como consecuencia de la conversión del sistema de combustión a GLP, las características originales del vehículo se han modificado<br>De la siguiente manera:</div>
+    <table class="data-table conversion-data-table" style="margin-bottom: 0;">
+        <colgroup>
+            <col style="width: 3.61%;">
+            <col style="width: 17.34%;">
+            <col style="width: 79.05%;">
+        </colgroup>
         <tr>
             <td class="num">11</td>
             <td style="width: 140px;">Combustible</td>
@@ -379,11 +453,11 @@ const tallerDisplay = 'CHARING S.A.C. Calle San Pedro N° 745 Surquillo Lima';
         ${verifHtml}
     </ol>
 
-    <div style="text-align: justify; font-size: 9.5px; margin-bottom: 8px;">
+    <div class="conclusion" data-sistema-edicion="declaracion">
         Conste por el presente documento que el sistema de combustión a Gas Licuado de Petróleo-GLP del vehículo antes referido, no afecta negativamente la seguridad del mismo, el tránsito terrestre, el medio ambiente o incumple con las condiciones técnicas establecidas en la normativa vigente en la materia, según consta en el expediente técnico <strong>N.º ${escapeHtml(numCertificado)}</strong> habilitándose al mismo para cargar Gas Licuado de Petróleo-GLP, hasta el <strong>${escapeHtml(vigenciaHastaFmt)}</strong>.
     </div>
 
-<div class="obs-sec">
+<div class="obs-sec" data-sistema-edicion="observaciones-previas">
         <strong>Observaciones</strong>
         ${esTaller ? observacionesMostrar : (
             `<div>- Este documento no es válido en caso de presentar cualquier tipo de alteración o enmendadura.</div>
@@ -394,7 +468,7 @@ const tallerDisplay = 'CHARING S.A.C. Calle San Pedro N° 745 Surquillo Lima';
         )}
     </div>
 
-    <div class="footer-sec" style="margin-top: 10px; font-weight: bold; text-align: center;">
+    <div class="footer-sec" style="margin-top: 5pt; font-weight: bold; text-align: center;" data-sistema-edicion="pie">
         Se expide el presente certificado en la Provincia Constitucional del Callao a los ${fechaImp.dia} días del mes de ${fechaImp.mes} del ${fechaImp.anio}.
     </div>
         </div>

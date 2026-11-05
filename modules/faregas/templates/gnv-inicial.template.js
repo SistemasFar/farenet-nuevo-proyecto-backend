@@ -85,27 +85,48 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
     <title>Certificado GNV Inicial - Previsualización</title>
     <style>
         @page { size: A4 portrait; margin: 0; }
+        html {
+            width: 210mm;
+            min-height: 297mm;
+        }
         body {
-            font-family: Arial, Helvetica, sans-serif;
+            font-family: "Trebuchet MS", Arial, Helvetica, sans-serif;
             margin: 0;
             padding: 0;
+            width: 210mm;
+            min-height: 297mm;
             background-color: #fff;
             position: relative;
-            overflow-wrap: anywhere;
-            word-break: break-word;
+            overflow-wrap: normal;
+            word-break: normal;
+        }
+        @media screen {
+            html {
+                width: 100%;
+                min-height: 100%;
+            }
+            body {
+                margin-left: auto;
+                margin-right: auto;
+            }
         }
         .documento-certificado {
             width: 210mm;
             min-height: 297mm;
             box-sizing: border-box;
-            padding: 20mm 15mm 15mm 15mm;
+            padding: 79pt 37pt 14pt 37pt;
             margin: 0 auto;
             position: relative;
         }
         .cert-content {
-            font-size: 11px;
+            width: 509.5pt;
+            margin-left: 5.5pt;
+            margin-right: 6.5pt;
+            font-size: 9pt;
             color: #000;
-            line-height: 1.35;
+            line-height: 13.65pt;
+            overflow-wrap: anywhere;
+            word-break: normal;
         }
         .watermark {
             position: fixed;
@@ -123,6 +144,11 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
             z-index: 9999;
         }
         .preview-badge {
+            position: absolute;
+            top: 10pt;
+            left: 42.5pt;
+            width: 509.5pt;
+            box-sizing: border-box;
             background-color: #fef3c7;
             border: 2px dashed #f59e0b;
             color: #92400e;
@@ -131,59 +157,92 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
             font-weight: bold;
             font-size: 11px;
             letter-spacing: 1px;
-            margin-bottom: 15px;
             border-radius: 6px;
+            z-index: 10000;
         }
         .header {
-            margin-bottom: 12px;
+            margin: 0;
             position: relative;
         }
         .header-sub {
-            font-size: 9.5px;
-            color: #333;
-            line-height: 1.3;
-            text-align: left;
+            width: 207pt;
+            margin-left: -30pt;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 8pt;
+            color: #000;
+            line-height: 9.2pt;
+            text-align: center;
         }
         .title {
-            font-size: 14px;
+            width: 342.5pt;
+            font-family: "Trebuchet MS", Arial, Helvetica, sans-serif;
+            font-size: 12pt;
             font-weight: bold;
-            margin: 12px 0 4px 0;
+            line-height: 12pt;
+            word-spacing: 0.15pt;
+            margin: 33.4pt auto 10.9pt auto;
             text-align: center;
             text-transform: uppercase;
         }
         .cert-num {
-            font-size: 12px;
+            font-family: "Trebuchet MS", Arial, Helvetica, sans-serif;
+            font-size: 9pt;
             font-weight: bold;
+            line-height: 12pt;
             text-align: right;
-            margin-bottom: 10px;
+            margin: 0 5.45pt 8.25pt 0;
+        }
+        .cert-num-label-space {
+            word-spacing: 1.15pt;
+        }
+        .company-name {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 10pt;
+            font-weight: bold;
+            line-height: 21.45pt;
+            margin: 0 4.1pt 0 5.5pt;
+            text-align: center;
         }
         .certifica-hdr {
             text-align: left;
             font-weight: bold;
-            font-size: 12px;
-            margin: 10px 0 6px 0;
-            letter-spacing: 1px;
+            font-size: 10.5pt;
+            line-height: 21.45pt;
+            margin: 4.5pt 0 0 0;
         }
         .certifica-p {
             text-align: justify;
-            margin-bottom: 10px;
-            font-size: 10.5px;
+            margin: 0;
+            font-size: 9pt;
+            line-height: 13.65pt;
         }
+        .intro-certificacion {
+            margin-bottom: 2.85pt;
+        }
+        .intro-space-05 { word-spacing: 0.25pt; }
+        .intro-space-06 { word-spacing: 0.3pt; }
+        .intro-space-01 { word-spacing: 0.05pt; }
+        .intro-space-minus-02 { word-spacing: -0.1pt; }
         table.data-table {
-            width: 100%;
+            width: 509.5pt;
             border-collapse: collapse;
-            margin-bottom: 12px;
-            font-size: 10px;
+            table-layout: fixed;
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 9pt;
+            line-height: 12pt;
         }
         table.data-table td, table.data-table th {
-            border: 1px solid #000;
-            padding: 4px 6px;
+            border: 0.5pt solid #000;
+            height: 16.1pt;
+            box-sizing: border-box;
+            padding: 0 0 0 3pt;
             vertical-align: middle;
+            overflow-wrap: anywhere;
         }
         table.data-table td.num {
-            width: 22px;
             text-align: center;
-            font-weight: bold;
+            font-weight: normal;
         }
         table.data-table td.label {
             font-weight: normal;
@@ -191,27 +250,86 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
         table.data-table td.val {
             
         }
+        .ws-vehiculo-cilindrada { word-spacing: -0.388pt; }
+        .ws-vehiculo-ejes { word-spacing: -0.625pt; }
+        .ws-vehiculo-asientos { word-spacing: -0.617pt; }
+        .ws-vehiculo-dimensiones { word-spacing: -0.55pt; }
+        .ws-vehiculo-anio { word-spacing: 0.075pt; }
+        .ws-vehiculo-vin { word-spacing: -0.388pt; }
+        .ws-vehiculo-peso-neto { word-spacing: -0.125pt; }
+        .ws-vehiculo-motor { word-spacing: -0.225pt; }
+        .ws-vehiculo-peso-bruto { word-spacing: -0.283pt; }
         table.comp-table {
-            width: 100%;
+            width: 509.5pt;
             border-collapse: collapse;
-            margin-bottom: 12px;
-            font-size: 10px;
+            table-layout: fixed;
+            margin: 0 0 12.5pt 0;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 9pt;
+            line-height: 12pt;
         }
         table.comp-table th, table.comp-table td {
-            border: 1px solid #000;
-            padding: 4px;
+            border: 0.5pt solid #000;
+            height: 16.1pt;
+            box-sizing: border-box;
+            padding: 0 0 0 3pt;
+            vertical-align: middle;
+            overflow-wrap: anywhere;
         }
+        table.comp-table th {
+            font-weight: normal;
+            text-align: center;
+        }
+        .ws-comp-serie { word-spacing: -0.7pt; }
+        .ws-comp-capacidad { word-spacing: -0.6pt; }
+        .ws-comp-fecha { word-spacing: -0.2pt; }
+        .componentes-intro {
+            font-size: 9pt;
+            line-height: 12pt;
+            margin: 11.4pt 0 6pt 0;
+            word-spacing: 0.575pt;
+        }
+        .conversion-intro {
+            font-size: 9pt;
+            line-height: 13.65pt;
+            margin: 0 0 4.95pt 0;
+            word-spacing: 0.113pt;
+        }
+        .ws-conversion-combustible { word-spacing: -0.6pt; }
+        .ws-conversion-peso { word-spacing: 0.225pt; }
+        .conversion-table {
+            margin-bottom: 8.3pt !important;
+        }
+        .certificacion-final {
+            margin-bottom: 1pt;
+            word-spacing: 0.058pt;
+        }
+        .observaciones-titulo {
+            font-size: 9pt;
+            font-weight: bold;
+            line-height: 12pt;
+            margin: 0 0 7.5pt 0;
+        }
+        .obs-paragraph-legal-1 { word-spacing: -0.032pt; }
+        .obs-paragraph-legal-2 { word-spacing: 0.322pt; }
         .obs-sec {
-            margin-top: 10px;
-            font-size: 10.5px;
+            margin: 0;
+            font-size: 9pt;
             text-align: justify;
-            line-height: 1.4;
+            line-height: 13.65pt;
+        }
+        .obs-paragraph {
+            margin: 0;
+            break-inside: avoid;
+            page-break-inside: avoid;
         }
         .footer-date {
-            margin-top: 20px;
+            margin-top: 2.75pt;
             text-align: left;
-            font-size: 10.5px;
+            font-size: 9pt;
+            line-height: 12pt;
         }
+        .footer-date-tracked { letter-spacing: 0.25pt; }
     </style>
 </head>
 <body>
@@ -227,23 +345,31 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                     Const del Callao – Prov. Const del Callao.<br>
                     Celular: 966702160
                 </div>
-                <div class="title">CERTIFICADO DE CONFORMIDAD DE CONVERSIÓN A GNV</div>
-                <div class="cert-num">CERTIFICADO N°: <span style="">${escapeHtml(numCertificado)}</span></div>
-                <div style="font-weight: bold; font-size: 12px; margin-bottom: 10px; text-align: center;">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
+                <div class="title" data-sistema-edicion="titulo">CERTIFICADO DE CONFORMIDAD DE CONVERSIÓN A GNV</div>
+                <div class="cert-num">CERTIFICADO<span class="cert-num-label-space"> </span>N°: <span style="">${escapeHtml(numCertificado)}</span></div>
+                <div class="company-name">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
             </div>
 
-            <div class="certifica-hdr">CERTIFICA:</div>
-            <div class="certifica-p">
-                Haber efectuado la evaluación de las condiciones de seguridad respecto de la conversión del sistema de combustión a Gas Natural Vehicular - GNV efectuada por el Taller de Conversión Autorizado: <strong>${escapeHtml(tallerNombre || '-')}</strong> al siguiente vehículo:
+            <div class="certifica-hdr" data-sistema-edicion="titulo-certifica">CERTIFICA:</div>
+            <div class="certifica-p intro-certificacion">
+                <span class="intro-space-05">Haber </span><span class="intro-space-06">efectuado </span><span class="intro-space-05">la </span><span class="intro-space-06">evaluación </span><span class="intro-space-05">de </span><span class="intro-space-06">las </span><span class="intro-space-05">condiciones </span><span class="intro-space-06">de </span><span class="intro-space-05">seguridad </span><span class="intro-space-06">respecto </span><span class="intro-space-06">de </span><span class="intro-space-05">la </span><span class="intro-space-06">conversión </span><span class="intro-space-05">del </span><span class="intro-space-06">sistema </span><span class="intro-space-05">de </span><span class="intro-space-06">combustión </span><span class="intro-space-05">a </span><span class="intro-space-01">Gas </span>Natural Vehicular - GNV efectuada por el Taller de Conversión Autorizado:<span class="intro-space-01"> </span><strong>${escapeHtml(tallerNombre || '-')}</strong> al<span class="intro-space-minus-02"> </span>siguiente<span class="intro-space-minus-02"> </span>vehículo:
             </div>
 
             <table class="data-table">
+                <colgroup>
+                    <col style="width: 30pt;">
+                    <col style="width: 83.2pt;">
+                    <col style="width: 114.85pt;">
+                    <col style="width: 28.35pt;">
+                    <col style="width: 140.95pt;">
+                    <col style="width: 112.15pt;">
+                </colgroup>
                 <tr>
                     <td class="num">1</td>
                     <td class="label">Placa de Rodaje</td>
                     <td class="val">${escapeHtml(veh.placa || cert.placa_nueva || '-')}</td>
                     <td class="num">9</td>
-                    <td class="label">N° Cilindros / Cilindrada (cm3)</td>
+                    <td class="label ws-vehiculo-cilindrada">N° Cilindros / Cilindrada (cm3)</td>
                     <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.cilindros))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.cilindrada))}</td>
                 </tr>
                 <tr>
@@ -259,7 +385,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                     <td class="label">Marca</td>
                     <td class="val">${escapeHtml(veh.marca || '-')}</td>
                     <td class="num">11</td>
-                    <td class="label">N° ejes / N° ruedas</td>
+                    <td class="label ws-vehiculo-ejes">N° ejes / N° ruedas</td>
                     <td class="val">${escapeHtml(formatCountTwoDigits(veh.ejes))} / ${escapeHtml(formatCountTwoDigits(veh.ruedas))}</td>
                 </tr>
                 <tr>
@@ -267,7 +393,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                     <td class="label">Modelo</td>
                     <td class="val">${escapeHtml(veh.modelo || '-')}</td>
                     <td class="num">12</td>
-                    <td class="label">N° Asientos / Pasajeros</td>
+                    <td class="label ws-vehiculo-asientos">N° Asientos / Pasajeros</td>
                     <td class="val">${escapeHtml(formatCountTwoDigits(veh.asientos))} / ${escapeHtml(formatCountTwoDigits(veh.pasajeros))}</td>
                 </tr>
                 <tr>
@@ -275,12 +401,12 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                     <td class="label">Versión</td>
                     <td class="val">${escapeHtml(veh.version || '-')}</td>
                     <td class="num">13</td>
-                    <td class="label">Largo / Ancho / Alto (m)</td>
+                    <td class="label ws-vehiculo-dimensiones">Largo / Ancho / Alto (m)</td>
                     <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.longitud))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.ancho))} / ${escapeHtml(formatNumberWithoutTrailingZeros(veh.altura))}</td>
                 </tr>
                 <tr>
                     <td class="num">6</td>
-                    <td class="label">Año de Fabricación</td>
+                    <td class="label ws-vehiculo-anio">Año de Fabricación</td>
                     <td class="val">${escapeHtml(veh.anio_fabricacion || '-')}</td>
                     <td class="num">14</td>
                     <td class="label">Color(es)</td>
@@ -288,33 +414,41 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                 </tr>
                 <tr>
                     <td class="num">7</td>
-                    <td class="label">VIN / N° de Serie</td>
+                    <td class="label ws-vehiculo-vin">VIN / N° de Serie</td>
                     <td class="val">${escapeHtml(veh.vin || veh.serie || '-')}</td>
                     <td class="num">15</td>
-                    <td class="label">Peso Neto (Kg.)</td>
+                    <td class="label ws-vehiculo-peso-neto">Peso Neto (Kg.)</td>
                     <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.peso_neto))}</td>
                 </tr>
                 <tr>
                     <td class="num">8</td>
-                    <td class="label">N° de Motor</td>
+                    <td class="label ws-vehiculo-motor">N° de Motor</td>
                     <td class="val">${escapeHtml(veh.motor || '-')}</td>
                     <td class="num">16</td>
-                    <td class="label">Peso bruto vehicular (Kg.)</td>
+                    <td class="label ws-vehiculo-peso-bruto">Peso bruto vehicular (Kg.)</td>
                     <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.peso_bruto))}</td>
                 </tr>
             </table>
 
-            <div style="margin-bottom: 8px; font-size: 10.5px;">Habiéndose instalado al mismo los siguientes componentes:</div>
+            <div class="componentes-intro">Habiéndose instalado al mismo los siguientes componentes:</div>
             
             <table class="comp-table">
+                <colgroup>
+                    <col style="width: 30pt;">
+                    <col style="width: 96.6pt;">
+                    <col style="width: 100.65pt;">
+                    <col style="width: 94.75pt;">
+                    <col style="width: 82.55pt;">
+                    <col style="width: 104.95pt;">
+                </colgroup>
                 <thead>
                     <tr>
                         <th></th>
                         <th>COMPONENTE</th>
                         <th>MARCA</th>
-                        <th>N° DE SERIE</th>
-                        <th>CAP. (Lts)</th>
-                        <th>FECHA FAB. (MM/AA)</th>
+                        <th class="ws-comp-serie">N° DE SERIE</th>
+                        <th class="ws-comp-capacidad">CAP. (Lts)</th>
+                        <th class="ws-comp-fecha">FECHA FAB. (MM/AA)</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -322,33 +456,38 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
                 </tbody>
             </table>
 
-            <div style="margin-top: 10px; margin-bottom: 8px; font-size: 10.5px;">Como consecuencia de la conversión del sistema de combustión a Gas Natural Vehicular-GNV, las características originales del vehículo se han modificado de la siguiente manera:</div>
+            <div class="conversion-intro">Como consecuencia de la conversión del sistema de combustión a Gas Natural Vehicular-GNV, las características originales del vehículo se han modificado de la siguiente manera:</div>
 
-            <table class="data-table" style="margin-bottom: 15px;">
+            <table class="data-table conversion-table">
+                <colgroup>
+                    <col style="width: 30pt;">
+                    <col style="width: 107pt;">
+                    <col style="width: 372.5pt;">
+                </colgroup>
                 <tr>
                     <td class="num" style="width: 25px;">10</td>
                     <td style="width: 150px;">COMBUSTIBLE</td>
-                    <td style="">${escapeHtml(gnv.combustible_posterior || 'BI - COMBUSTIBLE GNV')}</td>
+                    <td class="ws-conversion-combustible">${escapeHtml(gnv.combustible_posterior || 'BI - COMBUSTIBLE GNV')}</td>
                 </tr>
                 <tr>
                     <td class="num">15</td>
-                    <td>PESO NETO (Kg.)</td>
+                    <td class="ws-conversion-peso">PESO NETO (Kg.)</td>
                     <td style="">${escapeHtml(formatNumberWithoutTrailingZeros(gnv.peso_neto_posterior))}</td>
                 </tr>
             </table>
 
-            <div class="certifica-p">
+            <div class="certifica-p certificacion-final">
                 Asimismo, se certifica que la conversión del sistema de combustión a Gas Natural Vehicular-GNV efectuada al vehículo antes referido no afecta negativamente la seguridad del mismo, el tránsito terrestre, el medio ambiente o incumple las condiciones técnicas establecidas en la normativa vigente en la materia.
             </div>
 
-            <div style="font-weight: bold; font-size: 11px; margin-top: 10px; margin-bottom: 5px;">OBSERVACIONES:</div>
+            <div class="observaciones-titulo">OBSERVACIONES:</div>
             <div class="obs-sec">
-                ${observacionHtml}Numerales del 1 al 16, obtenidos de la tarjeta de propiedad del vehículo y/o suministro del cliente, por tal motivo deberán ser verificados por el cliente antes de realizar cualquier trámite con este certificado. Las condiciones técnicas y de seguridad verificadas en el vehículo, corresponden a las expuestas en la NTP 111.015:2004 y Directiva N° 001-2005-MTC/15. La sigla "NE" significa "dato no especificado en los documentos o plaqueta del vehículo".<br><br>
-                Cumpliendo con D.S. 047-2001-MTC, modificatorias 009-2012 MINAM, D.S N° 010-2017 – MINAM, carta N° 0124-2018-MINAM/VMGA/DGCA indicamos que el resultado de la prueba de emisiones contaminantes del vehículo es aprobatorio
+                ${observacionHtml}<div class="obs-paragraph obs-paragraph-legal-1">Numerales del 1 al 16, obtenidos de la tarjeta de propiedad del vehículo y/o suministro del cliente, por tal motivo deberán ser verificados por el cliente antes de realizar cualquier trámite con este certificado. Las condiciones técnicas y de seguridad verificadas en el vehículo, corresponden a las expuestas en la NTP 111.015:2004 y Directiva N° 001-2005-MTC/15. La sigla "NE" significa "dato no especificado en los documentos o plaqueta del vehículo".</div>
+                <div class="obs-paragraph obs-paragraph-legal-2">Cumpliendo con D.S. 047-2001-MTC, modificatorias 009-2012 MINAM, D.S N° 010-2017 – MINAM, carta N° 0124-2018-MINAM/VMGA/DGCA indicamos que el resultado de la prueba de emisiones contaminantes del vehículo es aprobatorio</div>
             </div>
 
-            <div class="footer-date">
-                Se expide el presente certificado en la ciudad de Lima, al <span style="">${fechaLima}</span>.
+            <div class="footer-date" data-sistema-edicion="pie">
+                Se expide el presente certificado en la ciudad de Lima, a<span class="footer-date-tracked">l ${fechaLima}</span>.
             </div>
         </div>
     </div>
