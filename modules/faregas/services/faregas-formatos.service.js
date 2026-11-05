@@ -14,6 +14,7 @@ const { convertirDocxAHtml } = require('./faregas-formatos-word');
 const {
     normalizarHtmlEditor,
     renderizarHtml,
+    aplicarLayoutOficialTaller,
     variablesDesconocidas,
     extraerVariablesHtml
 } = require('./faregas-formatos-html');
@@ -664,7 +665,10 @@ guardarMappings: async (formatoId, versionId, mappings) => {
     }
 
     if (motorVersion === 'HTML_DINAMICO') {
-        const html = renderizarHtml(config?.html || '', dummyData);
+        const htmlBase = renderizarHtml(config?.html || '', dummyData);
+        const html = String(verRes.rows[0].formato_codigo || '').startsWith('TALLER_')
+            ? aplicarLayoutOficialTaller(htmlBase, dummyData)
+            : htmlBase;
         
         return { tipo: 'HTML_DINAMICO', data: html };
     }
@@ -771,7 +775,11 @@ guardarMappings: async (formatoId, versionId, mappings) => {
 
   renderVersion: async (formatoVersionId, data, allowBorrador = false) => {
     const verRes = await db.query(
-      'SELECT archivo_ruta, configuracion, estado, motor FROM fg_certificado_formato_version WHERE id = $1',
+      `SELECT v.archivo_ruta, v.configuracion, v.estado, v.motor,
+              f.codigo AS formato_codigo
+         FROM fg_certificado_formato_version v
+         JOIN fg_certificado_formato f ON f.id = v.formato_id
+        WHERE v.id = $1`,
       [formatoVersionId]
     );
     if (verRes.rowCount === 0) throw new Error('Versión no encontrada');
@@ -783,9 +791,13 @@ guardarMappings: async (formatoId, versionId, mappings) => {
     if (motorVersion === 'HTML_DINAMICO') {
       let configuracion = verRes.rows[0].configuracion || {};
       if (typeof configuracion === 'string') configuracion = JSON.parse(configuracion);
+      const htmlBase = renderizarHtml(configuracion.html || '', data);
+      const html = String(verRes.rows[0].formato_codigo || '').startsWith('TALLER_')
+        ? aplicarLayoutOficialTaller(htmlBase, data)
+        : htmlBase;
       return {
         tipo: 'HTML_DINAMICO',
-        data: renderizarHtml(configuracion.html || '', data)
+        data: html
       };
     }
     

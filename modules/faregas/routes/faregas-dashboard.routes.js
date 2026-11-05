@@ -44,5 +44,9 @@ router.get('/detalle/pagos', controller.obtenerPagos);
 router.get('/detalle/descuentos', controller.obtenerDescuentos);
 router.get('/detalle/usuarios', controller.obtenerUsuarios);
 router.get('/exportacion', controller.obtenerExportacion);
+router.get('/exportacion-financiera', controller.obtenerReporteFinanciero);
+router.get('/documentos-emitidos-extendido', controller.obtenerDocumentosEmitidosExtendido);
+router.get('/resumen-mensual-facturacion', controller.obtenerResumenMensualFacturacion);
+router.get('/registro-ventas-tributario', controller.obtenerRegistroVentasTributario);
 
 module.exports = router;

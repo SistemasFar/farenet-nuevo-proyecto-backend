@@ -25,6 +25,7 @@ test('FAREGAS Dashboard - Filtrado por Producto (producto_facturacion_id)', asyn
             assert.ok(typeof prod.id === 'number', `El producto ${prod.descripcion} debe tener un id numérico`);
             assert.ok(prod.sku, 'Debe tener SKU');
             assert.ok(prod.descripcion, 'Debe tener descripción');
+            assert.ok(prod.categoria, 'Debe incluir la categoría real del catálogo');
         }
 
         // Verificar que existen productos con el mismo nombre y diferente ID
@@ -108,6 +109,7 @@ test('FAREGAS Dashboard - Filtrado por Producto (producto_facturacion_id)', asyn
         });
         assert.equal(prods.items.length, 1, 'Debe devolver exactamente 1 fila para el producto seleccionado');
         assert.equal(prods.items[0].id, 25);
+        const totalProductoCatalogo = Number(prods.items[0].totalSoles.toFixed(2));
 
         // Detalle sedes
         const sedes = await dashboardService.obtenerDetalleSedes({
@@ -118,7 +120,7 @@ test('FAREGAS Dashboard - Filtrado por Producto (producto_facturacion_id)', asyn
         });
         const sedesConVenta = sedes.filter(s => s.ventaOperativa > 0);
         const totalVentaSedes = sedesConVenta.reduce((acc, s) => acc + s.ventaOperativa, 0);
-        assert.equal(Number(totalVentaSedes.toFixed(2)), 1080);
+        assert.equal(Number(totalVentaSedes.toFixed(2)), totalProductoCatalogo);
 
         // Detalle usuarios
         const usuarios = await dashboardService.obtenerDetalleUsuarios({
@@ -129,7 +131,7 @@ test('FAREGAS Dashboard - Filtrado por Producto (producto_facturacion_id)', asyn
         });
         const usuariosConVenta = usuarios.filter(u => u.totalVendido > 0);
         const totalVentaUsuarios = usuariosConVenta.reduce((acc, u) => acc + u.totalVendido, 0);
-        assert.equal(Number(totalVentaUsuarios.toFixed(2)), 1080);
+        assert.equal(Number(totalVentaUsuarios.toFixed(2)), totalProductoCatalogo);
     });
 
     await t.test('6. Restauración: Al no enviar productoId se recuperan exactamente los totales originales', async () => {

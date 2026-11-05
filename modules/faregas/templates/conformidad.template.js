@@ -33,11 +33,15 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
 
     const tipoConf = String(conf.tipo_conformidad || '').toUpperCase();
 
-    const caracRegText = variablesDinamicas
+    const normalizarCaracteristicaRegistrable = (valor) => String(valor || '-')
+        .trim()
+        .replace(/^RECTIFICACI[ÓO]N\s+DE\s+CARACTER[IÍ]STICAS\s+REGISTRABLES\s*:\s*/i, '')
+        .replace(/^\/+\s*/, '')
+        .toUpperCase();
+    const caracRegValor = variablesDinamicas
         ? '{{conformidad.caracteristica_registrable}}'
-        : conf.caracteristica_registrable
-        ? escapeHtml(conf.caracteristica_registrable.toUpperCase())
-        : '-';
+        : escapeHtml(normalizarCaracteristicaRegistrable(conf.caracteristica_registrable));
+    const caracRegText = `RECTIFICACION DE CARACTERISTICAS REGISTRABLES: /${caracRegValor}`;
 
     const claseTipo = (tipo) => variablesDinamicas
         ? `{{conformidad.clase_${tipo.toLowerCase()}}}`
@@ -51,11 +55,22 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         : (options.modo === "PREVIEW" ? `<div class="watermark">PREVISUALIZACIÓN</div>
     <div class="preview-badge">⚠️ BORRADOR FAREGAS — PREVISUALIZACIÓN NO EMITIDA (DOCUMENTO SIN VALIDEZ LEGAL)</div>` : "");
 
-    const entNombre = cert.entidad_certificadora_nombre || '-';
-    const resDirectoral = cert.resolucion_directoral || '-';
-    const domFiscal = cert.domicilio_fiscal || '-';
-    const telfCert = cert.telefono_certificadora || '-';
-    const lugarEmision = cert.lugar_emision || '-';
+    const textoConfigurado = (valor) => String(valor || '').trim();
+    const entNombre = textoConfigurado(cert.entidad_certificadora_nombre)
+        || 'SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRÚAS S.A.C.';
+    const resDirectoral = textoConfigurado(cert.resolucion_directoral)
+        .replace(/^R\.?\s*D\.?\s*N[.°º]*\s*/i, '')
+        || '282-2022-MTC';
+    const domicilioConfigurado = textoConfigurado(cert.domicilio_fiscal);
+    const lineasDomicilio = domicilioConfigurado
+        .split(/\r?\n|\s*\|\s*/)
+        .map((linea) => linea.trim())
+        .filter(Boolean);
+    const domFiscal = lineasDomicilio[0] || 'Calle San Pedro N° 745, Surquillo, Lima, Lima';
+    const distritoFiscal = textoConfigurado(cert.distrito_fiscal)
+        || lineasDomicilio.slice(1).join(' ')
+        || 'Distrito de Surquillo – Provincia y Departamento de Lima';
+    const telfCert = textoConfigurado(cert.telefono_certificadora) || '966702160';
 
     return `<!DOCTYPE html>
 <html lang="es">
@@ -137,6 +152,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             text-align: center !important;
         }
         .title {
+            width: 453.9pt;
             font-size: 13pt;
             line-height: 15.6pt;
             font-weight: bold;
@@ -145,6 +161,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             text-transform: uppercase;
         }
         .cert-num {
+            width: 453.9pt;
             font-size: 10pt;
             line-height: 12pt;
             font-weight: bold;
@@ -153,7 +170,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         }
         table.type-box {
             width: 219.7pt;
-            margin: 15pt auto 9pt;
+            margin: 15pt 0 8.25pt 104.25pt;
             border-collapse: collapse;
             font-size: 10pt;
             line-height: 11.25pt;
@@ -163,7 +180,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         }
         table.type-box td {
             border: .5pt solid #000;
-            height: 12pt;
+            height: 11.75pt;
             padding: 0 2pt;
             box-sizing: border-box;
         }
@@ -171,16 +188,17 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             background-color: #e2e8f0;
         }
         .certifica-p {
+            width: 453.9pt;
             text-align: justify;
-            margin: 0 0 2pt;
+            margin: 0 0 9pt;
             font-size: 10pt;
             line-height: 12pt;
         }
-        table.type-box + .certifica-p { margin-bottom: 12pt; }
+        table.type-box + .certifica-p { margin-bottom: 9.75pt; }
         table.owner-box {
             width: 481.05pt;
             border-collapse: collapse;
-            margin: 0 0 4pt;
+            margin: 0 0 3.1pt;
             font-size: 9pt;
             line-height: 12pt;
             table-layout: fixed;
@@ -191,10 +209,14 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             box-sizing: border-box;
             vertical-align: middle;
         }
+        table.owner-box tr:nth-child(2) td:first-child { width: 232.65pt !important; }
+        table.owner-box tr:nth-child(2) td:last-child { width: 248.4pt !important; }
+        table.owner-box .val { font-weight: bold; }
         table.owner-box tr:first-child td { height: 27.1pt; }
         table.owner-box tr:nth-child(2) td { height: 16.35pt; }
         .section-heading {
-            margin: 0 0 8pt;
+            width: 453.9pt;
+            margin: 0 0 8.25pt;
             font-size: 10pt;
             line-height: 12pt;
             font-weight: bold;
@@ -204,19 +226,19 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             border-collapse: collapse;
             margin: 0 0 0;
             font-size: 9pt;
-            line-height: 11pt;
+            line-height: 10.5pt;
             table-layout: fixed;
         }
         table.data-table td {
             border: .5pt solid #000;
-            height: 11.75pt;
-            padding: .65pt 3.5pt;
+            height: 12.45pt;
+            padding: .45pt 3.5pt;
             box-sizing: border-box;
             vertical-align: middle;
             overflow-wrap: break-word;
         }
-        table.data-table tr:first-child td { height: 27.35pt; }
-        table.data-table tr:nth-child(2) td { height: 19.7pt; }
+        table.data-table tr:first-child td { height: 24pt; }
+        table.data-table tr:nth-child(2) td { height: 18pt; }
         table.data-table td:nth-child(1) { width: 123.15pt; }
         table.data-table td:nth-child(2) { width: 123.25pt; }
         table.data-table td:nth-child(3) { width: 113.4pt; }
@@ -226,9 +248,11 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             background-color: #f8fafc;
         }
         table.data-table td.val {
-            font-weight: bold;
+            font-size: 10pt;
+            font-weight: normal;
         }
         .spec-para {
+            width: 453.9pt;
             font-weight: bold;
             font-size: 10pt;
             line-height: 12pt;
@@ -236,22 +260,32 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             text-transform: uppercase;
         }
         .grant-line {
+            width: 453.9pt;
             font-size: 9pt;
             line-height: 12pt;
             margin: 0;
         }
         .legal-p {
+            width: 453.9pt;
             text-align: justify;
             margin: 0 0 6pt;
             font-size: 9pt;
-            line-height: 12pt;
+            line-height: 10.5pt;
         }
         .footer-date {
-            margin-top: 16.5pt;
+            width: 453.9pt;
+            margin-top: 28.5pt;
             text-align: right;
             font-size: 10pt;
             line-height: 12pt;
         }
+        .closing-block { break-inside: avoid; page-break-inside: avoid; }
+        .closing-block .legal-p {
+            margin-bottom: 0;
+            font-size: 10pt;
+            line-height: 12pt;
+        }
+        .legal-p.before-closing { margin-bottom: 5.25pt; }
     </style>
 </head>
 <body>
@@ -261,50 +295,53 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         <div class="cert-content">
             <div class="header">
                 <div class="header-sub" style="text-align: left;">
-            R.D. N° 282-2022-MTC/17.03<br>
-            Domicilio Fiscal: Calle San Pedro N° 745, Surquillo, Lima, Lima<br>
-            Distrito de Surquillo – Provincia y Departamento de Lima<br>
-            Celular: 966702160
+            R.D. N° ${escapeHtml(resDirectoral)}<br>
+            Domicilio Fiscal: ${escapeHtml(domFiscal)}<br>
+            ${escapeHtml(distritoFiscal)}<br>
+            Celular: ${escapeHtml(telfCert)}
         </div>
         <div class="title" data-sistema-edicion="titulo">CERTIFICADO DE CONFORMIDAD</div>
-        <div class="cert-num">Certificado N°${escapeHtml(numCertificado)}</div>
+        <div class="cert-num">N.º ${escapeHtml(numCertificado)}</div>
     </div>
 
     <table class="type-box">
+        <colgroup><col style="width:108.3pt"><col style="width:111.4pt"></colgroup>
         <tr>
-            <td style="width: 50%;" class="${claseTipo('MODIFICACION')}">MODIFICACION</td>
-            <td style="width: 50%; text-align: center; font-weight: bold;">${marcaTipo('MODIFICACION', conf.marca_modificacion)}</td>
+            <td class="${claseTipo('MODIFICACION')}">MODIFICACION</td>
+            <td style="text-align: center; font-weight: bold;">${marcaTipo('MODIFICACION', conf.marca_modificacion)}</td>
         </tr>
         <tr>
-            <td style="width: 50%;" class="${claseTipo('MONTAJE')}">MONTAJE</td>
-            <td style="width: 50%; text-align: center; font-weight: bold;">${marcaTipo('MONTAJE', conf.marca_montaje)}</td>
+            <td class="${claseTipo('MONTAJE')}">MONTAJE</td>
+            <td style="text-align: center; font-weight: bold;">${marcaTipo('MONTAJE', conf.marca_montaje)}</td>
         </tr>
         <tr>
-            <td style="width: 50%;" class="${claseTipo('FABRICACION')}">FABRICACION</td>
-            <td style="width: 50%; text-align: center; font-weight: bold;">${marcaTipo('FABRICACION', conf.marca_fabricacion)}</td>
+            <td class="${claseTipo('FABRICACION')}">FABRICACION</td>
+            <td style="text-align: center; font-weight: bold;">${marcaTipo('FABRICACION', conf.marca_fabricacion)}</td>
         </tr>
     </table>
 
     <div class="certifica-p">
-        La empresa SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRÚAS S.A.C. Reconocida como Entidad Certificadora de Conformidad con RESOLUCIÓN DIRECTORAL N°282-2022 MTC/15.
+        La empresa <strong>${escapeHtml(entNombre)}</strong> Reconocida como Entidad Certificadora de Conformidad con <strong>RESOLUCIÓN DIRECTORAL N°282-2022 MTC/15.</strong>
     </div>
     <div class="certifica-p">
         <strong data-sistema-edicion="titulo-certifica">CERTIFICA:</strong> Haber realizado la inspección técnica del vehículo: <strong>${escapeHtml(veh.placa || cert.placa_nueva || '-')}</strong>
     </div>
 
     <table class="owner-box">
+        <colgroup><col style="width:232.65pt"><col style="width:248.4pt"></colgroup>
         <tr>
             <td colspan="2">Razón social/Persona natural: <span class="val">${escapeHtml(propietarioNombre)}</span></td>
         </tr>
         <tr>
-            <td style="width: 50%;">Placa de rodaje: <strong>${escapeHtml(veh.placa || cert.placa_nueva || '-')}</strong></td>
-            <td style="width: 50%;">Clase: <strong>${escapeHtml(veh.clase || '-')}</strong></td>
+            <td>Placa de rodaje: <strong>${escapeHtml(veh.placa || cert.placa_nueva || '-')}</strong></td>
+            <td>Clase: <strong>${escapeHtml(veh.clase || '-')}</strong></td>
         </tr>
     </table>
 
     <div class="section-heading">LAS CARACTERISTICAS REGISTRABLES FINALES DEL VEHICULO SON:</div>
 
     <table class="data-table">
+        <colgroup><col style="width:123.15pt"><col style="width:123.25pt"><col style="width:113.4pt"><col style="width:120.5pt"></colgroup>
         <tr>
             <td colspan="4">Razón social/Persona natural: <strong>${escapeHtml(propietarioNombre)}</strong></td>
         </tr>
@@ -312,7 +349,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             <td colspan="4">Dirección: <strong>${escapeHtml(propietarioDireccion)}</strong></td>
         </tr>
         <tr>
-            <td style="width: 140px;">Categoría</td>
+            <td>Categoría</td>
             <td class="val">${escapeHtml(veh.categoria || '-')}</td>
             <td style="width: 140px;">Altura (metros)</td>
             <td class="val">${escapeHtml(formatNumberWithoutTrailingZeros(veh.altura))}</td>
@@ -396,15 +433,17 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
     <div class="legal-p">
         El vehículo no ha sido modificado en sus características de fabricación originales, No altera o modifica su carrocería, Se respeta los parámetros de fabricante y cumple la normatividad vigente, Resolución del Superintendente Nacional de los Registros Públicos N°039 – 2013 – SUNARP / SN).
     </div>
-    <div class="legal-p">
+    <div class="legal-p before-closing">
         En cumplimiento del D.S N°058-2003-MTC y modificatorias se procede a entregar el presente certificado de conformidad de la modificación, montaje o fabricación efectuada, El vehículo cumple los requisitos técnicos exigidos para el SNTT, no afecta negativamente su seguridad ni el medio ambiente.
     </div>
-    <div class="legal-p">
-        El vehículo originalmente diseñado y construido para transporte de <strong>${escapeHtml(conf.uso_original_vehiculo || '-')}</strong>.
-    </div>
+    <div class="closing-block">
+        <div class="legal-p">
+            El vehículo originalmente diseñado y construido para transporte de <strong>${escapeHtml(conf.uso_original_vehiculo || '-')}</strong>.
+        </div>
 
-    <div class="footer-date" data-sistema-edicion="pie">
-        Lima, <strong>${fechaImp.dia}</strong> de <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.
+        <div class="footer-date" data-sistema-edicion="pie">
+            Lima, <strong>${fechaImp.dia}</strong> <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.
+        </div>
     </div>
         </div>
     </div>

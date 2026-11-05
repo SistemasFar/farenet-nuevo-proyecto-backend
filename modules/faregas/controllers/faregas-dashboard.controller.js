@@ -2,6 +2,10 @@ const dashboardService = require('../services/faregas-dashboard.service');
 const faregasAuthService = require('../services/faregas-auth.service');
 const db = require('../../../config/database');
 const { validarRangoFechasDashboard } = require('../services/faregas-dashboard-fechas.service');
+const reporteFinancieroService = require('../services/faregas-reporte-financiero.service');
+const documentosEmitidosExtendidoService = require('../services/faregas-documentos-emitidos-extendido.service');
+const resumenMensualFacturacionService = require('../services/faregas-resumen-mensual-facturacion.service');
+const registroVentasTributarioService = require('../services/faregas-registro-ventas-tributario.service');
 
 /**
  * Resuelve las plantas autorizadas para el usuario y valida el alcance (GLOBAL vs SEDE)
@@ -338,5 +342,85 @@ exports.obtenerExportacion = async (req, res) => {
         return res.status(200).json({ success: true, data });
     } catch (error) {
         return manejarErrorDashboard(res, error, 'obtenerExportacion');
+    }
+};
+
+exports.obtenerReporteFinanciero = async (req, res) => {
+    try {
+        const { plantasAutorizadas, plantasFiltro } = await resolverPlantasAutorizadas(req);
+        const rPerms = await db.query(
+            'SELECT 1 FROM fg_perfil_permiso WHERE perfil_clave = $1 AND permiso_clave = \'DASHBOARD_EXPORTAR\' LIMIT 1',
+            [req.user.perfil_id]
+        );
+        if (rPerms.rowCount === 0) {
+            return res.status(403).json({ success: false, message: 'No tiene permiso para exportar reportes del Dashboard.' });
+        }
+
+        const { desde, hasta } = req.query;
+        const data = await reporteFinancieroService.obtenerReporteFinanciero({
+            plantasAutorizadas, plantasFiltro, desde, hasta, username: req.user.username
+        });
+        return res.status(200).json({ success: true, data });
+    } catch (error) {
+        return manejarErrorDashboard(res, error, 'obtenerReporteFinanciero');
+    }
+};
+
+exports.obtenerDocumentosEmitidosExtendido = async (req, res) => {
+    try {
+        const { plantasAutorizadas, plantasFiltro } = await resolverPlantasAutorizadas(req);
+        const rPerms = await db.query(
+            'SELECT 1 FROM fg_perfil_permiso WHERE perfil_clave = $1 AND permiso_clave = \'DASHBOARD_EXPORTAR\' LIMIT 1',
+            [req.user.perfil_id]
+        );
+        if (rPerms.rowCount === 0) {
+            return res.status(403).json({ success: false, message: 'No tiene permiso para exportar reportes del Dashboard.' });
+        }
+
+        const { desde, hasta } = req.query;
+        const data = await documentosEmitidosExtendidoService.obtenerDocumentosEmitidosExtendido({
+            plantasAutorizadas, plantasFiltro, desde, hasta
+        });
+        return res.status(200).json({ success: true, data });
+    } catch (error) {
+        return manejarErrorDashboard(res, error, 'obtenerDocumentosEmitidosExtendido');
+    }
+};
+
+exports.obtenerResumenMensualFacturacion = async (req, res) => {
+    try {
+        const { plantasAutorizadas, plantasFiltro } = await resolverPlantasAutorizadas(req);
+        const rPerms = await db.query(
+            'SELECT 1 FROM fg_perfil_permiso WHERE perfil_clave = $1 AND permiso_clave = \'DASHBOARD_EXPORTAR\' LIMIT 1',
+            [req.user.perfil_id]
+        );
+        if (rPerms.rowCount === 0) {
+            return res.status(403).json({ success: false, message: 'No tiene permiso para exportar reportes del Dashboard.' });
+        }
+        const { desde, hasta } = req.query;
+        const data = await resumenMensualFacturacionService.obtenerResumenMensualFacturacion({
+            plantasAutorizadas, plantasFiltro, desde, hasta
+        });
+        return res.status(200).json({ success: true, data });
+    } catch (error) {
+        return manejarErrorDashboard(res, error, 'obtenerResumenMensualFacturacion');
+    }
+};
+
+exports.obtenerRegistroVentasTributario = async (req, res) => {
+    try {
+        const { plantasAutorizadas, plantasFiltro } = await resolverPlantasAutorizadas(req);
+        const rPerms = await db.query(
+            'SELECT 1 FROM fg_perfil_permiso WHERE perfil_clave = $1 AND permiso_clave = \'DASHBOARD_EXPORTAR\' LIMIT 1',
+            [req.user.perfil_id]
+        );
+        if (rPerms.rowCount === 0) {
+            return res.status(403).json({ success: false, message: 'No tiene permiso para exportar reportes del Dashboard.' });
+        }
+        const { desde, hasta } = req.query;
+        const data = await registroVentasTributarioService.obtenerRegistroVentasTributario({ plantasAutorizadas, plantasFiltro, desde, hasta });
+        return res.status(200).json({ success: true, data });
+    } catch (error) {
+        return manejarErrorDashboard(res, error, 'obtenerRegistroVentasTributario');
     }
 };

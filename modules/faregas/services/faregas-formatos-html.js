@@ -1,4 +1,5 @@
 const cheerio = require('cheerio');
+const { ESTILOS_TALLER_OFICIAL } = require('./faregas-formatos.templates');
 
 const CANONICAL_ATTRIBUTE = 'data-faregas-var';
 const FALLBACK_ATTRIBUTE = 'data-faregas-fallback';
@@ -135,6 +136,51 @@ const renderizarHtml = (html = '', data = {}) => {
     });
 };
 
+/**
+ * Adapta cualquier versión HTML_DINAMICO de Taller a la geometría de los
+ * documentos Word oficiales. No sustituye valores ni persiste cambios: sólo
+ * normaliza clases, orden visual y CSS al momento de renderizar.
+ */
+const aplicarLayoutOficialTaller = (html = '', data = {}) => {
+    const $ = cheerio.load(String(html), { decodeEntities: false });
+    const combustible = String(data?.inspeccion?.tipo_combustible || '').toUpperCase();
+    const esGlp = combustible.includes('GLP') || combustible.includes('LICUADO');
+    const body = $('body').first();
+    body.addClass(`faregas-taller-word ${esGlp ? 'taller-glp' : 'taller-gnv'}`);
+
+    const documento = $('.documento-certificado').first();
+    const parrafos = documento.find('.parrafo, .parrafo-certifica');
+    parrafos.each((_index, element) => {
+        const nodo = $(element);
+        const texto = nodo.text().replace(/\s+/g, ' ').trim().toUpperCase();
+        if (texto.startsWith('LA EMPRESA ')) nodo.addClass('institucional');
+        if (texto.startsWith('CERTIFICA')) nodo.addClass('certifica');
+        if (texto.startsWith('HABIÉNDOSE VERIFICADO') || texto.startsWith('HABIENDOSE VERIFICADO')) {
+            nodo.addClass('verificacion');
+        }
+    });
+
+    const seccionFinal = documento.find('.seccion-final').first();
+    const proxima = documento.find('[data-faregas-var="inspeccion.fecha_proxima_inspeccion"]').first().closest('p, div');
+    const observaciones = documento.find('[data-faregas-var="inspeccion.observaciones"]').first().closest('p, div');
+    const expedicion = documento.find('[data-faregas-var="certificado.fecha_emision"]').filter((_index, element) => (
+        $(element).parent().text().includes('Se expide el presente certificado')
+    )).first().closest('p, div');
+
+    proxima.addClass('proxima-inspeccion');
+    observaciones.addClass('observaciones');
+    expedicion.addClass('fecha-expedicion');
+    if (seccionFinal.length) {
+        if (proxima.length) seccionFinal.append(proxima);
+        if (observaciones.length) seccionFinal.append(observaciones);
+        if (expedicion.length) seccionFinal.append(expedicion);
+    }
+
+    $('style#faregas-taller-word-oficial').remove();
+    $('head').append(`<style id="faregas-taller-word-oficial">${ESTILOS_TALLER_OFICIAL}</style>`);
+    return $.html();
+};
+
 const variablesDesconocidas = (html, variablesPermitidas) => {
     const permitidas = new Set(variablesPermitidas);
     return extraerVariablesHtml(html).filter((key) => !permitidas.has(key));
@@ -148,5 +194,6 @@ module.exports = {
     normalizarHtmlEditor,
     extraerVariablesHtml,
     renderizarHtml,
+    aplicarLayoutOficialTaller,
     variablesDesconocidas
 };

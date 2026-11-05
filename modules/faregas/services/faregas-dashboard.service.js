@@ -1122,12 +1122,15 @@ async function consultarDistribucionProductos(plantas, inicio, fin) {
             COALESCE(od.codigo_sku_snapshot, 'SIN-SKU') AS sku,
             COALESCE(od.descripcion_snapshot, 'PRODUCTO') AS descripcion,
             COALESCE(od.unidad_snapshot, 'NIU') AS unidad,
+            COALESCE(cat.nombre, 'Sin categoría de catálogo') AS categoria,
             SUM(od.cantidad) AS total_unidades,
             SUM(od.importe_total) AS total_soles,
             COUNT(DISTINCT oc.id) AS total_operaciones,
             ROUND(SUM(od.importe_total) / NULLIF(SUM(od.cantidad), 0), 2) AS precio_promedio
         FROM fg_operacion_detalle od
         JOIN fg_operacion_comercial oc ON oc.id = od.operacion_id
+        LEFT JOIN fg_producto_facturacion pf ON pf.id = od.producto_facturacion_id
+        LEFT JOIN fg_categoria_servicio cat ON cat.id = pf.categoria_id
         WHERE oc.planta_key = ANY($1::varchar[])
           AND oc.fecha_creacion >= $2::timestamptz AND oc.fecha_creacion < $3::timestamptz
           AND EXISTS (
@@ -1138,7 +1141,7 @@ async function consultarDistribucionProductos(plantas, inicio, fin) {
           )
           AND od.tipo_item = 'PRODUCTO'
           AND od.producto_facturacion_id IS NOT NULL
-        GROUP BY od.producto_facturacion_id, od.codigo_sku_snapshot, od.descripcion_snapshot, od.unidad_snapshot
+        GROUP BY od.producto_facturacion_id, od.codigo_sku_snapshot, od.descripcion_snapshot, od.unidad_snapshot, cat.nombre
         ORDER BY total_soles DESC, total_unidades DESC
     `;
     const res = await db.query(query, [plantas, inicio, fin]);
@@ -1147,6 +1150,7 @@ async function consultarDistribucionProductos(plantas, inicio, fin) {
         sku: r.sku,
         descripcion: r.descripcion,
         unidad: r.unidad,
+        categoria: r.categoria,
         unidadesVendidas: Number(r.total_unidades || 0),
         totalSoles: Number(r.total_soles || 0),
         operaciones: Number(r.total_operaciones || 0),
@@ -1699,12 +1703,15 @@ async function obtenerDetalleProductos({ plantasAutorizadas, plantasFiltro, desd
             COALESCE(od.codigo_sku_snapshot, 'SIN-SKU') AS sku,
             COALESCE(od.descripcion_snapshot, 'PRODUCTO') AS descripcion,
             COALESCE(od.unidad_snapshot, 'NIU') AS unidad,
+            COALESCE(cat.nombre, 'Sin categoría de catálogo') AS categoria,
             SUM(od.cantidad) AS total_unidades,
             SUM(od.importe_total) AS total_soles,
             COUNT(DISTINCT oc.id) AS total_operaciones,
             ROUND(SUM(od.importe_total) / NULLIF(SUM(od.cantidad), 0), 2) AS precio_promedio
         FROM fg_operacion_detalle od
         JOIN fg_operacion_comercial oc ON oc.id = od.operacion_id
+        LEFT JOIN fg_producto_facturacion pf ON pf.id = od.producto_facturacion_id
+        LEFT JOIN fg_categoria_servicio cat ON cat.id = pf.categoria_id
         WHERE oc.planta_key = ANY($1::varchar[])
           AND oc.fecha_creacion >= $2::timestamptz AND oc.fecha_creacion < $3::timestamptz
           AND EXISTS (
@@ -1716,7 +1723,7 @@ async function obtenerDetalleProductos({ plantasAutorizadas, plantasFiltro, desd
           AND od.tipo_item = 'PRODUCTO'
           AND od.producto_facturacion_id IS NOT NULL
           ${whereProducto}
-        GROUP BY od.producto_facturacion_id, od.codigo_sku_snapshot, od.descripcion_snapshot, od.unidad_snapshot
+        GROUP BY od.producto_facturacion_id, od.codigo_sku_snapshot, od.descripcion_snapshot, od.unidad_snapshot, cat.nombre
         ORDER BY total_soles DESC, total_unidades DESC
     `;
 
@@ -1730,6 +1737,7 @@ async function obtenerDetalleProductos({ plantasAutorizadas, plantasFiltro, desd
             sku: r.sku,
             descripcion: r.descripcion,
             unidad: r.unidad,
+            categoria: r.categoria,
             unidadesVendidas: Number(r.total_unidades),
             totalSoles: Number(r.total_soles),
             operaciones: Number(r.total_operaciones),

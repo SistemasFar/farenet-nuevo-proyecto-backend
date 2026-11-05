@@ -1,0 +1,268 @@
+const db = require('../../../config/database');
+
+async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasFiltro, desde, hasta }) {
+    const plantas = (plantasFiltro?.length ? plantasFiltro : plantasAutorizadas)
+        .filter((planta) => plantasAutorizadas.includes(planta));
+    if (!plantas.length) return { cabeceras: [], lineas: [] };
+    const inicio = desde;
+    const [year, month, day] = hasta.split('-').map(Number);
+    const finDate = new Date(Date.UTC(year, month - 1, day + 1));
+    const fin = `${finDate.getUTCFullYear()}-${String(finDate.getUTCMonth() + 1).padStart(2, '0')}-${String(finDate.getUTCDate()).padStart(2, '0')}`;
+
+    const [cabeceras, lineasOperacion, lineasVenta] = await Promise.all([
+        db.query(`
+            WITH documentos AS (
+                SELECT 'F-' || f.id::text AS id_documento, f.id AS facturacion_id,
+                       f.operacion_id, f.venta_id, f.certificado_id, COALESCE(f.planta_key, oc.planta_key, v.planta_key) AS planta_key,
+                       COALESCE(f.sede_nombre_snapshot, pl.nombre) AS sede,
+                       COALESCE(f.razon_social_emisor, e.nombre) AS empresa_emisora,
+                       COALESCE(f.ruc_emisor, e.ruc) AS ruc_emisor,
+                       f.tipo_comprobante, f.serie, f.numero, f.fecha_documento::timestamp AS fecha_emision,
+                       'FECHA_DOCUMENTO'::text AS fecha_emision_fuente, f.fecha_aceptacion::timestamp AS fecha_aceptacion,
+                        f.fecha_documento, f.fecha_vencimiento, NULL::date AS fecha_referencia, f.codigo_unico, f.usuario_creacion AS usuario_emisor,
+                       f.entorno_facturador, f.medio_pago AS medio_pago_registrado,
+                       f.nombre_razon_social AS cliente, f.tipo_documento_cliente AS tipo_documento,
+                        f.nro_documento AS numero_documento, f.telefono AS telefono_cliente, f.moneda_key AS moneda,
+                       f.base_imponible, f.igv, f.importe_total, f.estado,
+                        f.proveedor, f.aceptada_sunat, f.sunat_responsecode, f.sunat_description, f.sunat_soap_error,
+                       f.respuesta_proveedor AS campos_dinamicos,
+                       ''::text AS referencia_afectada
+                FROM fg_facturacion f
+                LEFT JOIN fg_operacion_comercial oc ON oc.id = f.operacion_id
+                LEFT JOIN fg_venta v ON v.id = f.venta_id
+                LEFT JOIN fg_planta pl ON pl.key = COALESCE(f.planta_key, oc.planta_key, v.planta_key)
+                LEFT JOIN fg_empresa e ON e.key = COALESCE(f.empresa_key, pl.empresa_key)
+                WHERE COALESCE(f.planta_key, oc.planta_key, v.planta_key) = ANY($1::varchar[])
+                  AND f.fecha_documento >= $2::date AND f.fecha_documento < $3::date
+                  AND f.estado <> 'BORRADOR'
+                UNION ALL
+                SELECT 'C-' || cr.id::text, f.id, f.operacion_id, f.venta_id, f.certificado_id,
+                       COALESCE(f.planta_key, oc.planta_key, v.planta_key),
+                       COALESCE(f.sede_nombre_snapshot, pl.nombre),
+                       COALESCE(f.razon_social_emisor, e.nombre), COALESCE(cr.ruc_emisor, f.ruc_emisor, e.ruc),
+                       'NOTA DE CRÉDITO', cr.serie, cr.numero, NULL::timestamp,
+                       'EMISIÓN NO REGISTRADA; PERÍODO SEGÚN ACEPTACIÓN'::text, cr.fecha_aceptacion,
+                       NULL::date, NULL::date, f.fecha_documento::date, cr.codigo_unico, cr.usuario_creacion,
+                       f.entorno_facturador, f.medio_pago,
+                        f.nombre_razon_social, f.tipo_documento_cliente, f.nro_documento, f.telefono, cr.moneda_key,
+                       cr.base_imponible, cr.igv, cr.importe_total, cr.estado, cr.proveedor,
+                       cr.aceptada_sunat, cr.sunat_responsecode, cr.sunat_description, cr.sunat_soap_error,
+                       cr.respuesta_proveedor,
+                       CONCAT('Afecta ', COALESCE(f.serie, ''), '-', COALESCE(f.numero::text, ''), ' (Facturación ', f.id, ')')
+                FROM fg_credito cr
+                JOIN fg_facturacion f ON f.id = cr.facturacion_id
+                LEFT JOIN fg_operacion_comercial oc ON oc.id = f.operacion_id
+                LEFT JOIN fg_venta v ON v.id = f.venta_id
+                LEFT JOIN fg_planta pl ON pl.key = COALESCE(f.planta_key, oc.planta_key, v.planta_key)
+                LEFT JOIN fg_empresa e ON e.key = COALESCE(cr.empresa_key, f.empresa_key, pl.empresa_key)
+                WHERE COALESCE(f.planta_key, oc.planta_key, v.planta_key) = ANY($1::varchar[])
+                  AND cr.fecha_aceptacion >= $2::date
+                  AND cr.fecha_aceptacion < $3::date
+                  AND cr.estado <> 'BORRADOR'
+            )
+            SELECT d.*,
+                   COALESCE(descuento.importe_descuento, 0) AS descuento,
+                   descuento.tipo_descuento,
+                   comercial.medios_pago,
+                   comercial.monto_pagado,
+                   comercial.referencia_pago,
+                   COALESCE(comercial.tipos_producto, comercial.tipo_certificado_directo) AS tipos_producto,
+                   COALESCE(comercial.certificados, comercial.certificado_directo) AS certificados,
+                   COALESCE(comercial.placas, comercial.placa_directa) AS placas,
+                   comercial.marcas_vehiculo AS marca_vehiculo,
+                   comercial.modelos_vehiculo AS modelo_vehiculo,
+                   comercial.motores_vehiculo AS motor_vehiculo,
+                   comercial.categorias_vehiculo AS tipo_vehiculo,
+                   notas.notas_credito,
+                   notas_debito.notas_debito,
+                   anulacion.codigo_unico AS documento_anulacion,
+                   anulacion.fecha_creacion AS fecha_anulacion,
+                   anulacion.motivo AS motivo_anulacion
+            FROM documentos d
+            LEFT JOIN LATERAL (
+                SELECT CASE WHEN d.tipo_comprobante = 'NOTA DE CRÉDITO' THEN 0 ELSE SUM(dc.importe_descuento) END AS importe_descuento,
+                       STRING_AGG(DISTINCT fdsc.tipo, ', ' ORDER BY fdsc.tipo) AS tipo_descuento
+                FROM fg_descuentocomprobante dc
+                LEFT JOIN fg_descuento fdsc ON fdsc.id = dc.descuento_id
+                WHERE dc.facturacion_id = d.facturacion_id AND dc.estado = 'APLICADO'
+            ) descuento ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT (SELECT STRING_AGG(DISTINCT COALESCE(t.nombre, ef.nombre, p.tipocontado_key), ', ' ORDER BY COALESCE(t.nombre, ef.nombre, p.tipocontado_key))
+                        FROM fg_pago p
+                        JOIN fg_orden_pago op_pago ON op_pago.id = p.orden_pago_id
+                        LEFT JOIN tarjeta t ON t.key = p.tarjeta_key
+                        LEFT JOIN entidadfinanciera ef ON ef.key = p.entidadfinanciera_key
+                        WHERE ((d.operacion_id IS NOT NULL AND op_pago.operacion_id = d.operacion_id)
+                           OR (d.venta_id IS NOT NULL AND op_pago.venta_id = d.venta_id)
+                           OR (d.certificado_id IS NOT NULL AND op_pago.certificado_id = d.certificado_id))
+                          AND p.estado = 'CAN') AS medios_pago,
+                       (SELECT SUM(p.importe)
+                        FROM fg_pago p JOIN fg_orden_pago op_pago ON op_pago.id = p.orden_pago_id
+                        WHERE ((d.operacion_id IS NOT NULL AND op_pago.operacion_id = d.operacion_id)
+                           OR (d.venta_id IS NOT NULL AND op_pago.venta_id = d.venta_id)
+                           OR (d.certificado_id IS NOT NULL AND op_pago.certificado_id = d.certificado_id))
+                          AND p.estado = 'CAN') AS monto_pagado,
+                       (SELECT STRING_AGG(DISTINCT COALESCE(p.nrooperacionbanco, p.nrooperaciontarjeta), ', ' ORDER BY COALESCE(p.nrooperacionbanco, p.nrooperaciontarjeta))
+                        FROM fg_pago p JOIN fg_orden_pago op_pago ON op_pago.id = p.orden_pago_id
+                        WHERE ((d.operacion_id IS NOT NULL AND op_pago.operacion_id = d.operacion_id)
+                           OR (d.venta_id IS NOT NULL AND op_pago.venta_id = d.venta_id)
+                           OR (d.certificado_id IS NOT NULL AND op_pago.certificado_id = d.certificado_id))
+                          AND p.estado = 'CAN') AS referencia_pago,
+                       (SELECT STRING_AGG(DISTINCT clase.nombre, ', ' ORDER BY clase.nombre)
+                        FROM (
+                            SELECT COALESCE(cs.nombre, cp.nombre, pf.tipo_producto) AS nombre
+                            FROM fg_operacion_detalle od
+                            LEFT JOIN fg_servicio s ON s.id = od.servicio_id
+                            LEFT JOIN fg_categoria_servicio cs ON cs.id = s.categoria_id
+                            LEFT JOIN fg_producto_facturacion pf ON pf.id = od.producto_facturacion_id
+                            LEFT JOIN fg_categoria_servicio cp ON cp.id = pf.categoria_id
+                            WHERE (d.operacion_id IS NOT NULL AND od.operacion_id = d.operacion_id)
+                               OR (d.certificado_id IS NOT NULL AND od.certificado_id = d.certificado_id)
+                            UNION
+                            SELECT COALESCE(cat.nombre, pf.tipo_producto, pi.tipo)
+                            FROM fg_venta_detalle vd
+                            JOIN fg_venta ven ON ven.id = vd.venta_id
+                            LEFT JOIN fg_producto_inventariable pi ON pi.id = vd.producto_inventariable_id
+                            LEFT JOIN fg_producto_inventariable_sede pis ON pis.producto_inventariable_id = pi.id AND pis.planta_key = ven.planta_key
+                            LEFT JOIN fg_producto_facturacion pf ON pf.id = pis.producto_facturacion_id
+                            LEFT JOIN fg_categoria_servicio cat ON cat.id = pf.categoria_id
+                            WHERE ven.id = d.venta_id
+                        ) clase WHERE clase.nombre IS NOT NULL) AS tipos_producto,
+                       (SELECT STRING_AGG(DISTINCT COALESCE(c.numero_certificado, dup.numero_certificado_snapshot), ', ' ORDER BY COALESCE(c.numero_certificado, dup.numero_certificado_snapshot))
+                        FROM fg_operacion_detalle od
+                        LEFT JOIN fg_certificado c ON c.id = od.certificado_id
+                        LEFT JOIN fg_certificado_duplicado dup ON dup.operacion_id = od.operacion_id
+                        WHERE ((d.operacion_id IS NOT NULL AND od.operacion_id = d.operacion_id)
+                            OR (d.certificado_id IS NOT NULL AND od.certificado_id = d.certificado_id))
+                          AND COALESCE(c.numero_certificado, dup.numero_certificado_snapshot) IS NOT NULL) AS certificados,
+                       (SELECT STRING_AGG(DISTINCT COALESCE(cv.placa, dup.placa), ', ' ORDER BY COALESCE(cv.placa, dup.placa))
+                        FROM fg_operacion_detalle od
+                        LEFT JOIN fg_certificado_vehiculo cv ON cv.certificado_id = od.certificado_id
+                        LEFT JOIN fg_certificado_duplicado dup ON dup.operacion_id = od.operacion_id
+                        WHERE ((d.operacion_id IS NOT NULL AND od.operacion_id = d.operacion_id)
+                            OR (d.certificado_id IS NOT NULL AND od.certificado_id = d.certificado_id))
+                          AND COALESCE(cv.placa, dup.placa) IS NOT NULL) AS placas,
+                       (SELECT STRING_AGG(DISTINCT c.numero_certificado, ', ' ORDER BY c.numero_certificado)
+                        FROM fg_certificado c WHERE d.certificado_id = c.id) AS certificado_directo,
+                       (SELECT STRING_AGG(DISTINCT cv.placa, ', ' ORDER BY cv.placa)
+                        FROM fg_certificado_vehiculo cv WHERE d.certificado_id = cv.certificado_id) AS placa_directa,
+                        (SELECT STRING_AGG(DISTINCT tc.nombre, ', ' ORDER BY tc.nombre)
+                        FROM fg_certificado c
+                        JOIN fg_tipo_certificado tc ON tc.clave = c.tipo_certificado_clave
+                         WHERE d.certificado_id = c.id) AS tipo_certificado_directo,
+                       (SELECT STRING_AGG(DISTINCT cv.marca, ', ' ORDER BY cv.marca)
+                        FROM fg_certificado_vehiculo cv
+                        WHERE cv.certificado_id = d.certificado_id OR cv.certificado_id IN (
+                            SELECT od.certificado_id FROM fg_operacion_detalle od
+                            WHERE ((d.operacion_id IS NOT NULL AND od.operacion_id = d.operacion_id)
+                                OR (d.certificado_id IS NOT NULL AND od.certificado_id = d.certificado_id))
+                        )) AS marcas_vehiculo,
+                       (SELECT STRING_AGG(DISTINCT cv.modelo, ', ' ORDER BY cv.modelo)
+                        FROM fg_certificado_vehiculo cv
+                        WHERE cv.certificado_id = d.certificado_id OR cv.certificado_id IN (
+                            SELECT od.certificado_id FROM fg_operacion_detalle od
+                            WHERE ((d.operacion_id IS NOT NULL AND od.operacion_id = d.operacion_id)
+                                OR (d.certificado_id IS NOT NULL AND od.certificado_id = d.certificado_id))
+                        )) AS modelos_vehiculo,
+                       (SELECT STRING_AGG(DISTINCT cv.numero_motor, ', ' ORDER BY cv.numero_motor)
+                        FROM fg_certificado_vehiculo cv
+                        WHERE cv.certificado_id = d.certificado_id OR cv.certificado_id IN (
+                            SELECT od.certificado_id FROM fg_operacion_detalle od
+                            WHERE ((d.operacion_id IS NOT NULL AND od.operacion_id = d.operacion_id)
+                                OR (d.certificado_id IS NOT NULL AND od.certificado_id = d.certificado_id))
+                        )) AS motores_vehiculo,
+                       (SELECT STRING_AGG(DISTINCT cv.categoria, ', ' ORDER BY cv.categoria)
+                        FROM fg_certificado_vehiculo cv
+                        WHERE cv.certificado_id = d.certificado_id OR cv.certificado_id IN (
+                            SELECT od.certificado_id FROM fg_operacion_detalle od
+                            WHERE ((d.operacion_id IS NOT NULL AND od.operacion_id = d.operacion_id)
+                                OR (d.certificado_id IS NOT NULL AND od.certificado_id = d.certificado_id))
+                        )) AS categorias_vehiculo
+                
+            ) comercial ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT STRING_AGG(DISTINCT CONCAT_WS('-', nc.serie, nc.numero::text), ', ' ORDER BY CONCAT_WS('-', nc.serie, nc.numero::text)) AS notas_credito,
+                       COUNT(DISTINCT nc.id)::int AS cantidad_notas_credito
+                FROM fg_credito nc
+                WHERE nc.facturacion_id = d.facturacion_id AND d.tipo_comprobante <> 'NOTA DE CRÉDITO'
+                  AND nc.estado <> 'BORRADOR'
+            ) notas ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT STRING_AGG(DISTINCT CONCAT_WS('-', nd.serie, nd.numero::text), ', ' ORDER BY CONCAT_WS('-', nd.serie, nd.numero::text)) AS notas_debito,
+                       COUNT(DISTINCT nd.id)::int AS cantidad_notas_debito
+                FROM fg_debito nd
+                WHERE nd.facturacion_id = d.facturacion_id AND d.tipo_comprobante <> 'NOTA DE DÉBITO'
+                  AND nd.estado <> 'BORRADOR'
+            ) notas_debito ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT da.codigo_unico, da.fecha_creacion, da.motivo
+                FROM fg_documento_anulacion da
+                WHERE da.facturacion_id = d.facturacion_id
+                ORDER BY da.id DESC LIMIT 1
+            ) anulacion ON TRUE
+            ORDER BY d.fecha_emision, d.id_documento
+        `, [plantas, inicio, fin]),
+        db.query(`
+            SELECT od.id AS id_detalle, oc.id AS operacion_id,
+                   STRING_AGG(DISTINCT CONCAT_WS('-', f.serie, f.numero::text), ', ' ORDER BY CONCAT_WS('-', f.serie, f.numero::text)) AS documentos_asociados,
+                   STRING_AGG(DISTINCT 'F-' || f.id::text, ', ' ORDER BY 'F-' || f.id::text) AS documentos_ids,
+                   oc.planta_key, pl.nombre AS sede, COALESCE(cs.nombre, cp.nombre, pf.tipo_producto) AS tipo_producto,
+                   COALESCE(pf.codigo_sku, od.codigo_sku_snapshot) AS codigo_producto,
+                   COALESCE(pf.descripcion, s.nombre, od.descripcion_snapshot) AS producto,
+                   COALESCE(pf.unidad, od.unidad_snapshot) AS unidad, od.cantidad, od.precio_unitario,
+                   pf.valor_referencial_unitario, od.afectacion_igv_snapshot AS codigo_afectacion_igv,
+                   od.base_imponible, od.igv, od.importe_total,
+                   COALESCE(c.numero_certificado, dup.numero_certificado_snapshot) AS certificado,
+                   COALESCE(cv.placa, dup.placa) AS placa
+            FROM fg_operacion_detalle od
+            JOIN fg_operacion_comercial oc ON oc.id = od.operacion_id
+            JOIN fg_facturacion f ON f.operacion_id = oc.id
+            LEFT JOIN fg_planta pl ON pl.key = oc.planta_key
+            LEFT JOIN fg_servicio s ON s.id = od.servicio_id
+            LEFT JOIN fg_categoria_servicio cs ON cs.id = s.categoria_id
+            LEFT JOIN fg_producto_facturacion pf ON pf.id = od.producto_facturacion_id
+            LEFT JOIN fg_categoria_servicio cp ON cp.id = pf.categoria_id
+            LEFT JOIN fg_certificado c ON c.id = od.certificado_id
+            LEFT JOIN fg_certificado_vehiculo cv ON cv.certificado_id = c.id
+            LEFT JOIN fg_certificado_duplicado dup ON dup.operacion_id = oc.id
+            WHERE oc.planta_key = ANY($1::varchar[])
+              AND f.fecha_documento >= $2::date AND f.fecha_documento < $3::date
+              AND f.estado <> 'BORRADOR'
+            GROUP BY od.id, oc.id, oc.planta_key, pl.nombre, cs.nombre, cp.nombre, pf.tipo_producto,
+                     pf.codigo_sku, od.codigo_sku_snapshot, pf.descripcion, s.nombre, od.descripcion_snapshot,
+                     pf.unidad, od.unidad_snapshot, od.cantidad, od.precio_unitario, pf.valor_referencial_unitario,
+                     od.afectacion_igv_snapshot, od.base_imponible, od.igv,
+                     od.importe_total, c.numero_certificado, dup.numero_certificado_snapshot, cv.placa, dup.placa
+            ORDER BY oc.id, od.orden, od.id
+        `, [plantas, inicio, fin]),
+        db.query(`
+            SELECT vd.id AS id_detalle, v.id AS venta_id,
+                   STRING_AGG(DISTINCT CONCAT_WS('-', f.serie, f.numero::text), ', ' ORDER BY CONCAT_WS('-', f.serie, f.numero::text)) AS documentos_asociados,
+                   STRING_AGG(DISTINCT 'F-' || f.id::text, ', ' ORDER BY 'F-' || f.id::text) AS documentos_ids,
+                   v.planta_key, pl.nombre AS sede, COALESCE(cat.nombre, pf.tipo_producto, pi.tipo) AS tipo_producto,
+                   pi.codigo AS codigo_producto, pi.nombre AS producto, pf.unidad,
+                   vd.cantidad, vd.precio_unitario, pf.valor_referencial_unitario,
+                   pf.tipo_afectacion_igv AS codigo_afectacion_igv, NULL::numeric AS base_imponible,
+                   NULL::numeric AS igv, vd.total AS importe_total, NULL::text AS certificado, NULL::text AS placa
+            FROM fg_venta_detalle vd
+            JOIN fg_venta v ON v.id = vd.venta_id
+            JOIN fg_facturacion f ON f.venta_id = v.id
+            LEFT JOIN fg_planta pl ON pl.key = v.planta_key
+            LEFT JOIN fg_producto_inventariable pi ON pi.id = vd.producto_inventariable_id
+            LEFT JOIN fg_producto_inventariable_sede pis ON pis.producto_inventariable_id = pi.id AND pis.planta_key = v.planta_key
+            LEFT JOIN fg_producto_facturacion pf ON pf.id = pis.producto_facturacion_id
+            LEFT JOIN fg_categoria_servicio cat ON cat.id = pf.categoria_id
+            WHERE v.planta_key = ANY($1::varchar[])
+              AND f.fecha_documento >= $2::date AND f.fecha_documento < $3::date
+              AND f.estado <> 'BORRADOR'
+            GROUP BY vd.id, v.id, v.planta_key, pl.nombre, cat.nombre, pf.tipo_producto, pi.tipo,
+                     pi.codigo, pi.nombre, pf.unidad, vd.cantidad, vd.precio_unitario, pf.valor_referencial_unitario,
+                     pf.tipo_afectacion_igv, vd.total
+            ORDER BY v.id, vd.id
+        `, [plantas, inicio, fin])
+    ]);
+
+    return { cabeceras: cabeceras.rows, lineas: [...lineasOperacion.rows, ...lineasVenta.rows] };
+}
+
+module.exports = { obtenerDocumentosEmitidosExtendido };
