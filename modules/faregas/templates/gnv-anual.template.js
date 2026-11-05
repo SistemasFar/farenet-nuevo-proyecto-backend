@@ -111,11 +111,11 @@ const obsContentHtml = esTaller
         }
         body {
             font-family: Arial, Helvetica, sans-serif;
-            font-size: 9pt;
+            font-size: 10pt;
             color: #000;
-            line-height: 13.65pt;
+            line-height: 12pt;
             margin: 0;
-            padding: 88pt 55pt 35.15pt 55pt;
+            padding: 88pt 49.55pt 35.15pt 57pt;
             box-sizing: border-box;
             width: 210mm;
             min-height: 297mm;
@@ -144,9 +144,9 @@ const obsContentHtml = esTaller
         }
         .cert-content {
             width: 100%;
-            font-size: 9pt;
+            font-size: 10pt;
             color: #000;
-            line-height: 13.65pt;
+            line-height: 12pt;
         }
         .watermark {
             position: fixed;
@@ -164,6 +164,11 @@ const obsContentHtml = esTaller
             z-index: 9999;
         }
         .preview-badge {
+            position: absolute;
+            top: 10pt;
+            left: 60pt;
+            width: 485.45pt;
+            box-sizing: border-box;
             background-color: #fef3c7;
             border: 2px dashed #f59e0b;
             color: #92400e;
@@ -172,8 +177,8 @@ const obsContentHtml = esTaller
             font-weight: bold;
             font-size: 11px;
             letter-spacing: 1px;
-            margin-bottom: 15px;
             border-radius: 6px;
+            z-index: 10000;
         }
         .header {
             text-align: center;
@@ -181,93 +186,99 @@ const obsContentHtml = esTaller
             position: relative;
         }
         .header-sub {
-            width: 241.8pt;
-            margin-left: -25pt;
-            margin-bottom: 36pt;
+            width: 207pt;
+            margin-left: -13.5pt;
+            margin-bottom: 37.4pt;
             font-family: Arial, Helvetica, sans-serif;
             font-size: 8pt;
             color: #000;
-            line-height: 10.5pt;
+            line-height: 9.2pt;
             letter-spacing: 0;
             text-align: center;
         }
         .title {
-            font-size: 14pt;
+            font-size: 13pt;
             font-weight: bold;
-            line-height: 16.8pt;
-            margin: 0;
+            line-height: 15.6pt;
+            margin: 0 0 2.5pt 0;
             text-align: center;
             text-transform: uppercase;
         }
         .cert-num {
-            font-size: 10.5pt;
+            font-size: 10pt;
             font-weight: bold;
-            line-height: 12.6pt;
+            line-height: 12pt;
             text-align: right;
-            margin-bottom: 8pt;
+            margin-bottom: 23.2pt;
         }
         .company-name {
-            font-size: 10.5pt;
-            line-height: 12.6pt;
-            margin-bottom: 8pt;
-            letter-spacing: 0.05pt;
+            font-size: 10pt;
+            line-height: 12pt;
+            margin-bottom: 13pt;
+            letter-spacing: 0;
             text-align: center;
         }
         .certifica-hdr {
             text-align: center;
             font-weight: bold;
-            font-size: 9.5pt;
-            line-height: 11pt;
-            margin: 8pt 0 5pt 0;
+            font-size: 10pt;
+            line-height: 12pt;
+            margin: 0;
             letter-spacing: 0;
         }
         .certifica-p {
             text-align: justify;
-            margin: 0 0 5pt 0;
-            font-size: 9.5pt;
-            line-height: 14.25pt;
-            letter-spacing: 0.04pt;
-            word-spacing: 0.1pt;
+            margin: 0 0 8.5pt 0;
+            font-size: 10pt;
+            line-height: 12pt;
+            letter-spacing: 0;
+            word-spacing: 0;
         }
         table.data-table {
-            width: 100%;
+            width: 485.45pt;
             border-collapse: collapse;
             table-layout: fixed;
-            margin: 0 0 7.5pt 0;
-            font-size: 8.5pt;
-            line-height: 10pt;
+            margin: 0 0 8.5pt 0;
+            font-size: 9pt;
+            line-height: 10.5pt;
         }
         table.data-table td, table.data-table th {
-            border: 0.5pt solid #000;
-            height: 13.5pt;
-            padding: 1.25pt 3pt;
+            border: 0.25pt solid #000;
+            height: 11.5pt;
+            box-sizing: border-box;
+            padding: 0 3.5pt;
             vertical-align: middle;
             overflow-wrap: anywhere;
         }
         table.data-table td.num {
             width: 22px;
             text-align: center;
-            font-weight: bold;
+            font-weight: normal;
+            white-space: nowrap;
+            overflow-wrap: normal;
+            word-break: normal;
+            padding-left: 0;
+            padding-right: 0;
         }
         table.data-table td.label {
             font-weight: normal;
         }
         table.data-table td.val {
-            font-weight: bold;
+            font-weight: normal;
         }
         .verif-title {
-            font-weight: bold;
-            margin: 0 0 3pt 0;
-            font-size: 9.5pt;
-            line-height: 12.5pt;
+            font-weight: normal;
+            margin: 0;
+            font-size: 10pt;
+            line-height: 12pt;
         }
         ol.verif-list {
-            padding-left: 12pt;
+            padding-left: 18pt;
             list-style: none;
             margin: 0 0 6pt 0;
             text-align: left;
-            font-size: 9.5pt;
-            line-height: 12.5pt;
+            font-size: 10pt;
+            line-height: 12pt;
         }
         ol.verif-list li {
             display: grid;
@@ -275,33 +286,34 @@ const obsContentHtml = esTaller
             column-gap: 6pt;
             align-items: start;
             padding: 0;
-            line-height: 12.5pt;
-            margin: 0 0 1.5pt 0;
+            line-height: 12pt;
+            margin: 0;
         }
         .verif-code {
             display: block;
             text-align: left;
+            font-weight: normal;
         }
         .verif-text {
             display: block;
             min-width: 0;
             text-align: justify;
-            overflow-wrap: anywhere;
+            overflow-wrap: normal;
         }
         .conclusion {
-            padding-left: 18pt;
+            padding-left: 0;
             text-align: justify;
-            font-size: 9.5pt;
-            line-height: 14.25pt;
-            margin: 0 0 7pt 0;
+            font-size: 10pt;
+            line-height: 12pt;
+            margin: 0 0 9pt 0;
         }
         .obs-sec {
-            margin-top: 3pt;
-            font-size: 9.5pt;
-            line-height: 14.25pt;
+            margin-top: 0;
+            font-size: 10pt;
+            line-height: 12pt;
             text-align: justify;
         }
-        .obs-sec > div:not(.obs-header-line):not(.obs-dots-full):not(.obs-sec) { padding-left: 21pt; }
+        .obs-sec > div:not(.obs-header-line):not(.obs-dots-full):not(.obs-sec) { padding-left: 0; }
         .obs-header-line {
             display: flex;
             align-items: baseline;
@@ -320,18 +332,18 @@ const obsContentHtml = esTaller
             margin-top: 4px;
         }
         .footer-date {
-            margin-top: 12pt;
+            margin-top: 11pt;
             text-align: left;
-            font-size: 9.5pt;
-            line-height: 14.25pt;
+            font-size: 10pt;
+            line-height: 12pt;
         }
 
         /* El diseño de sistema agrega reglas !important al final del head.
            Estas reglas, limitadas a GNV_ANUAL, conservan la escala de impresión del modelo. */
         html body {
-            padding: 88pt 55pt 35.15pt 55pt !important;
-            font-size: 9pt !important;
-            line-height: 13.65pt !important;
+            padding: 88pt 49.55pt 35.15pt 57pt !important;
+            font-size: 10pt !important;
+            line-height: 12pt !important;
         }
         html body .documento-certificado {
             width: 100% !important;
@@ -341,30 +353,38 @@ const obsContentHtml = esTaller
         }
         html body .documento-certificado .cert-content {
             width: 100% !important;
-            font-size: 9pt !important;
-            line-height: 13.65pt !important;
+            font-size: 10pt !important;
+            line-height: 12pt !important;
         }
         html body .documento-certificado .header .title[data-sistema-edicion="titulo"] {
-            font-size: 14pt !important;
-            line-height: 16.8pt !important;
-            margin-top: 10.5pt !important;
-            margin-bottom: 8pt !important;
+            font-size: 13pt !important;
+            line-height: 15.6pt !important;
+            margin: 0 0 2.5pt 0 !important;
         }
         html body table.data-table {
-            width: 100% !important;
-            font-size: 8.5pt !important;
-            line-height: 10pt !important;
+            width: 485.45pt !important;
+            margin-left: 0 !important;
+            font-size: 9pt !important;
+            line-height: 10.5pt !important;
         }
         html body table.data-table td,
         html body table.data-table th {
-            height: 13.5pt !important;
-            padding: 1.25pt 3pt !important;
-            border-width: 0.5pt !important;
+            height: 11.5pt !important;
+            box-sizing: border-box !important;
+            padding: 0 3.5pt !important;
+            border-width: 0.25pt !important;
+        }
+        html body table.data-table td.num {
+            white-space: nowrap !important;
+            overflow-wrap: normal !important;
+            word-break: normal !important;
+            padding-left: 0 !important;
+            padding-right: 0 !important;
         }
         html body .documento-certificado .footer-date[data-sistema-edicion="pie"] {
-            font-size: 9.5pt !important;
-            line-height: 14.25pt !important;
-            margin-top: 12pt !important;
+            font-size: 10pt !important;
+            line-height: 12pt !important;
+            margin-top: 11pt !important;
             text-align: left !important;
         }
     </style>
@@ -382,8 +402,8 @@ const obsContentHtml = esTaller
                     Const del Callao – Prov. Const del Callao<br>
                     Celular: 966702160
                 </div>
-                <div class="title" style="margin-top: 10px; margin-bottom: 10px;" data-sistema-edicion="titulo">CERTIFICADO DE INSPECCION ANUAL DEL VEHICULO A GNV</div>
-                <div class="cert-num" style="text-align: right;">Certificado N° ${escapeHtml(numCertificado)}</div>
+                <div class="title" data-sistema-edicion="titulo">CERTIFICADO DE INSPECCION ANUAL DEL VEHICULO A GNV</div>
+                <div class="cert-num">Certificado N° ${escapeHtml(numCertificado)}</div>
                 <div class="company-name" style="font-weight: bold;">SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRUAS S.A.C.</div>
     </div>
 
@@ -394,12 +414,12 @@ const obsContentHtml = esTaller
 
     <table class="data-table">
         <colgroup>
-            <col style="width: 3.8%;">
-            <col style="width: 19.6%;">
-            <col style="width: 22.8%;">
-            <col style="width: 3.8%;">
-            <col style="width: 27.2%;">
-            <col style="width: 22.8%;">
+            <col style="width: 17.95pt;">
+            <col style="width: 94.8pt;">
+            <col style="width: 111.95pt;">
+            <col style="width: 17.95pt;">
+            <col style="width: 129.2pt;">
+            <col style="width: 113.6pt;">
         </colgroup>
         <tr>
             <td class="num">1</td>

@@ -316,7 +316,7 @@ function generateGnvInicialHtml(data, options = { modo: "PREVIEW" }) {
             margin: 0;
             font-size: 9pt;
             text-align: justify;
-            line-height: 13.65pt;
+            line-height: 12pt;
         }
         .obs-paragraph {
             margin: 0;

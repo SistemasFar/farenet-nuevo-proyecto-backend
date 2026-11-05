@@ -64,17 +64,23 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
     <title>Certificado de Conformidad - Previsualización</title>
     <style>
         @page { size: A4 portrait; margin: 0; }
+        html {
+            width: 210mm;
+            min-height: 297mm;
+            background: #fff;
+        }
         body {
             font-family: Arial, Helvetica, sans-serif;
-            font-size: 10.5px;
+            font-size: 10pt;
             color: #000;
-            line-height: 1.3;
+            line-height: 12pt;
             margin: 0;
-            padding: 20px;
+            padding: 107.45pt 29.5pt 70.9pt 84.75pt;
+            width: 210mm;
+            min-height: 297mm;
+            box-sizing: border-box;
             background-color: #fff;
             position: relative;
-            overflow-wrap: anywhere;
-            word-break: break-word;
         }
         .watermark {
             position: fixed;
@@ -92,16 +98,22 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             z-index: 9999;
         }
         .preview-badge {
+            position: absolute;
+            top: 30pt;
+            left: 84.75pt;
+            width: 481.05pt;
+            box-sizing: border-box;
             background-color: #fef3c7;
-            border: 2px dashed #f59e0b;
+            border: 1pt dashed #f59e0b;
             color: #92400e;
-            padding: 6px 12px;
+            padding: 3pt 6pt;
             text-align: center;
             font-weight: bold;
-            font-size: 11px;
-            letter-spacing: 1px;
-            margin-bottom: 15px;
-            border-radius: 6px;
+            font-size: 7.5pt;
+            line-height: 9pt;
+            letter-spacing: .35pt;
+            border-radius: 3pt;
+            z-index: 3;
         }
         .preview-hidden { display: none !important; }
         /* TipTap conserva los bloques editables como <p>. Sus márgenes de
@@ -109,70 +121,106 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         .documento-certificado p { margin: 0; }
         body > p:last-child:empty { display: none; }
         .header {
+            margin: 0;
             text-align: center;
-            margin-bottom: 10px;
         }
         .header-sub {
-            font-size: 9px;
-            color: #333;
-            line-height: 1.25;
+            position: absolute;
+            top: 71.9pt;
+            left: 22.7pt;
+            width: 253.6pt;
+            height: 48.55pt;
+            box-sizing: border-box;
+            font-size: 8pt;
+            color: #000;
+            line-height: 9.6pt;
+            text-align: center !important;
         }
         .title {
-            font-size: 14px;
+            font-size: 13pt;
+            line-height: 15.6pt;
             font-weight: bold;
-            margin: 10px 0 4px 0;
+            margin: 18.55pt 0 0;
             text-align: center;
             text-transform: uppercase;
         }
         .cert-num {
-            font-size: 11.5px;
+            font-size: 10pt;
+            line-height: 12pt;
             font-weight: bold;
             text-align: right;
-            margin-bottom: 8px;
+            margin: 14.4pt 0 0;
         }
         table.type-box {
-            width: 500px;
-            margin: 0 auto 12px auto;
+            width: 219.7pt;
+            margin: 15pt auto 9pt;
             border-collapse: collapse;
-            font-size: 10px;
+            font-size: 10pt;
+            line-height: 11.25pt;
             font-weight: bold;
             text-align: center;
             table-layout: fixed;
         }
         table.type-box td {
-            border: 1px solid #000;
-            padding: 4px;
+            border: .5pt solid #000;
+            height: 12pt;
+            padding: 0 2pt;
+            box-sizing: border-box;
         }
         table.type-box td.active {
             background-color: #e2e8f0;
         }
         .certifica-p {
             text-align: justify;
-            margin-bottom: 10px;
-            font-size: 10px;
-            line-height: 1.35;
+            margin: 0 0 2pt;
+            font-size: 10pt;
+            line-height: 12pt;
         }
+        table.type-box + .certifica-p { margin-bottom: 12pt; }
         table.owner-box {
-            width: 100%;
+            width: 481.05pt;
             border-collapse: collapse;
-            margin-bottom: 10px;
-            font-size: 10px;
+            margin: 0 0 4pt;
+            font-size: 9pt;
+            line-height: 12pt;
+            table-layout: fixed;
         }
         table.owner-box td {
-            border: 1px solid #000;
-            padding: 4px 6px;
-        }
-        table.data-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 12px;
-            font-size: 9.5px;
-        }
-        table.data-table td {
-            border: 1px solid #000;
-            padding: 3.5px 6px;
+            border: .5pt solid #000;
+            padding: 1.5pt 4pt;
+            box-sizing: border-box;
             vertical-align: middle;
         }
+        table.owner-box tr:first-child td { height: 27.1pt; }
+        table.owner-box tr:nth-child(2) td { height: 16.35pt; }
+        .section-heading {
+            margin: 0 0 8pt;
+            font-size: 10pt;
+            line-height: 12pt;
+            font-weight: bold;
+        }
+        table.data-table {
+            width: 480.3pt;
+            border-collapse: collapse;
+            margin: 0 0 0;
+            font-size: 9pt;
+            line-height: 11pt;
+            table-layout: fixed;
+        }
+        table.data-table td {
+            border: .5pt solid #000;
+            height: 11.75pt;
+            padding: .65pt 3.5pt;
+            box-sizing: border-box;
+            vertical-align: middle;
+            overflow-wrap: break-word;
+        }
+        table.data-table tr:first-child td { height: 27.35pt; }
+        table.data-table tr:nth-child(2) td { height: 19.7pt; }
+        table.data-table td:nth-child(1) { width: 123.15pt; }
+        table.data-table td:nth-child(2) { width: 123.25pt; }
+        table.data-table td:nth-child(3) { width: 113.4pt; }
+        table.data-table td:nth-child(4) { width: 120.5pt; }
         table.data-table td.hdr {
             font-weight: bold;
             background-color: #f8fafc;
@@ -182,20 +230,27 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         }
         .spec-para {
             font-weight: bold;
-            font-size: 10.5px;
-            margin: 12px 0;
+            font-size: 10pt;
+            line-height: 12pt;
+            margin: 12pt 0 10.5pt;
             text-transform: uppercase;
+        }
+        .grant-line {
+            font-size: 9pt;
+            line-height: 12pt;
+            margin: 0;
         }
         .legal-p {
             text-align: justify;
-            margin-bottom: 10px;
-            font-size: 9.5px;
-            line-height: 1.35;
+            margin: 0 0 6pt;
+            font-size: 9pt;
+            line-height: 12pt;
         }
         .footer-date {
-            margin-top: 25px;
+            margin-top: 16.5pt;
             text-align: right;
-            font-size: 10.5px;
+            font-size: 10pt;
+            line-height: 12pt;
         }
     </style>
 </head>
@@ -247,7 +302,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         </tr>
     </table>
 
-    <div style="font-weight: bold; font-size: 10px; margin-bottom: 4px;">LAS CARACTERISTICAS REGISTRABLES FINALES DEL VEHICULO SON:</div>
+    <div class="section-heading">LAS CARACTERISTICAS REGISTRABLES FINALES DEL VEHICULO SON:</div>
 
     <table class="data-table">
         <tr>
@@ -330,7 +385,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         </tr>
     </table>
 
-    <div style="font-size: 9.5px; margin-bottom: 8px;">
+    <div class="grant-line">
         Se otorga la certificación de conformidad al vehículo de placa: <strong>${escapeHtml(veh.placa || cert.placa_nueva || '-')}</strong>
     </div>
 
