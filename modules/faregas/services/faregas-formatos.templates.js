@@ -22,6 +22,13 @@ const ESTILOS_DOCUMENTO_A4 = `
 const ESTILOS_TALLER_OFICIAL = `
   @page { size: Letter portrait; margin: 0; }
   html, body { width: 612pt; min-height: 792pt; margin: 0; background: #fff; }
+  /* La hoja se centra sólo en pantalla; las medidas oficiales de impresión
+     permanecen intactas dentro de @media print. */
+  @media screen {
+    html, body { width: 100%; min-height: 100%; }
+    body.faregas-taller-word { display: flex; justify-content: safe center; overflow-x: auto; }
+    .faregas-taller-word .documento-certificado { flex: 0 0 612pt; }
+  }
   body.faregas-taller-word { color: #000; font-family: Calibri, Arial, sans-serif; }
   .faregas-taller-word .documento-certificado {
     position: relative; box-sizing: border-box; width: 612pt; min-height: 792pt;

@@ -688,10 +688,10 @@ test('16. la migración anterior no existe y el esquema maestro no siembra el pe
     const migrationsRoot = path.join(__dirname, '..', 'database');
     const migracion = path.join(
         migrationsRoot,
-        'migrations_history/20261027_faregas_permisos_sensibles_administrar.sql'
+        'archive/migrations_history/20261027_faregas_permisos_sensibles_administrar.sql'
     );
     const maestro = fs.readFileSync(
-        path.join(migrationsRoot, 'migrations/0001_faregas_schema.sql'),
+        path.join(migrationsRoot, 'faregas_instalacion_completa.sql'),
         'utf8'
     );
 

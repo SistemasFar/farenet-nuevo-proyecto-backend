@@ -82,7 +82,7 @@ test('la nota de crédito sólo admite motivos 01, 02 y 03 y debe ser total', ()
 test('la migración incremental retira privilegios fiscales sólo a OPERADOR', () => {
     const migration = fs.readFileSync(path.join(
         __dirname,
-        '../database/migrations_history/20261022_faregas_fase0_seguridad_documentos.sql'
+        '../database/archive/migrations_history/20261022_faregas_fase0_seguridad_documentos.sql'
     ), 'utf8');
     assert.match(migration, /FAREGAS_ANULAR_COMPROBANTE/);
     assert.match(migration, /WHERE perfil_clave = 'OPERADOR'/);

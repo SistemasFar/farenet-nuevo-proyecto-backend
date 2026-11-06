@@ -1,16 +1,21 @@
 -- ============================================================================
--- FAREGAS - ESQUEMA CONSOLIDADO
--- Generado desde el esquema operativo verificado el 2026-10-19.
--- Contiene 61 tablas funcionales, secuencias, claves, restricciones, indices,
--- comentarios, funcion, trigger y la unica cuenta bancaria operativa FAREGAS.
+-- FAREGAS - INSTALACION COMPLETA
+-- Estado final consolidado y revisado el 2026-11-06.
+-- Contiene 69 tablas funcionales, secuencias, claves, restricciones, indices,
+-- funciones, triggers y catálogos de permisos propios de FAREGAS.
 --
 -- Prerrequisito: el esquema legacy Farenet debe existir porque FAREGAS conserva
 -- claves foraneas hacia moneda, formapago, cuentacorriente, entidadfinanciera,
 -- tarjeta, tipocontado y persona.
 --
--- Sustituye las migraciones incrementales 20200101-20261019. El historial fue
--- movido a database/migrations_history y no debe ejecutarse despues de este
--- archivo consolidado.
+-- Este archivo es exclusivo para instalaciones nuevas. No se debe combinar
+-- con migrations/ ni migrations_history/. No contiene clientes, vehiculos,
+-- usuarios, certificados, pagos, comprobantes, contraseñas, tokens ni otros
+-- datos transaccionales.
+--
+-- Incluye el catálogo RBAC de aplicación. Empresa, sedes, servicios, productos,
+-- tarifas, talleres, series y correlativos son configuración específica del
+-- despliegue y deben provisionarse en un procedimiento posterior controlado.
 -- ============================================================================
 
 BEGIN;
@@ -34,31 +39,25 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 
--- Cuenta bancaria exclusiva de FAREGAS. Se guarda en el catalogo legacy para
--- conservar la FK de fg_pago, pero empresa_key permite excluirla de FARENET.
--- Cuenta: 0100020564. CCI informativo: 011-397-000100020564-79.
--- El UPSERT hace segura la reinstalacion de esta configuracion maestra.
-INSERT INTO public.cuentacorriente (
-    key,
-    nroctacorriente,
-    entidadfinanciera_key,
-    moneda_key,
-    enable,
-    empresa_key
-) VALUES (
-    'FG_BBVA_00020564',
-    '0011-0397-0100020564',
-    '6',
-    'sol',
-    TRUE,
-    'FAREGAS'
-)
-ON CONFLICT (key) DO UPDATE SET
-    nroctacorriente = EXCLUDED.nroctacorriente,
-    entidadfinanciera_key = EXCLUDED.entidadfinanciera_key,
-    moneda_key = EXCLUDED.moneda_key,
-    enable = EXCLUDED.enable,
-    empresa_key = EXCLUDED.empresa_key;
+-- FAREGAS consume esta cuenta a través de la FK de fg_pago, pero no debe
+-- provisionarla ni actualizarla desde una migración. Un administrador de
+-- FARENET debe preparar y validar la fila heredada antes del despliegue.
+-- Esta comprobación es de solo lectura y falla con un mensaje claro si falta.
+DO $faregas_cuenta_preflight$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.cuentacorriente
+        WHERE key = 'FG_BBVA_00020564'
+          AND nroctacorriente = '0011-0397-0100020564'
+          AND entidadfinanciera_key = '6'
+          AND moneda_key = 'sol'
+          AND empresa_key = 'FAREGAS'
+    ) THEN
+        RAISE EXCEPTION 'Falta provisionar la cuenta bancaria FAREGAS en el catálogo FARENET antes de instalar el esquema';
+    END IF;
+END;
+$faregas_cuenta_preflight$;
 
 
 -- Funcion requerida por el trigger inmutable del inventario por cantidad.
@@ -1104,7 +1103,8 @@ ALTER SEQUENCE public.fg_descuentocliente_id_seq OWNED BY public.fg_descuentocli
 
 CREATE TABLE public.fg_descuentocomprobante (
     id bigint NOT NULL,
-    descuento_cliente_id bigint NOT NULL,
+    descuento_cliente_id bigint,
+    descuento_id bigint,
     certificado_id bigint NOT NULL,
     orden_pago_id bigint,
     facturacion_id bigint,
@@ -1119,7 +1119,9 @@ CREATE TABLE public.fg_descuentocomprobante (
     usuario_modificacion character varying,
     fecha_modificacion timestamp without time zone,
     CONSTRAINT chk_fg_descom_estado CHECK (((estado)::text = ANY ((ARRAY['RESERVADO'::character varying, 'APLICADO'::character varying, 'LIBERADO'::character varying, 'ANULADO'::character varying])::text[]))),
-    CONSTRAINT chk_fg_descom_importes CHECK (((importe_original >= importe_descuento) AND (importe_final = (importe_original - importe_descuento)) AND (importe_final >= (0)::numeric)))
+    CONSTRAINT chk_fg_descom_importes CHECK (((importe_original >= importe_descuento) AND (importe_final = (importe_original - importe_descuento)) AND (importe_final >= (0)::numeric))),
+    CONSTRAINT chk_fg_descom_descuento_ref CHECK (((descuento_id IS NOT NULL) OR (descuento_cliente_id IS NOT NULL))),
+    CONSTRAINT fk_fg_descom_descuento FOREIGN KEY (descuento_id) REFERENCES public.fg_descuento(id) ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
 
@@ -2258,6 +2260,30 @@ CREATE TABLE public.fg_usuario (
 
 
 --
+-- Name: fg_usuario_perfil; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fg_usuario_perfil (
+    usuario_username character varying(255) NOT NULL,
+    tipo_documento_key character varying(20) NOT NULL,
+    nro_documento character varying(20) NOT NULL,
+    nombres character varying(200),
+    apellidos character varying(200),
+    nombre_razon_social character varying(500),
+    pais_key character varying(20),
+    departamento_key character varying(20),
+    provincia_key character varying(20),
+    distrito_key character varying(20),
+    direccion character varying(500),
+    email character varying(150),
+    telefono character varying(100),
+    persona_contacto character varying(255),
+    fecha_creacion timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    fecha_actualizacion timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
 -- Name: fg_usuario_planta; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3255,6 +3281,22 @@ ALTER TABLE ONLY public.fg_usuario
 
 
 --
+-- Name: fg_usuario_perfil fg_usuario_perfil_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fg_usuario_perfil
+    ADD CONSTRAINT fg_usuario_perfil_pkey PRIMARY KEY (usuario_username);
+
+
+--
+-- Name: fg_usuario_perfil uq_fg_usuario_perfil_documento; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fg_usuario_perfil
+    ADD CONSTRAINT uq_fg_usuario_perfil_documento UNIQUE (tipo_documento_key, nro_documento);
+
+
+--
 -- Name: fg_usuario_sesion fg_usuario_sesion_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3558,6 +3600,13 @@ CREATE INDEX idx_fg_descom_cert ON public.fg_descuentocomprobante USING btree (c
 
 
 --
+-- Name: idx_fg_descom_descuento_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fg_descom_descuento_id ON public.fg_descuentocomprobante USING btree (descuento_id);
+
+
+--
 -- Name: idx_fg_descom_descli; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3737,6 +3786,13 @@ CREATE INDEX idx_fg_tarifa_servicio ON public.fg_tarifa USING btree (servicio_id
 --
 
 CREATE INDEX idx_fg_usuario_persona_nrodocumento ON public.fg_usuario USING btree (persona_nrodocumentoidentidad) WHERE (persona_nrodocumentoidentidad IS NOT NULL);
+
+
+--
+-- Name: idx_fg_usuario_perfil_nombre; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fg_usuario_perfil_nombre ON public.fg_usuario_perfil USING btree (nombre_razon_social, apellidos, nombres);
 
 
 --
@@ -5308,6 +5364,14 @@ ALTER TABLE ONLY public.fg_usuario_sesion
 
 
 --
+-- Name: fg_usuario_perfil fk_fg_usuario_perfil_usuario; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fg_usuario_perfil
+    ADD CONSTRAINT fk_fg_usuario_perfil_usuario FOREIGN KEY (usuario_username) REFERENCES public.fg_usuario(username) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
 -- Name: fg_usuario fk_fg_usuario_perfil; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5482,8 +5546,9 @@ CREATE TABLE public.fg_solicitud_operacion (
     CONSTRAINT ck_fg_solicitud_estado CHECK (estado IN ('PENDIENTE_APROBACION', 'APROBADA', 'RECHAZADA', 'CANCELADA', 'EN_EJECUCION', 'COMPLETADA', 'ERROR', 'REQUIERE_INTERVENCION')),
     CONSTRAINT ck_fg_solicitud_documentos CHECK (
         (tipo_operacion IN ('ANULAR_CERTIFICADO', 'RECTIFICAR_CERTIFICADO') AND certificado_id IS NOT NULL)
-        OR (tipo_operacion IN ('ANULAR_COMPROBANTE', 'EMITIR_NOTA_CREDITO', 'RECTIFICAR_COMPROBANTE') AND facturacion_id IS NOT NULL)
+        OR (tipo_operacion IN ('ANULAR_COMPROBANTE', 'RECTIFICAR_COMPROBANTE') AND facturacion_id IS NOT NULL)
         OR (tipo_operacion = 'ANULAR_AMBOS' AND certificado_id IS NOT NULL)
+        OR (tipo_operacion = 'EMITIR_NOTA_CREDITO' AND certificado_id IS NOT NULL AND facturacion_id IS NOT NULL)
         OR (tipo_operacion = 'RECTIFICAR_AMBOS' AND certificado_id IS NOT NULL AND facturacion_id IS NOT NULL)
     ),
     CONSTRAINT ck_fg_solicitud_motivo CHECK (btrim(motivo) <> ''),
@@ -5580,7 +5645,9 @@ VALUES
     ('FAREGAS_SOLICITUD_ADMINISTRAR', 'Administrar solicitudes de anulación', 'FAREGAS', 'Permite administrar solicitudes sin omitir la separación de funciones.', TRUE),
     ('FAREGAS_ACCESO_GLOBAL_SEDES', 'Acceso global a sedes', 'FAREGAS', 'Permite operar en todas las sedes activas, sin conceder permisos operativos adicionales.', TRUE),
     ('FAREGAS_CERTIFICADO_ANULAR_EJECUTAR', 'Ejecutar anulación autorizada', 'FAREGAS', 'Permite iniciar la ejecución de una anulación total aprobada y ajena dentro del alcance autorizado.', TRUE),
-    ('FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR', 'Rectificar directamente un certificado', 'FAREGAS', 'Permite rectificar directamente un certificado emitido, con versionado y auditoría, sin alterar comprobantes, pagos, fecha original ni correlativo DG.', TRUE)
+    ('FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR', 'Rectificar directamente un certificado', 'FAREGAS', 'Permite rectificar directamente un certificado emitido, con versionado y auditoría, sin alterar comprobantes, pagos, fecha original ni correlativo DG.', TRUE),
+    ('FAREGAS_NOTA_CREDITO_APROBAR', 'Aprobar o rechazar solicitudes de nota de crédito FAREGAS', 'FAREGAS', 'Permite aprobar o rechazar solicitudes administrativas de autorización de notas de crédito dentro de las sedes autorizadas.', TRUE),
+    ('FAREGAS_NOTA_CREDITO_AUTOAPROBAR', 'Autoaprobar solicitud propia de nota de crédito FAREGAS', 'FAREGAS', 'Permite autoaprobar una solicitud propia de nota de crédito únicamente si también se tiene el permiso FAREGAS_NOTA_CREDITO_APROBAR.', TRUE)
 ON CONFLICT (clave) DO UPDATE SET nombre = EXCLUDED.nombre, modulo = EXCLUDED.modulo, descripcion = EXCLUDED.descripcion, activo = EXCLUDED.activo;
 
 INSERT INTO public.fg_perfil_permiso (perfil_clave, permiso_clave)
@@ -5598,7 +5665,9 @@ JOIN (VALUES
     ('SISTEMAS'::varchar, 'FAREGAS_SOLICITUD_ADMINISTRAR'::varchar),
     ('SISTEMAS'::varchar, 'FAREGAS_ACCESO_GLOBAL_SEDES'::varchar),
     ('SISTEMAS'::varchar, 'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR'::varchar),
-    ('SISTEMAS'::varchar, 'FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR'::varchar)
+    ('SISTEMAS'::varchar, 'FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR'::varchar),
+    ('SISTEMAS'::varchar, 'FAREGAS_NOTA_CREDITO_APROBAR'::varchar),
+    ('SISTEMAS'::varchar, 'FAREGAS_NOTA_CREDITO_AUTOAPROBAR'::varchar)
 ) permiso(perfil_clave, clave) ON permiso.perfil_clave = perfil.clave
 ON CONFLICT (perfil_clave, permiso_clave) DO NOTHING;
 
@@ -5634,5 +5703,275 @@ CREATE INDEX idx_fg_cert_ver_solicitud ON public.fg_certificado_version (solicit
 CREATE INDEX idx_fg_cert_ver_estado ON public.fg_certificado_version (estado_version, fecha_version DESC);
 CREATE UNIQUE INDEX uq_fg_cert_ver_unica_vigente ON public.fg_certificado_version (certificado_id)
     WHERE es_vigente = TRUE;
+
+-- ============================================================================
+-- NOTIFICACIONES PERSISTENTES POR USUARIO
+-- ============================================================================
+
+CREATE TABLE public.fg_notificacion (
+    id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    evento_clave varchar(80) NOT NULL UNIQUE,
+    tipo varchar(40) NOT NULL,
+    titulo varchar(160) NOT NULL,
+    mensaje varchar(500) NOT NULL,
+    planta_key varchar(80),
+    empresa_key varchar(80),
+    entidad_tipo varchar(60),
+    entidad_id bigint,
+    destino_navegacion varchar(200),
+    fecha_creacion timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    creado_por varchar(80)
+);
+
+CREATE TABLE public.fg_notificacion_destinatario (
+    id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    notificacion_id bigint NOT NULL REFERENCES public.fg_notificacion(id) ON DELETE CASCADE,
+    usuario_id varchar(80) NOT NULL,
+    leida boolean NOT NULL DEFAULT FALSE,
+    fecha_lectura timestamptz,
+    CONSTRAINT fg_notificacion_destinatario_notificacion_id_usuario_id_key
+        UNIQUE (notificacion_id, usuario_id)
+);
+
+CREATE INDEX idx_fg_notificacion_destinatario_usuario
+    ON public.fg_notificacion_destinatario (usuario_id);
+CREATE INDEX idx_fg_notificacion_destinatario_leida
+    ON public.fg_notificacion_destinatario (leida);
+CREATE INDEX idx_fg_notificacion_evento_clave
+    ON public.fg_notificacion (evento_clave);
+CREATE INDEX idx_fg_notificacion_fecha
+    ON public.fg_notificacion (fecha_creacion DESC);
+
+-- BEGIN CATALOGO_RBAC_FAREGAS_GENERADO
+-- Catálogo RBAC observado mediante SELECT; no contiene usuarios ni secretos.
+-- Fuente: 192.168.14.19/32:5432/inspeccion.
+
+INSERT INTO public.fg_perfil (clave, nombre, visible)
+VALUES
+    ('AMINISTRADOR', 'ADMINISTRADOR', TRUE),
+    ('CONTADOR', 'CONTADOR', TRUE),
+    ('JEFE_PLANTA', 'Jefe de Planta', TRUE),
+    ('OPERADOR', 'operador/emisor/ventas', TRUE),
+    ('SISTEMAS', 'Sistemas', TRUE),
+    ('SUPERVISOR', 'SUPERVISOR', TRUE)
+ON CONFLICT (clave) DO UPDATE
+SET nombre = EXCLUDED.nombre, visible = EXCLUDED.visible;
+
+INSERT INTO public.fg_permiso (clave, nombre, modulo, descripcion, activo)
+VALUES
+    ('CHIPS_BAJA', 'Dar de baja chips', 'FAREGAS', 'Dar de baja chips disponibles', TRUE),
+    ('CHIPS_CONFIGURAR', 'Configurar productos inventariables', 'FAREGAS', 'Crear y editar productos inventariables y su disponibilidad por sede', TRUE),
+    ('CHIPS_INGRESAR', 'Ingresar chips', 'FAREGAS', 'Registrar chips físicos en una sede', TRUE),
+    ('CHIPS_TRANSFERIR', 'Transferir chips', 'FAREGAS', 'Mover chips disponibles entre sedes', TRUE),
+    ('CHIPS_VENDER', 'Vender chips', 'FAREGAS', 'Reservar y liberar chips, validar y registrar ventas de chips con su comprobante', TRUE),
+    ('CHIPS_VER', 'Ver inventario de chips', 'FAREGAS', 'Consultar stock e historial de chips', TRUE),
+    ('CONFIGURACION_CATEGORIAS', 'Administrar Categorías', 'FAREGAS', 'Administrar categorías comerciales de servicios Faregas', TRUE),
+    ('CONFIGURACION_EMPRESAS', 'Administrar Empresas FAREGAS', 'FAREGAS', 'Editar empresas y asignar sus sedes en FAREGAS', TRUE),
+    ('CONFIGURACION_PRODUCTOS', 'Administrar Productos / SKU', 'FAREGAS', 'Administrar catálogo de productos de facturación Faregas', TRUE),
+    ('CONFIGURACION_SEDES', 'Administrar Sedes', 'FAREGAS', 'Modificar sedes', TRUE),
+    ('CONFIGURACION_SERIES', 'Administrar Series de Comprobante', 'FAREGAS', 'Administrar series propias de comprobantes Faregas por sede', TRUE),
+    ('CONFIGURACION_SERVICIOS', 'Administrar Servicios', 'FAREGAS', 'Modificar catálogo de servicios', TRUE),
+    ('CONFIGURACION_TARIFAS', 'Administrar Tarifas', 'FAREGAS', 'Modificar precios por sede', TRUE),
+    ('DASHBOARD_EXPORTAR', 'Exportar Métricas del Dashboard', 'FAREGAS', 'Permite descargar el libro Excel multi-pestaña con datos del dashboard', TRUE),
+    ('DASHBOARD_GLOBAL', 'Dashboard Global Multi-Sede', 'FAREGAS', 'Permite consolidar métricas de todas las sedes autorizadas del usuario', TRUE),
+    ('DASHBOARD_SEDE', 'Dashboard de Sede Operativa', 'FAREGAS', 'Permite visualizar métricas exclusivas de la sede activa en sesión', TRUE),
+    ('DESCUENTOS_ADMINISTRAR', 'Administrar Descuentos', 'FAREGAS', 'Permite crear y modificar campañas de descuentos FAREGAS', TRUE),
+    ('FAREGAS_ANULAR_COMPROBANTE', 'Anular comprobante electrónico', 'FAREGAS', 'Permite iniciar la baja fiscal de comprobantes electrónicos FAREGAS; no anula certificados técnicos ni devuelve pagos.', TRUE),
+    ('FAREGAS_CERTIFICADO_ANULAR_EJECUTAR', 'Ejecutar anulación autorizada', 'FAREGAS', 'Permite a SISTEMAS iniciar la ejecución de una anulación total aprobada y ajena.', TRUE),
+    ('FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR', 'Ejecutar rectificación técnica de certificado', 'FAREGAS', 'Permite ejecutar la rectificación técnica y el versionado de un certificado emitido con solicitud administrativa aprobada, sin emitir comprobantes ni consumir correlativos.', TRUE),
+    ('FAREGAS_NOTA_CREDITO', 'Emitir nota de crédito', 'FAREGAS', 'Permite emitir notas de crédito vinculadas a comprobantes FAREGAS.', TRUE),
+    ('FAREGAS_NOTA_CREDITO_APROBAR', 'Aprobar o rechazar solicitudes de nota de crédito FAREGAS', 'FAREGAS', 'Permite aprobar o rechazar solicitudes administrativas de autorización de notas de crédito dentro de las sedes autorizadas.', TRUE),
+    ('FAREGAS_NOTA_CREDITO_AUTOAPROBAR', 'Autoaprobar solicitud propia de nota de crédito FAREGAS', 'FAREGAS', 'Permite autoaprobar una solicitud propia de nota de crédito únicamente si también se tiene el permiso FAREGAS_NOTA_CREDITO_APROBAR.', TRUE),
+    ('FAREGAS_SOLICITUD_ADMINISTRAR', 'Administrar solicitudes de anulación', 'FAREGAS', 'Permite administrar solicitudes sin ejecutar efectos técnicos o fiscales.', TRUE),
+    ('FAREGAS_SOLICITUD_APROBAR', 'Aprobar anulaciones', 'FAREGAS', 'Permite a SISTEMAS aprobar solicitudes de otro usuario dentro del alcance autorizado.', TRUE),
+    ('FAREGAS_SOLICITUD_AUTOAPROBAR', 'Autoaprobar anulación excepcional', 'FAREGAS', 'Permite a SISTEMAS aprobar excepcionalmente una solicitud propia con justificación y confirmación explícitas. No habilita la ejecución fiscal.', TRUE),
+    ('FAREGAS_SOLICITUD_AUTOEJECUTAR', 'Autoejecución excepcional de anulación', 'FAREGAS', 'Permite a un usuario SISTEMAS ejecutar su propia solicitud de anulación previamente aprobada, con confirmación explícita, justificación obligatoria y auditoría inmutable. No se asigna automáticamente a ningún perfil.', TRUE),
+    ('FAREGAS_SOLICITUD_CREAR', 'Solicitar anulación total', 'FAREGAS', 'Permite a un perfil autorizado por RBAC solicitar la anulación total sin aprobarla ni ejecutarla.', TRUE),
+    ('FAREGAS_SOLICITUD_RECHAZAR', 'Rechazar anulaciones', 'FAREGAS', 'Permite a SISTEMAS rechazar solicitudes de otro usuario dentro del alcance autorizado.', TRUE),
+    ('FAREGAS_SOLICITUD_VER', 'Consultar solicitudes de anulación', 'FAREGAS', 'Permite consultar solicitudes dentro del alcance autorizado.', TRUE),
+    ('MENU_AUDITORIA', 'Auditoría', 'MENU', NULL, TRUE),
+    ('MENU_CHIPS', 'Chips', 'MENU', 'Acceso al módulo de inventario de chips FAREGAS', TRUE),
+    ('MENU_CHIPS_INVENTARIO', 'Inventario de chips', 'MENU', 'Acceso a la pestaña Inventario de chips (control de seriales y stock)', TRUE),
+    ('MENU_CHIPS_TIPOS', 'Tipos de chip', 'MENU', 'Acceso a la pestaña Tipos de chip (catálogo de productos inventariables)', TRUE),
+    ('MENU_CHIPS_VENTAS', 'Ventas de chips', 'MENU', 'Acceso a la pestaña Ventas de chips (operaciones y venta directa)', TRUE),
+    ('MENU_CONFIGURACION', 'Configuración', 'MENU', 'Ver módulo configuración', TRUE),
+    ('MENU_CONFIGURACION_CATALOGO', 'Catálogo', 'MENU', 'Acceso a la pestaña Catálogo del módulo Configuración', TRUE),
+    ('MENU_CONFIGURACION_CORRELATIVOS', 'Correlativos', 'MENU', 'Acceso a la pestaña Correlativos de certificados del módulo Configuración', TRUE),
+    ('MENU_CONFIGURACION_EMPRESAS', 'Empresas', 'MENU', 'Acceso a la pestaña Empresas del módulo Configuración', TRUE),
+    ('MENU_CONFIGURACION_SEDES', 'Sedes / Categorías DMS', 'MENU', 'Acceso a la pestaña Sedes / Categorías DMS del módulo Configuración', TRUE),
+    ('MENU_CONFIGURACION_TARIFAS', 'Tarifas por sede', 'MENU', 'Acceso a la pestaña Tarifas por sede del módulo Configuración', TRUE),
+    ('MENU_DASHBOARD', 'Dashboard FAREGAS', 'MENU', 'Acceso al módulo Dashboard en la barra lateral', TRUE),
+    ('MENU_DESCUENTOS', 'Descuentos', 'MENU', NULL, TRUE),
+    ('MENU_FACTURACION', 'Facturación', 'MENU', 'Acceso al módulo de facturación electrónica FAREGAS', TRUE),
+    ('MENU_FACTURACION_CLIENTES', 'Clientes', 'MENU', 'Acceso a la pestaña Clientes y al directorio de clientes de facturación', TRUE),
+    ('MENU_FACTURACION_COMPROBANTES', 'Comprobantes', 'MENU', 'Acceso a la pestaña Comprobantes (seguimiento de comprobantes emitidos)', TRUE),
+    ('MENU_FACTURACION_PREPARACION', 'Preparación', 'MENU', 'Acceso a la pestaña Preparación de facturación (estado de NubeFact por sede)', TRUE),
+    ('MENU_FACTURACION_SERIES', 'Series', 'MENU', 'Acceso a la pestaña Series de facturación (series Nubefact y DMS por sede)', TRUE),
+    ('MENU_INICIO', 'Inicio', 'MENU', NULL, TRUE),
+    ('MENU_USUARIOS', 'Usuarios', 'MENU', NULL, TRUE)
+ON CONFLICT (clave) DO UPDATE
+SET nombre = EXCLUDED.nombre, modulo = EXCLUDED.modulo,
+    descripcion = EXCLUDED.descripcion, activo = EXCLUDED.activo;
+
+INSERT INTO public.fg_perfil_permiso (perfil_clave, permiso_clave)
+VALUES
+    ('AMINISTRADOR', 'CHIPS_VENDER'),
+    ('AMINISTRADOR', 'CHIPS_VER'),
+    ('AMINISTRADOR', 'CONFIGURACION_CATEGORIAS'),
+    ('AMINISTRADOR', 'CONFIGURACION_EMPRESAS'),
+    ('AMINISTRADOR', 'CONFIGURACION_PRODUCTOS'),
+    ('AMINISTRADOR', 'CONFIGURACION_SEDES'),
+    ('AMINISTRADOR', 'CONFIGURACION_SERIES'),
+    ('AMINISTRADOR', 'CONFIGURACION_SERVICIOS'),
+    ('AMINISTRADOR', 'CONFIGURACION_TARIFAS'),
+    ('AMINISTRADOR', 'DASHBOARD_EXPORTAR'),
+    ('AMINISTRADOR', 'DASHBOARD_GLOBAL'),
+    ('AMINISTRADOR', 'DASHBOARD_SEDE'),
+    ('AMINISTRADOR', 'DESCUENTOS_ADMINISTRAR'),
+    ('AMINISTRADOR', 'MENU_CHIPS'),
+    ('AMINISTRADOR', 'MENU_CHIPS_INVENTARIO'),
+    ('AMINISTRADOR', 'MENU_CHIPS_TIPOS'),
+    ('AMINISTRADOR', 'MENU_CHIPS_VENTAS'),
+    ('AMINISTRADOR', 'MENU_CONFIGURACION'),
+    ('AMINISTRADOR', 'MENU_CONFIGURACION_CATALOGO'),
+    ('AMINISTRADOR', 'MENU_CONFIGURACION_CORRELATIVOS'),
+    ('AMINISTRADOR', 'MENU_CONFIGURACION_SEDES'),
+    ('AMINISTRADOR', 'MENU_CONFIGURACION_TARIFAS'),
+    ('AMINISTRADOR', 'MENU_DASHBOARD'),
+    ('AMINISTRADOR', 'MENU_DESCUENTOS'),
+    ('AMINISTRADOR', 'MENU_INICIO'),
+    ('CONTADOR', 'MENU_CONFIGURACION'),
+    ('CONTADOR', 'MENU_CONFIGURACION_CORRELATIVOS'),
+    ('CONTADOR', 'MENU_FACTURACION'),
+    ('CONTADOR', 'MENU_FACTURACION_CLIENTES'),
+    ('CONTADOR', 'MENU_FACTURACION_COMPROBANTES'),
+    ('JEFE_PLANTA', 'CHIPS_BAJA'),
+    ('JEFE_PLANTA', 'CHIPS_CONFIGURAR'),
+    ('JEFE_PLANTA', 'CHIPS_INGRESAR'),
+    ('JEFE_PLANTA', 'CHIPS_TRANSFERIR'),
+    ('JEFE_PLANTA', 'CHIPS_VENDER'),
+    ('JEFE_PLANTA', 'CHIPS_VER'),
+    ('JEFE_PLANTA', 'CONFIGURACION_CATEGORIAS'),
+    ('JEFE_PLANTA', 'CONFIGURACION_EMPRESAS'),
+    ('JEFE_PLANTA', 'CONFIGURACION_PRODUCTOS'),
+    ('JEFE_PLANTA', 'CONFIGURACION_SEDES'),
+    ('JEFE_PLANTA', 'CONFIGURACION_SERIES'),
+    ('JEFE_PLANTA', 'CONFIGURACION_SERVICIOS'),
+    ('JEFE_PLANTA', 'CONFIGURACION_TARIFAS'),
+    ('JEFE_PLANTA', 'DESCUENTOS_ADMINISTRAR'),
+    ('JEFE_PLANTA', 'FAREGAS_SOLICITUD_VER'),
+    ('JEFE_PLANTA', 'MENU_CHIPS'),
+    ('JEFE_PLANTA', 'MENU_CHIPS_INVENTARIO'),
+    ('JEFE_PLANTA', 'MENU_CHIPS_TIPOS'),
+    ('JEFE_PLANTA', 'MENU_CHIPS_VENTAS'),
+    ('JEFE_PLANTA', 'MENU_CONFIGURACION_TARIFAS'),
+    ('JEFE_PLANTA', 'MENU_DESCUENTOS'),
+    ('JEFE_PLANTA', 'MENU_INICIO'),
+    ('JEFE_PLANTA', 'MENU_USUARIOS'),
+    ('OPERADOR', 'CHIPS_BAJA'),
+    ('OPERADOR', 'CHIPS_CONFIGURAR'),
+    ('OPERADOR', 'CHIPS_INGRESAR'),
+    ('OPERADOR', 'CHIPS_TRANSFERIR'),
+    ('OPERADOR', 'CHIPS_VENDER'),
+    ('OPERADOR', 'CHIPS_VER'),
+    ('OPERADOR', 'CONFIGURACION_CATEGORIAS'),
+    ('OPERADOR', 'CONFIGURACION_EMPRESAS'),
+    ('OPERADOR', 'CONFIGURACION_PRODUCTOS'),
+    ('OPERADOR', 'CONFIGURACION_SEDES'),
+    ('OPERADOR', 'CONFIGURACION_SERIES'),
+    ('OPERADOR', 'CONFIGURACION_SERVICIOS'),
+    ('OPERADOR', 'CONFIGURACION_TARIFAS'),
+    ('OPERADOR', 'DESCUENTOS_ADMINISTRAR'),
+    ('OPERADOR', 'FAREGAS_SOLICITUD_CREAR'),
+    ('OPERADOR', 'FAREGAS_SOLICITUD_VER'),
+    ('OPERADOR', 'MENU_CHIPS'),
+    ('OPERADOR', 'MENU_CHIPS_VENTAS'),
+    ('OPERADOR', 'MENU_INICIO'),
+    ('SISTEMAS', 'CHIPS_BAJA'),
+    ('SISTEMAS', 'CHIPS_CONFIGURAR'),
+    ('SISTEMAS', 'CHIPS_INGRESAR'),
+    ('SISTEMAS', 'CHIPS_TRANSFERIR'),
+    ('SISTEMAS', 'CHIPS_VENDER'),
+    ('SISTEMAS', 'CHIPS_VER'),
+    ('SISTEMAS', 'CONFIGURACION_CATEGORIAS'),
+    ('SISTEMAS', 'CONFIGURACION_EMPRESAS'),
+    ('SISTEMAS', 'CONFIGURACION_PRODUCTOS'),
+    ('SISTEMAS', 'CONFIGURACION_SEDES'),
+    ('SISTEMAS', 'CONFIGURACION_SERIES'),
+    ('SISTEMAS', 'CONFIGURACION_SERVICIOS'),
+    ('SISTEMAS', 'CONFIGURACION_TARIFAS'),
+    ('SISTEMAS', 'DASHBOARD_EXPORTAR'),
+    ('SISTEMAS', 'DASHBOARD_GLOBAL'),
+    ('SISTEMAS', 'DASHBOARD_SEDE'),
+    ('SISTEMAS', 'DESCUENTOS_ADMINISTRAR'),
+    ('SISTEMAS', 'FAREGAS_ANULAR_COMPROBANTE'),
+    ('SISTEMAS', 'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR'),
+    ('SISTEMAS', 'FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR'),
+    ('SISTEMAS', 'FAREGAS_NOTA_CREDITO'),
+    ('SISTEMAS', 'FAREGAS_NOTA_CREDITO_APROBAR'),
+    ('SISTEMAS', 'FAREGAS_NOTA_CREDITO_AUTOAPROBAR'),
+    ('SISTEMAS', 'FAREGAS_SOLICITUD_ADMINISTRAR'),
+    ('SISTEMAS', 'FAREGAS_SOLICITUD_APROBAR'),
+    ('SISTEMAS', 'FAREGAS_SOLICITUD_AUTOAPROBAR'),
+    ('SISTEMAS', 'FAREGAS_SOLICITUD_AUTOEJECUTAR'),
+    ('SISTEMAS', 'FAREGAS_SOLICITUD_CREAR'),
+    ('SISTEMAS', 'FAREGAS_SOLICITUD_RECHAZAR'),
+    ('SISTEMAS', 'FAREGAS_SOLICITUD_VER'),
+    ('SISTEMAS', 'MENU_AUDITORIA'),
+    ('SISTEMAS', 'MENU_CHIPS'),
+    ('SISTEMAS', 'MENU_CHIPS_INVENTARIO'),
+    ('SISTEMAS', 'MENU_CHIPS_TIPOS'),
+    ('SISTEMAS', 'MENU_CHIPS_VENTAS'),
+    ('SISTEMAS', 'MENU_CONFIGURACION'),
+    ('SISTEMAS', 'MENU_CONFIGURACION_CATALOGO'),
+    ('SISTEMAS', 'MENU_CONFIGURACION_CORRELATIVOS'),
+    ('SISTEMAS', 'MENU_CONFIGURACION_EMPRESAS'),
+    ('SISTEMAS', 'MENU_CONFIGURACION_SEDES'),
+    ('SISTEMAS', 'MENU_CONFIGURACION_TARIFAS'),
+    ('SISTEMAS', 'MENU_DASHBOARD'),
+    ('SISTEMAS', 'MENU_DESCUENTOS'),
+    ('SISTEMAS', 'MENU_FACTURACION'),
+    ('SISTEMAS', 'MENU_FACTURACION_CLIENTES'),
+    ('SISTEMAS', 'MENU_FACTURACION_COMPROBANTES'),
+    ('SISTEMAS', 'MENU_FACTURACION_PREPARACION'),
+    ('SISTEMAS', 'MENU_FACTURACION_SERIES'),
+    ('SISTEMAS', 'MENU_INICIO'),
+    ('SISTEMAS', 'MENU_USUARIOS'),
+    ('SUPERVISOR', 'CHIPS_BAJA'),
+    ('SUPERVISOR', 'CHIPS_CONFIGURAR'),
+    ('SUPERVISOR', 'CHIPS_INGRESAR'),
+    ('SUPERVISOR', 'CHIPS_TRANSFERIR'),
+    ('SUPERVISOR', 'CHIPS_VENDER'),
+    ('SUPERVISOR', 'CHIPS_VER'),
+    ('SUPERVISOR', 'CONFIGURACION_CATEGORIAS'),
+    ('SUPERVISOR', 'CONFIGURACION_EMPRESAS'),
+    ('SUPERVISOR', 'CONFIGURACION_PRODUCTOS'),
+    ('SUPERVISOR', 'CONFIGURACION_SEDES'),
+    ('SUPERVISOR', 'CONFIGURACION_SERIES'),
+    ('SUPERVISOR', 'CONFIGURACION_SERVICIOS'),
+    ('SUPERVISOR', 'CONFIGURACION_TARIFAS'),
+    ('SUPERVISOR', 'DASHBOARD_EXPORTAR'),
+    ('SUPERVISOR', 'DASHBOARD_GLOBAL'),
+    ('SUPERVISOR', 'DASHBOARD_SEDE'),
+    ('SUPERVISOR', 'DESCUENTOS_ADMINISTRAR'),
+    ('SUPERVISOR', 'FAREGAS_ANULAR_COMPROBANTE'),
+    ('SUPERVISOR', 'FAREGAS_CERTIFICADO_ANULAR_EJECUTAR'),
+    ('SUPERVISOR', 'FAREGAS_CERTIFICADO_RECTIFICAR_EJECUTAR'),
+    ('SUPERVISOR', 'FAREGAS_NOTA_CREDITO'),
+    ('SUPERVISOR', 'FAREGAS_SOLICITUD_ADMINISTRAR'),
+    ('SUPERVISOR', 'FAREGAS_SOLICITUD_APROBAR'),
+    ('SUPERVISOR', 'FAREGAS_SOLICITUD_AUTOAPROBAR'),
+    ('SUPERVISOR', 'FAREGAS_SOLICITUD_AUTOEJECUTAR'),
+    ('SUPERVISOR', 'FAREGAS_SOLICITUD_CREAR'),
+    ('SUPERVISOR', 'FAREGAS_SOLICITUD_RECHAZAR'),
+    ('SUPERVISOR', 'FAREGAS_SOLICITUD_VER'),
+    ('SUPERVISOR', 'MENU_CHIPS'),
+    ('SUPERVISOR', 'MENU_CHIPS_INVENTARIO'),
+    ('SUPERVISOR', 'MENU_CHIPS_VENTAS'),
+    ('SUPERVISOR', 'MENU_CONFIGURACION_TARIFAS'),
+    ('SUPERVISOR', 'MENU_DASHBOARD'),
+    ('SUPERVISOR', 'MENU_INICIO')
+ON CONFLICT (perfil_clave, permiso_clave) DO NOTHING;
+-- END CATALOGO_RBAC_FAREGAS_GENERADO
 
 COMMIT;

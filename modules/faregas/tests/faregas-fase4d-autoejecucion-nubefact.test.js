@@ -559,9 +559,9 @@ test('17. Historial: la autoejecución autorizada deja evento inmutable con evid
 });
 
 test('18. Migración: permiso dedicado sin asignación automática y constraint con excepción', () => {
-    const migrationsDir = path.join(__dirname, '..', 'database', 'migrations');
-    const historyDir = path.join(__dirname, '..', 'database', 'migrations_history');
-    const schema = fs.readFileSync(path.join(migrationsDir, '0001_faregas_schema.sql'), 'utf8');
+    const databaseDir = path.join(__dirname, '..', 'database');
+    const historyDir = path.join(databaseDir, 'archive', 'migrations_history');
+    const schema = fs.readFileSync(path.join(databaseDir, 'faregas_instalacion_completa.sql'), 'utf8');
     const migration = fs.readFileSync(path.join(historyDir, '20261026_faregas_solicitud_autoejecucion.sql'), 'utf8');
 
     assert.match(schema, /'FAREGAS_SOLICITUD_AUTOEJECUTAR'/);

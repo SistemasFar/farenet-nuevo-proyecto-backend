@@ -285,7 +285,7 @@ test('la autorización de nota es independiente de la anulación total', () => {
 test('la migración incremental habilita el nuevo tipo sin modificar documentos fiscales', () => {
     const migration = fs.readFileSync(path.join(
         __dirname,
-        '../database/migrations_history/20261029_faregas_autorizacion_nota_credito.sql'
+        '../database/archive/migrations_history/20261029_faregas_autorizacion_nota_credito.sql'
     ), 'utf8');
     assert.match(migration, /^BEGIN;/m);
     assert.match(migration, /'EMITIR_NOTA_CREDITO'/);

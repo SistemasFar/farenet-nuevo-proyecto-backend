@@ -9,6 +9,7 @@ const {
 const {
     PERMISO_ACCESO_GLOBAL_SEDES
 } = require('./faregas-acceso-sedes.service');
+const usuarioPerfilRepository = require('./faregas-usuario-perfil.repository');
 
 const errorNegocio = (code, statusCode = 400, detalles) => {
     const error = new Error(code);
@@ -264,6 +265,15 @@ const listarHistorial = async (usuarioId, executor, opciones = {}) => {
     // también se impone en backend para que no pueda omitirse desde el cliente.
     const limite = Math.min(10, Math.max(1, parseInt(opciones.limite, 10) || 10));
     const offset = (pagina - 1) * limite;
+    const perfilPropioDisponible = await usuarioPerfilRepository.estaDisponible(db);
+    const nombrePersona = (aliasPropio, aliasLegacy) => perfilPropioDisponible
+        ? `CASE WHEN ${aliasPropio}.usuario_username IS NOT NULL
+               THEN COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', ${aliasPropio}.nombres, ${aliasPropio}.apellidos)), ''), NULLIF(BTRIM(${aliasPropio}.nombre_razon_social), ''))
+               ELSE COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', ${aliasLegacy}.nombres, ${aliasLegacy}.apellidos)), ''), NULLIF(BTRIM(${aliasLegacy}.nombrerazonsocial), ''))
+           END`
+        : `COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', ${aliasLegacy}.nombres, ${aliasLegacy}.apellidos)), ''), NULLIF(BTRIM(${aliasLegacy}.nombrerazonsocial), ''))`;
+    const solicitanteNombreSql = nombrePersona('psf', 'ps');
+    const autorizadorNombreSql = nombrePersona('pdf', 'pd');
 
     const conditions = ['d.usuario_id = $1'];
     const params = [usuarioId];
@@ -277,8 +287,10 @@ const listarHistorial = async (usuarioId, executor, opciones = {}) => {
         LEFT JOIN fg_facturacion f ON f.id = s.facturacion_id
         LEFT JOIN fg_planta pl ON pl.key = s.planta_key
         LEFT JOIN fg_usuario us ON us.username = s.usuario_solicitante
+        ${perfilPropioDisponible ? 'LEFT JOIN public.fg_usuario_perfil psf ON psf.usuario_username = us.username' : ''}
         LEFT JOIN persona ps ON ps.nrodocumentoidentidad = us.persona_nrodocumentoidentidad
         LEFT JOIN fg_usuario ud ON ud.username = s.usuario_decision
+        ${perfilPropioDisponible ? 'LEFT JOIN public.fg_usuario_perfil pdf ON pdf.usuario_username = ud.username' : ''}
         LEFT JOIN persona pd ON pd.nrodocumentoidentidad = ud.persona_nrodocumentoidentidad
     `;
 
@@ -294,8 +306,8 @@ const listarHistorial = async (usuarioId, executor, opciones = {}) => {
             OR pl.nombre ILIKE $${paramIndex}
             OR s.usuario_solicitante ILIKE $${paramIndex}
             OR s.usuario_decision ILIKE $${paramIndex}
-            OR COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', ps.nombres, ps.apellidos)), ''), NULLIF(BTRIM(ps.nombrerazonsocial), '')) ILIKE $${paramIndex}
-            OR COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', pd.nombres, pd.apellidos)), ''), NULLIF(BTRIM(pd.nombrerazonsocial), '')) ILIKE $${paramIndex}
+            OR ${solicitanteNombreSql} ILIKE $${paramIndex}
+            OR ${autorizadorNombreSql} ILIKE $${paramIndex}
             OR c.numero_certificado ILIKE $${paramIndex}
             OR f.nro_comprobante ILIKE $${paramIndex}
             OR s.tipo_operacion ILIKE $${paramIndex}
@@ -338,14 +350,12 @@ const listarHistorial = async (usuarioId, executor, opciones = {}) => {
                s.id AS solicitud_id,
                s.usuario_solicitante AS solicitante_username,
                COALESCE(
-                   NULLIF(BTRIM(CONCAT_WS(' ', ps.nombres, ps.apellidos)), ''),
-                   NULLIF(BTRIM(ps.nombrerazonsocial), ''),
+                   ${solicitanteNombreSql},
                    s.usuario_solicitante
                ) AS solicitante_nombre,
                s.usuario_decision AS autorizador_username,
                COALESCE(
-                   NULLIF(BTRIM(CONCAT_WS(' ', pd.nombres, pd.apellidos)), ''),
-                   NULLIF(BTRIM(pd.nombrerazonsocial), ''),
+                   ${autorizadorNombreSql},
                    s.usuario_decision
                ) AS autorizador_nombre,
                s.fecha_decision AS fecha_decision,

@@ -53,6 +53,46 @@ test('Conformidad histórica emitida sin formato_version_id conserva el renderer
   }
 });
 
+test('Conformidad en borrador usa el generador oficial aunque exista una VIGENTE HTML_DINAMICO heredada', async () => {
+  const originales = {
+    obtenerBorradorCompleto: certificados.obtenerBorradorCompleto,
+    obtenerConformidad: certificados.obtenerConformidad,
+    renderVersion: faregasFormatosService.renderVersion
+  };
+  let rendersDinamicos = 0;
+  try {
+    certificados.obtenerBorradorCompleto = async () => ({
+      ...borradorBase(),
+      estado: 'BORRADOR',
+      numeroCertificado: null,
+      formatoVersionAsignadaId: null,
+      formatoVersionId: 114
+    });
+    certificados.obtenerConformidad = async () => ({
+      conformidad: {
+        tipo_conformidad: 'MODIFICACION',
+        marca_modificacion: true,
+        caracteristica_registrable: 'CAMBIO DE MOTOR',
+        uso_original_vehiculo: 'PERSONAS'
+      }
+    });
+    faregasFormatosService.renderVersion = async () => {
+      rendersDinamicos += 1;
+      return { data: '<p>HTML DINAMICO HEREDADO</p>' };
+    };
+
+    const resultado = await certificados.obtenerPrevisualizacion(501, { username: 'test', perfil_id: 1 });
+    assert.equal(rendersDinamicos, 0);
+    assert.match(resultado.html, /CERTIFICADO DE CONFORMIDAD/);
+    assert.match(resultado.html, /RECTIFICACION DE CARACTERISTICAS REGISTRABLES: \/CAMBIO DE MOTOR/);
+    assert.doesNotMatch(resultado.html, /HTML DINAMICO HEREDADO/);
+  } finally {
+    certificados.obtenerBorradorCompleto = originales.obtenerBorradorCompleto;
+    certificados.obtenerConformidad = originales.obtenerConformidad;
+    faregasFormatosService.renderVersion = originales.renderVersion;
+  }
+});
+
 test('Conformidad emitida con formato_version_id reimprime exactamente esa versión', async () => {
   const originales = {
     obtenerBorradorCompleto: certificados.obtenerBorradorCompleto,
@@ -86,7 +126,9 @@ test('Conformidad emitida con formato_version_id reimprime exactamente esa versi
 
 test('cada nueva emisión fija la VIGENTE de su momento y una publicación posterior no cambia la anterior', async () => {
   const originalConnect = db.connect;
+  const originalQuery = db.query;
   const originalValidarEmision = certificados.validarEmision;
+  const originalObtenerBorradorCompleto = certificados.obtenerBorradorCompleto;
   const originalValidarAcceso = authService.validarAccesoCertificado;
   let versionVigente = 120;
   const versionesFijadas = [];
@@ -117,6 +159,18 @@ test('cada nueva emisión fija la VIGENTE de su momento y una publicación poste
     release() {}
   });
   certificados.validarEmision = async () => ({ valido: true, errores: [] });
+  certificados.obtenerBorradorCompleto = async (id) => ({
+    id,
+    estado: 'EMITIDO',
+    tipo: { clave: 'OTRO' },
+    formatoFormulario: null
+  });
+  db.query = async (sql) => {
+    if (String(sql).includes('SELECT id FROM fg_facturacion')) {
+      return { rowCount: 0, rows: [] };
+    }
+    throw new Error(`Consulta inesperada fuera de transacción: ${String(sql)}`);
+  };
   authService.validarAccesoCertificado = async () => true;
 
   try {
@@ -128,7 +182,9 @@ test('cada nueva emisión fija la VIGENTE de su momento y una publicación poste
     assert.equal(versionesFijadas[0], 120);
   } finally {
     db.connect = originalConnect;
+    db.query = originalQuery;
     certificados.validarEmision = originalValidarEmision;
+    certificados.obtenerBorradorCompleto = originalObtenerBorradorCompleto;
     authService.validarAccesoCertificado = originalValidarAcceso;
   }
 });

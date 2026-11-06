@@ -1,4 +1,5 @@
 const db = require('../../../config/database');
+const { exigirVentanaDiaFiscal } = require('./faregas-fecha-fiscal-dia.service');
 const nubefactService = require('../../../services/integrations/nubefact.service');
 const nubefactConfigService = require('./faregas-nubefact-config.service');
 const correlativosNubefactService = require('./faregas-correlativos-nubefact.service');
@@ -56,7 +57,8 @@ const normalizarTipoNota = (value) => {
 
 const validarAccesoFacturacion = async (executor, certificadoId, userContext, bloquear = false) => {
     const result = await executor.query(`
-        SELECT f.*, c.planta_key, c.estado AS certificado_estado
+        SELECT f.*, f.fecha_documento::text AS fecha_documento_fiscal_dia,
+               c.planta_key, c.estado AS certificado_estado
         FROM fg_facturacion f
         JOIN fg_certificado c ON c.id = f.certificado_id
         WHERE f.certificado_id = $1${bloquear ? ' FOR UPDATE OF f' : ''}
@@ -328,6 +330,7 @@ const reservarNota = async (certificadoId, tipoEntrada, data, userContext, notaI
         await client.query('BEGIN');
         if (tipo === 'CREDITO') await validarPermisoNotaCredito(client, userContext);
         const facturacion = await validarAccesoFacturacion(client, certificadoId, userContext, true);
+        if (tipo === 'CREDITO' && !notaId) exigirVentanaDiaFiscal(facturacion.fecha_documento_fiscal_dia, 'NOTA_CREDITO');
         if (!esDocumentoBaseOperable(facturacion)) throw errorNegocio('COMPROBANTE_NO_ACEPTADO', 409);
         await validarSinAnulacionActiva(client, facturacion.id);
         let nota;
@@ -1083,10 +1086,12 @@ const obtenerObjetivoAnulacion = async (client, facturacion, tipoDocumento, docu
     return { tipo: notaTipo, tabla: meta.tabla, fk: meta.fk, row: result.rows[0], tipoComprobante: meta.comprobante, prefijo: notaTipo === 'CREDITO' ? 'C' : 'D' };
 };
 
-// La primera solicitud de emisión fija el inicio del plazo operativo de 24 h
-// definido por FAREGAS. Un reintento no lo renueva. Este plazo es distinto del
-// plazo fiscal de 7 días que evalúa el resolvedor para elegir baja o nota.
 const validarPlazoAnulacion = async (client, objetivo) => {
+    if (objetivo.tipo === 'FACTURACION') {
+        exigirVentanaDiaFiscal(objetivo.row.fecha_documento_fiscal_dia || objetivo.row.fecha_documento, 'ANULAR');
+        return;
+    }
+    // Las anulaciones de documentos derivados conservan su control temporal actual.
     const result = objetivo.tipo === 'FACTURACION'
         ? await client.query(`
             SELECT MIN(fecha_creacion) AS fecha_emision,

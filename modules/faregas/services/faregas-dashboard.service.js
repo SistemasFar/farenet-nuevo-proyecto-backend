@@ -1,4 +1,5 @@
 const db = require('../../../config/database');
+const usuarioPerfilRepository = require('./faregas-usuario-perfil.repository');
 const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
 const { validarRangoFechasDashboard } = require('./faregas-dashboard-fechas.service');
 
@@ -2048,11 +2049,24 @@ async function obtenerDetalleUsuarios({ plantasAutorizadas, plantasFiltro, desde
     if (plantas.length === 0) return [];
 
     const { inicioActual, finActual } = calcularIntervaloFechas(desde, hasta);
+    const perfilPropioDisponible = await usuarioPerfilRepository.estaDisponible(db);
+    const nombreUsuarioSql = perfilPropioDisponible
+        ? `CASE WHEN up.usuario_username IS NOT NULL
+               THEN COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', up.nombres, up.apellidos)), ''), NULLIF(BTRIM(up.nombre_razon_social), ''), oc.usuario_creacion)
+               ELSE COALESCE(TRIM(CONCAT(p.nombres, ' ', p.apellidos)), p.nombrerazonsocial, oc.usuario_creacion)
+           END`
+        : `COALESCE(TRIM(CONCAT(p.nombres, ' ', p.apellidos)), p.nombrerazonsocial, oc.usuario_creacion)`;
+    const perfilJoin = perfilPropioDisponible
+        ? 'LEFT JOIN public.fg_usuario_perfil up ON up.usuario_username = u.username'
+        : '';
+    const perfilGroupBy = perfilPropioDisponible
+        ? ', up.usuario_username, up.nombres, up.apellidos, up.nombre_razon_social'
+        : '';
 
     const query = `
         SELECT 
             oc.usuario_creacion AS username,
-            COALESCE(TRIM(CONCAT(p.nombres, ' ', p.apellidos)), p.nombrerazonsocial, oc.usuario_creacion) AS nombre,
+            ${nombreUsuarioSql} AS nombre,
             COUNT(DISTINCT oc.id) AS total_operaciones,
             COALESCE(SUM(
                 CASE 
@@ -2073,6 +2087,7 @@ async function obtenerDetalleUsuarios({ plantasAutorizadas, plantasFiltro, desde
         FROM fg_operacion_comercial oc
         ${productoId ? `JOIN fg_operacion_detalle od ON od.operacion_id = oc.id AND od.tipo_item = 'PRODUCTO' AND od.producto_facturacion_id = $4::bigint` : `LEFT JOIN fg_operacion_detalle od ON od.operacion_id = oc.id`}
         LEFT JOIN fg_usuario u ON u.username = oc.usuario_creacion
+        ${perfilJoin}
         LEFT JOIN persona p ON p.nrodocumentoidentidad = u.persona_nrodocumentoidentidad
         WHERE oc.planta_key = ANY($1::varchar[])
           AND oc.fecha_creacion >= $2::timestamptz AND oc.fecha_creacion < $3::timestamptz
@@ -2082,7 +2097,7 @@ async function obtenerDetalleUsuarios({ plantasAutorizadas, plantasFiltro, desde
               WHERE f.operacion_id = oc.id
                 AND ${SQL_COMPROBANTE_EMITIDO_EXITOSAMENTE}
           )
-        GROUP BY oc.usuario_creacion, p.nombres, p.apellidos, p.nombrerazonsocial
+        GROUP BY oc.usuario_creacion, p.nombres, p.apellidos, p.nombrerazonsocial${perfilGroupBy}
         ORDER BY total_vendido DESC, total_operaciones DESC
     `;
 

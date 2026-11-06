@@ -47,8 +47,8 @@ test('Fase 4C: edición de perfil administra todos los permisos, incluidos los s
 });
 
 test('Fase 4C: esquema maestro y migración incremental restauran CREAR a SISTEMAS', () => {
-    const master = leer('../database/migrations/0001_faregas_schema.sql');
-    const migration = leer('../database/migrations_history/20261023_faregas_fase4c_solicitudes_inicio.sql');
+    const master = leer('../database/faregas_instalacion_completa.sql');
+    const migration = leer('../database/archive/migrations_history/20261023_faregas_fase4c_solicitudes_inicio.sql');
 
     assert.match(master, /\('SISTEMAS'::varchar, 'FAREGAS_SOLICITUD_CREAR'::varchar\)/);
     assert.match(migration, /permiso\.clave = 'FAREGAS_SOLICITUD_CREAR'/);

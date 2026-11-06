@@ -2,6 +2,7 @@ const db = require('../../../config/database');
 const bcrypt = require('bcryptjs');
 const paginacion = require('./faregas-paginacion.rules');
 const validacion = require('./faregas-usuarios-validacion.service');
+const perfilRepository = require('./faregas-usuario-perfil.repository');
 const permisosSensiblesService = require('./faregas-permisos-sensibles.service');
 const {
     PERMISOS_SENSIBLES,
@@ -10,21 +11,123 @@ const {
     PERMISOS_FAREGAS_GESTIONABLES
 } = require('./faregas-permisos-sensibles.constants');
 
+const normalizarValorPerfil = (valor) => {
+    const normalizado = String(valor ?? '').trim();
+    return normalizado || null;
+};
+
+const errorPerfilHeredadoSoloLectura = (code, message, campos = []) => {
+    const error = new Error(message);
+    error.code = code;
+    error.statusCode = 409;
+    error.detalles = campos;
+    return error;
+};
+
+const compararPerfilConPersonaLegacy = async (client, datos) => {
+    const { rows } = await client.query(`
+        SELECT tipodocumentoidentidad_key, nombres, apellidos, nombrerazonsocial,
+               pais_key, departamento_key, provincia_key, distrito_key,
+               direccion, email, telefono, persona_contacto
+        FROM persona
+        WHERE nrodocumentoidentidad = $1
+        LIMIT 1
+    `, [datos.nroDocumento]);
+    const persona = rows[0];
+    if (!persona) {
+        throw errorPerfilHeredadoSoloLectura(
+            'PERSONA_FARENET_NO_EXISTE',
+            'El documento no existe en FARENET. No se guardaron cambios personales; aplique la migración FAREGAS para administrar perfiles propios.'
+        );
+    }
+    const camposPerfil = [
+        ['tipoDocumentoKey', 'tipodocumentoidentidad_key'],
+        ['nombres', 'nombres'],
+        ['apellidos', 'apellidos'],
+        ['nombreRazonSocial', 'nombrerazonsocial'],
+        ['paisKey', 'pais_key'],
+        ['departamentoKey', 'departamento_key'],
+        ['provinciaKey', 'provincia_key'],
+        ['distritoKey', 'distrito_key'],
+        ['direccion', 'direccion'],
+        ['email', 'email'],
+        ['telefono', 'telefono'],
+        ['personaContacto', 'persona_contacto']
+    ];
+    const modificados = camposPerfil
+        .filter(([entrada, columna]) => normalizarValorPerfil(datos[entrada]) !== normalizarValorPerfil(persona[columna]))
+        .map(([entrada]) => entrada);
+
+    if (modificados.length > 0) {
+        throw errorPerfilHeredadoSoloLectura(
+            'PERFIL_PERSONA_FARENET_SOLO_LECTURA',
+            'El esquema independiente de perfiles FAREGAS aún no está instalado y persona es de solo lectura. No se guardaron los cambios personales.',
+            modificados
+        );
+    }
+    return persona;
+};
+
+const guardarPerfilPropio = async (client, username, datos) => {
+    await client.query(`
+        INSERT INTO public.fg_usuario_perfil (
+            usuario_username, tipo_documento_key, nro_documento,
+            nombres, apellidos, nombre_razon_social,
+            pais_key, departamento_key, provincia_key, distrito_key,
+            direccion, email, telefono, persona_contacto,
+            fecha_actualizacion
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (usuario_username) DO UPDATE SET
+            tipo_documento_key = EXCLUDED.tipo_documento_key,
+            nro_documento = EXCLUDED.nro_documento,
+            nombres = EXCLUDED.nombres,
+            apellidos = EXCLUDED.apellidos,
+            nombre_razon_social = EXCLUDED.nombre_razon_social,
+            pais_key = EXCLUDED.pais_key,
+            departamento_key = EXCLUDED.departamento_key,
+            provincia_key = EXCLUDED.provincia_key,
+            distrito_key = EXCLUDED.distrito_key,
+            direccion = EXCLUDED.direccion,
+            email = EXCLUDED.email,
+            telefono = EXCLUDED.telefono,
+            persona_contacto = EXCLUDED.persona_contacto,
+            fecha_actualizacion = CURRENT_TIMESTAMP
+    `, [
+        username, datos.tipoDocumentoKey, datos.nroDocumento,
+        datos.nombres, datos.apellidos, datos.nombreRazonSocial,
+        datos.paisKey, datos.departamentoKey, datos.provinciaKey, datos.distritoKey,
+        datos.direccion, datos.email, datos.telefono, datos.personaContacto
+    ]);
+};
+
 // El trim de los campos vive en `faregas-usuarios-validacion.service`, que es
 // quien devuelve los valores ya normalizados y validados. Aquí no se normaliza
 // nada por separado: lo que se guarda es exactamente lo que se comprobó.
 
 exports.obtenerUsuarios = async () => {
+    const perfilPropioDisponible = await perfilRepository.estaDisponible(db);
+    const perfil = (columnaPropia, columnaLegacy) => perfilPropioDisponible
+        ? `CASE WHEN fp.usuario_username IS NOT NULL THEN fp.${columnaPropia} ELSE p.${columnaLegacy} END`
+        : `p.${columnaLegacy}`;
     const query = `
         SELECT u.username, u.perfil_id, u.estado, u.user_type, u.persona_nrodocumentoidentidad,
-               p.tipodocumentoidentidad_key as "tipoDocumentoKey", td.nombre as "tipoDocumentoNombre",
-               p.nrodocumentoidentidad as "nroDocumento",
-               p.nombres, p.apellidos, p.nombrerazonsocial as "nombreRazonSocial",
-               p.pais_key as "paisKey", pais.nombre as "paisNombre",
-               p.departamento_key as "departamentoKey", dep.nombre as "departamentoNombre",
-               p.provincia_key as "provinciaKey", prov.nombre as "provinciaNombre",
-               p.distrito_key as "distritoKey", dis.nombre as "distritoNombre",
-               p.direccion, p.email, p.telefono, p.persona_contacto as "personaContacto",
+               ${perfil('tipo_documento_key', 'tipodocumentoidentidad_key')} as "tipoDocumentoKey",
+               td.nombre as "tipoDocumentoNombre",
+               ${perfil('nro_documento', 'nrodocumentoidentidad')} as "nroDocumento",
+               ${perfil('nombres', 'nombres')} as nombres,
+               ${perfil('apellidos', 'apellidos')} as apellidos,
+               ${perfil('nombre_razon_social', 'nombrerazonsocial')} as "nombreRazonSocial",
+               ${perfil('pais_key', 'pais_key')} as "paisKey", pais.nombre as "paisNombre",
+               ${perfil('departamento_key', 'departamento_key')} as "departamentoKey", dep.nombre as "departamentoNombre",
+               ${perfil('provincia_key', 'provincia_key')} as "provinciaKey", prov.nombre as "provinciaNombre",
+               ${perfil('distrito_key', 'distrito_key')} as "distritoKey", dis.nombre as "distritoNombre",
+               ${perfil('direccion', 'direccion')} as direccion,
+               ${perfil('email', 'email')} as email,
+               ${perfil('telefono', 'telefono')} as telefono,
+               ${perfil('persona_contacto', 'persona_contacto')} as "personaContacto",
                COALESCE(
                    (SELECT json_agg(json_build_object('key', up.plantas_key, 'nombre', pl.nombre))
                     FROM fg_usuario_planta up
@@ -34,11 +137,12 @@ exports.obtenerUsuarios = async () => {
                ) as sedes
         FROM fg_usuario u
         LEFT JOIN persona p ON u.persona_nrodocumentoidentidad = p.nrodocumentoidentidad
-        LEFT JOIN tipodocumentoidentidad td ON p.tipodocumentoidentidad_key = td.key
-        LEFT JOIN pais ON p.pais_key = pais.key
-        LEFT JOIN departamento dep ON p.departamento_key = dep.key
-        LEFT JOIN provincia prov ON p.provincia_key = prov.key
-        LEFT JOIN distrito dis ON p.distrito_key = dis.key
+        ${perfilPropioDisponible ? 'LEFT JOIN public.fg_usuario_perfil fp ON fp.usuario_username = u.username' : ''}
+        LEFT JOIN tipodocumentoidentidad td ON ${perfil('tipo_documento_key', 'tipodocumentoidentidad_key')} = td.key
+        LEFT JOIN pais ON ${perfil('pais_key', 'pais_key')} = pais.key
+        LEFT JOIN departamento dep ON ${perfil('departamento_key', 'departamento_key')} = dep.key
+        LEFT JOIN provincia prov ON ${perfil('provincia_key', 'provincia_key')} = prov.key
+        LEFT JOIN distrito dis ON ${perfil('distrito_key', 'distrito_key')} = dis.key
         ORDER BY u.username
     `;
     const result = await db.query(query);
@@ -50,6 +154,7 @@ exports.obtenerUsuarios = async () => {
  * solo se pagina. Se mantiene el ORDER BY por usuario.
  */
 exports.obtenerUsuariosPaginado = async (filtros = {}) => {
+    const perfilPropioDisponible = await perfilRepository.estaDisponible(db);
     const { page, limit, offset } = paginacion.normalizarPaginacion(filtros);
     const condiciones = [];
     const valores = [];
@@ -61,7 +166,9 @@ exports.obtenerUsuariosPaginado = async (filtros = {}) => {
         valores.push(`%${filtros.buscar}%`);
         const patron = `$${valores.length}`;
         condiciones.push(
-            `(u.username ILIKE ${patron} OR COALESCE(p.nombrerazonsocial, '') ILIKE ${patron})`
+            `(u.username ILIKE ${patron} OR COALESCE(${perfilPropioDisponible
+                ? "CASE WHEN fp.usuario_username IS NOT NULL THEN fp.nombre_razon_social ELSE p.nombrerazonsocial END"
+                : 'p.nombrerazonsocial'}, '') ILIKE ${patron})`
         );
     }
     if (filtros.perfil_id) agregar('u.perfil_id = ?', filtros.perfil_id);
@@ -71,6 +178,7 @@ exports.obtenerUsuariosPaginado = async (filtros = {}) => {
     const joins = `
         FROM fg_usuario u
         LEFT JOIN persona p ON u.persona_nrodocumentoidentidad = p.nrodocumentoidentidad
+        ${perfilPropioDisponible ? 'LEFT JOIN public.fg_usuario_perfil fp ON fp.usuario_username = u.username' : ''}
     `;
 
     const conteo = await db.query(
@@ -100,21 +208,14 @@ exports.obtenerUsuariosPaginado = async (filtros = {}) => {
     );
 };
 
-exports.crearUsuario = async (data, creadorUsername) => {
-    const {
-        perfil_id, estado, sedes, user_type,
-        password, nombres, apellidos, nombreRazonSocial,
-        paisKey, departamentoKey, provinciaKey, distritoKey,
-        direccion, email, telefono, personaContacto
-    } = data;
+exports.crearUsuario = async (data, _creadorUsername) => {
+    const { perfil_id, estado, sedes, user_type, password, nombres, apellidos, nombreRazonSocial } = data;
 
     // Ninguna escritura llega a la base sin pasar por la validación. Se valida
     // sobre `data` completo y se usan los valores NORMALIZADOS que devuelve,
     // para que lo que se guarde sea exactamente lo que se comprobó.
     const datosValidados = validacion.exigirDatosValidos(data, { modo: 'crear' });
     const cleanUsername = datosValidados.username;
-    const nroDocumento = datosValidados.nroDocumento;
-    const tipoDocumentoKey = datosValidados.tipoDocumentoKey;
 
     const hash = bcrypt.hashSync(password, 10);
     const cleanPerfil = perfil_id === '' ? null : perfil_id;
@@ -124,44 +225,17 @@ exports.crearUsuario = async (data, creadorUsername) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        
-        // 1. Insert/Update Persona
-        if (nroDocumento && tipoDocumentoKey) {
-            await client.query(`
-                INSERT INTO persona (
-                    nrodocumentoidentidad, tipodocumentoidentidad_key,
-                    nombres, apellidos, nombrerazonsocial,
-                    pais_key, departamento_key, provincia_key, distrito_key,
-                    direccion, email, telefono, persona_contacto,
-                    estado, usuariocreacion_username
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true, $14)
-                ON CONFLICT (nrodocumentoidentidad) DO UPDATE SET
-                    tipodocumentoidentidad_key = EXCLUDED.tipodocumentoidentidad_key,
-                    nombres = EXCLUDED.nombres,
-                    apellidos = EXCLUDED.apellidos,
-                    nombrerazonsocial = EXCLUDED.nombrerazonsocial,
-                    pais_key = EXCLUDED.pais_key,
-                    departamento_key = EXCLUDED.departamento_key,
-                    provincia_key = EXCLUDED.provincia_key,
-                    distrito_key = EXCLUDED.distrito_key,
-                    direccion = EXCLUDED.direccion,
-                    email = EXCLUDED.email,
-                    telefono = EXCLUDED.telefono,
-                    persona_contacto = EXCLUDED.persona_contacto,
-                    usuariomodi_id = EXCLUDED.usuariocreacion_username,
-                    fechmodi = CURRENT_TIMESTAMP
-            `, [
-                nroDocumento, tipoDocumentoKey, nombres, apellidos, nombreRazonSocial,
-                paisKey, departamentoKey, provinciaKey, distritoKey,
-                direccion, email, telefono, personaContacto, creadorUsername
-            ]);
+
+        if (!await perfilRepository.estaDisponible(client)) {
+            throw perfilRepository.errorMigracionPendiente();
         }
 
-        // 2. Insertar usuario
+        // Nuevos usuarios FAREGAS no necesitan ni crean una persona heredada.
         await client.query(`
             INSERT INTO fg_usuario (username, contrasenha, perfil_id, estado, user_type, persona_nrodocumentoidentidad)
-            VALUES ($1, $2, $3, $4, $5, $6)
-        `, [cleanUsername, hash, cleanPerfil, estadoBool, tipoUsr, nroDocumento || null]);
+            VALUES ($1, $2, $3, $4, $5, NULL)
+        `, [cleanUsername, hash, cleanPerfil, estadoBool, tipoUsr]);
+        await guardarPerfilPropio(client, cleanUsername, datosValidados);
 
         // 3. Asignar sedes
         if (Array.isArray(sedes) && sedes.length > 0) {
@@ -194,20 +268,13 @@ exports.crearUsuario = async (data, creadorUsername) => {
     }
 };
 
-exports.actualizarUsuario = async (oldUsername, data, modificadorUsername) => {
-    const {
-        perfil_id, estado, sedes, user_type,
-        nombres, apellidos, nombreRazonSocial,
-        paisKey, departamentoKey, provinciaKey, distritoKey,
-        direccion, email, telefono, personaContacto
-    } = data;
+exports.actualizarUsuario = async (oldUsername, data, _modificadorUsername) => {
+    const { perfil_id, estado, sedes, user_type, nombres, apellidos, nombreRazonSocial } = data;
 
     // Mismas reglas que en la creación. `modo: 'editar'` deja pasar la contraseña
     // vacía, que es lo que el formulario ya entendía como "no cambiar".
     const datosValidados = validacion.exigirDatosValidos(data, { modo: 'editar' });
     const newUsername = datosValidados.username;
-    const nroDocumento = datosValidados.nroDocumento;
-    const tipoDocumentoKey = datosValidados.tipoDocumentoKey;
 
     const cleanPerfil = perfil_id === '' ? null : perfil_id;
     const estadoBool = estado === true || estado === 'true';
@@ -222,44 +289,23 @@ exports.actualizarUsuario = async (oldUsername, data, modificadorUsername) => {
             if (r.rowCount > 0) throw new Error('USERNAME_EXISTS');
         }
 
-        // 1. Insert/Update Persona
-        if (nroDocumento && tipoDocumentoKey) {
-            await client.query(`
-                INSERT INTO persona (
-                    nrodocumentoidentidad, tipodocumentoidentidad_key,
-                    nombres, apellidos, nombrerazonsocial,
-                    pais_key, departamento_key, provincia_key, distrito_key,
-                    direccion, email, telefono, persona_contacto,
-                    estado, usuariocreacion_username
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true, $14)
-                ON CONFLICT (nrodocumentoidentidad) DO UPDATE SET
-                    tipodocumentoidentidad_key = EXCLUDED.tipodocumentoidentidad_key,
-                    nombres = EXCLUDED.nombres,
-                    apellidos = EXCLUDED.apellidos,
-                    nombrerazonsocial = EXCLUDED.nombrerazonsocial,
-                    pais_key = EXCLUDED.pais_key,
-                    departamento_key = EXCLUDED.departamento_key,
-                    provincia_key = EXCLUDED.provincia_key,
-                    distrito_key = EXCLUDED.distrito_key,
-                    direccion = EXCLUDED.direccion,
-                    email = EXCLUDED.email,
-                    telefono = EXCLUDED.telefono,
-                    persona_contacto = EXCLUDED.persona_contacto,
-                    usuariomodi_id = EXCLUDED.usuariocreacion_username,
-                    fechmodi = CURRENT_TIMESTAMP
-            `, [
-                nroDocumento, tipoDocumentoKey, nombres, apellidos, nombreRazonSocial,
-                paisKey, departamentoKey, provinciaKey, distritoKey,
-                direccion, email, telefono, personaContacto, modificadorUsername
-            ]);
+        const perfilPropioDisponible = await perfilRepository.estaDisponible(client);
+        if (!perfilPropioDisponible) {
+            // Compatibilidad temporal: se mantienen los cambios administrativos
+            // si el perfil remitido sigue coincidiendo con persona. El formulario
+            // personal continuará bloqueado hasta desplegar fg_usuario_perfil.
+            await compararPerfilConPersonaLegacy(client, datosValidados);
         }
 
         // UPDATE
         await client.query(`
             UPDATE fg_usuario 
-            SET username = $1, perfil_id = $2, estado = $3, user_type = $4, persona_nrodocumentoidentidad = $5
-            WHERE username = $6
-        `, [newUsername, cleanPerfil, estadoBool, tipoUsr, nroDocumento || null, oldUsername]);
+            SET username = $1, perfil_id = $2, estado = $3, user_type = $4
+            WHERE username = $5
+        `, [newUsername, cleanPerfil, estadoBool, tipoUsr, oldUsername]);
+        if (perfilPropioDisponible) {
+            await guardarPerfilPropio(client, newUsername, datosValidados);
+        }
 
         // Actualizar plantas
         await client.query('DELETE FROM fg_usuario_planta WHERE usuario_username = $1', [newUsername]);
@@ -317,12 +363,6 @@ exports.cambiarPassword = async (username, password) => {
         if (resFaregas.rowCount === 0) {
             throw new Error('USER_NOT_FOUND');
         }
-
-        await client.query(`
-            UPDATE usuario
-            SET contrasenha = $1
-            WHERE username = $2
-        `, [hash, username]);
 
         await client.query('COMMIT');
     } catch (e) {

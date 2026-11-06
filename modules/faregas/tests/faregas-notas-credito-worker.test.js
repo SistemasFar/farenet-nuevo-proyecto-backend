@@ -217,7 +217,7 @@ test('6. el motivo 03 conserva exactamente la descripción aprobada', () => {
 test('7. la migración no hace backfill de solicitudes históricas', () => {
     const migration = fs.readFileSync(path.resolve(
         __dirname,
-        '../database/migrations_history/20261030_faregas_cola_notas_credito.sql'
+        '../database/archive/migrations_history/20261030_faregas_cola_notas_credito.sql'
     ), 'utf8');
     assert.match(migration, /No realiza backfill/i);
     assert.doesNotMatch(migration, /INSERT\s+INTO\s+(?:public\.)?fg_nota_credito_trabajo\s*\([^;]*SELECT/is);

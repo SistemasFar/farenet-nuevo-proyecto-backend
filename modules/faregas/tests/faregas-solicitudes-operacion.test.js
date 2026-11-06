@@ -521,9 +521,9 @@ test('19. toda decisión registra estado anterior, posterior y responsable', asy
 });
 
 const serviceSource = fs.readFileSync(path.join(__dirname, '../services/faregas-solicitudes-operacion.service.js'), 'utf8');
-const migrationSource = fs.readFileSync(path.join(__dirname, '../database/migrations_history/20261022_faregas_fase1_solicitudes_administrativas.sql'), 'utf8');
-const masterSource = fs.readFileSync(path.join(__dirname, '../database/migrations/0001_faregas_schema.sql'), 'utf8');
-const autoaprobarMigrationSource = fs.readFileSync(path.join(__dirname, '../database/migrations_history/20261026_faregas_solicitud_autoaprobar.sql'), 'utf8');
+const migrationSource = fs.readFileSync(path.join(__dirname, '../database/archive/migrations_history/20261022_faregas_fase1_solicitudes_administrativas.sql'), 'utf8');
+const masterSource = fs.readFileSync(path.join(__dirname, '../database/faregas_instalacion_completa.sql'), 'utf8');
+const autoaprobarMigrationSource = fs.readFileSync(path.join(__dirname, '../database/archive/migrations_history/20261026_faregas_solicitud_autoaprobar.sql'), 'utf8');
 
 test('20. el módulo no modifica fg_certificado', () => assert.doesNotMatch(serviceSource, /UPDATE\s+fg_certificado|DELETE\s+FROM\s+fg_certificado/i));
 test('21. el módulo no modifica fg_facturacion', () => assert.doesNotMatch(serviceSource, /UPDATE\s+fg_facturacion|INSERT\s+INTO\s+fg_facturacion|DELETE\s+FROM\s+fg_facturacion/i));
@@ -537,7 +537,7 @@ test('24. la integración fiscal usa el servicio existente y permanece detrás d
 });
 
 test('25. conserva la regresión de seguridad de Fase 0', () => {
-    const fase0 = fs.readFileSync(path.join(__dirname, '../database/migrations_history/20261022_faregas_fase0_seguridad_documentos.sql'), 'utf8');
+    const fase0 = fs.readFileSync(path.join(__dirname, '../database/archive/migrations_history/20261022_faregas_fase0_seguridad_documentos.sql'), 'utf8');
     assert.match(fase0, /FAREGAS_ANULAR_COMPROBANTE/); assert.match(fase0, /FAREGAS_NOTA_CREDITO/);
 });
 

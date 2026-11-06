@@ -736,7 +736,7 @@ test('historial enriquece usuarios, decisión y documento sin perder aislamiento
     assert.equal(resultado.limite, 10, 'El backend debe imponer un máximo de 10 registros por página');
     assert.equal(resultado.data[0].solicitante_nombre, 'Grace Ibarra');
     assert.equal(resultado.data[0].autoaprobacion_excepcional, true);
-    assert.ok(consultas.every(({ params }) => params[0] === 'gibarra'));
+    assert.ok(consultas.filter(({ params }) => params?.length).every(({ params }) => params[0] === 'gibarra'));
     const sql = consultas.map(({ texto }) => texto).join('\n');
     assert.match(sql, /LEFT JOIN persona ps/);
     assert.match(sql, /LEFT JOIN persona pd/);

@@ -199,8 +199,8 @@ test('Paso A/4B: rutas parciales no se exponen y la ejecución fiscal conserva p
 
 test('Paso A: esquema maestro y migración reflejan ANULAR_AMBOS y RBAC definitivo', () => {
     const database = path.join(__dirname, '../database');
-    const master = fs.readFileSync(path.join(database, 'migrations/0001_faregas_schema.sql'), 'utf8');
-    const migration = fs.readFileSync(path.join(database, 'migrations_history/20261023_faregas_fase4a_anulacion_total.sql'), 'utf8');
+    const master = fs.readFileSync(path.join(database, 'faregas_instalacion_completa.sql'), 'utf8');
+    const migration = fs.readFileSync(path.join(database, 'archive/migrations_history/20261023_faregas_fase4a_anulacion_total.sql'), 'utf8');
     for (const sql of [master, migration]) {
         assert.match(sql, /tipo_operacion = 'ANULAR_AMBOS' AND certificado_id IS NOT NULL/);
     }

@@ -406,7 +406,7 @@ test('buscar rechaza sedes no autorizadas', async () => {
 });
 
 test('esquema consolidado contiene tabla, restricciones e indices del duplicado', () => {
-    const sql = fs.readFileSync(path.join(__dirname, '../database/migrations/0001_faregas_schema.sql'), 'utf8');
+    const sql = fs.readFileSync(path.join(__dirname, '../database/faregas_instalacion_completa.sql'), 'utf8');
     assert.match(sql, /CREATE TABLE public\.fg_certificado_duplicado/);
     assert.match(sql, /precio numeric\(10,2\) DEFAULT 50\.00 NOT NULL/);
     assert.match(sql, /html_original_snapshot text NOT NULL/);

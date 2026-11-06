@@ -60,7 +60,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         || 'SERVICIOS COMPLEMENTARIOS DE TRANSPORTE TERRESTRE Y GRÚAS S.A.C.';
     const resDirectoral = textoConfigurado(cert.resolucion_directoral)
         .replace(/^R\.?\s*D\.?\s*N[.°º]*\s*/i, '')
-        || '282-2022-MTC';
+        || '282-2022-MTC/17.03';
     const domicilioConfigurado = textoConfigurado(cert.domicilio_fiscal);
     const lineasDomicilio = domicilioConfigurado
         .split(/\r?\n|\s*\|\s*/)
@@ -90,7 +90,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             color: #000;
             line-height: 12pt;
             margin: 0;
-            padding: 107.45pt 29.5pt 70.9pt 84.75pt;
+            padding: 107.45pt 56.65pt 70.9pt 84.75pt;
             width: 210mm;
             min-height: 297mm;
             box-sizing: border-box;
@@ -141,14 +141,14 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         }
         .header-sub {
             position: absolute;
-            top: 71.9pt;
-            left: 22.7pt;
+            top: 76.2pt;
+            left: 23.2pt;
             width: 253.6pt;
             height: 48.55pt;
             box-sizing: border-box;
             font-size: 8pt;
             color: #000;
-            line-height: 9.6pt;
+            line-height: 9.3pt;
             text-align: center !important;
         }
         .title {
@@ -170,7 +170,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         }
         table.type-box {
             width: 219.7pt;
-            margin: 15pt 0 8.25pt 104.25pt;
+            margin: 14.4pt 0 8.85pt 98.85pt;
             border-collapse: collapse;
             font-size: 10pt;
             line-height: 11.25pt;
@@ -185,7 +185,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             box-sizing: border-box;
         }
         table.type-box td.active {
-            background-color: #e2e8f0;
+            background-color: transparent;
         }
         .certifica-p {
             width: 453.9pt;
@@ -195,10 +195,11 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             line-height: 12pt;
         }
         table.type-box + .certifica-p { margin-bottom: 9.75pt; }
+        .certifica-p + .certifica-p { margin-bottom: 0; }
         table.owner-box {
             width: 481.05pt;
             border-collapse: collapse;
-            margin: 0 0 3.1pt;
+            margin: 0 0 11.6pt -5.4pt;
             font-size: 9pt;
             line-height: 12pt;
             table-layout: fixed;
@@ -213,10 +214,10 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         table.owner-box tr:nth-child(2) td:last-child { width: 248.4pt !important; }
         table.owner-box .val { font-weight: bold; }
         table.owner-box tr:first-child td { height: 27.1pt; }
-        table.owner-box tr:nth-child(2) td { height: 16.35pt; }
+        table.owner-box tr:nth-child(2) td { height: 16.85pt; }
         .section-heading {
             width: 453.9pt;
-            margin: 0 0 8.25pt;
+            margin: 0;
             font-size: 10pt;
             line-height: 12pt;
             font-weight: bold;
@@ -224,7 +225,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         table.data-table {
             width: 480.3pt;
             border-collapse: collapse;
-            margin: 0 0 0;
+            margin: -0.5pt 0 0 -5.4pt;
             font-size: 9pt;
             line-height: 10.5pt;
             table-layout: fixed;
@@ -237,8 +238,20 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             vertical-align: middle;
             overflow-wrap: break-word;
         }
-        table.data-table tr:first-child td { height: 24pt; }
-        table.data-table tr:nth-child(2) td { height: 18pt; }
+        table.data-table tr:first-child td { height: 27.35pt; }
+        table.data-table tr:nth-child(2) td { height: 19.7pt; }
+        table.data-table tr:nth-child(3) td { height: 14.4pt; }
+        table.data-table tr:nth-child(4) td { height: 12.8pt; }
+        table.data-table tr:nth-child(5) td { height: 13.4pt; }
+        table.data-table tr:nth-child(6) td { height: 12.45pt; }
+        table.data-table tr:nth-child(7) td { height: 11.5pt; }
+        table.data-table tr:nth-child(8) td { height: 13.4pt; }
+        table.data-table tr:nth-child(9) td { height: 12.45pt; }
+        table.data-table tr:nth-child(10) td { height: 11.5pt; }
+        table.data-table tr:nth-child(11) td { height: 12.45pt; }
+        table.data-table tr:nth-child(12) td { height: 13.4pt; }
+        table.data-table tr:nth-child(13) td { height: 12pt; }
+        table.data-table tr:nth-child(14) td { height: 12.45pt; }
         table.data-table td:nth-child(1) { width: 123.15pt; }
         table.data-table td:nth-child(2) { width: 123.25pt; }
         table.data-table td:nth-child(3) { width: 113.4pt; }
@@ -248,9 +261,10 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             background-color: #f8fafc;
         }
         table.data-table td.val {
-            font-size: 10pt;
+            font-size: 9pt;
             font-weight: normal;
         }
+        table.data-table td:nth-child(4).val { font-size: 10pt; }
         .spec-para {
             width: 453.9pt;
             font-weight: bold;
@@ -261,10 +275,12 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         }
         .grant-line {
             width: 453.9pt;
-            font-size: 9pt;
+            font-size: 10pt;
             line-height: 12pt;
             margin: 0;
         }
+        .placa-certifica,
+        .grant-plate { font-size: 9pt; }
         .legal-p {
             width: 453.9pt;
             text-align: justify;
@@ -324,7 +340,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         La empresa <strong>${escapeHtml(entNombre)}</strong> Reconocida como Entidad Certificadora de Conformidad con <strong>RESOLUCIÓN DIRECTORAL N°282-2022 MTC/15.</strong>
     </div>
     <div class="certifica-p">
-        <strong data-sistema-edicion="titulo-certifica">CERTIFICA:</strong> Haber realizado la inspección técnica del vehículo: <strong>${escapeHtml(veh.placa || cert.placa_nueva || '-')}</strong>
+        <strong data-sistema-edicion="titulo-certifica">CERTIFICA:</strong> Haber realizado la inspección técnica del vehículo: <strong class="placa-certifica">${escapeHtml(veh.placa || cert.placa_nueva || '-')}</strong>
     </div>
 
     <table class="owner-box">
@@ -423,7 +439,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
     </table>
 
     <div class="grant-line">
-        Se otorga la certificación de conformidad al vehículo de placa: <strong>${escapeHtml(veh.placa || cert.placa_nueva || '-')}</strong>
+        Se otorga la certificación de conformidad al vehículo de placa: <strong class="grant-plate">${escapeHtml(veh.placa || cert.placa_nueva || '-')}</strong>
     </div>
 
     <div class="spec-para">
@@ -442,7 +458,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         </div>
 
         <div class="footer-date" data-sistema-edicion="pie">
-            Lima, <strong>${fechaImp.dia}</strong> <strong>${fechaImp.mes}</strong> del <strong>${fechaImp.anio}</strong>.
+            Lima, ${fechaImp.dia} ${fechaImp.mes} del ${fechaImp.anio}.
         </div>
     </div>
         </div>

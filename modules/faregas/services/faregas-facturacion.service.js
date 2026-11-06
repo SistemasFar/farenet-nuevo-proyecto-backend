@@ -91,7 +91,7 @@ const respuestaPublica = (row, cuotas = []) => {
         direccion: row.direccion,
         email: row.email,
         telefono: row.telefono,
-        fechaDocumento: row.fecha_documento || null,
+        fechaDocumento: row.fecha_documento_iso || row.fecha_documento || null,
         sedeNombre: row.sede_nombre_snapshot || null,
         sedeDireccion: row.sede_direccion_snapshot || null,
         sedeTelefono: row.sede_telefono_snapshot || null,
@@ -144,7 +144,7 @@ const respuestaPublica = (row, cuotas = []) => {
 exports.obtenerFacturacion = async (certificadoId, userContext) => {
     const certificado = await obtenerCertificado(db, certificadoId, userContext);
     const result = await db.query(`
-        SELECT f.*, op.fecha_inicio_credito,
+        SELECT f.*, f.fecha_documento::text AS fecha_documento_iso, op.fecha_inicio_credito,
                (clock_timestamp() >= emision.fecha_emision
                 AND clock_timestamp() < emision.fecha_emision + INTERVAL '24 hours') AS anulacion_en_plazo,
                (EXTRACT(EPOCH FROM (emision.fecha_emision + INTERVAL '24 hours')::timestamptz) * 1000) AS anulacion_hasta_ms,

@@ -6,7 +6,7 @@ const test = require('node:test');
 const backendRoot = path.join(__dirname, '..');
 const migrationPath = path.join(
     backendRoot,
-    'database/migrations_history/20261021_faregas_supervisor_dashboard_exportar.sql'
+    'database/archive/migrations_history/20261021_faregas_supervisor_dashboard_exportar.sql'
 );
 
 test('Migración 20261021 otorga permisos de Dashboard al perfil SUPERVISOR', () => {

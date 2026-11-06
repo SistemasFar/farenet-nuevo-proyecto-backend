@@ -96,11 +96,11 @@ test('el filtro empresarial se conserva incluso con acceso global', async () => 
 test('la migración registra el permiso y conserva SISTEMAS sin tocar asignaciones individuales', () => {
     const migracion = fs.readFileSync(path.join(
         __dirname,
-        '../database/migrations_history/20261029_faregas_acceso_global_sedes.sql'
+        '../database/archive/migrations_history/20261029_faregas_acceso_global_sedes.sql'
     ), 'utf8');
     const maestro = fs.readFileSync(path.join(
         __dirname,
-        '../database/migrations/0001_faregas_schema.sql'
+        '../database/faregas_instalacion_completa.sql'
     ), 'utf8');
     assert.match(migracion, /FAREGAS_ACCESO_GLOBAL_SEDES/);
     assert.match(migracion, /WHERE p\.clave = 'SISTEMAS'/);

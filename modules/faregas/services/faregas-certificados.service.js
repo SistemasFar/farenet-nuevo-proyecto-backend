@@ -716,6 +716,11 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             COALESCE(s.nombre, t.nombre) AS "conceptoVehicular",
             op.estado AS "estadoPago",
             f.estado AS "estadoFacturacion",
+            f.id AS "facturacionId",
+            f.fecha_documento::text AS "fechaDocumentoFiscal",
+            f.proveedor AS "facturacionProveedor",
+            f.serie AS "facturacionSerie",
+            f.numero AS "facturacionNumero",
             importe_final.importe_final AS "importeFinal",
             (importe_final.importe_final IS NOT NULL
              AND ABS(importe_final.importe_final) < 0.005) AS "anulacionImporteCero",
@@ -723,6 +728,7 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
             f.aceptada_sunat AS "aceptadaSunat",
             f.entorno_facturador AS "entornoFacturador",
             f.enlace_pdf AS "enlacePdf",
+            f.enlace_xml AS "enlaceXml",
             f.enlace_pdf_faregas AS "enlacePdfFaregas",
             f.nro_comprobante AS "nroComprobante",
             (clock_timestamp() >= emision_factura.fecha_emision
@@ -3252,16 +3258,18 @@ exports.emitirCertificado = async (id, userContext) => {
 
         await client.query('COMMIT');
 
-        // Las futuras emisiones GLP_INICIAL que usen un diseño visual guardan
+        // Las futuras emisiones con diseño visual y las de CONFORMIDAD guardan
         // el HTML final como snapshot inmutable. Así una modificación posterior
         // del generador base no altera la reimpresión histórica.
         try {
             const emitido = await exports.obtenerBorradorCompleto(id, userContext);
-            if (esConfiguracionVisualSistema(emitido.formatoFormulario?.configuracion)) {
+            const esConformidadOficial = emitido.tipo?.clave === 'CONFORMIDAD';
+            if (esConfiguracionVisualSistema(emitido.formatoFormulario?.configuracion) || esConformidadOficial) {
                 const representacion = await renderizarPrevisualizacionDesdeBorrador({
                     borrador: emitido,
                     id,
-                    userContext
+                    userContext,
+                    forzarGeneradorSistema: esConformidadOficial
                 });
                 await db.query(
                     `UPDATE fg_certificado
@@ -3326,7 +3334,8 @@ const renderizarPrevisualizacionDesdeBorrador = async ({
     borrador,
     id,
     userContext,
-    datosEspecificos = null
+    datosEspecificos = null,
+    forzarGeneradorSistema = false
 }) => {
     const tipoClave = borrador.tipo ? borrador.tipo.clave : null;
     const vehiculoPlantilla = paraPlantilla(borrador.vehiculo || {});
@@ -3367,7 +3376,16 @@ const renderizarPrevisualizacionDesdeBorrador = async ({
     // Una operación con formato HTML propio se renderiza desde su versión y su
     // snapshot dinámico, aunque reutilice una clave técnica base GNV/GLP para
     // correlativos. La clave base no debe imponerle el formulario vehicular.
-    const usaVersionOficialDinamica = borrador.formatoFormulario?.motor === 'HTML_DINAMICO'
+    // CONFORMIDAD es un formato protegido cuyo documento oficial se genera en
+    // conformidad.template.js. En la base heredada existe una versión
+    // HTML_DINAMICO publicada antes de calibrar el formato contra el Word; no
+    // debe sustituir al generador oficial en borradores nuevos. Los emitidos
+    // antiguos que no tienen snapshot siguen resolviendo su versión asignada,
+    // preservando exactamente su representación histórica.
+    const usaGeneradorOficialConformidad = tipoClave === 'CONFORMIDAD'
+        && (borrador.estado !== 'EMITIDO' || forzarGeneradorSistema);
+    const usaVersionOficialDinamica = !usaGeneradorOficialConformidad
+        && borrador.formatoFormulario?.motor === 'HTML_DINAMICO'
         && (borrador.estado !== 'EMITIDO' || Boolean(borrador.formatoVersionAsignadaId));
     if ((borrador.servicio?.tipoFlujo === 'TALLER_INSPECCION' || usaVersionOficialDinamica) && borrador.formatoVersionId) {
         const datosConformidad = datosEspecificos?.conformidad !== undefined

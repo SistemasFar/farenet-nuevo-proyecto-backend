@@ -560,7 +560,7 @@ test('el servicio de rectificación mantiene bloqueo, versionado e idempotencia 
 
 test('el esquema garantiza una sola versión vigente por certificado', () => {
     const schema = fs.readFileSync(
-        path.join(__dirname, '..', 'database', 'migrations', '0001_faregas_schema.sql'),
+        path.join(__dirname, '..', 'database', 'faregas_instalacion_completa.sql'),
         'utf8'
     );
 

@@ -53,7 +53,9 @@ const construirSnapshotProducto = (tarifa, certificado) => ({
     descripcion: tarifa.producto_descripcion
         || tarifa.servicio_nombre
         || `CERTIFICACION ${certificado.tipo_certificado_clave}`,
-    unidad: String(tarifa.producto_unidad || 'ZZ').trim().toUpperCase(),
+    // Este snapshot representa siempre el concepto de certificación (servicio).
+    // Los bienes físicos asociados conservan su propia unidad NIU en su detalle.
+    unidad: 'ZZ',
     afectacionIgv: String(tarifa.producto_afectacion_igv || '10').trim(),
     codigoSunat: tarifa.producto_codigo_sunat || null
 });

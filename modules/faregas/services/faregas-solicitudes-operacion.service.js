@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const db = require('../../../config/database');
+const { exigirVentanaDiaFiscal } = require('./faregas-fecha-fiscal-dia.service');
 const certificadosService = require('./faregas-certificados.service');
 const defaultDocumentosService = require('./faregas-documentos-electronicos.service');
 const defaultNubefactConfigService = require('./faregas-nubefact-config.service');
@@ -302,7 +303,7 @@ const consultaContextoCertificado = (bloquear = false) => `
         f.tipo_comprobante,
         f.nro_comprobante,
         f.estado AS facturacion_estado,
-        f.fecha_documento,
+        f.fecha_documento::text AS fecha_documento,
         f.importe_total,
         f.tipo_documento_cliente,
         f.nro_documento,
@@ -407,15 +408,11 @@ const validarAccesoPlanta = async (executor, usuario, plantaKey, empresaKey = nu
 };
 
 const validarVentanaAnulacionDirecta = (row, tipo) => {
-    if (tipo !== 'ANULAR_AMBOS' || !row.facturacion_id) return;
-    if (!row.fecha_emision_fiscal) {
-        throw errorNegocio('SOLICITUD_FECHA_EMISION_FISCAL_NO_DISPONIBLE', 409);
-    }
-    if (row.anulacion_directa_en_plazo !== true) {
-        throw errorNegocio('SOLICITUD_ANULACION_PLAZO_VENCIDO', 409, {
-            fechaEmisionFiscal: row.fecha_emision_fiscal,
-            plazoHoras: 24
-        });
+    if (!row.facturacion_id) return;
+    if (tipo === 'ANULAR_AMBOS') {
+        exigirVentanaDiaFiscal(row.fecha_documento, 'ANULAR');
+    } else if (tipo === 'EMITIR_NOTA_CREDITO') {
+        exigirVentanaDiaFiscal(row.fecha_documento, 'NOTA_CREDITO');
     }
 };
 

@@ -3,12 +3,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const migrationsDir = path.join(__dirname, '..', 'database', 'migrations');
-const schemaPath = path.join(migrationsDir, '0001_faregas_schema.sql');
+const databaseDir = path.join(__dirname, '..', 'database');
+const schemaPath = path.join(databaseDir, 'faregas_instalacion_completa.sql');
 
-test('migrations contiene solamente el esquema consolidado', () => {
-    const files = fs.readdirSync(migrationsDir).filter((file) => file.endsWith('.sql'));
-    assert.deepEqual(files, ['0001_faregas_schema.sql']);
+test('database separa el instalador activo de los SQL archivados', () => {
+    assert.equal(fs.existsSync(path.join(databaseDir, 'migrations')), false);
+    assert.equal(fs.existsSync(path.join(databaseDir, 'migrations_history')), false);
+    assert.equal(fs.existsSync(schemaPath), true);
+    assert.equal(fs.existsSync(path.join(databaseDir, 'faregas_roles_postgresql.template.sql')), true);
+
+    const contarSql = (carpeta) => fs.readdirSync(carpeta).filter((file) => file.endsWith('.sql')).length;
+    assert.equal(contarSql(path.join(databaseDir, 'archive', 'updates_existing')), 6);
+    assert.equal(contarSql(path.join(databaseDir, 'archive', 'migrations_history')), 97);
+    assert.equal(contarSql(path.join(databaseDir, 'archive', 'legacy_master')), 1);
 });
 
 test('el esquema consolidado crea todas las tablas funcionales sin parches de columnas', () => {
@@ -18,9 +25,12 @@ test('el esquema consolidado crea todas las tablas funcionales sin parches de co
         (match) => match[1]
     );
 
-    assert.equal(tables.length, 62);
-    assert.equal(new Set(tables).size, 62);
+    assert.equal(tables.length, 69);
+    assert.equal(new Set(tables).size, 69);
     assert.ok(tables.includes('fg_certificado_duplicado'));
+    assert.ok(tables.includes('fg_usuario_perfil'));
+    assert.ok(tables.includes('fg_notificacion'));
+    assert.ok(tables.includes('fg_notificacion_destinatario'));
     assert.doesNotMatch(schema, /\bADD\s+COLUMN\b/i);
     assert.doesNotMatch(schema, /fg_descuentodetalle_backup_20260826_reglas_compartidas/i);
 });
