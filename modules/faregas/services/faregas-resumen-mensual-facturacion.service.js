@@ -58,10 +58,14 @@ async function obtenerResumenMensualFacturacion({ plantasAutorizadas = [], plant
         WHERE pl.key = ANY($1::varchar[])
         ORDER BY e.nombre, e.ruc
     `, [plantas])]);
-    return { cabeceras: result.rows, metadatos: {
-        empresasEmisoras: emisores.rows.map((row) => row.empresa_emisora).filter(Boolean),
-        rucEmisores: emisores.rows.map((row) => row.ruc_emisor).filter(Boolean)
-    } };
+    return {
+        cabeceras: result.rows,
+        metadatos: {
+            empresasEmisoras: emisores.rows.map((row) => row.empresa_emisora).filter(Boolean),
+            rucEmisores: emisores.rows.map((row) => row.ruc_emisor).filter(Boolean)
+        },
+        rango: { desde, hasta }
+    };
 }
 
 module.exports = { obtenerResumenMensualFacturacion };

@@ -3245,16 +3245,41 @@ exports.emitirCertificado = async (id, userContext) => {
 
         // Update certificado. La versión se fija al emitir para que las
         // reimpresiones históricas no cambien cuando se publique otra versión.
-        await client.query(`
-            UPDATE fg_certificado
-            SET estado = 'EMITIDO',
-                numero_certificado = $1,
-                fecha_emision = CURRENT_TIMESTAMP,
-                usuario_modificacion = $2,
-                fecha_modificacion = CURRENT_TIMESTAMP,
-                formato_version_id = $4
-            WHERE id = $3
-        `, [numero_certificado, userContext.username, id, formatoVersionId]);
+        // NOTA LIMITACIÓN: fg_certificado.fecha_emision es DATE (sin hora) en
+        // instalación actual. Se escribe CURRENT_DATE (fecha de negocio Lima) para
+        // no perder la fecha por TZ; la hora individual histórica no es
+        // recuperable sin migración a timestamptz (fuera de alcance).
+        // FASE 2 (sin DDL): captura idempotente de fecha_hora_emision si la columna
+        // existe (post-migración autorizada). COALESCE evita sobrescribir reimpresiones.
+        // El backend puede aún no tener la columna: el UPDATE se protege con try/catch
+        // y se reintenta sin la columna para no invalidar la aplicación.
+        let actualizadoConHora = false;
+        try {
+            await client.query(`
+                UPDATE fg_certificado
+                SET estado = 'EMITIDO',
+                    numero_certificado = $1,
+                    fecha_emision = (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')::date,
+                    fecha_hora_emision = COALESCE(fecha_hora_emision, now()),
+                    usuario_modificacion = $2,
+                    fecha_modificacion = CURRENT_TIMESTAMP,
+                    formato_version_id = $4
+                WHERE id = $3
+            `, [numero_certificado, userContext.username, id, formatoVersionId]);
+            actualizadoConHora = true;
+        } catch (e) {
+            if (e.code !== '42703') throw e;
+            await client.query(`
+                UPDATE fg_certificado
+                SET estado = 'EMITIDO',
+                    numero_certificado = $1,
+                    fecha_emision = (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')::date,
+                    usuario_modificacion = $2,
+                    fecha_modificacion = CURRENT_TIMESTAMP,
+                    formato_version_id = $4
+                WHERE id = $3
+            `, [numero_certificado, userContext.username, id, formatoVersionId]);
+        }
 
         await client.query('COMMIT');
 

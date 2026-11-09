@@ -87,6 +87,22 @@ const validarAccesoFacturacionOperacion = async (executor, operacionId, userCont
     return row;
 };
 
+const esTotalNotaCreditoIgualComprobante = (nota, facturacion) => {
+    const totalNota = Number(nota?.importe_total ?? nota?.importeTotal);
+    const totalComp = Number(facturacion?.importe_total ?? facturacion?.importeTotal);
+    if (!Number.isFinite(totalNota) || !Number.isFinite(totalComp) || totalComp <= 0) return false;
+    if (Math.abs(totalNota - totalComp) > 0.02) return false;
+    const baseNota = Number(nota?.base_imponible ?? nota?.baseImponible);
+    const igvNota = Number(nota?.igv);
+    const baseComp = Number(facturacion?.base_imponible ?? facturacion?.baseImponible);
+    const igvComp = Number(facturacion?.igv);
+    const totalesCompletos = [baseNota, igvNota, baseComp, igvComp].every(Number.isFinite);
+    if (totalesCompletos) {
+        if (Math.abs(baseNota - baseComp) > 0.02 || Math.abs(igvNota - igvComp) > 0.02) return false;
+    }
+    return true;
+};
+
 const validarImporteAnulacionCertificado = async (executor, facturacion, operacion) => {
     if (!facturacion?.certificado_id) return;
     await validarAnulacionCertificadoPorImporte(executor, facturacion.certificado_id, { operacion });
@@ -595,6 +611,15 @@ const completarNota = async (reserva, resultado, userContext, opciones = {}) => 
     const respuesta = limpiarRespuestaProveedor(resultado.data) || {};
     const estadoProveedor = mapearEstadoProveedor(resultado, 'DOCUMENTO_RELACIONADO');
     const estado = esResultadoInciertoProveedor(resultado) ? 'PENDIENTE' : estadoProveedor;
+    const tipoNormalizado = String(reserva.tipo || '').trim().toUpperCase();
+    const motivoCodigoRaw = reserva.nota?.motivo_codigo;
+    // NC total por anulación de operación: motivo 01/02 y estado ACEPTADO (definitivo).
+    // Parcial, ajuste o devolución que no anula totalmente (motivo 03 u otros) NO anula certificado.
+    // Pendiente/Rechazado tampoco cambian el certificado.
+    const esNotaCreditoAnulacionTotalConfirmada = tipoNormalizado === 'CREDITO'
+        && estado === 'ACEPTADO'
+        && esMotivoAnulacionNotaCredito(motivoCodigoRaw)
+        && esTotalNotaCreditoIgualComprobante(reserva.nota, reserva.facturacion);
     const client = await db.connect();
     try {
         await client.query('BEGIN');
@@ -617,6 +642,26 @@ const completarNota = async (reserva, resultado, userContext, opciones = {}) => 
             JSON.stringify(respuesta), userContext.username
         ]);
         await finalizarOperacion(client, reserva.operacionId, resultado, respuesta);
+        // NUEVA REGLA: NC de anulación TOTAL confirmada (aceptada + importe total
+        // igual al comprobante) => certificado ANULADO. Parciales, correcciones
+        // (03) o importes distintos NO se marcan.
+        if (esNotaCreditoAnulacionTotalConfirmada && reserva.facturacion?.certificado_id) {
+            const certificadoId = Number(reserva.facturacion.certificado_id);
+            await client.query(`
+                UPDATE fg_certificado
+                SET estado = 'ANULADO',
+                    fecha_anulacion = COALESCE(fecha_anulacion, CURRENT_TIMESTAMP),
+                    motivo_anulacion = COALESCE(motivo_anulacion, $2),
+                    usuario_anulacion = COALESCE(usuario_anulacion, $3),
+                    usuario_modificacion = $3,
+                    fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE id = $1 AND estado = 'EMITIDO'
+            `, [
+                certificadoId,
+                respuesta.sunat_description || `Nota de crédito de anulación total confirmada (motivo ${motivoCodigoRaw}).`,
+                userContext.username
+            ]);
+        }
         if (reserva.solicitudId) {
             const estadoSolicitud = estado === 'ACEPTADO'
                 ? 'COMPLETADA'
@@ -675,7 +720,7 @@ const completarNota = async (reserva, resultado, userContext, opciones = {}) => 
     if (estado !== 'ACEPTADO' && opciones.lanzarError !== false) {
         throw errorNegocio('NUBEFACT_NOTA_NO_ACEPTADA', resultado.status === 'REJECTED' ? 422 : 502, { nota });
     }
-    return nota;
+    return { ...nota, anulacionTotalConfirmada: esNotaCreditoAnulacionTotalConfirmada };
 };
 
 exports.emitirNota = async (certificadoId, tipo, data, userContext, dependencies = {}) => {
@@ -1203,6 +1248,9 @@ exports.generarAnulacionOperacion = async (operacionId, data, userContext, depen
 const completarAnulacion = async (reserva, resultado, userContext) => {
     const respuesta = limpiarRespuestaProveedor(resultado.data) || {};
     const estado = mapearEstadoProveedor(resultado, 'DOCUMENTO_RELACIONADO');
+    // Baja: confirmación fiscal definitiva => estado ACEPTADO (anulado SUNAT).
+    // PENDIENTE / RECHAZADO / ERROR => NO anular certificado.
+    const anulacionFiscalConfirmada = estado === 'ACEPTADO';
     const client = await db.connect();
     try {
         await client.query('BEGIN');
@@ -1219,9 +1267,30 @@ const completarAnulacion = async (reserva, resultado, userContext) => {
             respuesta.enlace_del_cdr || null, JSON.stringify(respuesta), userContext.username
         ]);
         await finalizarOperacion(client, reserva.operacionId, resultado, respuesta);
-        if (estado === 'ACEPTADO') {
+        if (anulacionFiscalConfirmada) {
             await client.query(`UPDATE ${reserva.objetivo.tabla} SET estado='ANULADO',
                 usuario_modificacion=$2, fecha_modificacion=CURRENT_TIMESTAMP WHERE id=$1`, [reserva.objetivo.row.id, userContext.username]);
+            if (reserva.facturacion?.certificado_id) {
+                const certificadoId = Number(reserva.facturacion.certificado_id);
+                // Baja = anulación TOTAL del comprobante: anula SOLO el certificado
+                // directamente ligado a ESTA facturación (f.certificado_id).
+                // Certificados de la misma operación agrupada, otro cliente/placa o
+                // sin vínculo directo NO se tocan. No se busca por operacion_id.
+                await client.query(`
+                    UPDATE fg_certificado
+                    SET estado = 'ANULADO',
+                        fecha_anulacion = COALESCE(fecha_anulacion, CURRENT_TIMESTAMP),
+                        motivo_anulacion = COALESCE(motivo_anulacion, $2),
+                        usuario_anulacion = COALESCE(usuario_anulacion, $3),
+                        usuario_modificacion = $3,
+                        fecha_modificacion = CURRENT_TIMESTAMP
+                    WHERE id = $1 AND estado = 'EMITIDO'
+                `, [
+                    certificadoId,
+                    respuesta.sunat_description || 'Anulación fiscal confirmada (baja aceptada).',
+                    userContext.username
+                ]);
+            }
         }
         await client.query('COMMIT');
     } catch (error) {
@@ -1230,7 +1299,7 @@ const completarAnulacion = async (reserva, resultado, userContext) => {
     } finally {
         client.release();
     }
-    return { id: Number(reserva.anulacion.id), estado, ticketSunat: respuesta.sunat_ticket_numero || null, respuesta };
+    return { id: Number(reserva.anulacion.id), estado, ticketSunat: respuesta.sunat_ticket_numero || null, respuesta, anulacionFiscalConfirmada };
 };
 
 const consultarAnulacionConAcceso = async (referenciaId, anulacionId, userContext, dependencies, validarAcceso) => {
@@ -1276,6 +1345,8 @@ exports._private = {
     esMarcadorColaNotaSinDocumento,
     esResultadoInciertoProveedor,
     completarNota,
+    completarAnulacion,
+    esTotalNotaCreditoIgualComprobante,
     validarSinAnulacionActiva,
     validarPlazoAnulacion,
     normalizarTipoNota,

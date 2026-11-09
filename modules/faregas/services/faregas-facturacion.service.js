@@ -617,24 +617,43 @@ async function persistirRespuestaNubeFact(reserva, resultadoEmision, recuperacio
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        const facturacionActualizada = await client.query(
-            `UPDATE fg_facturacion SET
-                estado = $1, aceptada_sunat = $2, sunat_description = $3, sunat_responsecode = $4,
-                sunat_soap_error = $5, enlace_pdf = $6, enlace_xml = $7, enlace_cdr = $8,
-                cadena_qr = $9, codigo_hash = $10, respuesta_proveedor = $11::jsonb,
-                fecha_aceptacion = CASE WHEN $2 THEN CURRENT_TIMESTAMP ELSE fecha_aceptacion END,
-                usuario_modificacion = $12, fecha_modificacion = CURRENT_TIMESTAMP
-             WHERE id = $13
-             RETURNING *`,
-            [
-                estado, aceptada, body.sunat_description || body.errors || resultado.reason || null,
-                body.sunat_responsecode || null, body.sunat_soap_error || resultado.error || null,
-                body.enlace_del_pdf || body.enlace_pdf || body.enlace || null,
-                body.enlace_del_xml || body.enlace_xml || null, body.enlace_del_cdr || body.enlace_cdr || null,
-                body.cadena_para_codigo_qr || null, body.codigo_hash || null,
-                JSON.stringify(respuestaPersistida), userContext.username, reserva.facturacion.id
-            ]
-        );
+        // FASE 2: fecha_hora_emision = instante local de emisión (creación del comprobante).
+        // COALESCE: no sobrescribir reintentos. Si la columna aún no existe (42703),
+        // se reintenta sin ella para no invalidar la app antes de la migración DDL.
+        const paramsUpdate = [
+            estado, aceptada, body.sunat_description || body.errors || resultado.reason || null,
+            body.sunat_responsecode || null, body.sunat_soap_error || resultado.error || null,
+            body.enlace_del_pdf || body.enlace_pdf || body.enlace || null,
+            body.enlace_del_xml || body.enlace_xml || null, body.enlace_del_cdr || body.enlace_cdr || null,
+            body.cadena_para_codigo_qr || null, body.codigo_hash || null,
+            JSON.stringify(respuestaPersistida), userContext.username, reserva.facturacion.id
+        ];
+        let facturacionActualizada;
+        try {
+            facturacionActualizada = await client.query(
+                `UPDATE fg_facturacion SET
+                    estado = $1, aceptada_sunat = $2, sunat_description = $3, sunat_responsecode = $4,
+                    sunat_soap_error = $5, enlace_pdf = $6, enlace_xml = $7, enlace_cdr = $8,
+                    cadena_qr = $9, codigo_hash = $10, respuesta_proveedor = $11::jsonb,
+                    fecha_hora_emision = COALESCE(fecha_hora_emision, now()),
+                    fecha_aceptacion = CASE WHEN $2 THEN CURRENT_TIMESTAMP ELSE fecha_aceptacion END,
+                    usuario_modificacion = $12, fecha_modificacion = CURRENT_TIMESTAMP
+                 WHERE id = $13
+                 RETURNING *`, paramsUpdate);
+        } catch (e) {
+            if (e.code !== '42703') throw e;
+            await client.query('ROLLBACK');
+            await client.query('BEGIN');
+            facturacionActualizada = await client.query(
+                `UPDATE fg_facturacion SET
+                    estado = $1, aceptada_sunat = $2, sunat_description = $3, sunat_responsecode = $4,
+                    sunat_soap_error = $5, enlace_pdf = $6, enlace_xml = $7, enlace_cdr = $8,
+                    cadena_qr = $9, codigo_hash = $10, respuesta_proveedor = $11::jsonb,
+                    fecha_aceptacion = CASE WHEN $2 THEN CURRENT_TIMESTAMP ELSE fecha_aceptacion END,
+                    usuario_modificacion = $12, fecha_modificacion = CURRENT_TIMESTAMP
+                 WHERE id = $13
+                 RETURNING *`, paramsUpdate);
+        }
         await client.query(
             `UPDATE fg_facturacion_intento SET
                 estado = $1, respuesta = $2::jsonb, http_status = $3, error = $4, fecha_finalizacion = CURRENT_TIMESTAMP
