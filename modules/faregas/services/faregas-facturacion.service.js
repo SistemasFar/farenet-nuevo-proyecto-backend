@@ -8,7 +8,7 @@ const facturacionSnapshotService = require('./faregas-facturacion-snapshot.servi
 const integrationsConfig = require('../../../config/integrations.config');
 const chipCertificadoService = require('./faregas-chip-certificado.service');
 const clientesService = require('./faregas-clientes.service');
-const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
+const { esDocumentoBaseOperable, normalizarEntorno } = require('./faregas-documento-tributario-policy');
 const { validarAccesoPlanta } = require('./faregas-auth.service');
 const { esCodigoClasificacionSunatValidoOpcional } = require('./faregas-pagos.rules');
 const {
@@ -229,7 +229,12 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
             'SELECT * FROM fg_facturacion WHERE certificado_id = $1 FOR UPDATE',
             [certificadoId]
         );
-        if (actual.rowCount > 0 && ['PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'ERROR'].includes(actual.rows[0].estado)) {
+        const yaTieneComprobante = actual.rowCount > 0 && Boolean(
+            actual.rows[0].codigo_hash
+            && (actual.rows[0].enlace_pdf || actual.rows[0].enlace_xml)
+            && actual.rows[0].nro_comprobante
+        );
+        if (actual.rowCount > 0 && (['PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'ERROR'].includes(actual.rows[0].estado) || yaTieneComprobante)) {
             const cuotas = await client.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [actual.rows[0].id]);
             await client.query("COMMIT");
             return respuestaPublica(actual.rows[0], cuotas.rows);
@@ -384,7 +389,18 @@ const reservarEmision = async (certificadoId, userContext, dependencies = {}) =>
             && !validarCuotasContraTotal(cuotasResult.rows, orden.saldo_pendiente)) {
             throw errorNegocio('CUOTAS_NO_COINCIDEN_CON_SALDO', 409);
         }
-        if (['ACEPTADO', 'PENDIENTE_SUNAT'].includes(facturacion.estado)) {
+        if (['ACEPTADO', 'PENDIENTE_SUNAT'].includes(facturacion.estado) || Boolean(facturacion.codigo_hash && facturacion.enlace_pdf)) {
+            if (facturacion.estado === 'BORRADOR' && Boolean(facturacion.codigo_hash && facturacion.enlace_pdf)) {
+                const entornoFact = normalizarEntorno(facturacion.entorno_facturador || integrationsConfig.nubefact.environment);
+                const nuevoEstado = entornoFact === 'DEMO' ? 'PENDIENTE_SUNAT' : facturacion.estado;
+                if (nuevoEstado !== facturacion.estado) {
+                    await client.query(
+                        `UPDATE fg_facturacion SET estado = $1, usuario_modificacion = $2, fecha_modificacion = CURRENT_TIMESTAMP WHERE id = $3`,
+                        [nuevoEstado, userContext.username, facturacion.id]
+                    );
+                    facturacion.estado = nuevoEstado;
+                }
+            }
             await client.query('COMMIT');
             return { yaAceptada: true, facturacion };
         }
@@ -617,9 +633,10 @@ async function persistirRespuestaNubeFact(reserva, resultadoEmision, recuperacio
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        // FASE 2: fecha_hora_emision = instante local de emisión (creación del comprobante).
-        // COALESCE: no sobrescribir reintentos. Si la columna aún no existe (42703),
-        // se reintenta sin ella para no invalidar la app antes de la migración DDL.
+        // FASE 2: compatibilidad transparente antes y después de migración.
+        // Se consulta existencia de columna sin abortar la transacción PostgreSQL.
+        const { tieneColumna } = require('./faregas-columna-compat.service');
+        const soportaFechaHora = await tieneColumna('fg_facturacion', 'fecha_hora_emision');
         const paramsUpdate = [
             estado, aceptada, body.sunat_description || body.errors || resultado.reason || null,
             body.sunat_responsecode || null, body.sunat_soap_error || resultado.error || null,
@@ -629,21 +646,37 @@ async function persistirRespuestaNubeFact(reserva, resultadoEmision, recuperacio
             JSON.stringify(respuestaPersistida), userContext.username, reserva.facturacion.id
         ];
         let facturacionActualizada;
-        try {
-            facturacionActualizada = await client.query(
-                `UPDATE fg_facturacion SET
-                    estado = $1, aceptada_sunat = $2, sunat_description = $3, sunat_responsecode = $4,
-                    sunat_soap_error = $5, enlace_pdf = $6, enlace_xml = $7, enlace_cdr = $8,
-                    cadena_qr = $9, codigo_hash = $10, respuesta_proveedor = $11::jsonb,
-                    fecha_hora_emision = COALESCE(fecha_hora_emision, now()),
-                    fecha_aceptacion = CASE WHEN $2 THEN CURRENT_TIMESTAMP ELSE fecha_aceptacion END,
-                    usuario_modificacion = $12, fecha_modificacion = CURRENT_TIMESTAMP
-                 WHERE id = $13
-                 RETURNING *`, paramsUpdate);
-        } catch (e) {
-            if (e.code !== '42703') throw e;
-            await client.query('ROLLBACK');
-            await client.query('BEGIN');
+        if (soportaFechaHora) {
+            try {
+                await client.query('SAVEPOINT sp_fact_fecha_hora');
+                facturacionActualizada = await client.query(
+                    `UPDATE fg_facturacion SET
+                        estado = $1, aceptada_sunat = $2, sunat_description = $3, sunat_responsecode = $4,
+                        sunat_soap_error = $5, enlace_pdf = $6, enlace_xml = $7, enlace_cdr = $8,
+                        cadena_qr = $9, codigo_hash = $10, respuesta_proveedor = $11::jsonb,
+                        fecha_hora_emision = COALESCE(fecha_hora_emision, now()),
+                        fecha_aceptacion = CASE WHEN $2 THEN CURRENT_TIMESTAMP ELSE fecha_aceptacion END,
+                        usuario_modificacion = $12, fecha_modificacion = CURRENT_TIMESTAMP
+                     WHERE id = $13
+                     RETURNING *`, paramsUpdate);
+                await client.query('RELEASE SAVEPOINT sp_fact_fecha_hora');
+            } catch (errHora) {
+                if (errHora.code === '42703') {
+                    await client.query('ROLLBACK TO SAVEPOINT sp_fact_fecha_hora');
+                    facturacionActualizada = await client.query(
+                        `UPDATE fg_facturacion SET
+                            estado = $1, aceptada_sunat = $2, sunat_description = $3, sunat_responsecode = $4,
+                            sunat_soap_error = $5, enlace_pdf = $6, enlace_xml = $7, enlace_cdr = $8,
+                            cadena_qr = $9, codigo_hash = $10, respuesta_proveedor = $11::jsonb,
+                            fecha_aceptacion = CASE WHEN $2 THEN CURRENT_TIMESTAMP ELSE fecha_aceptacion END,
+                            usuario_modificacion = $12, fecha_modificacion = CURRENT_TIMESTAMP
+                         WHERE id = $13
+                         RETURNING *`, paramsUpdate);
+                } else {
+                    throw errHora;
+                }
+            }
+        } else {
             facturacionActualizada = await client.query(
                 `UPDATE fg_facturacion SET
                     estado = $1, aceptada_sunat = $2, sunat_description = $3, sunat_responsecode = $4,
@@ -921,7 +954,18 @@ const reservarEmisionOperacion = async (operacionId, userContext, opciones = {})
         if (factResult.rowCount === 0) throw errorNegocio('FACTURACION_FALTANTE', 409);
         let facturacion = factResult.rows[0];
 
-        if (['ACEPTADO', 'PENDIENTE_SUNAT'].includes(facturacion.estado)) {
+        if (['ACEPTADO', 'PENDIENTE_SUNAT'].includes(facturacion.estado) || Boolean(facturacion.codigo_hash && facturacion.enlace_pdf)) {
+            if (facturacion.estado === 'BORRADOR' && Boolean(facturacion.codigo_hash && facturacion.enlace_pdf)) {
+                const entornoFact = normalizarEntorno(facturacion.entorno_facturador || integrationsConfig.nubefact.environment);
+                const nuevoEstado = entornoFact === 'DEMO' ? 'PENDIENTE_SUNAT' : facturacion.estado;
+                if (nuevoEstado !== facturacion.estado) {
+                    await client.query(
+                        `UPDATE fg_facturacion SET estado = $1, usuario_modificacion = $2, fecha_modificacion = CURRENT_TIMESTAMP WHERE id = $3`,
+                        [nuevoEstado, userContext.username, facturacion.id]
+                    );
+                    facturacion.estado = nuevoEstado;
+                }
+            }
             await client.query('COMMIT');
             return { yaAceptada: true, facturacion };
         }

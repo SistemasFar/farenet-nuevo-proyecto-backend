@@ -66,7 +66,7 @@ const normalizarFacturacion = (data = {}) => {
 const validarFacturacion = (facturacion) => {
     const errores = [];
     if (!['BOLETA', 'FACTURA'].includes(facturacion.tipoComprobante)) {
-        errores.push('El tipo de comprobante debe ser BOLETA o FACTURA.');
+        errores.push('Debe seleccionar BOLETA o FACTURA para continuar.');
     }
     if (!['DNI', 'RUC', 'CARNETEXTRANJERIA'].includes(facturacion.tipoDocumentoCliente)) {
         errores.push('Seleccione un tipo de documento valido para facturacion.');

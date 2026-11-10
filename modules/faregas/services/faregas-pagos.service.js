@@ -3,6 +3,7 @@ const faregasAuthService = require('./faregas-auth.service');
 const tarifasService = require('./faregas-tarifas.service');
 const descuentosService = require('./faregas-descuentos.service');
 const { validarCuentaFaregas } = require('./faregas-cuenta-bancaria.service');
+const { esGratuidadTallerAutorizada, esFlujoTaller } = require('./faregas-gratuidad-taller.policy');
 const {
     redondear,
     obtenerTarifaConfigurada,
@@ -13,10 +14,14 @@ const {
 
 const obtenerCertificado = async (queryable, certificadoId, userContext, bloquear = false) => {
     const result = await queryable.query(
-        `SELECT id, estado, planta_key, tipo_certificado_clave, tarifa_codigo, cliente_id,
-                producto_facturacion_certificado_id, precio_certificado,
-                producto_chip_id, producto_facturacion_chip_id, precio_chip, importe_total
-         FROM fg_certificado WHERE id = $1${bloquear ? ' FOR UPDATE' : ''}`,
+        `SELECT c.id, c.estado, c.planta_key, c.tipo_certificado_clave, c.tarifa_codigo, c.cliente_id,
+                c.producto_facturacion_certificado_id, c.precio_certificado,
+                c.producto_chip_id, c.producto_facturacion_chip_id, c.precio_chip, c.importe_total,
+                s.tipo_flujo AS servicio_tipo_flujo
+         FROM fg_certificado c
+         LEFT JOIN fg_tarifa t ON t.planta_key = c.planta_key AND t.codigo = c.tarifa_codigo
+         LEFT JOIN fg_servicio s ON s.id = t.servicio_id
+         WHERE c.id = $1${bloquear ? ' FOR UPDATE OF c' : ''}`,
         [certificadoId]
     );
     if (result.rowCount === 0) throw new Error('CERTIFICADO_NOT_FOUND');
@@ -370,6 +375,29 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         if (!Number.isFinite(importeSolicitado) || importeSolicitado < 0) throw new Error('IMPORTE_TOTAL_INVALIDO');
         const pagos = normalizarPagos(data.pagos);
         const periodoCredito = normalizarPeriodoCredito(data);
+
+        // Validar si la operación corresponde a cortesía de taller
+        const reservaDescuento = await client.query(`
+            SELECT cmp.*, dc.codigo AS codigo_autorizacion
+            FROM fg_descuentocomprobante cmp
+            LEFT JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id
+            WHERE cmp.certificado_id = $1 AND cmp.estado IN ('RESERVADO', 'APLICADO')
+            ORDER BY cmp.id DESC LIMIT 1
+        `, [certificadoId]);
+        const reserva = reservaDescuento.rows[0] || null;
+        const esCortesia = esGratuidadTallerAutorizada({
+            reserva,
+            tipoFlujo: certificado.servicio_tipo_flujo
+        });
+
+        if (esCortesia) {
+            if (pagos.length > 0) throw new Error('CORTESIA_NO_ADMITE_PAGOS');
+            if (periodoCredito.condicionPago === 'CREDITO') throw new Error('CORTESIA_NO_ADMITE_CREDITO');
+            if (importeSolicitado !== 0) throw new Error('CORTESIA_IMPORTE_DEBE_SER_CERO');
+        } else if (importeSolicitado === 0) {
+            throw new Error('OPERACION_CERO_REQUIERE_AUTORIZACION_GRATUITA');
+        }
+
         for (const pago of pagos) await validarReferenciaPago(client, pago);
 
         let ordenResult = await client.query(
@@ -390,13 +418,15 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             if (Math.abs(tarifaConfigurada - importeSolicitado) > 0.009) throw new Error('TARIFA_NO_COINCIDE');
             const base = redondear(importeSolicitado / 1.18);
             const igv = redondear(importeSolicitado - base);
+            const estadoInicial = esCortesia ? 'PAGADO' : 'PENDIENTE';
+            const saldoInicial = esCortesia ? 0 : importeSolicitado;
             ordenResult = await client.query(`
                 INSERT INTO fg_orden_pago (
                     certificado_id, importe_total, baseimponible, igv, importe_pagado,
                     saldo_pendiente, moneda_key, formapago_key, estado, usuariocreacion_username
-                ) VALUES ($1, $2, $3, $4, 0, $2, 'sol', 'contado', 'PENDIENTE', $5)
+                ) VALUES ($1, $2, $3, $4, 0, $5, 'sol', 'contado', $6, $7)
                 RETURNING *
-            `, [certificadoId, importeSolicitado, base, igv, userContext.username]);
+            `, [certificadoId, importeSolicitado, base, igv, saldoInicial, estadoInicial, userContext.username]);
             orden = ordenResult.rows[0];
         } else {
             orden = ordenResult.rows[0];
@@ -449,8 +479,8 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             ]);
         }
 
-        const saldo = redondear(Number(orden.importe_total) - totalPagado);
-        const estado = saldo === 0 ? 'PAGADO' : 'PENDIENTE';
+        const saldo = esCortesia ? 0 : redondear(Number(orden.importe_total) - totalPagado);
+        const estado = esCortesia || saldo === 0 ? 'PAGADO' : 'PENDIENTE';
         const ordenActualizada = await client.query(`
             UPDATE fg_orden_pago
             SET importe_pagado = $2, saldo_pendiente = $3, estado = $4,

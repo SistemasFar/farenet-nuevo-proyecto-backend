@@ -1512,6 +1512,10 @@ async function obtenerDetalleCertificados({ plantasAutorizadas, plantasFiltro, d
     const countRes = await db.query(countQuery, params);
     const total = Number(countRes.rows[0]?.total || 0);
 
+    const { tieneColumna } = require('./faregas-columna-compat.service');
+    const soportaFechaHora = await tieneColumna('fg_certificado', 'fecha_hora_emision');
+    const columnaFechaHora = soportaFechaHora ? 'c.fecha_hora_emision,' : 'NULL::timestamptz AS fecha_hora_emision,';
+
     const listQuery = `
         SELECT 
             c.id,
@@ -1522,7 +1526,7 @@ async function obtenerDetalleCertificados({ plantasAutorizadas, plantasFiltro, d
             p.nombre AS planta_nombre,
             c.usuario_creacion,
             c.fecha_creacion,
-            c.fecha_hora_emision,
+            ${columnaFechaHora}
             c.importe_total,
             v.placa,
             v.marca,

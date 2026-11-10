@@ -9,6 +9,10 @@ async function obtenerReporteFinanciero({ plantasAutorizadas, plantasFiltro, des
     if (!plantas.length) return { metadatos: { rango: '', plantas: [], razonSocialEmisor: '', rucEmisor: '' }, operaciones: [], lineas: [], ventasDirectas: [], comprobantes: [], ordenes: [], pagos: [], descuentos: [], ajustes: [], sedes: [] };
     const { inicioActual, finActual, desde: fechaDesde, hasta: fechaHasta } = calcularIntervaloFechas(desde, hasta);
 
+    const { tieneColumna } = require('./faregas-columna-compat.service');
+    const soportaFechaHora = await tieneColumna('fg_certificado', 'fecha_hora_emision');
+    const columnaHoraCert = soportaFechaHora ? 'cert.fecha_hora_emision' : 'NULL::timestamptz';
+
     const [operaciones, lineas, directas, comprobantes, ordenes, pagos, descuentos, ajustes, emisor] = await Promise.all([
         db.query(`SELECT oc.id, oc.planta_key, pl.nombre AS planta_nombre, oc.fecha_creacion, oc.estado, oc.placa,
                          oc.base_imponible, oc.igv, oc.importe_total, oc.nombre_cliente_snapshot,
@@ -39,7 +43,8 @@ async function obtenerReporteFinanciero({ plantasAutorizadas, plantasFiltro, des
                           -- fg_certificado.fecha_emision es DATE (sin hora): exponer sin convertir a Date.
                           cert.fecha_emision AS fecha_emision_certificado,
                           cert.fecha_emision::text AS fecha_emision_certificado_texto,
-                          NULL::timestamptz AS hora_emision_certificado,
+                          ${columnaHoraCert} AS hora_emision_certificado,
+                          ${columnaHoraCert} AS fecha_hora_emision,
                          dup.id AS duplicado_id, dup.tipo_nombre_snapshot AS duplicado_tipo_nombre,
                          dup.precio AS duplicado_precio,
                          chips.numero_chip
@@ -89,11 +94,15 @@ async function obtenerReporteFinanciero({ plantasAutorizadas, plantasFiltro, des
                          f.nombre_razon_social, f.tipo_documento_cliente,
                          f.nro_documento, f.estado, f.aceptada_sunat, f.entorno_facturador, f.proveedor,
                          f.enlace_pdf, f.enlace_xml, f.base_imponible, f.igv, f.importe_total, f.ruc_emisor,
-                         f.razon_social_emisor, f.medio_pago, f.codigo_descuento_snapshot,
+                         f.razon_social_emisor, f.medio_pago, f.condicion_pago, f.codigo_descuento_snapshot,
+                         cuotas.cuotas_count, cuotas.max_cuota,
                          f.usuario_creacion AS usuario_emisor_creacion,
                          f.usuario_modificacion AS usuario_modificacion_comprobante,
                           f.certificado_id, cert.estado AS certificado_estado,
                           cert.numero_certificado,
+                          cert.fecha_emision AS fecha_emision_certificado,
+                          ${columnaHoraCert} AS fecha_hora_emision,
+                          ${columnaHoraCert} AS hora_emision_certificado,
                           gnv.numero_chip AS numero_chip,
                           -- Anulación / NC idéntico a la hoja Datos (por facturacion_id, LIFO).
                           an.codigo_unico AS documento_anulacion,
@@ -137,6 +146,12 @@ async function obtenerReporteFinanciero({ plantasAutorizadas, plantasFiltro, des
                        (SELECT od.certificado_id FROM fg_operacion_detalle od WHERE od.operacion_id = f.operacion_id AND od.certificado_id IS NOT NULL ORDER BY od.id LIMIT 1))
                    LEFT JOIN fg_certificado_gnv gnv ON gnv.certificado_id = cert.id
                    LEFT JOIN LATERAL (
+                       SELECT COUNT(fc.id)::int AS cuotas_count,
+                              MAX(fc.numero_cuota)::int AS max_cuota
+                       FROM fg_facturacion_cuota fc
+                       WHERE fc.facturacion_id = f.id
+                   ) cuotas ON TRUE
+                   LEFT JOIN LATERAL (
                        SELECT da.codigo_unico, da.fecha_creacion, da.fecha_aceptacion, da.estado,
                               da.aceptada_sunat, da.ticket_sunat, da.motivo
                        FROM fg_documento_anulacion da
@@ -165,6 +180,7 @@ async function obtenerReporteFinanciero({ plantasAutorizadas, plantasFiltro, des
                     AND f.estado <> 'BORRADOR'
                     ORDER BY f.id`, [plantas, inicioActual, finActual, fechaDesde, fechaHasta]),
         db.query(`SELECT op.id, op.operacion_id, op.venta_id, op.certificado_id, op.importe_total, op.importe_pagado, op.saldo_pendiente,
+                         op.formapago_key,
                          ((oc.fecha_creacion >= $2::timestamptz AND oc.fecha_creacion < $3::timestamptz)
                            OR (v.creado_en >= $2::timestamptz AND v.creado_en < $3::timestamptz)
                            OR (cert.fecha_creacion >= $2::timestamptz AND cert.fecha_creacion < $3::timestamptz)) AS en_periodo_venta,

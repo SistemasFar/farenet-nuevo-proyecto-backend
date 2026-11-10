@@ -1,6 +1,7 @@
 const { faregasFormatosService: formatosService } = require('./faregas-formatos.service');
 const db = require('../../../config/database');
 const integrationsConfig = require('../../../config/integrations.config');
+const { esGratuidadTallerAutorizada, esFlujoTaller } = require('./faregas-gratuidad-taller.policy');
 const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
 const { validarAnulacionCertificadoPorImporte } = require('./faregas-certificado-anulacion-policy.service');
 const { paraPlantilla } = require('../mappers/faregas-vehiculo.mapper');
@@ -693,12 +694,18 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
         return { data: [], total: 0, page, pageSize, totalPages: 0 };
     }
 
+    const { tieneColumna } = require('./faregas-columna-compat.service');
+    const soportaFechaHora = await tieneColumna('fg_certificado', 'fecha_hora_emision');
+    const columnaFechaHora = soportaFechaHora ? 'c.fecha_hora_emision AS "fechaHoraEmision",' : 'NULL::timestamptz AS "fechaHoraEmision",';
+    const columnaOrderByEmision = soportaFechaHora ? 'c.fecha_hora_emision,' : '';
+
     const qData = `
         SELECT 
             c.id, 
             c.fecha_creacion AS "fechaCreacion",
             c.fecha_modificacion AS "fechaActualizacion",
             to_char(c.fecha_emision, 'DD/MM/YYYY') AS "fechaEmision",
+            ${columnaFechaHora}
             c.numero_certificado AS "numeroCertificado",
             c.estado,
             c.paso_actual AS "pasoActual",
@@ -810,6 +817,7 @@ exports.obtenerBorradores = async (page = 1, pageSize = 10, search = '', userCon
         WHERE ${filtroWhere}
         ORDER BY CASE
             WHEN c.estado = 'EMITIDO' THEN COALESCE(
+                ${columnaOrderByEmision}
                 (SELECT MAX(a.fecha_evento)
                  FROM fg_auditoria_acceso a
                  WHERE a.evento = 'CERTIFICADO_EMITIDO'
@@ -1125,6 +1133,7 @@ exports.obtenerBorradorCompleto = async (id, userContext) => {
         } : null,
         numeroCertificado: cert.numero_certificado,
         fechaEmision: cert.fecha_emision,
+        fechaHoraEmision: cert.fecha_hora_emision || null,
         observaciones: cert.observaciones,
         entidadCertificadoraNombre: cert.entidad_certificadora_nombre,
         resolucionDirectoral: cert.resolucion_directoral,
@@ -2844,7 +2853,7 @@ exports.validarEmision = async (id, userContext, options = {}) => {
     const facturacionSimulada = integrationsConfig.nubefact.simulationEnabled;
     const rFacturacion = await db.query(
         `SELECT id, tipo_comprobante, condicion_pago, estado, nro_comprobante, aceptada_sunat, entorno_facturador,
-                proveedor, serie, numero, enlace_pdf, enlace_xml
+                proveedor, serie, numero, enlace_pdf, enlace_xml, codigo_hash, cadena_qr
          FROM fg_facturacion
          WHERE certificado_id = $1`,
         [id]
@@ -2864,7 +2873,39 @@ exports.validarEmision = async (id, userContext, options = {}) => {
         const condicionPago = String(fact?.condicion_pago || (orden.formapago_key === 'credito' ? 'CREDITO' : 'CONTADO')).toUpperCase();
         const esFacturaCredito = tipoComprobante === 'FACTURA' && condicionPago === 'CREDITO';
 
-        if (tipoComprobante === 'BOLETA' && (condicionPago === 'CREDITO' || orden.formapago_key === 'credito')) {
+        // Validar gratuidad autorizada (Cortesía de taller)
+        const rReservaDesc = await db.query(`
+            SELECT cmp.*, dc.codigo AS codigo_autorizacion
+            FROM fg_descuentocomprobante cmp
+            LEFT JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id
+            WHERE cmp.certificado_id = $1 AND cmp.estado IN ('RESERVADO', 'APLICADO')
+            ORDER BY cmp.id DESC LIMIT 1
+        `, [id]);
+        const reserva = rReservaDesc.rows[0] || null;
+        const esCortesia = esGratuidadTallerAutorizada({
+            reserva,
+            tipoFlujo: cert.servicio_tipo_flujo
+        });
+
+        if (Number(orden.importe_total) === 0) {
+            if (!esCortesia) {
+                pushError('pago', 'cortesia', 'OPERACION_CERO_REQUIERE_AUTORIZACION_GRATUITA', 'Una operación con importe S/ 0.00 requiere una autorización de gratuidad de taller');
+            } else {
+                if (condicionPago === 'CREDITO') {
+                    pushError('pago', 'condicion', 'CORTESIA_CREDITO_INVALIDO', 'Una operación de cortesía no admite condición a crédito');
+                }
+                const rPagos = await db.query('SELECT SUM(importe) AS total FROM fg_pago WHERE orden_pago_id = $1 AND estado = \'CAN\'', [orden.id]);
+                if (Number(rPagos.rows[0]?.total || 0) > 0.009) {
+                    pushError('pago', 'pagos', 'CORTESIA_PAGOS_INVALIDOS', 'Una operación de cortesía no debe registrar pagos');
+                }
+            }
+        } else if (esCortesia) {
+            pushError('pago', 'importe', 'CORTESIA_IMPORTE_INVALIDO', 'La operación de cortesía debe tener un total a cobrar de S/ 0.00');
+        }
+
+        if (!['BOLETA', 'FACTURA'].includes(tipoComprobante)) {
+            pushError('facturacion', 'tipo_comprobante', 'COMPROBANTE_NO_SELECCIONADO', 'Debe seleccionar BOLETA o FACTURA para continuar.');
+        } else if (tipoComprobante === 'BOLETA' && (condicionPago === 'CREDITO' || orden.formapago_key === 'credito')) {
             pushError('pago', 'condicion', 'BOLETA_CREDITO_INVALIDA', 'Una boleta solo puede emitirse con condición de pago CONTADO.');
         } else if (esFacturaCredito) {
             const saldoPendiente = Number(orden.saldo_pendiente || 0);
@@ -3249,26 +3290,46 @@ exports.emitirCertificado = async (id, userContext) => {
         // instalación actual. Se escribe CURRENT_DATE (fecha de negocio Lima) para
         // no perder la fecha por TZ; la hora individual histórica no es
         // recuperable sin migración a timestamptz (fuera de alcance).
-        // FASE 2 (sin DDL): captura idempotente de fecha_hora_emision si la columna
-        // existe (post-migración autorizada). COALESCE evita sobrescribir reimpresiones.
-        // El backend puede aún no tener la columna: el UPDATE se protege con try/catch
-        // y se reintenta sin la columna para no invalidar la aplicación.
+        // FASE 2: compatibilidad transparente antes y después de migración.
+        // Se consulta existencia de columna sin fallar ni abortar la transacción PostgreSQL.
+        const { tieneColumna } = require('./faregas-columna-compat.service');
+        const soportaFechaHora = await tieneColumna('fg_certificado', 'fecha_hora_emision');
         let actualizadoConHora = false;
-        try {
-            await client.query(`
-                UPDATE fg_certificado
-                SET estado = 'EMITIDO',
-                    numero_certificado = $1,
-                    fecha_emision = (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')::date,
-                    fecha_hora_emision = COALESCE(fecha_hora_emision, now()),
-                    usuario_modificacion = $2,
-                    fecha_modificacion = CURRENT_TIMESTAMP,
-                    formato_version_id = $4
-                WHERE id = $3
-            `, [numero_certificado, userContext.username, id, formatoVersionId]);
-            actualizadoConHora = true;
-        } catch (e) {
-            if (e.code !== '42703') throw e;
+
+        if (soportaFechaHora) {
+            try {
+                await client.query('SAVEPOINT sp_emision_fecha_hora');
+                await client.query(`
+                    UPDATE fg_certificado
+                    SET estado = 'EMITIDO',
+                        numero_certificado = $1,
+                        fecha_emision = (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')::date,
+                        fecha_hora_emision = COALESCE(fecha_hora_emision, now()),
+                        usuario_modificacion = $2,
+                        fecha_modificacion = CURRENT_TIMESTAMP,
+                        formato_version_id = $4
+                    WHERE id = $3
+                `, [numero_certificado, userContext.username, id, formatoVersionId]);
+                await client.query('RELEASE SAVEPOINT sp_emision_fecha_hora');
+                actualizadoConHora = true;
+            } catch (errHora) {
+                if (errHora.code === '42703') {
+                    await client.query('ROLLBACK TO SAVEPOINT sp_emision_fecha_hora');
+                    await client.query(`
+                        UPDATE fg_certificado
+                        SET estado = 'EMITIDO',
+                            numero_certificado = $1,
+                            fecha_emision = (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')::date,
+                            usuario_modificacion = $2,
+                            fecha_modificacion = CURRENT_TIMESTAMP,
+                            formato_version_id = $4
+                        WHERE id = $3
+                    `, [numero_certificado, userContext.username, id, formatoVersionId]);
+                } else {
+                    throw errHora;
+                }
+            }
+        } else {
             await client.query(`
                 UPDATE fg_certificado
                 SET estado = 'EMITIDO',
@@ -3513,12 +3574,78 @@ const renderizarPrevisualizacionDesdeBorrador = async ({
     }
 };
 
+const normalizarEncabezadoConformidad = (html) => {
+    if (!html || typeof html !== 'string') return html;
+    if (!html.includes('CERTIFICADO DE CONFORMIDAD') || !html.includes('76.2pt')) return html;
+    let fixed = html;
+    fixed = fixed.replace(
+        'padding: 107.45pt 56.65pt 70.9pt 84.75pt;',
+        'padding: 30pt 56.65pt 60pt 84.75pt;'
+    );
+    fixed = fixed.replace(
+        /\.header-sub\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?top:\s*76\.2pt;[\s\S]*?\}/i,
+        `.header-sub {
+            width: 254pt;
+            box-sizing: border-box;
+            font-size: 8pt;
+            color: #000;
+            line-height: 9.6pt;
+            text-align: center;
+            margin: 0 0 16pt -61.55pt;
+        }`
+    );
+    fixed = fixed.replace(
+        /(\.title\s*\{[\s\S]*?)margin:\s*18\.55pt\s+0\s+0;/i,
+        '$1margin: 0;'
+    );
+    fixed = fixed.replace(
+        '<div class="header-sub" style="text-align: left;">',
+        '<div class="header-sub">'
+    );
+    return fixed;
+};
+
+const asegurarCentradoWeb = (html) => {
+    if (!html || typeof html !== 'string') return html;
+    let normalizado = normalizarEncabezadoConformidad(html);
+    if (/@media\s+screen[\s\S]*?body[\s\S]*?margin-(?:left|inline)/i.test(normalizado)) {
+        return normalizado;
+    }
+    const estiloCentrado = `
+    <style id="faregas-preview-centrado">
+        @media screen {
+            html {
+                width: 100% !important;
+                min-height: 100% !important;
+            }
+            body {
+                margin-left: auto !important;
+                margin-right: auto !important;
+            }
+        }
+    </style>
+`;
+    if (html.includes('</head>')) {
+        return html.replace('</head>', `${estiloCentrado}</head>`);
+    }
+    return estiloCentrado + normalizado;
+};
+
+exports.asegurarCentradoWeb = asegurarCentradoWeb;
+
 exports.obtenerPrevisualizacion = async (id, userContext) => {
     const borrador = await exports.obtenerBorradorCompleto(id, userContext);
     if (borrador.estado === 'EMITIDO' && borrador.representacionHtmlEmitida) {
-        return { html: borrador.representacionHtmlEmitida, tipo: borrador.tipo?.clave || null };
+        return {
+            html: asegurarCentradoWeb(borrador.representacionHtmlEmitida),
+            tipo: borrador.tipo?.clave || null
+        };
     }
-    return renderizarPrevisualizacionDesdeBorrador({ borrador, id, userContext });
+    const resultado = await renderizarPrevisualizacionDesdeBorrador({ borrador, id, userContext });
+    return {
+        ...resultado,
+        html: asegurarCentradoWeb(resultado?.html)
+    };
 };
 
 /**
@@ -3599,6 +3726,7 @@ exports.previsualizarRectificacion = async (id, datosPropuestos, userContext) =>
     };
     return {
         ...resultado,
+        html: asegurarCentradoWeb(resultado?.html),
         diferencias: calcularDiferenciasRectificacion(snapshotBase, datosPropuestos),
         advertencias: advertenciasGestionExterna(
             calcularDiferenciasRectificacion(snapshotBase, datosPropuestos)

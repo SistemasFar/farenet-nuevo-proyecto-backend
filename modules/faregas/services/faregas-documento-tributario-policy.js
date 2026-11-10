@@ -17,16 +17,39 @@ const esAceptadoPorSunat = (documento) => (
  * la regla productiva de CDR aceptado.
  */
 const esDemoGeneradoPorNubefact = (documento) => {
-    const entorno = normalizarEntorno(documento?.entorno_facturador);
-    const estado = String(documento?.estado || '').trim().toUpperCase();
-    const proveedor = String(documento?.proveedor || '').trim().toUpperCase();
-    const tieneIdentidad = Boolean(documento?.nro_comprobante && documento?.serie && documento?.numero !== null);
-    const tieneArtefacto = Boolean(documento?.enlace_pdf || documento?.enlace_xml);
+    const entornoDoc = normalizarEntorno(documento?.entorno_facturador);
+    const entornoGlobal = normalizarEntorno(integrationsConfig.nubefact.environment);
+    const esDemo = entornoDoc === 'DEMO' || (!entornoDoc && entornoGlobal === 'DEMO');
 
-    return entorno === 'DEMO'
+    const proveedorRaw = String(documento?.proveedor || '').trim().toUpperCase();
+    const proveedor = proveedorRaw || 'NUBEFACT';
+
+    const estado = String(documento?.estado || '').trim().toUpperCase();
+    const estadoCompatible = ['PENDIENTE_SUNAT', 'ACEPTADO', 'BORRADOR'].includes(estado)
+        && estado !== 'RECHAZADO'
+        && estado !== 'ANULADO'
+        && estado !== 'ERROR';
+
+    const tieneIdentidad = Boolean(
+        documento?.nro_comprobante
+        && documento?.serie
+        && documento?.numero !== null
+        && documento?.numero !== undefined
+    );
+
+    const tieneHash = typeof documento?.codigo_hash === 'string'
+        && documento.codigo_hash.trim().length > 0;
+
+    const tieneArtefacto = Boolean(
+        (typeof documento?.enlace_pdf === 'string' && documento.enlace_pdf.trim().length > 0)
+        || (typeof documento?.enlace_xml === 'string' && documento.enlace_xml.trim().length > 0)
+    );
+
+    return esDemo
         && proveedor === 'NUBEFACT'
-        && estado === 'PENDIENTE_SUNAT'
+        && estadoCompatible
         && tieneIdentidad
+        && tieneHash
         && tieneArtefacto;
 };
 

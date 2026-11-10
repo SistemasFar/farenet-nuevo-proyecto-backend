@@ -14,16 +14,19 @@ test('el backend aplica sede/rango y devuelve relaciones comerciales para el con
         plantasAutorizadas: ['98'], plantasFiltro: ['98'],
         desde: '2026-10-08', hasta: '2026-11-06', username: 'tester'
     });
-    assert.equal(calls.length, 9);
-    calls.forEach((call) => assert.deepEqual(call.params[0], ['98']));
-    assert.match(calls[0].sql, /oc\.fecha_creacion >= \$2::timestamptz/);
-    assert.match(calls[1].sql, /fg_operacion_detalle_chip/);
-    assert.match(calls[1].sql, /cert\.numero_certificado/);
-    assert.match(calls[1].sql, /fg_certificado_duplicado/);
-    assert.match(calls[1].sql, /duplicado_tipo_nombre/);
-    assert.match(calls[3].sql, /baja_aceptada/);
-    assert.match(calls[3].sql, /nota_anulacion_total_aceptada/);
-    assert.match(calls[3].sql, /nota_credito_parcial_total/);
+    const mainCalls = calls.filter((c) => !c.sql.includes('information_schema'));
+    assert.equal(mainCalls.length, 9);
+    mainCalls.forEach((call) => assert.deepEqual(call.params[0], ['98']));
+    assert.match(mainCalls[0].sql, /oc\.fecha_creacion >= \$2::timestamptz/);
+    assert.match(mainCalls[1].sql, /fg_operacion_detalle_chip/);
+    assert.match(mainCalls[1].sql, /cert\.numero_certificado/);
+    assert.match(mainCalls[1].sql, /fg_certificado_duplicado/);
+    assert.match(mainCalls[1].sql, /duplicado_tipo_nombre/);
+    assert.match(mainCalls[3].sql, /baja_aceptada/);
+    assert.match(mainCalls[3].sql, /nota_anulacion_total_aceptada/);
+    assert.match(mainCalls[3].sql, /nota_credito_parcial_total/);
+    assert.match(mainCalls[3].sql, /cuotas_count/);
+    assert.match(mainCalls[4].sql, /formapago_key/);
     assert.deepEqual(result.metadatos.plantas, ['98']);
     assert.equal(result.metadatos.desde, '2026-10-08');
     assert.equal(result.metadatos.hasta, '2026-11-06');

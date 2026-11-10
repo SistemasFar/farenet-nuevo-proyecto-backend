@@ -90,11 +90,26 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             color: #000;
             line-height: 12pt;
             margin: 0;
-            padding: 107.45pt 56.65pt 70.9pt 84.75pt;
+            padding: 30pt 56.65pt 60pt 84.75pt;
             width: 210mm;
             min-height: 297mm;
             box-sizing: border-box;
             background-color: #fff;
+            position: relative;
+        }
+        @media screen {
+            html {
+                width: 100% !important;
+                min-height: 100% !important;
+            }
+            body {
+                margin-left: auto !important;
+                margin-right: auto !important;
+            }
+        }
+        .documento-certificado {
+            width: 100%;
+            box-sizing: border-box;
             position: relative;
         }
         .watermark {
@@ -114,9 +129,9 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         }
         .preview-badge {
             position: absolute;
-            top: 30pt;
-            left: 84.75pt;
-            width: 481.05pt;
+            top: 8pt;
+            left: 56.65pt;
+            width: 481.9pt;
             box-sizing: border-box;
             background-color: #fef3c7;
             border: 1pt dashed #f59e0b;
@@ -140,23 +155,20 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
             text-align: center;
         }
         .header-sub {
-            position: absolute;
-            top: 76.2pt;
-            left: 23.2pt;
-            width: 253.6pt;
-            height: 48.55pt;
+            width: 254pt;
             box-sizing: border-box;
             font-size: 8pt;
             color: #000;
-            line-height: 9.3pt;
-            text-align: center !important;
+            line-height: 9.6pt;
+            text-align: center;
+            margin: 0 0 16pt -61.55pt;
         }
         .title {
             width: 453.9pt;
             font-size: 13pt;
             line-height: 15.6pt;
             font-weight: bold;
-            margin: 18.55pt 0 0;
+            margin: 0;
             text-align: center;
             text-transform: uppercase;
         }
@@ -197,7 +209,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
         table.type-box + .certifica-p { margin-bottom: 9.75pt; }
         .certifica-p + .certifica-p { margin-bottom: 0; }
         table.owner-box {
-            width: 481.05pt;
+            width: 481.9pt;
             border-collapse: collapse;
             margin: 0 0 11.6pt -5.4pt;
             font-size: 9pt;
@@ -310,7 +322,7 @@ function generateConformidadHtml(data, options = { modo: "PREVIEW" }) {
     <div class="documento-certificado">
         <div class="cert-content">
             <div class="header">
-                <div class="header-sub" style="text-align: left;">
+                <div class="header-sub">
             R.D. N° ${escapeHtml(resDirectoral)}<br>
             Domicilio Fiscal: ${escapeHtml(domFiscal)}<br>
             ${escapeHtml(distritoFiscal)}<br>

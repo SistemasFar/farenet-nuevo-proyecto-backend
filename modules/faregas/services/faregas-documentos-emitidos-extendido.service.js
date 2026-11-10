@@ -9,6 +9,11 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
     const finDate = new Date(Date.UTC(year, month - 1, day + 1));
     const fin = `${finDate.getUTCFullYear()}-${String(finDate.getUTCMonth() + 1).padStart(2, '0')}-${String(finDate.getUTCDate()).padStart(2, '0')}`;
 
+    const { tieneColumna } = require('./faregas-columna-compat.service');
+    const soportaFechaHora = await tieneColumna('fg_certificado', 'fecha_hora_emision');
+    const columnaHoraCert = soportaFechaHora ? 'cert.fecha_hora_emision' : 'NULL::timestamptz';
+    const lateralHoraCert = soportaFechaHora ? 'cert.fecha_hora_emision,' : '';
+
     const [cabeceras, lineasOperacion, lineasVenta] = await Promise.all([
         db.query(`
             WITH documentos AS (
@@ -20,7 +25,7 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                        f.tipo_comprobante, f.serie, f.numero, f.fecha_documento::timestamp AS fecha_emision,
                        'FECHA_DOCUMENTO'::text AS fecha_emision_fuente, f.fecha_aceptacion::timestamp AS fecha_aceptacion,
                         f.fecha_documento, f.fecha_vencimiento, NULL::date AS fecha_referencia, f.codigo_unico, f.usuario_creacion AS usuario_emisor,
-                       f.entorno_facturador, f.medio_pago AS medio_pago_registrado,
+                       f.entorno_facturador, f.medio_pago AS medio_pago_registrado, f.condicion_pago,
                        f.nombre_razon_social AS cliente, f.tipo_documento_cliente AS tipo_documento,
                         f.nro_documento AS numero_documento, f.telefono AS telefono_cliente, f.moneda_key AS moneda,
                        f.base_imponible, f.igv, f.importe_total, f.estado,
@@ -43,7 +48,7 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                        'NOTA DE CRÉDITO', cr.serie, cr.numero, NULL::timestamp,
                        'EMISIÓN NO REGISTRADA; PERÍODO SEGÚN ACEPTACIÓN'::text, cr.fecha_aceptacion,
                        NULL::date, NULL::date, f.fecha_documento::date, cr.codigo_unico, cr.usuario_creacion,
-                       f.entorno_facturador, f.medio_pago,
+                       f.entorno_facturador, f.medio_pago, f.condicion_pago,
                         f.nombre_razon_social, f.tipo_documento_cliente, f.nro_documento, f.telefono, cr.moneda_key,
                        cr.base_imponible, cr.igv, cr.importe_total, cr.estado, cr.proveedor,
                        cr.aceptada_sunat, cr.sunat_responsecode, cr.sunat_description, cr.sunat_soap_error,
@@ -67,7 +72,9 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                     comercial.tipo_pago,
                     comercial.forma_pago,
                     comercial.monto_pagado,
-                   comercial.referencia_pago,
+                    comercial.referencia_pago,
+                    cuotas.cuotas_count,
+                    cuotas.max_cuota,
                    COALESCE(comercial.tipos_producto, comercial.tipo_certificado_directo) AS tipos_producto,
                    COALESCE(comercial.certificados, comercial.certificado_directo) AS certificados,
                    COALESCE(comercial.placas, comercial.placa_directa) AS placas,
@@ -90,9 +97,11 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                    -- NUNCA fecha_modificacion/creacion/pago/comprobante como sustituto.
                    cert.fecha_emision AS fecha_emision_certificado,
                    cert.fecha_emision::text AS fecha_emision_certificado_texto,
-                   NULL::timestamptz AS hora_emision_certificado,
+                   ${columnaHoraCert} AS hora_emision_certificado,
+                   ${columnaHoraCert} AS fecha_hora_emision,
                    cert.numero_chip AS numero_chip_certificado,
                    cert.placa AS placa_certificado,
+                   cortesia.es_cortesia,
                    cons.sede AS sede_consolidado,
                    cons.cliente AS cliente_consolidado,
                    cons.tipo_operacion AS tipo_operacion_consolidado,
@@ -110,6 +119,30 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                 WHERE dc.facturacion_id = d.facturacion_id AND dc.estado = 'APLICADO'
             ) descuento ON TRUE
             LEFT JOIN LATERAL (
+                SELECT COUNT(fc.id)::int AS cuotas_count,
+                       MAX(fc.numero_cuota)::int AS max_cuota
+                FROM fg_facturacion_cuota fc
+                WHERE fc.facturacion_id = d.facturacion_id
+            ) cuotas ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT (
+                    d.tipo_comprobante <> 'NOTA DE CRÉDITO' AND (
+                        (d.importe_total = 0 AND (
+                            EXISTS (
+                                SELECT 1 FROM fg_descuentocomprobante dc_cort
+                                LEFT JOIN fg_descuento fd_cort ON fd_cort.id = dc_cort.descuento_id
+                                LEFT JOIN fg_descuentocliente fdc_cort ON fdc_cort.id = dc_cort.descuento_cliente_id
+                                WHERE (dc_cort.facturacion_id = d.facturacion_id OR (d.certificado_id IS NOT NULL AND dc_cort.certificado_id = d.certificado_id))
+                                  AND (fd_cort.codigo_autorizacion = 'DESCUENTO_TALLER' OR fdc_cort.codigo = 'DESCUENTO_TALLER' OR dc_cort.importe_final = 0)
+                            )
+                            OR d.campos_dinamicos::text LIKE '%1002%'
+                            OR d.campos_dinamicos::text ILIKE '%TRANSFERENCIA GRATUITA%'
+                            OR d.campos_dinamicos::text ILIKE '%CORTESIA%'
+                        ))
+                    )
+                ) AS es_cortesia
+            ) cortesia ON TRUE
+            LEFT JOIN LATERAL (
                 SELECT (SELECT STRING_AGG(DISTINCT COALESCE(t.nombre, ef.nombre, p.tipocontado_key), ', ' ORDER BY COALESCE(t.nombre, ef.nombre, p.tipocontado_key))
                         FROM fg_pago p
                         JOIN fg_orden_pago op_pago ON op_pago.id = p.orden_pago_id
@@ -119,35 +152,58 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                            OR (d.venta_id IS NOT NULL AND op_pago.venta_id = d.venta_id)
                            OR (d.certificado_id IS NOT NULL AND op_pago.certificado_id = d.certificado_id))
                           AND p.estado = 'CAN') AS medios_pago,
-                        (SELECT COALESCE(STRING_AGG(tipo, ' + ' ORDER BY tipo), 'SIN IDENTIFICAR')
-                        FROM (SELECT DISTINCT
-                               CASE WHEN UPPER(COALESCE(p.tipocontado_key, '')) LIKE '%EFECTIVO%' THEN 'EFECTIVO'
-                                    WHEN UPPER(COALESCE(p.tipocontado_key, '')) LIKE '%BANCO%' OR UPPER(COALESCE(p.tipocontado_key, '')) LIKE '%TRANSFER%' THEN 'BANCO'
-                                    WHEN UPPER(COALESCE(p.tipocontado_key, '')) LIKE '%TARJETA%' THEN 'TARJETA'
-                                    ELSE 'SIN IDENTIFICAR' END AS tipo
-                        FROM fg_pago p JOIN fg_orden_pago op_pago ON op_pago.id = p.orden_pago_id
-                        WHERE ((d.operacion_id IS NOT NULL AND op_pago.operacion_id = d.operacion_id)
-                           OR (d.venta_id IS NOT NULL AND op_pago.venta_id = d.venta_id)
-                           OR (d.certificado_id IS NOT NULL AND op_pago.certificado_id = d.certificado_id))
-                          AND p.estado = 'CAN') q) AS tipo_pago,
-                        (SELECT COALESCE(STRING_AGG(forma, ' + ' ORDER BY forma), 'SIN IDENTIFICAR')
-                        FROM (SELECT DISTINCT
-                               CASE WHEN UPPER(COALESCE(p.tipocontado_key, '')) LIKE '%EFECTIVO%' THEN 'EFECTIVO'
-                                    WHEN UPPER(COALESCE(p.tipocontado_key, '')) LIKE '%BANCO%' THEN 'BANCO'
-                                    WHEN UPPER(COALESCE(p.tarjeta_key, '')) <> '' THEN UPPER(p.tarjeta_key)
-                                    WHEN UPPER(COALESCE(p.modalidad_tarjeta, '')) <> '' THEN UPPER(p.modalidad_tarjeta)
-                                    ELSE 'SIN IDENTIFICAR' END AS forma
-                        FROM fg_pago p JOIN fg_orden_pago op_pago ON op_pago.id = p.orden_pago_id
-                        WHERE ((d.operacion_id IS NOT NULL AND op_pago.operacion_id = d.operacion_id)
-                           OR (d.venta_id IS NOT NULL AND op_pago.venta_id = d.venta_id)
-                           OR (d.certificado_id IS NOT NULL AND op_pago.certificado_id = d.certificado_id))
-                          AND p.estado = 'CAN') q) AS forma_pago,
-                       (SELECT SUM(p.importe)
-                        FROM fg_pago p JOIN fg_orden_pago op_pago ON op_pago.id = p.orden_pago_id
-                        WHERE ((d.operacion_id IS NOT NULL AND op_pago.operacion_id = d.operacion_id)
-                           OR (d.venta_id IS NOT NULL AND op_pago.venta_id = d.venta_id)
-                           OR (d.certificado_id IS NOT NULL AND op_pago.certificado_id = d.certificado_id))
-                          AND p.estado = 'CAN') AS monto_pagado,
+                        CASE
+                            WHEN cortesia.es_cortesia THEN 'CORTESÍA'
+                            WHEN UPPER(COALESCE(d.condicion_pago, '')) = 'CREDITO' THEN 'CRÉDITO'
+                            ELSE (SELECT COALESCE(STRING_AGG(tipo, ' + ' ORDER BY tipo), 'SIN IDENTIFICAR')
+                                  FROM (SELECT DISTINCT
+                                         CASE WHEN UPPER(COALESCE(p.tipocontado_key, '')) LIKE '%EFECTIVO%' THEN 'EFECTIVO'
+                                              WHEN UPPER(COALESCE(p.tipocontado_key, '')) LIKE '%BANCO%' OR UPPER(COALESCE(p.tipocontado_key, '')) LIKE '%TRANSFER%' OR COALESCE(ef.nombre, '') <> '' THEN 'BANCO'
+                                              WHEN UPPER(COALESCE(p.tipocontado_key, '')) LIKE '%TARJETA%' OR COALESCE(t.nombre, '') <> '' THEN 'TARJETA'
+                                              ELSE 'SIN IDENTIFICAR' END AS tipo
+                                  FROM fg_pago p
+                                  JOIN fg_orden_pago op_pago ON op_pago.id = p.orden_pago_id
+                                  LEFT JOIN tarjeta t ON t.key = p.tarjeta_key
+                                  LEFT JOIN entidadfinanciera ef ON ef.key = p.entidadfinanciera_key
+                                  WHERE ((d.operacion_id IS NOT NULL AND op_pago.operacion_id = d.operacion_id)
+                                     OR (d.venta_id IS NOT NULL AND op_pago.venta_id = d.venta_id)
+                                     OR (d.certificado_id IS NOT NULL AND op_pago.certificado_id = d.certificado_id))
+                                    AND p.estado = 'CAN') q)
+                        END AS tipo_pago,
+                        CASE
+                            WHEN cortesia.es_cortesia THEN 'CORTESÍA'
+                            WHEN UPPER(COALESCE(d.condicion_pago, '')) = 'CREDITO' THEN
+                                CASE
+                                    WHEN COALESCE(cuotas.cuotas_count, 0) > 1 THEN cuotas.cuotas_count || ' CUOTAS'
+                                    WHEN COALESCE(cuotas.cuotas_count, 0) = 1 THEN '1 CUOTA'
+                                    ELSE '1 CUOTA'
+                                end
+                            ELSE (SELECT COALESCE(STRING_AGG(forma, ' + ' ORDER BY forma), 'SIN IDENTIFICAR')
+                                  FROM (SELECT DISTINCT
+                                         CASE WHEN UPPER(COALESCE(p.tipocontado_key, '')) LIKE '%EFECTIVO%' THEN 'EFECTIVO'
+                                              WHEN COALESCE(t.nombre, '') <> '' THEN UPPER(t.nombre)
+                                              WHEN UPPER(COALESCE(p.modalidad_tarjeta, '')) <> '' THEN UPPER(p.modalidad_tarjeta)
+                                              WHEN UPPER(COALESCE(p.tarjeta_key, '')) <> '' AND UPPER(COALESCE(p.tarjeta_key, '')) !~ '^[0-9]+$' THEN UPPER(p.tarjeta_key)
+                                              WHEN UPPER(COALESCE(p.tipocontado_key, '')) LIKE '%BANCO%' OR COALESCE(ef.nombre, '') <> '' THEN COALESCE(UPPER(ef.nombre), 'BANCO')
+                                              ELSE 'SIN IDENTIFICAR' END AS forma
+                                  FROM fg_pago p
+                                  JOIN fg_orden_pago op_pago ON op_pago.id = p.orden_pago_id
+                                  LEFT JOIN tarjeta t ON t.key = p.tarjeta_key
+                                  LEFT JOIN entidadfinanciera ef ON ef.key = p.entidadfinanciera_key
+                                  WHERE ((d.operacion_id IS NOT NULL AND op_pago.operacion_id = d.operacion_id)
+                                     OR (d.venta_id IS NOT NULL AND op_pago.venta_id = d.venta_id)
+                                     OR (d.certificado_id IS NOT NULL AND op_pago.certificado_id = d.certificado_id))
+                                    AND p.estado = 'CAN') q)
+                        END AS forma_pago,
+                       CASE
+                           WHEN cortesia.es_cortesia THEN 0::numeric
+                           ELSE (SELECT SUM(p.importe)
+                                 FROM fg_pago p JOIN fg_orden_pago op_pago ON op_pago.id = p.orden_pago_id
+                                 WHERE ((d.operacion_id IS NOT NULL AND op_pago.operacion_id = d.operacion_id)
+                                    OR (d.venta_id IS NOT NULL AND op_pago.venta_id = d.venta_id)
+                                    OR (d.certificado_id IS NOT NULL AND op_pago.certificado_id = d.certificado_id))
+                                   AND p.estado = 'CAN')
+                       END AS monto_pagado,
                        (SELECT STRING_AGG(DISTINCT COALESCE(p.nrooperacionbanco, p.nrooperaciontarjeta), ', ' ORDER BY COALESCE(p.nrooperacionbanco, p.nrooperaciontarjeta))
                         FROM fg_pago p JOIN fg_orden_pago op_pago ON op_pago.id = p.orden_pago_id
                         WHERE ((d.operacion_id IS NOT NULL AND op_pago.operacion_id = d.operacion_id)
@@ -249,6 +305,7 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
             ) anulacion ON TRUE
             LEFT JOIN LATERAL (
                 SELECT cert.fecha_emision,
+                       ${lateralHoraCert}
                        (SELECT gnv.numero_chip FROM fg_certificado_gnv gnv WHERE gnv.certificado_id = cert.id) AS numero_chip,
                        (SELECT cv.placa FROM fg_certificado_vehiculo cv WHERE cv.certificado_id = cert.id) AS placa
                 FROM fg_certificado cert
