@@ -68,31 +68,13 @@ const obtenerDestinatariosPorPlanta = async (executor, plantaKey, empresaKey = n
     return result.rows.map((row) => row.username);
 };
 
-const obtenerDestinatariosCortesia = async (executor, plantaKey, empresaKey = null) => {
+const obtenerDestinatariosCortesia = async (executor, _plantaKey, _empresaKey = null) => {
     const result = await executor.query(`
         SELECT DISTINCT u.username
         FROM fg_usuario u
-        JOIN fg_planta p ON p.key = $1 AND p.activo = TRUE
-        JOIN fg_perfil_permiso pp ON pp.perfil_clave = u.perfil_id
-        JOIN fg_permiso perm ON perm.clave = pp.permiso_clave AND perm.activo = TRUE
         WHERE u.estado = TRUE
-          AND pp.permiso_clave = $2
-          AND ($3::varchar IS NULL OR p.empresa_key = $3)
-          AND (
-              EXISTS (
-                  SELECT 1 FROM fg_perfil_permiso gpp
-                  JOIN fg_permiso gp ON gp.clave = gpp.permiso_clave AND gp.activo = TRUE
-                  WHERE gpp.perfil_clave = u.perfil_id
-                    AND gpp.permiso_clave = $4
-              )
-              OR EXISTS (
-                  SELECT 1 FROM fg_usuario_planta up
-                  JOIN fg_perfil_planta fp ON fp.planta_key = up.plantas_key
-                    AND fp.perfil_clave = u.perfil_id
-                  WHERE up.usuario_username = u.username AND up.plantas_key = $1
-              )
-          )
-    `, [plantaKey, PERMISO_NOTIFICACION_CORTESIA, empresaKey, PERMISO_ACCESO_GLOBAL_SEDES]);
+        ORDER BY u.username
+    `);
     return result.rows.map((row) => row.username);
 };
 
@@ -284,11 +266,13 @@ const crearParaCortesiaEmitida = async (executor, cortesia) => {
     if (destinatarios.length === 0) return 0;
     const numero = cortesia.numeroCertificado || `#${cortesia.certificadoId}`;
     const sede = cortesia.sedeNombre || cortesia.plantaKey;
+    const tipo = cortesia.tipoCertificado || 'CERTIFICADO';
+    const totalCobrado = Number(cortesia.totalCobrado || 0).toFixed(2);
     return (await crear(executor, {
         eventoClave: `CORTESIA_CERTIFICADO_${cortesia.certificadoId}_EMITIDA`,
         tipo: 'CORTESIA_EMITIDA',
         titulo: 'Cortesía emitida',
-        mensaje: `El usuario ${cortesia.usuarioNombre || cortesia.username} aplicó una cortesía al certificado ${numero} en la sede ${sede}.`,
+        mensaje: `El usuario ${cortesia.usuarioNombre || cortesia.username} emitió un certificado de cortesía. Certificado: ${numero}. Tipo: ${tipo}. Sede: ${sede}. Operación gratuita — Importe cobrado: S/ ${totalCobrado}.`,
         plantaKey: cortesia.plantaKey,
         empresaKey: cortesia.empresaKey || null,
         entidadTipo: 'CERTIFICADO_CORTESIA',

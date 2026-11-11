@@ -81,6 +81,9 @@ const validarFacturacion = (facturacion) => {
     if (facturacion.tipoComprobante === 'FACTURA' && facturacion.tipoDocumentoCliente !== 'RUC') {
         errores.push('Una FACTURA requiere un RUC de 11 digitos.');
     }
+    if (facturacion.tipoComprobante === 'BOLETA' && facturacion.tipoDocumentoCliente === 'RUC') {
+        errores.push('Un cliente identificado con RUC debe facturarse con FACTURA.');
+    }
     if (facturacion.tipoComprobante === 'FACTURA'
         && facturacion.tipoDocumentoCliente === 'RUC'
         && !esRucValido(facturacion.nroDocumento)) {

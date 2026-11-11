@@ -217,6 +217,15 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                                     OR (d.certificado_id IS NOT NULL AND op_pago.certificado_id = d.certificado_id))
                                    AND p.estado = 'CAN')
                        END AS monto_pagado,
+                       CASE
+                           WHEN cortesia.es_cortesia THEN 'S/ 0.00'
+                           ELSE (SELECT STRING_AGG('S/ ' || TO_CHAR(p.importe, 'FM999999990.00'), ' + ' ORDER BY p.id)
+                                 FROM fg_pago p JOIN fg_orden_pago op_pago ON op_pago.id = p.orden_pago_id
+                                 WHERE ((d.operacion_id IS NOT NULL AND op_pago.operacion_id = d.operacion_id)
+                                    OR (d.venta_id IS NOT NULL AND op_pago.venta_id = d.venta_id)
+                                    OR (d.certificado_id IS NOT NULL AND op_pago.certificado_id = d.certificado_id))
+                                   AND p.estado = 'CAN')
+                       END AS desglose_pagos,
                        (SELECT STRING_AGG(DISTINCT COALESCE(p.nrooperacionbanco, p.nrooperaciontarjeta), ', ' ORDER BY COALESCE(p.nrooperacionbanco, p.nrooperaciontarjeta))
                         FROM fg_pago p JOIN fg_orden_pago op_pago ON op_pago.id = p.orden_pago_id
                         WHERE ((d.operacion_id IS NOT NULL AND op_pago.operacion_id = d.operacion_id)
@@ -349,7 +358,16 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                    END AS tipo_producto,
                    COALESCE(pf.codigo_sku, od.codigo_sku_snapshot) AS codigo_producto,
                    COALESCE(pf.descripcion, s.nombre, od.descripcion_snapshot) AS producto,
-                   COALESCE(pf.unidad, od.unidad_snapshot) AS unidad, od.cantidad, od.precio_unitario,
+                   CASE
+                       WHEN dup.id IS NOT NULL OR dup.numero_certificado_snapshot IS NOT NULL THEN 'ZZ'
+                       WHEN od.servicio_id IS NOT NULL OR od.certificado_id IS NOT NULL THEN 'ZZ'
+                       WHEN UPPER(COALESCE(cs.nombre, cp.nombre, pf.tipo_producto, '')) LIKE '%CERTIFIC%'
+                         OR UPPER(COALESCE(cs.nombre, cp.nombre, pf.tipo_producto, '')) LIKE '%DUPLIC%'
+                         OR UPPER(COALESCE(cs.nombre, cp.nombre, pf.tipo_producto, '')) LIKE '%INSPECC%'
+                         OR UPPER(COALESCE(cs.nombre, cp.nombre, pf.tipo_producto, '')) LIKE '%TALLER%' THEN 'ZZ'
+                       WHEN UPPER(COALESCE(pf.descripcion, s.nombre, od.descripcion_snapshot, '')) LIKE '%CHIP%' THEN 'NIU'
+                       ELSE COALESCE(pf.unidad, od.unidad_snapshot, 'NIU')
+                   END AS unidad, od.cantidad, od.precio_unitario,
                    pf.valor_referencial_unitario, od.afectacion_igv_snapshot AS codigo_afectacion_igv,
                    od.base_imponible, od.igv, od.importe_total,
                    COALESCE(c.numero_certificado, dup.numero_certificado_snapshot) AS certificado,
@@ -381,7 +399,7 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                    STRING_AGG(DISTINCT CONCAT_WS('-', f.serie, f.numero::text), ', ' ORDER BY CONCAT_WS('-', f.serie, f.numero::text)) AS documentos_asociados,
                    STRING_AGG(DISTINCT 'F-' || f.id::text, ', ' ORDER BY 'F-' || f.id::text) AS documentos_ids,
                    v.planta_key, pl.nombre AS sede, 'COMPLEMENTARIO VENTA DE PRODUCTO'::varchar AS tipo_producto,
-                   pi.codigo AS codigo_producto, pi.nombre AS producto, pf.unidad,
+                   pi.codigo AS codigo_producto, pi.nombre AS producto, COALESCE(pf.unidad, 'NIU') AS unidad,
                    vd.cantidad, vd.precio_unitario, pf.valor_referencial_unitario,
                    pf.tipo_afectacion_igv AS codigo_afectacion_igv, NULL::numeric AS base_imponible,
                    NULL::numeric AS igv, vd.total AS importe_total, NULL::text AS certificado, NULL::text AS placa

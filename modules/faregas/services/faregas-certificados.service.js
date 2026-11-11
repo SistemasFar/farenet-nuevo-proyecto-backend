@@ -3416,10 +3416,12 @@ exports.emitirCertificado = async (id, userContext) => {
         // La notificación se crea únicamente después de confirmar certificado y
         // comprobante. El evento_clave la hace idempotente ante reintentos.
         try {
+            let notificacionEmitida = null;
             await client.query('BEGIN');
             const contextoCortesia = await client.query(`
-                SELECT c.id, c.numero_certificado, c.planta_key, p.nombre AS sede_nombre,
-                       p.empresa_key, f.id AS facturacion_id,
+                SELECT c.id, c.numero_certificado, c.planta_key, c.tipo_certificado_clave,
+                       p.nombre AS sede_nombre, p.empresa_key, f.id AS facturacion_id,
+                       f.importe_total AS total_cobrado,
                        COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', per.nombres, per.apellidos)), ''),
                                 NULLIF(BTRIM(per.nombrerazonsocial), ''),
                                 $2) AS usuario_nombre
@@ -3456,18 +3458,27 @@ exports.emitirCertificado = async (id, userContext) => {
             if (contextoCortesia.rowCount > 0) {
                 const notificacionesService = require('./faregas-notificaciones.service');
                 const contexto = contextoCortesia.rows[0];
-                await notificacionesService.crearParaCortesiaEmitida(client, {
+                const notificacionId = await notificacionesService.crearParaCortesiaEmitida(client, {
                     certificadoId: id,
                     numeroCertificado: contexto.numero_certificado,
                     plantaKey: contexto.planta_key,
                     sedeNombre: contexto.sede_nombre,
                     empresaKey: contexto.empresa_key,
+                    tipoCertificado: contexto.tipo_certificado_clave,
+                    totalCobrado: contexto.total_cobrado,
                     username: userContext.username,
                     usuarioNombre: contexto.usuario_nombre
                 });
-                notificacionesService.emitirNotificacionActualizada(contexto.planta_key, contexto.empresa_key);
+                if (notificacionId > 0) notificacionEmitida = contexto;
             }
             await client.query('COMMIT');
+            if (notificacionEmitida) {
+                const notificacionesService = require('./faregas-notificaciones.service');
+                notificacionesService.emitirNotificacionActualizada(
+                    notificacionEmitida.planta_key,
+                    notificacionEmitida.empresa_key
+                );
+            }
         } catch (errorNotificacion) {
             try { await client.query('ROLLBACK'); } catch (_) {}
             console.error('[FAREGAS_CORTESIA_NOTIFICACION_ERROR]', errorNotificacion.message);
