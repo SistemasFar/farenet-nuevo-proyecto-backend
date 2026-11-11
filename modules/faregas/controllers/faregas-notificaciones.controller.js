@@ -85,6 +85,25 @@ exports.historial = async (req, res) => {
         return responderJson(res, error.statusCode || 500, { ok: false, codigo: error.code || 'ERROR_INTERNO', message: error.message || 'Error interno.' });
     }
 };
+
+exports.exportarCortesias = async (req, res) => {
+    try {
+        const usuarioId = String(req.user?.username || '').trim();
+        if (!usuarioId) return responderJson(res, 401, { ok: false, codigo: 'USUARIO_NO_AUTENTICADO' });
+        const data = await notificacionesService.exportarCortesias(usuarioId, db, {
+            busqueda: req.query.busqueda,
+            fechaDesde: req.query.fechaDesde,
+            fechaHasta: req.query.fechaHasta
+        });
+        return res.json({ ok: true, data });
+    } catch (error) {
+        return responderJson(res, error.statusCode || 500, {
+            ok: false,
+            codigo: error.code || 'ERROR_INTERNO',
+            message: error.message || 'Error interno.'
+        });
+    }
+};
 /**
  * Marcar todas las notificaciones como leÃ­das para el usuario autenticado.
  */

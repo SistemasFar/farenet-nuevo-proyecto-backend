@@ -14,6 +14,12 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
     const columnaHoraCert = soportaFechaHora ? 'cert.fecha_hora_emision' : 'NULL::timestamptz';
     const lateralHoraCert = soportaFechaHora ? 'cert.fecha_hora_emision,' : '';
 
+    const soportaFechaHoraComp = await tieneColumna('fg_facturacion', 'fecha_hora_emision');
+    const columnaHoraCompFact = soportaFechaHoraComp ? 'f.fecha_hora_emision' : 'NULL::timestamptz';
+    const filtroFechaFact = soportaFechaHoraComp
+        ? "COALESCE(f.fecha_documento, (f.fecha_hora_emision AT TIME ZONE 'America/Lima')::date, f.fecha_creacion::date)"
+        : "COALESCE(f.fecha_documento, f.fecha_creacion::date)";
+
     const [cabeceras, lineasOperacion, lineasVenta] = await Promise.all([
         db.query(`
             WITH documentos AS (
@@ -24,6 +30,7 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                        COALESCE(f.ruc_emisor, e.ruc) AS ruc_emisor,
                        f.tipo_comprobante, f.serie, f.numero, f.fecha_documento::timestamp AS fecha_emision,
                        'FECHA_DOCUMENTO'::text AS fecha_emision_fuente, f.fecha_aceptacion::timestamp AS fecha_aceptacion,
+                       ${columnaHoraCompFact} AS fecha_hora_emision_comprobante,
                         f.fecha_documento, f.fecha_vencimiento, NULL::date AS fecha_referencia, f.codigo_unico, f.usuario_creacion AS usuario_emisor,
                        f.entorno_facturador, f.medio_pago AS medio_pago_registrado, f.condicion_pago,
                        f.nombre_razon_social AS cliente, f.tipo_documento_cliente AS tipo_documento,
@@ -38,7 +45,7 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                 LEFT JOIN fg_planta pl ON pl.key = COALESCE(f.planta_key, oc.planta_key, v.planta_key)
                 LEFT JOIN fg_empresa e ON e.key = COALESCE(f.empresa_key, pl.empresa_key)
                 WHERE COALESCE(f.planta_key, oc.planta_key, v.planta_key) = ANY($1::varchar[])
-                  AND f.fecha_documento >= $2::date AND f.fecha_documento < $3::date
+                  AND ${filtroFechaFact} >= $2::date AND ${filtroFechaFact} < $3::date
                   AND f.estado <> 'BORRADOR'
                 UNION ALL
                 SELECT 'C-' || cr.id::text, f.id, f.operacion_id, f.venta_id, f.certificado_id,
@@ -47,6 +54,7 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                        COALESCE(f.razon_social_emisor, e.nombre), COALESCE(cr.ruc_emisor, f.ruc_emisor, e.ruc),
                        'NOTA DE CRÉDITO', cr.serie, cr.numero, NULL::timestamp,
                        'EMISIÓN NO REGISTRADA; PERÍODO SEGÚN ACEPTACIÓN'::text, cr.fecha_aceptacion,
+                       cr.fecha_aceptacion::timestamp AS fecha_hora_emision_comprobante,
                        NULL::date, NULL::date, f.fecha_documento::date, cr.codigo_unico, cr.usuario_creacion,
                        f.entorno_facturador, f.medio_pago, f.condicion_pago,
                         f.nombre_razon_social, f.tipo_documento_cliente, f.nro_documento, f.telefono, cr.moneda_key,
@@ -99,6 +107,8 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                    cert.fecha_emision::text AS fecha_emision_certificado_texto,
                    ${columnaHoraCert} AS hora_emision_certificado,
                    ${columnaHoraCert} AS fecha_hora_emision,
+                   d.fecha_hora_emision_comprobante,
+                   d.fecha_hora_emision_comprobante AS hora_emision_comprobante,
                    cert.numero_chip AS numero_chip_certificado,
                    cert.placa AS placa_certificado,
                    cortesia.es_cortesia,
@@ -133,7 +143,10 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                                 LEFT JOIN fg_descuento fd_cort ON fd_cort.id = dc_cort.descuento_id
                                 LEFT JOIN fg_descuentocliente fdc_cort ON fdc_cort.id = dc_cort.descuento_cliente_id
                                 WHERE (dc_cort.facturacion_id = d.facturacion_id OR (d.certificado_id IS NOT NULL AND dc_cort.certificado_id = d.certificado_id))
-                                  AND (fd_cort.codigo_autorizacion = 'DESCUENTO_TALLER' OR fdc_cort.codigo = 'DESCUENTO_TALLER' OR dc_cort.importe_final = 0)
+                                  AND (
+                                      UPPER(BTRIM(COALESCE(fd_cort.codigo, ''))) IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER')
+                                      OR UPPER(BTRIM(COALESCE(fdc_cort.codigo, ''))) IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER')
+                                  )
                             )
                             OR d.campos_dinamicos::text LIKE '%1002%'
                             OR d.campos_dinamicos::text ILIKE '%TRANSFERENCIA GRATUITA%'
@@ -212,8 +225,14 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                           AND p.estado = 'CAN') AS referencia_pago,
                        (SELECT STRING_AGG(DISTINCT clase.nombre, ', ' ORDER BY clase.nombre)
                         FROM (
-                            SELECT COALESCE(cs.nombre, cp.nombre, pf.tipo_producto) AS nombre
+                            SELECT
+                                CASE
+                                    WHEN dup.id IS NOT NULL OR dup.numero_certificado_snapshot IS NOT NULL THEN 'COMPLEMENTARIO DUPLICADO'
+                                    WHEN od.tipo_item = 'PRODUCTO' OR (od.certificado_id IS NULL AND od.servicio_id IS NULL) OR UPPER(COALESCE(cs.nombre, cp.nombre, pf.tipo_producto, '')) LIKE '%COMPLEMENTAR%' THEN 'COMPLEMENTARIO VENTA DE PRODUCTO'
+                                    ELSE COALESCE(cs.nombre, cp.nombre, pf.tipo_producto)
+                                END AS nombre
                             FROM fg_operacion_detalle od
+                            LEFT JOIN fg_certificado_duplicado dup ON dup.operacion_id = od.operacion_id
                             LEFT JOIN fg_servicio s ON s.id = od.servicio_id
                             LEFT JOIN fg_categoria_servicio cs ON cs.id = s.categoria_id
                             LEFT JOIN fg_producto_facturacion pf ON pf.id = od.producto_facturacion_id
@@ -221,14 +240,9 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                             WHERE (d.operacion_id IS NOT NULL AND od.operacion_id = d.operacion_id)
                                OR (d.certificado_id IS NOT NULL AND od.certificado_id = d.certificado_id)
                             UNION
-                            SELECT COALESCE(cat.nombre, pf.tipo_producto, pi.tipo)
+                            SELECT 'COMPLEMENTARIO VENTA DE PRODUCTO' AS nombre
                             FROM fg_venta_detalle vd
-                            JOIN fg_venta ven ON ven.id = vd.venta_id
-                            LEFT JOIN fg_producto_inventariable pi ON pi.id = vd.producto_inventariable_id
-                            LEFT JOIN fg_producto_inventariable_sede pis ON pis.producto_inventariable_id = pi.id AND pis.planta_key = ven.planta_key
-                            LEFT JOIN fg_producto_facturacion pf ON pf.id = pis.producto_facturacion_id
-                            LEFT JOIN fg_categoria_servicio cat ON cat.id = pf.categoria_id
-                            WHERE ven.id = d.venta_id
+                            WHERE vd.venta_id = d.venta_id
                         ) clase WHERE clase.nombre IS NOT NULL) AS tipos_producto,
                        (SELECT STRING_AGG(DISTINCT COALESCE(c.numero_certificado, dup.numero_certificado_snapshot), ', ' ORDER BY COALESCE(c.numero_certificado, dup.numero_certificado_snapshot))
                         FROM fg_operacion_detalle od
@@ -327,7 +341,12 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
             SELECT od.id AS id_detalle, oc.id AS operacion_id,
                    STRING_AGG(DISTINCT CONCAT_WS('-', f.serie, f.numero::text), ', ' ORDER BY CONCAT_WS('-', f.serie, f.numero::text)) AS documentos_asociados,
                    STRING_AGG(DISTINCT 'F-' || f.id::text, ', ' ORDER BY 'F-' || f.id::text) AS documentos_ids,
-                   oc.planta_key, pl.nombre AS sede, COALESCE(cs.nombre, cp.nombre, pf.tipo_producto) AS tipo_producto,
+                   oc.planta_key, pl.nombre AS sede,
+                   CASE
+                       WHEN dup.id IS NOT NULL OR dup.numero_certificado_snapshot IS NOT NULL THEN 'COMPLEMENTARIO DUPLICADO'
+                       WHEN od.tipo_item = 'PRODUCTO' OR (od.certificado_id IS NULL AND od.servicio_id IS NULL) OR UPPER(COALESCE(cs.nombre, cp.nombre, pf.tipo_producto, '')) LIKE '%COMPLEMENTAR%' THEN 'COMPLEMENTARIO VENTA DE PRODUCTO'
+                       ELSE COALESCE(cs.nombre, cp.nombre, pf.tipo_producto)
+                   END AS tipo_producto,
                    COALESCE(pf.codigo_sku, od.codigo_sku_snapshot) AS codigo_producto,
                    COALESCE(pf.descripcion, s.nombre, od.descripcion_snapshot) AS producto,
                    COALESCE(pf.unidad, od.unidad_snapshot) AS unidad, od.cantidad, od.precio_unitario,
@@ -347,9 +366,10 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
             LEFT JOIN fg_certificado_vehiculo cv ON cv.certificado_id = c.id
             LEFT JOIN fg_certificado_duplicado dup ON dup.operacion_id = oc.id
             WHERE oc.planta_key = ANY($1::varchar[])
-              AND f.fecha_documento >= $2::date AND f.fecha_documento < $3::date
+              AND ${filtroFechaFact} >= $2::date AND ${filtroFechaFact} < $3::date
               AND f.estado <> 'BORRADOR'
             GROUP BY od.id, oc.id, oc.planta_key, pl.nombre, cs.nombre, cp.nombre, pf.tipo_producto,
+                     dup.id, dup.numero_certificado_snapshot, od.tipo_item, od.certificado_id, od.servicio_id,
                      pf.codigo_sku, od.codigo_sku_snapshot, pf.descripcion, s.nombre, od.descripcion_snapshot,
                      pf.unidad, od.unidad_snapshot, od.cantidad, od.precio_unitario, pf.valor_referencial_unitario,
                      od.afectacion_igv_snapshot, od.base_imponible, od.igv,
@@ -360,7 +380,7 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
             SELECT vd.id AS id_detalle, v.id AS venta_id,
                    STRING_AGG(DISTINCT CONCAT_WS('-', f.serie, f.numero::text), ', ' ORDER BY CONCAT_WS('-', f.serie, f.numero::text)) AS documentos_asociados,
                    STRING_AGG(DISTINCT 'F-' || f.id::text, ', ' ORDER BY 'F-' || f.id::text) AS documentos_ids,
-                   v.planta_key, pl.nombre AS sede, COALESCE(cat.nombre, pf.tipo_producto, pi.tipo) AS tipo_producto,
+                   v.planta_key, pl.nombre AS sede, 'COMPLEMENTARIO VENTA DE PRODUCTO'::varchar AS tipo_producto,
                    pi.codigo AS codigo_producto, pi.nombre AS producto, pf.unidad,
                    vd.cantidad, vd.precio_unitario, pf.valor_referencial_unitario,
                    pf.tipo_afectacion_igv AS codigo_afectacion_igv, NULL::numeric AS base_imponible,
@@ -374,7 +394,7 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
             LEFT JOIN fg_producto_facturacion pf ON pf.id = pis.producto_facturacion_id
             LEFT JOIN fg_categoria_servicio cat ON cat.id = pf.categoria_id
             WHERE v.planta_key = ANY($1::varchar[])
-              AND f.fecha_documento >= $2::date AND f.fecha_documento < $3::date
+              AND ${filtroFechaFact} >= $2::date AND ${filtroFechaFact} < $3::date
               AND f.estado <> 'BORRADOR'
             GROUP BY vd.id, v.id, v.planta_key, pl.nombre, cat.nombre, pf.tipo_producto, pi.tipo,
                      pi.codigo, pi.nombre, pf.unidad, vd.cantidad, vd.precio_unitario, pf.valor_referencial_unitario,

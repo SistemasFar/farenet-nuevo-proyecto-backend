@@ -242,7 +242,9 @@ const crearVenta = async (payload, userContext) => {
         
         await client.query(
             `UPDATE fg_facturacion 
-             SET respuesta_proveedor = $1, enlace_pdf = $2, enlace_xml = $3, enlace_cdr = $4, aceptada_sunat = $5, estado = $6
+             SET respuesta_proveedor = $1, enlace_pdf = $2, enlace_xml = $3, enlace_cdr = $4, aceptada_sunat = $5, estado = $6,
+                 fecha_hora_emision = COALESCE(fecha_hora_emision, now()),
+                 fecha_aceptacion = CASE WHEN $5 THEN CURRENT_TIMESTAMP ELSE fecha_aceptacion END
              WHERE id = $7`,
             [
                 respuestaNubefact, respuestaNubefact.enlace_del_pdf, respuestaNubefact.enlace_del_xml,

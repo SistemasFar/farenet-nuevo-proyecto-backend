@@ -2873,23 +2873,41 @@ exports.validarEmision = async (id, userContext, options = {}) => {
         const condicionPago = String(fact?.condicion_pago || (orden.formapago_key === 'credito' ? 'CREDITO' : 'CONTADO')).toUpperCase();
         const esFacturaCredito = tipoComprobante === 'FACTURA' && condicionPago === 'CREDITO';
 
-        // Validar gratuidad autorizada (Cortesía de taller)
+        // Validar cortesía mediante su reserva comercial persistida.
         const rReservaDesc = await db.query(`
-            SELECT cmp.*, dc.codigo AS codigo_autorizacion
+            SELECT cmp.*,
+                   COALESCE(
+                       dc.codigo,
+                       CASE WHEN d.id = 17 OR UPPER(BTRIM(d.codigo)) = 'D_CONVENIO_A88137BB742F4157' OR EXISTS (
+                           SELECT 1 FROM fg_descuentocliente dcp
+                           WHERE dcp.descuento_id = d.id
+                             AND UPPER(BTRIM(dcp.codigo)) IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER')
+                       ) THEN 'CORTESIA_FAREGAS' END,
+                       d.codigo
+                   ) AS codigo_autorizacion,
+                   d.nombre AS descuento_nombre
             FROM fg_descuentocomprobante cmp
             LEFT JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id
+            LEFT JOIN fg_descuento d ON d.id = COALESCE(cmp.descuento_id, dc.descuento_id)
             WHERE cmp.certificado_id = $1 AND cmp.estado IN ('RESERVADO', 'APLICADO')
             ORDER BY cmp.id DESC LIMIT 1
         `, [id]);
         const reserva = rReservaDesc.rows[0] || null;
-        const esCortesia = esGratuidadTallerAutorizada({
-            reserva,
-            tipoFlujo: cert.servicio_tipo_flujo
-        });
+        if (reserva && Number(reserva.descuento_id) === 17 && !reserva.descuento_cliente_id) {
+            try {
+                await db.query(`
+                    UPDATE fg_descuentocomprobante
+                    SET descuento_cliente_id = 30
+                    WHERE id = $1 AND descuento_cliente_id IS NULL
+                `, [reserva.id]);
+                reserva.descuento_cliente_id = 30;
+            } catch (_) {}
+        }
+        const esCortesia = esGratuidadTallerAutorizada({ reserva });
 
         if (Number(orden.importe_total) === 0) {
             if (!esCortesia) {
-                pushError('pago', 'cortesia', 'OPERACION_CERO_REQUIERE_AUTORIZACION_GRATUITA', 'Una operación con importe S/ 0.00 requiere una autorización de gratuidad de taller');
+                pushError('pago', 'cortesia', 'OPERACION_CERO_REQUIERE_AUTORIZACION_GRATUITA', 'Una operación con importe S/ 0.00 requiere una modalidad de cortesía persistida');
             } else {
                 if (condicionPago === 'CREDITO') {
                     pushError('pago', 'condicion', 'CORTESIA_CREDITO_INVALIDO', 'Una operación de cortesía no admite condición a crédito');
@@ -3393,6 +3411,66 @@ exports.emitirCertificado = async (id, userContext) => {
             }
         } catch (errRep) {
             console.error('[FAREGAS_REPRESENTACION_IMPRESA_ERROR]', errRep.message);
+        }
+
+        // La notificación se crea únicamente después de confirmar certificado y
+        // comprobante. El evento_clave la hace idempotente ante reintentos.
+        try {
+            await client.query('BEGIN');
+            const contextoCortesia = await client.query(`
+                SELECT c.id, c.numero_certificado, c.planta_key, p.nombre AS sede_nombre,
+                       p.empresa_key, f.id AS facturacion_id,
+                       COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', per.nombres, per.apellidos)), ''),
+                                NULLIF(BTRIM(per.nombrerazonsocial), ''),
+                                $2) AS usuario_nombre
+                FROM fg_certificado c
+                JOIN fg_planta p ON p.key = c.planta_key
+                JOIN LATERAL (
+                    SELECT fact.*
+                    FROM fg_facturacion fact
+                    WHERE fact.certificado_id = c.id
+                    ORDER BY fact.id DESC
+                    LIMIT 1
+                ) f ON TRUE
+                LEFT JOIN fg_usuario u ON u.username = $2
+                LEFT JOIN persona per ON per.nrodocumentoidentidad = u.persona_nrodocumentoidentidad
+                JOIN LATERAL (
+                    SELECT cmp.id
+                    FROM fg_descuentocomprobante cmp
+                    LEFT JOIN fg_descuento d ON d.id = cmp.descuento_id
+                    LEFT JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id
+                    WHERE cmp.certificado_id = c.id
+                      AND cmp.estado IN ('RESERVADO', 'APLICADO')
+                      AND (
+                          UPPER(BTRIM(COALESCE(dc.codigo, ''))) IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER')
+                          OR d.id = 17
+                          OR UPPER(BTRIM(COALESCE(d.codigo, ''))) IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER', 'D_CONVENIO_A88137BB742F4157')
+                          OR UPPER(BTRIM(COALESCE(d.nombre, ''))) IN ('DESCUENTO CERTIFICADO TALLER', 'CORTESIA FAREGAS', 'CORTESÍA FAREGAS')
+                      )
+                    ORDER BY cmp.id DESC LIMIT 1
+                ) cortesia ON TRUE
+                WHERE c.id = $1 AND c.estado = 'EMITIDO'
+                  AND COALESCE(f.importe_total, 0) = 0
+                LIMIT 1
+            `, [id, userContext.username]);
+            if (contextoCortesia.rowCount > 0) {
+                const notificacionesService = require('./faregas-notificaciones.service');
+                const contexto = contextoCortesia.rows[0];
+                await notificacionesService.crearParaCortesiaEmitida(client, {
+                    certificadoId: id,
+                    numeroCertificado: contexto.numero_certificado,
+                    plantaKey: contexto.planta_key,
+                    sedeNombre: contexto.sede_nombre,
+                    empresaKey: contexto.empresa_key,
+                    username: userContext.username,
+                    usuarioNombre: contexto.usuario_nombre
+                });
+                notificacionesService.emitirNotificacionActualizada(contexto.planta_key, contexto.empresa_key);
+            }
+            await client.query('COMMIT');
+        } catch (errorNotificacion) {
+            try { await client.query('ROLLBACK'); } catch (_) {}
+            console.error('[FAREGAS_CORTESIA_NOTIFICACION_ERROR]', errorNotificacion.message);
         }
         
         return {

@@ -429,8 +429,8 @@ const obtenerDescuento = async (certificadoId, queryable) => {
     const result = await queryable.query(`
         SELECT cmp.importe_original, cmp.importe_descuento, cmp.importe_final,
                cmp.estado,
-               COALESCE(dc.codigo, CASE WHEN d.id = 17 OR EXISTS (SELECT 1 FROM fg_descuentocliente dcp WHERE dcp.descuento_id = d.id AND UPPER(BTRIM(dcp.codigo)) = 'DESCUENTO_TALLER') THEN 'DESCUENTO_TALLER' ELSE d.codigo END) AS codigo,
-               COALESCE(dc.codigo, CASE WHEN d.id = 17 OR EXISTS (SELECT 1 FROM fg_descuentocliente dcp WHERE dcp.descuento_id = d.id AND UPPER(BTRIM(dcp.codigo)) = 'DESCUENTO_TALLER') THEN 'DESCUENTO_TALLER' ELSE d.codigo END) AS codigo_autorizacion,
+               COALESCE(dc.codigo, CASE WHEN d.id = 17 OR UPPER(BTRIM(d.codigo)) = 'D_CONVENIO_A88137BB742F4157' OR EXISTS (SELECT 1 FROM fg_descuentocliente dcp WHERE dcp.descuento_id = d.id AND UPPER(BTRIM(dcp.codigo)) IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER')) THEN 'CORTESIA_FAREGAS' ELSE d.codigo END) AS codigo,
+               COALESCE(dc.codigo, CASE WHEN d.id = 17 OR UPPER(BTRIM(d.codigo)) = 'D_CONVENIO_A88137BB742F4157' OR EXISTS (SELECT 1 FROM fg_descuentocliente dcp WHERE dcp.descuento_id = d.id AND UPPER(BTRIM(dcp.codigo)) IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER')) THEN 'CORTESIA_FAREGAS' ELSE d.codigo END) AS codigo_autorizacion,
                d.tipo AS descuento_tipo, d.activo AS descuento_activo
         FROM fg_descuentocomprobante cmp
         LEFT JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id

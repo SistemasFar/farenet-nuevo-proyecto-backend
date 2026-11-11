@@ -486,7 +486,7 @@ const reservarEmision = async (certificadoId, userContext, dependencies = {}) =>
         // INTEGRACION DESCUENTOS
         const reservaResult = await client.query(
             `SELECT cmp.*,
-                    COALESCE(dc.codigo, CASE WHEN d.id = 17 OR EXISTS (SELECT 1 FROM fg_descuentocliente dcp WHERE dcp.descuento_id = d.id AND UPPER(BTRIM(dcp.codigo)) = 'DESCUENTO_TALLER') THEN 'DESCUENTO_TALLER' ELSE d.codigo END) AS codigo_autorizacion,
+                    COALESCE(dc.codigo, CASE WHEN d.id = 17 OR UPPER(BTRIM(d.codigo)) = 'D_CONVENIO_A88137BB742F4157' OR EXISTS (SELECT 1 FROM fg_descuentocliente dcp WHERE dcp.descuento_id = d.id AND UPPER(BTRIM(dcp.codigo)) IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER')) THEN 'CORTESIA_FAREGAS' ELSE d.codigo END) AS codigo_autorizacion,
                     COALESCE(dc.codigo, d.nombre) AS codigo,
                     d.tipo AS descuento_tipo, d.activo AS descuento_activo
              FROM fg_descuentocomprobante cmp

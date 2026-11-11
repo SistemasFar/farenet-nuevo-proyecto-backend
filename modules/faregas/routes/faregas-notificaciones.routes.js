@@ -41,6 +41,7 @@ router.use(authMiddleware);
 
 router.get('/', controller.listar);
 router.get('/historial', controller.historial);
+router.get('/cortesias/exportar', controller.exportarCortesias);
 router.get('/sin-leer', controller.contarSinLeer);
 router.put('/:id/leer', controller.marcarLeida);
 router.put('/leer-todas', controller.marcarTodasLeidas);

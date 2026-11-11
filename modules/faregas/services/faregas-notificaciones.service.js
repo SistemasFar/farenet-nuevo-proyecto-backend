@@ -10,6 +10,7 @@ const {
     PERMISO_ACCESO_GLOBAL_SEDES
 } = require('./faregas-acceso-sedes.service');
 const usuarioPerfilRepository = require('./faregas-usuario-perfil.repository');
+const PERMISO_NOTIFICACION_CORTESIA = 'FAREGAS_NOTIFICACION_CORTESIA_RECIBIR';
 
 const errorNegocio = (code, statusCode = 400, detalles) => {
     const error = new Error(code);
@@ -64,6 +65,34 @@ const obtenerDestinatariosPorPlanta = async (executor, plantaKey, empresaKey = n
           )
     `, [plantaKey, permisosClave, empresaKey, PERMISO_ACCESO_GLOBAL_SEDES]);
 
+    return result.rows.map((row) => row.username);
+};
+
+const obtenerDestinatariosCortesia = async (executor, plantaKey, empresaKey = null) => {
+    const result = await executor.query(`
+        SELECT DISTINCT u.username
+        FROM fg_usuario u
+        JOIN fg_planta p ON p.key = $1 AND p.activo = TRUE
+        JOIN fg_perfil_permiso pp ON pp.perfil_clave = u.perfil_id
+        JOIN fg_permiso perm ON perm.clave = pp.permiso_clave AND perm.activo = TRUE
+        WHERE u.estado = TRUE
+          AND pp.permiso_clave = $2
+          AND ($3::varchar IS NULL OR p.empresa_key = $3)
+          AND (
+              EXISTS (
+                  SELECT 1 FROM fg_perfil_permiso gpp
+                  JOIN fg_permiso gp ON gp.clave = gpp.permiso_clave AND gp.activo = TRUE
+                  WHERE gpp.perfil_clave = u.perfil_id
+                    AND gpp.permiso_clave = $4
+              )
+              OR EXISTS (
+                  SELECT 1 FROM fg_usuario_planta up
+                  JOIN fg_perfil_planta fp ON fp.planta_key = up.plantas_key
+                    AND fp.perfil_clave = u.perfil_id
+                  WHERE up.usuario_username = u.username AND up.plantas_key = $1
+              )
+          )
+    `, [plantaKey, PERMISO_NOTIFICACION_CORTESIA, empresaKey, PERMISO_ACCESO_GLOBAL_SEDES]);
     return result.rows.map((row) => row.username);
 };
 
@@ -244,6 +273,116 @@ const crearParaSolicitante = async (executor, solicitud, tipoEvento, titulo, men
     }, [solicitud.usuario_solicitante]);
 
     return notificacionId ?? 0;
+};
+
+const crearParaCortesiaEmitida = async (executor, cortesia) => {
+    const destinatarios = await obtenerDestinatariosCortesia(
+        executor,
+        cortesia.plantaKey,
+        cortesia.empresaKey || null
+    );
+    if (destinatarios.length === 0) return 0;
+    const numero = cortesia.numeroCertificado || `#${cortesia.certificadoId}`;
+    const sede = cortesia.sedeNombre || cortesia.plantaKey;
+    return (await crear(executor, {
+        eventoClave: `CORTESIA_CERTIFICADO_${cortesia.certificadoId}_EMITIDA`,
+        tipo: 'CORTESIA_EMITIDA',
+        titulo: 'Cortesía emitida',
+        mensaje: `El usuario ${cortesia.usuarioNombre || cortesia.username} aplicó una cortesía al certificado ${numero} en la sede ${sede}.`,
+        plantaKey: cortesia.plantaKey,
+        empresaKey: cortesia.empresaKey || null,
+        entidadTipo: 'CERTIFICADO_CORTESIA',
+        entidadId: cortesia.certificadoId,
+        destinoNavegacion: `/faregas/certificados/${cortesia.certificadoId}/continuar`,
+        creadoPor: cortesia.username
+    }, destinatarios)) ?? 0;
+};
+
+const rangoMesCalendario = (fechaDesde, fechaHasta) => {
+    const formato = /^\d{4}-\d{2}-\d{2}$/;
+    if (!formato.test(String(fechaDesde || '')) || !formato.test(String(fechaHasta || ''))) {
+        throw errorNegocio('RANGO_FECHAS_REQUERIDO', 400);
+    }
+    const [anioDesde, mesDesde, diaDesde] = fechaDesde.split('-').map(Number);
+    const [anioHasta, mesHasta, diaHasta] = fechaHasta.split('-').map(Number);
+    const desde = new Date(Date.UTC(anioDesde, mesDesde - 1, diaDesde));
+    const hasta = new Date(Date.UTC(anioHasta, mesHasta - 1, diaHasta));
+    if (Number.isNaN(desde.getTime()) || Number.isNaN(hasta.getTime()) || desde > hasta) {
+        throw errorNegocio('RANGO_FECHAS_INVALIDO', 400);
+    }
+    if (anioDesde !== anioHasta || mesDesde !== mesHasta) {
+        throw errorNegocio('RANGO_MAXIMO_UN_MES_CALENDARIO', 400);
+    }
+    return { fechaDesde, fechaHasta };
+};
+
+const exportarCortesias = async (usuarioId, executor, opciones = {}) => {
+    if (!usuarioId) throw errorNegocio('USUARIO_REQUERIDO', 401);
+    const { fechaDesde, fechaHasta } = rangoMesCalendario(opciones.fechaDesde, opciones.fechaHasta);
+    const busqueda = String(opciones.busqueda || '').trim();
+    const params = [usuarioId, fechaDesde, fechaHasta];
+    let filtroBusqueda = '';
+    if (busqueda) {
+        params.push(`%${busqueda}%`);
+        filtroBusqueda = `AND (
+            n.creado_por ILIKE $4 OR pl.nombre ILIKE $4 OR c.numero_certificado ILIKE $4
+            OR c.tipo_certificado_clave ILIKE $4 OR tit.nombre_razon_social ILIKE $4
+            OR f.nro_comprobante ILIKE $4
+        )`;
+    }
+    const perfilPropioDisponible = await usuarioPerfilRepository.estaDisponible(executor);
+    const joinPerfil = perfilPropioDisponible
+        ? 'LEFT JOIN fg_usuario_perfil upf ON upf.usuario_username = u.username'
+        : '';
+    const nombreUsuario = perfilPropioDisponible
+        ? "COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', upf.nombres, upf.apellidos)), ''), NULLIF(BTRIM(upf.nombre_razon_social), ''), n.creado_por)"
+        : "COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', per.nombres, per.apellidos)), ''), NULLIF(BTRIM(per.nombrerazonsocial), ''), n.creado_por)";
+    const result = await executor.query(`
+        SELECT
+            TO_CHAR(n.fecha_creacion AT TIME ZONE 'America/Lima', 'DD/MM/YYYY') AS fecha,
+            TO_CHAR(n.fecha_creacion AT TIME ZONE 'America/Lima', 'HH24:MI:SS') AS hora,
+            ${nombreUsuario} AS usuario,
+            COALESCE(pl.nombre, n.planta_key) AS sede,
+            c.tipo_certificado_clave AS tipo_certificado,
+            c.numero_certificado AS numero,
+            tit.nombre_razon_social AS titular,
+            dc.importe_original::numeric AS valor_referencial,
+            dc.importe_descuento::numeric AS importe_cortesia,
+            COALESCE(f.importe_total, 0)::numeric AS total_cobrado,
+            COALESCE(NULLIF(f.nro_comprobante, ''), CONCAT_WS('-', f.serie, f.numero::text)) AS comprobante,
+            CONCAT_WS(' / ', c.estado, f.estado) AS estado
+        FROM fg_notificacion n
+        JOIN fg_notificacion_destinatario nd ON nd.notificacion_id = n.id AND nd.usuario_id = $1
+        JOIN fg_certificado c ON c.id = n.entidad_id AND n.entidad_tipo = 'CERTIFICADO_CORTESIA'
+        LEFT JOIN fg_planta pl ON pl.key = c.planta_key
+        LEFT JOIN LATERAL (
+            SELECT fact.*
+            FROM fg_facturacion fact
+            WHERE fact.certificado_id = c.id
+            ORDER BY fact.id DESC
+            LIMIT 1
+        ) f ON TRUE
+        LEFT JOIN fg_certificado_titular tit ON tit.certificado_id = c.id AND tit.orden = 1
+        LEFT JOIN fg_usuario u ON u.username = n.creado_por
+        ${joinPerfil}
+        LEFT JOIN persona per ON per.nrodocumentoidentidad = u.persona_nrodocumentoidentidad
+        JOIN LATERAL (
+            SELECT cmp.importe_original, cmp.importe_descuento
+            FROM fg_descuentocomprobante cmp
+            LEFT JOIN fg_descuento d ON d.id = cmp.descuento_id
+            LEFT JOIN fg_descuentocliente dcl ON dcl.id = cmp.descuento_cliente_id
+            WHERE cmp.certificado_id = c.id
+              AND cmp.estado IN ('RESERVADO', 'APLICADO')
+              AND UPPER(BTRIM(COALESCE(dcl.codigo, d.codigo, ''))) IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER')
+            ORDER BY cmp.id DESC LIMIT 1
+        ) dc ON TRUE
+        WHERE n.tipo = 'CORTESIA_EMITIDA'
+          AND n.fecha_creacion >= ($2::date::timestamp AT TIME ZONE 'America/Lima')
+          AND n.fecha_creacion < (($3::date + 1)::timestamp AT TIME ZONE 'America/Lima')
+          ${filtroBusqueda}
+        ORDER BY n.fecha_creacion DESC
+    `, params);
+    return result.rows;
 };
 
 /**
@@ -430,9 +569,10 @@ const listar = async (usuarioId, executor) => {
         WHERE d.usuario_id = $1
           AND (
               -- Solo notificaciones que requieren atención (tareas pendientes)
-              n.tipo = 'SOLICITUD_PENDIENTE_APROBACION'
-              AND n.entidad_tipo = 'SOLICITUD_OPERACION'
-              AND (s.estado IS NULL OR s.estado = 'PENDIENTE_APROBACION')
+              (n.tipo = 'SOLICITUD_PENDIENTE_APROBACION'
+               AND n.entidad_tipo = 'SOLICITUD_OPERACION'
+               AND (s.estado IS NULL OR s.estado = 'PENDIENTE_APROBACION'))
+              OR n.tipo = 'CORTESIA_EMITIDA'
           )
         ORDER BY n.fecha_creacion DESC
         LIMIT 50
@@ -462,9 +602,10 @@ const contarNoLeidas = async (usuarioId, executor) => {
            AND n.entidad_tipo = 'SOLICITUD_OPERACION'
         WHERE d.usuario_id = $1 AND d.leida = FALSE
           AND (
-              n.tipo = 'SOLICITUD_PENDIENTE_APROBACION'
-              AND n.entidad_tipo = 'SOLICITUD_OPERACION'
-              AND (s.estado IS NULL OR s.estado = 'PENDIENTE_APROBACION')
+              (n.tipo = 'SOLICITUD_PENDIENTE_APROBACION'
+               AND n.entidad_tipo = 'SOLICITUD_OPERACION'
+               AND (s.estado IS NULL OR s.estado = 'PENDIENTE_APROBACION'))
+              OR n.tipo = 'CORTESIA_EMITIDA'
           )
     `, [usuarioId]);
 
@@ -525,13 +666,16 @@ module.exports = {
     crearParaSolicitud,
     crearParaAutorizacionNotaCredito,
     crearParaSolicitante,
+    crearParaCortesiaEmitida,
     obtenerDestinatariosPorPlanta,
+    obtenerDestinatariosCortesia,
     listar,
     listarHistorial,
+    exportarCortesias,
     contarNoLeidas,
     marcarLeida,
     marcarTodasLeidas,
     setSocketIO,
     emitirNotificacionActualizada,
-    _private: { errorNegocio }
+    _private: { errorNegocio, rangoMesCalendario, PERMISO_NOTIFICACION_CORTESIA }
 };

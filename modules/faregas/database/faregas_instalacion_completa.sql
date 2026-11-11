@@ -5744,6 +5744,20 @@ CREATE INDEX idx_fg_notificacion_evento_clave
 CREATE INDEX idx_fg_notificacion_fecha
     ON public.fg_notificacion (fecha_creacion DESC);
 
+INSERT INTO public.fg_descuento (
+    codigo, nombre, tipo, tipo_calculo, valor,
+    fecha_inicio, fecha_fin, activo, usuario_creacion
+)
+SELECT
+    'CORTESIA_FAREGAS', 'CORTESÍA FAREGAS', 'PROMOCION', 'PORCENTAJE', 100,
+    TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2099-12-31 23:59:59', TRUE,
+    'INSTALACION_FAREGAS'
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM public.fg_descuento
+    WHERE UPPER(BTRIM(codigo)) = 'CORTESIA_FAREGAS'
+);
+
 -- BEGIN CATALOGO_RBAC_FAREGAS_GENERADO
 -- Catálogo RBAC observado mediante SELECT; no contiene usuarios ni secretos.
 -- Fuente: 192.168.14.19/32:5432/inspeccion.
@@ -5784,6 +5798,7 @@ VALUES
     ('FAREGAS_NOTA_CREDITO', 'Emitir nota de crédito', 'FAREGAS', 'Permite emitir notas de crédito vinculadas a comprobantes FAREGAS.', TRUE),
     ('FAREGAS_NOTA_CREDITO_APROBAR', 'Aprobar o rechazar solicitudes de nota de crédito FAREGAS', 'FAREGAS', 'Permite aprobar o rechazar solicitudes administrativas de autorización de notas de crédito dentro de las sedes autorizadas.', TRUE),
     ('FAREGAS_NOTA_CREDITO_AUTOAPROBAR', 'Autoaprobar solicitud propia de nota de crédito FAREGAS', 'FAREGAS', 'Permite autoaprobar una solicitud propia de nota de crédito únicamente si también se tiene el permiso FAREGAS_NOTA_CREDITO_APROBAR.', TRUE),
+    ('FAREGAS_NOTIFICACION_CORTESIA_RECIBIR', 'Recibir notificaciones de cortesías', 'FAREGAS', 'Recibe avisos informativos cuando se emite una cortesía en una sede autorizada. No autoriza a emitir cortesías.', TRUE),
     ('FAREGAS_SOLICITUD_ADMINISTRAR', 'Administrar solicitudes de anulación', 'FAREGAS', 'Permite administrar solicitudes sin ejecutar efectos técnicos o fiscales.', TRUE),
     ('FAREGAS_SOLICITUD_APROBAR', 'Aprobar anulaciones', 'FAREGAS', 'Permite a SISTEMAS aprobar solicitudes de otro usuario dentro del alcance autorizado.', TRUE),
     ('FAREGAS_SOLICITUD_AUTOAPROBAR', 'Autoaprobar anulación excepcional', 'FAREGAS', 'Permite a SISTEMAS aprobar excepcionalmente una solicitud propia con justificación y confirmación explícitas. No habilita la ejecución fiscal.', TRUE),

@@ -12,6 +12,11 @@ async function obtenerReporteFinanciero({ plantasAutorizadas, plantasFiltro, des
     const { tieneColumna } = require('./faregas-columna-compat.service');
     const soportaFechaHora = await tieneColumna('fg_certificado', 'fecha_hora_emision');
     const columnaHoraCert = soportaFechaHora ? 'cert.fecha_hora_emision' : 'NULL::timestamptz';
+    const soportaFechaHoraComp = await tieneColumna('fg_facturacion', 'fecha_hora_emision');
+    const columnaHoraCompFact = soportaFechaHoraComp ? 'f.fecha_hora_emision' : 'NULL::timestamptz';
+    const filtroFechaComp = soportaFechaHoraComp
+        ? "COALESCE(f.fecha_documento, (f.fecha_hora_emision AT TIME ZONE 'America/Lima')::date, f.fecha_creacion::date)"
+        : "COALESCE(f.fecha_documento, f.fecha_creacion::date)";
 
     const [operaciones, lineas, directas, comprobantes, ordenes, pagos, descuentos, ajustes, emisor] = await Promise.all([
         db.query(`SELECT oc.id, oc.planta_key, pl.nombre AS planta_nombre, oc.fecha_creacion, oc.estado, oc.placa,
@@ -103,6 +108,8 @@ async function obtenerReporteFinanciero({ plantasAutorizadas, plantasFiltro, des
                           cert.fecha_emision AS fecha_emision_certificado,
                           ${columnaHoraCert} AS fecha_hora_emision,
                           ${columnaHoraCert} AS hora_emision_certificado,
+                          ${columnaHoraCompFact} AS fecha_hora_emision_comprobante,
+                          ${columnaHoraCompFact} AS hora_emision_comprobante,
                           gnv.numero_chip AS numero_chip,
                           -- Anulación / NC idéntico a la hoja Datos (por facturacion_id, LIFO).
                           an.codigo_unico AS documento_anulacion,
@@ -172,9 +179,8 @@ async function obtenerReporteFinanciero({ plantasAutorizadas, plantasFiltro, des
                        FROM fg_credito cr2 WHERE cr2.facturacion_id = f.id AND cr2.estado <> 'BORRADOR'
                    ) nc ON TRUE
                   WHERE (COALESCE(f.planta_key, oc.planta_key, v.planta_key) = ANY($1::varchar[]))
-                    AND ((f.fecha_documento IS NOT NULL
-                          AND f.fecha_documento >= $4::date
-                          AND f.fecha_documento <= $5::date)
+                    AND ((${filtroFechaComp} >= $4::date
+                          AND ${filtroFechaComp} <= $5::date)
                       OR (oc.fecha_creacion >= $2::timestamptz AND oc.fecha_creacion < $3::timestamptz)
                       OR (v.creado_en >= $2::timestamptz AND v.creado_en < $3::timestamptz))
                     AND f.estado <> 'BORRADOR'

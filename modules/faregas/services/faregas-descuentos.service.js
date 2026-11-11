@@ -6,7 +6,9 @@ const configService = require('./faregas-config.service');
 const auditoriaService = require('./faregas-auditoria.service');
 const descuentosImpactoService = require('./faregas-descuentos-impacto.service');
 const {
+    CODIGO_AUTORIZACION_CORTESIA,
     CODIGO_AUTORIZACION_GRATUIDAD_TALLER,
+    esCodigoCortesia,
     esCodigoGratuidadTaller,
     esFlujoTaller,
     consultarConvenioProtegido,
@@ -199,10 +201,7 @@ const consultarDescuentoCore = async (client, codigo, certificadoId, userContext
     }
 
     const importeFinal = tarifaOriginal - importeDescuento;
-    const esAutorizacionGratuita = esCodigoGratuidadTaller(ds.codigo);
-    if (esAutorizacionGratuita && !esFlujoTaller(certificado.servicio_tipo_flujo)) {
-        throw errorNegocio('DESCUENTO_NO_APLICA_SERVICIO', 422);
-    }
+    const esAutorizacionGratuita = esCodigoCortesia(ds.codigo);
     if (esAutorizacionGratuita && Math.abs(importeFinal) > 0.01) {
         throw errorNegocio('GRATUIDAD_TALLER_CONFIGURACION_INVALIDA', 409);
     }
@@ -281,6 +280,35 @@ const consultarDescuentoDirectoCore = async (client, descuentoId, certificadoId,
         throw errorNegocio('DESCUENTO_VENCIDO', 422);
     }
 
+    const convenioProtegido = await consultarConvenioProtegido(client, ds.descuento_id, false);
+    const esAutorizacionGratuita = Boolean(convenioProtegido) || esCodigoCortesia(ds.codigo);
+
+    // La cortesía es una modalidad comercial transversal: conserva la tarifa
+    // como valor referencial y no depende de reglas por servicio/sede.
+    if (esAutorizacionGratuita) {
+        return {
+            descuentoId: ds.descuento_id,
+            // En convenios históricos (DESCUENTO_TALLER) se conserva la fila
+            // que contiene el código de autorización. Así la persistencia no
+            // depende de inferir la cortesía únicamente por el importe cero.
+            descuentoClienteId: convenioProtegido?.codigo_id || null,
+            codigo: esCodigoCortesia(ds.codigo) ? ds.codigo : CODIGO_AUTORIZACION_CORTESIA,
+            nombre: ds.nombre,
+            tipo: ds.tipo,
+            empresaAliada: ds.empresa_aliada_nombre,
+            tipoCalculo: 'PORCENTAJE',
+            valor: 100,
+            formaPago: 'CONTADO',
+            tarifaOriginal,
+            importeDescuento: tarifaOriginal,
+            importeFinal: 0,
+            fechaFin: ds.d_fin,
+            beneficio: `Cortesía S/ ${tarifaOriginal.toFixed(2)} (total a cobrar S/ 0.00)`,
+            autorizaGratuidad: true,
+            certificado
+        };
+    }
+
     // Regla de sede y servicio en fg_descuentodetalle
     const sqlDet = `
         SELECT tipo_calculo, valor, valor_contado, valor_credito, activo
@@ -326,17 +354,7 @@ const consultarDescuentoDirectoCore = async (client, descuentoId, certificadoId,
 
     const importeFinal = Math.round((tarifaOriginal - importeDescuento) * 100) / 100;
 
-    // Verificar si es el convenio protegido de taller (DESCUENTO_TALLER)
-    const convenioProtegido = await consultarConvenioProtegido(client, ds.descuento_id, false);
-    const esAutorizacionGratuita = Boolean(convenioProtegido);
-
-    if (esAutorizacionGratuita && !esFlujoTaller(certificado.servicio_tipo_flujo)) {
-        throw errorNegocio('DESCUENTO_NO_APLICA_SERVICIO', 422);
-    }
-    if (esAutorizacionGratuita && Math.abs(importeFinal) > 0.01) {
-        throw errorNegocio('GRATUIDAD_TALLER_CONFIGURACION_INVALIDA', 409);
-    }
-    if (!esAutorizacionGratuita && Math.abs(importeFinal) <= 0.01) {
+    if (Math.abs(importeFinal) <= 0.01) {
         throw errorNegocio('OPERACION_CERO_REQUIERE_AUTORIZACION_GRATUITA', 409);
     }
 
@@ -364,7 +382,7 @@ const consultarDescuentoDirectoCore = async (client, descuentoId, certificadoId,
     return {
         descuentoId: ds.descuento_id,
         descuentoClienteId: null,
-        codigo: esAutorizacionGratuita ? 'DESCUENTO_TALLER' : ds.nombre,
+        codigo: ds.codigo || ds.nombre,
         nombre: ds.nombre,
         tipo: ds.tipo,
         empresaAliada: ds.empresa_aliada_nombre,
@@ -376,7 +394,7 @@ const consultarDescuentoDirectoCore = async (client, descuentoId, certificadoId,
         importeFinal,
         fechaFin: ds.d_fin,
         beneficio,
-        autorizaGratuidad: esAutorizacionGratuita,
+        autorizaGratuidad: false,
         certificado
     };
 };
@@ -414,12 +432,35 @@ exports.listarDescuentosDisponibles = async (certificadoId, userContext) => {
               AND dd.activo = TRUE
               AND dd.planta_key = $1
               AND dd.servicio_id = $2
-            ORDER BY d.nombre
+            UNION ALL
+            SELECT d.id, d.codigo, d.nombre, d.tipo, d.empresa_aliada_nombre,
+                   d.fecha_inicio, d.fecha_fin,
+                   'PORCENTAJE'::varchar AS tipo_calculo, 100::numeric AS valor,
+                   NULL::numeric AS valor_contado, NULL::numeric AS valor_credito
+            FROM fg_descuento d
+            WHERE d.activo = TRUE
+              AND CURRENT_TIMESTAMP >= d.fecha_inicio AND CURRENT_TIMESTAMP <= d.fecha_fin
+              AND (
+                  d.id = 17
+                  OR UPPER(BTRIM(d.codigo)) = ANY($3::varchar[])
+                  OR UPPER(BTRIM(d.nombre)) IN ('DESCUENTO CERTIFICADO TALLER', 'CORTESIA FAREGAS', 'CORTESÍA FAREGAS')
+                  OR EXISTS (
+                      SELECT 1 FROM fg_descuentocliente dc
+                      WHERE dc.descuento_id = d.id
+                        AND UPPER(BTRIM(dc.codigo)) = ANY($3::varchar[])
+                  )
+              )
+            ORDER BY nombre
         `;
-        const res = await client.query(sql, [certificado.planta_key, servicioId]);
+        const res = await client.query(sql, [
+            certificado.planta_key,
+            servicioId,
+            [CODIGO_AUTORIZACION_CORTESIA, CODIGO_AUTORIZACION_GRATUIDAD_TALLER, 'D_CONVENIO_A88137BB742F4157']
+        ]);
 
         const disponibles = [];
         for (const row of res.rows) {
+            if (disponibles.some((item) => item.id === Number(row.id))) continue;
             const tipoCalculo = row.tipo_calculo;
             const valorFinal = Number(tipoCalculo === 'FLAT' ? row.valor_contado : row.valor);
             if (!['FLAT', 'MONTO', 'PORCENTAJE'].includes(tipoCalculo) || !Number.isFinite(valorFinal) || valorFinal <= 0) {
@@ -440,11 +481,7 @@ exports.listarDescuentosDisponibles = async (certificadoId, userContext) => {
             const importeFinal = Math.round((tarifaOriginal - importeDescuento) * 100) / 100;
 
             const convenioProtegido = await consultarConvenioProtegido(client, row.id, false);
-            const esAutorizacionGratuita = Boolean(convenioProtegido);
-
-            if (esAutorizacionGratuita && !esFlujoTaller(certificado.servicio_tipo_flujo)) {
-                continue;
-            }
+            const esAutorizacionGratuita = Boolean(convenioProtegido) || esCodigoCortesia(row.codigo);
             if (esAutorizacionGratuita && Math.abs(importeFinal) > 0.01) {
                 continue;
             }
@@ -463,6 +500,7 @@ exports.listarDescuentosDisponibles = async (certificadoId, userContext) => {
 
             disponibles.push({
                 id: Number(row.id),
+                codigo: esAutorizacionGratuita ? CODIGO_AUTORIZACION_CORTESIA : row.codigo,
                 nombre: row.nombre,
                 tipo: row.tipo,
                 empresaAliada: row.empresa_aliada_nombre,
@@ -532,12 +570,20 @@ exports.aplicarDescuentoDirectoBorrador = async (certificadoId, descuentoId, use
                     descuento_id, descuento_cliente_id, certificado_id, importe_original, importe_descuento, importe_final,
                     estado, reservado_hasta, usuario_creacion
                 ) VALUES (
-                    $1, NULL, $2, $3, $4, $5, 'RESERVADO', CURRENT_TIMESTAMP + INTERVAL '24 hours', $6
+                    $1, $2, $3, $4, $5, $6, 'RESERVADO', CURRENT_TIMESTAMP + INTERVAL '24 hours', $7
                 )
             `, [
-                calculo.descuentoId, certificadoId, calculo.tarifaOriginal, 
+                calculo.descuentoId, calculo.descuentoClienteId, certificadoId, calculo.tarifaOriginal,
                 calculo.importeDescuento, calculo.importeFinal, userContext.username
             ]);
+        } else if (calculo.descuentoClienteId) {
+            await client.query(`
+                UPDATE fg_descuentocomprobante
+                SET descuento_cliente_id = COALESCE(descuento_cliente_id, $1),
+                    usuario_modificacion = $2,
+                    fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE id = $3
+            `, [calculo.descuentoClienteId, userContext.username, resExiste.rows[0].id]);
         }
 
         await client.query('COMMIT');
@@ -699,8 +745,8 @@ exports.obtenerResumenDescuentoCertificado = async (queryable, certificado) => {
     // no certificable jamás avance hacia pago aunque no tenga descuento.
     const sql = `
         SELECT cmp.*,
-               COALESCE(dc.codigo, CASE WHEN d.id = 17 OR EXISTS (SELECT 1 FROM fg_descuentocliente dcp WHERE dcp.descuento_id = d.id AND UPPER(BTRIM(dcp.codigo)) = 'DESCUENTO_TALLER') THEN 'DESCUENTO_TALLER' ELSE d.codigo END) AS codigo,
-               COALESCE(dc.codigo, CASE WHEN d.id = 17 OR EXISTS (SELECT 1 FROM fg_descuentocliente dcp WHERE dcp.descuento_id = d.id AND UPPER(BTRIM(dcp.codigo)) = 'DESCUENTO_TALLER') THEN 'DESCUENTO_TALLER' ELSE d.codigo END) AS codigo_autorizacion,
+               COALESCE(dc.codigo, CASE WHEN d.id = 17 OR UPPER(BTRIM(d.codigo)) = 'D_CONVENIO_A88137BB742F4157' OR EXISTS (SELECT 1 FROM fg_descuentocliente dcp WHERE dcp.descuento_id = d.id AND UPPER(BTRIM(dcp.codigo)) IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER')) THEN 'CORTESIA_FAREGAS' ELSE d.codigo END) AS codigo,
+               COALESCE(dc.codigo, CASE WHEN d.id = 17 OR UPPER(BTRIM(d.codigo)) = 'D_CONVENIO_A88137BB742F4157' OR EXISTS (SELECT 1 FROM fg_descuentocliente dcp WHERE dcp.descuento_id = d.id AND UPPER(BTRIM(dcp.codigo)) IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER')) THEN 'CORTESIA_FAREGAS' ELSE d.codigo END) AS codigo_autorizacion,
                d.nombre AS descuento_nombre
         FROM fg_descuentocomprobante cmp
         LEFT JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id

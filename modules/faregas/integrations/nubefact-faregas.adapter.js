@@ -69,19 +69,6 @@ const construirItem = (item) => {
     return resultado;
 };
 
-const esLineaGratuitaPorDescuentoCompleto = (item) => {
-    const cantidad = Number(item.cantidad || 1);
-    const baseOriginal = dosDecimales(Number(item.valor_unitario || 0) * cantidad);
-    const descuento = dosDecimales(item.descuento || 0);
-    const subtotal = dosDecimales(item.base_imponible ?? item.subtotal);
-    const total = dosDecimales(item.importe_total ?? item.total);
-    return baseOriginal > 0
-        && descuento > 0
-        && Math.abs(baseOriginal - descuento) <= 0.01
-        && subtotal === 0
-        && total === 0;
-};
-
 const construirItemGratuito = (item) => {
     const cantidad = Number(item.cantidad || 1);
     const valorReferencialUnitario = dosDecimales(item.precio_unitario);
@@ -206,31 +193,52 @@ const construirPayloadNubefact = ({
         reserva: reservaDescuento || resumenTributario?.descuento,
         tipoFlujo
     });
-    const lineasGratuitas = gratuidadAutorizada
-        ? detalles.filter(esLineaGratuitaPorDescuentoCompleto)
-        : [];
-    const totalGratuita = dosDecimales(lineasGratuitas.reduce(
-        (total, item) => total + Number(item.precio_unitario || 0) * Number(item.cantidad || 1),
-        0
-    ));
+    const fallbackGratuito = gratuidadAutorizada && detalles.length === 0 && Number(facturacion.importe_total || 0) === 0;
+    // La modalidad persistida autoriza la gratuidad de toda la operación.
+    // No se infiere por montos cero ni por un descuento comercial del 100 %.
+    const lineasGratuitas = gratuidadAutorizada ? detalles : [];
+    const totalGratuita = dosDecimales(
+        fallbackGratuito
+            ? tarifaOriginal
+            : lineasGratuitas.reduce(
+                (total, item) => total + Number(item.precio_unitario || 0) * Number(item.cantidad || 1),
+                0
+            )
+    );
     const descuentoOneroso = dosDecimales(Math.max(0, descuentoTotal - totalGratuita));
     const items = detalles.length > 0
-        ? detalles.map(item => gratuidadAutorizada && esLineaGratuitaPorDescuentoCompleto(item)
+        ? detalles.map(item => gratuidadAutorizada
             ? construirItemGratuito(item)
             : construirItem(item))
-        : [construirItem({
-            unidad_snapshot: 'ZZ',
-            codigo_sku_snapshot: `FAREGAS-${certificadoData.tipo_certificado_clave || 'OPERACION'}`,
-            descripcion_snapshot: descripcion,
-            cantidad: 1,
-            valor_unitario: baseOriginal,
-            precio_unitario: tarifaOriginal,
-            descuento: baseDescuento,
-            base_imponible: facturacion.base_imponible,
-            afectacion_igv_snapshot: '10',
-            igv: facturacion.igv,
-            importe_total: facturacion.importe_total
-        })];
+        : [
+            fallbackGratuito
+                ? construirItemGratuito({
+                    unidad_snapshot: 'ZZ',
+                    codigo_sku_snapshot: `FAREGAS-${certificadoData.tipo_certificado_clave || 'OPERACION'}`,
+                    descripcion_snapshot: descripcion,
+                    cantidad: 1,
+                    valor_unitario: baseOriginal,
+                    precio_unitario: tarifaOriginal,
+                    descuento: baseDescuento,
+                    base_imponible: 0,
+                    afectacion_igv_snapshot: '10',
+                    igv: 0,
+                    importe_total: 0
+                })
+                : construirItem({
+                    unidad_snapshot: 'ZZ',
+                    codigo_sku_snapshot: `FAREGAS-${certificadoData.tipo_certificado_clave || 'OPERACION'}`,
+                    descripcion_snapshot: descripcion,
+                    cantidad: 1,
+                    valor_unitario: baseOriginal,
+                    precio_unitario: tarifaOriginal,
+                    descuento: baseDescuento,
+                    base_imponible: facturacion.base_imponible,
+                    afectacion_igv_snapshot: '10',
+                    igv: facturacion.igv,
+                    importe_total: facturacion.importe_total
+                })
+        ];
     // Regla Faregas: sólo una FACTURA puede ser a crédito. La validación de
     // negocio rechaza BOLETA + CRÉDITO; esta defensa adicional evita enviar
     // cuotas si llegara un registro histórico inconsistente.
