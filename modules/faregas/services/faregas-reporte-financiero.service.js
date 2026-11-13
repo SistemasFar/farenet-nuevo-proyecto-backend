@@ -119,9 +119,13 @@ async function obtenerReporteFinanciero({ plantasAutorizadas, plantasFiltro, des
                           an.aceptada_sunat AS aceptada_anulacion_sunat,
                           an.ticket_sunat AS ticket_anulacion,
                           an.motivo AS motivo_anulacion,
+                          an.usuario_autorizador_anulacion,
                           nc.notas_credito, nc.cantidad_notas_credito,
                           nc.motivo_nota_credito, nc.estado_nota_credito,
-                          nc.fecha_emision_nota_credito, nc.importe_nota_credito,
+                          nc.fecha_emision_nota_credito,
+                          nc.fecha_hora_emision_nota_credito,
+                          nc.usuario_autorizador_nota_credito,
+                          nc.importe_nota_credito,
                           nc.tipo_afectacion_nota_credito,
                           EXISTS (
                               SELECT 1 FROM fg_documento_anulacion da
@@ -160,8 +164,29 @@ async function obtenerReporteFinanciero({ plantasAutorizadas, plantasFiltro, des
                    ) cuotas ON TRUE
                    LEFT JOIN LATERAL (
                        SELECT da.codigo_unico, da.fecha_creacion, da.fecha_aceptacion, da.estado,
-                              da.aceptada_sunat, da.ticket_sunat, da.motivo
+                              da.aceptada_sunat, da.ticket_sunat, da.motivo,
+                              COALESCE(
+                                  NULLIF(BTRIM(CONCAT_WS(' ', persona_an.nombres, persona_an.apellidos)), ''),
+                                  NULLIF(BTRIM(persona_an.nombrerazonsocial), ''),
+                                  solicitud_an.usuario_decision
+                              ) AS usuario_autorizador_anulacion
                        FROM fg_documento_anulacion da
+                       LEFT JOIN LATERAL (
+                           SELECT s.usuario_decision
+                           FROM fg_solicitud_operacion s
+                           WHERE s.facturacion_id = da.facturacion_id
+                             AND s.tipo_operacion IN ('ANULAR_COMPROBANTE', 'ANULAR_AMBOS')
+                             AND s.usuario_decision IS NOT NULL
+                           ORDER BY CASE
+                               WHEN s.resultado_fiscal ->> 'anulacionId' = da.id::text THEN 0
+                               ELSE 1
+                           END,
+                           s.fecha_decision DESC NULLS LAST,
+                           s.id DESC
+                           LIMIT 1
+                       ) solicitud_an ON TRUE
+                       LEFT JOIN fg_usuario usuario_an ON usuario_an.username = solicitud_an.usuario_decision
+                       LEFT JOIN persona persona_an ON persona_an.nrodocumentoidentidad = usuario_an.persona_nrodocumentoidentidad
                        WHERE da.facturacion_id = f.id ORDER BY da.id DESC LIMIT 1
                    ) an ON TRUE
                    LEFT JOIN LATERAL (
@@ -169,14 +194,44 @@ async function obtenerReporteFinanciero({ plantasAutorizadas, plantasFiltro, des
                               COUNT(DISTINCT cr2.id)::int AS cantidad_notas_credito,
                               STRING_AGG(DISTINCT COALESCE(cr2.motivo_codigo, ''), ', ' ORDER BY COALESCE(cr2.motivo_codigo, '')) AS motivo_nota_credito,
                               STRING_AGG(DISTINCT COALESCE(cr2.estado, ''), ', ' ORDER BY COALESCE(cr2.estado, '')) AS estado_nota_credito,
-                              MAX(cr2.fecha_aceptacion) AS fecha_emision_nota_credito,
+                              MAX(emision_nc.fecha_emision) AS fecha_emision_nota_credito,
+                              MAX(emision_nc.fecha_emision) AS fecha_hora_emision_nota_credito,
+                              STRING_AGG(DISTINCT COALESCE(
+                                  NULLIF(BTRIM(CONCAT_WS(' ', persona_nc.nombres, persona_nc.apellidos)), ''),
+                                  NULLIF(BTRIM(persona_nc.nombrerazonsocial), ''),
+                                  solicitud_nc.usuario_decision
+                              ), ', ') AS usuario_autorizador_nota_credito,
                               COALESCE(SUM(cr2.importe_total), 0) AS importe_nota_credito,
                               STRING_AGG(DISTINCT CASE WHEN LPAD(COALESCE(cr2.motivo_codigo, ''), 2, '0') IN ('01', '02') THEN 'TOTAL'
                                                          WHEN LPAD(COALESCE(cr2.motivo_codigo, ''), 2, '0') = '03' THEN 'CORRECCIÓN'
                                                          ELSE 'PARCIAL' END, ', ' ORDER BY CASE WHEN LPAD(COALESCE(cr2.motivo_codigo, ''), 2, '0') IN ('01', '02') THEN 'TOTAL'
                                                          WHEN LPAD(COALESCE(cr2.motivo_codigo, ''), 2, '0') = '03' THEN 'CORRECCIÓN'
                                                          ELSE 'PARCIAL' END) AS tipo_afectacion_nota_credito
-                       FROM fg_credito cr2 WHERE cr2.facturacion_id = f.id AND cr2.estado <> 'BORRADOR'
+                       FROM fg_credito cr2
+                       LEFT JOIN LATERAL (
+                           SELECT MIN(deo.fecha_creacion) AS fecha_emision
+                           FROM fg_documento_electronico_operacion deo
+                           WHERE deo.credito_id = cr2.id
+                             AND deo.operacion = 'EMITIR'
+                       ) emision_nc ON TRUE
+                       LEFT JOIN LATERAL (
+                           SELECT s.usuario_decision
+                           FROM fg_solicitud_operacion s
+                           LEFT JOIN fg_nota_credito_trabajo trabajo_nc ON trabajo_nc.solicitud_id = s.id
+                           WHERE s.tipo_operacion = 'EMITIR_NOTA_CREDITO'
+                             AND s.usuario_decision IS NOT NULL
+                             AND (
+                                 trabajo_nc.credito_id = cr2.id
+                                 OR s.resultado_fiscal ->> 'notaId' = cr2.id::text
+                             )
+                           ORDER BY CASE WHEN trabajo_nc.credito_id = cr2.id THEN 0 ELSE 1 END,
+                                    s.fecha_decision DESC NULLS LAST,
+                                    s.id DESC
+                           LIMIT 1
+                       ) solicitud_nc ON TRUE
+                       LEFT JOIN fg_usuario usuario_nc ON usuario_nc.username = solicitud_nc.usuario_decision
+                       LEFT JOIN persona persona_nc ON persona_nc.nrodocumentoidentidad = usuario_nc.persona_nrodocumentoidentidad
+                       WHERE cr2.facturacion_id = f.id AND cr2.estado <> 'BORRADOR'
                    ) nc ON TRUE
                   WHERE (COALESCE(f.planta_key, oc.planta_key, v.planta_key) = ANY($1::varchar[]))
                     AND ((${filtroFechaComp} >= $4::date

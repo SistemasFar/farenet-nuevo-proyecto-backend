@@ -25,6 +25,13 @@ test('el backend aplica sede/rango y devuelve relaciones comerciales para el con
     assert.match(mainCalls[3].sql, /baja_aceptada/);
     assert.match(mainCalls[3].sql, /nota_anulacion_total_aceptada/);
     assert.match(mainCalls[3].sql, /nota_credito_parcial_total/);
+    assert.match(mainCalls[3].sql, /fg_documento_electronico_operacion/);
+    assert.match(mainCalls[3].sql, /deo\.operacion = 'EMITIR'/);
+    assert.match(mainCalls[3].sql, /fecha_hora_emision_nota_credito/);
+    assert.match(mainCalls[3].sql, /usuario_autorizador_anulacion/);
+    assert.match(mainCalls[3].sql, /usuario_autorizador_nota_credito/);
+    assert.match(mainCalls[3].sql, /fg_nota_credito_trabajo/);
+    assert.match(mainCalls[3].sql, /s\.usuario_decision/);
     assert.match(mainCalls[3].sql, /cuotas_count/);
     assert.match(mainCalls[4].sql, /formapago_key/);
     assert.deepEqual(result.metadatos.plantas, ['98']);
