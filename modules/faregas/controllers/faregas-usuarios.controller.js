@@ -49,6 +49,19 @@ exports.crearUsuario = async (req, res) => {
         if (!username || !password) return res.status(400).json({ message: 'Username y password requeridos' });
         
         const result = await service.crearUsuario(req.body, req.user.username);
+
+        // Registro de auditoría
+        await auditoriaService.registrarEvento({
+            ...contextoAuditoria(req),
+            categoria: 'USUARIOS',
+            modulo: 'USUARIOS',
+            evento: 'USUARIO_CREADO',
+            mensaje: `Usuario ${result.username} creado con perfil ${result.perfil_id || req.body.perfil_id}`,
+            entidad: 'fg_usuario',
+            documento_referencia: result.username,
+            datos: { perfil_id: result.perfil_id || req.body.perfil_id, estado: result.estado ?? true }
+        });
+
         res.status(201).json(result);
     } catch (e) {
         if (e.code === 'MIGRACION_PERFIL_FAREGAS_PENDIENTE') {
@@ -79,6 +92,19 @@ exports.actualizarUsuario = async (req, res) => {
         }
         
         const result = await service.actualizarUsuario(usuarioObjetivo, req.body, req.user.username);
+
+        // Registro de auditoría
+        await auditoriaService.registrarEvento({
+            ...contextoAuditoria(req),
+            categoria: 'USUARIOS',
+            modulo: 'USUARIOS',
+            evento: req.body.estado === false ? 'USUARIO_DESACTIVADO' : 'USUARIO_ACTUALIZADO',
+            mensaje: `Usuario ${usuarioObjetivo} actualizado${req.body.estado === false ? ' (Desactivado)' : ''}`,
+            entidad: 'fg_usuario',
+            documento_referencia: usuarioObjetivo,
+            datos: { perfil_id: req.body.perfil_id, estado: req.body.estado }
+        });
+
         res.json(result);
     } catch (e) {
         if (e.code === 'MIGRACION_PERFIL_FAREGAS_PENDIENTE') {
@@ -109,6 +135,18 @@ exports.cambiarPassword = async (req, res) => {
         const { password } = req.body;
         if (!password) return res.status(400).json({ message: 'Nueva contrase�a requerida' });
         await service.cambiarPassword(req.params.username, password);
+
+        // Registro de auditoría (SIN registrar la contraseña)
+        await auditoriaService.registrarEvento({
+            ...contextoAuditoria(req),
+            categoria: 'USUARIOS',
+            modulo: 'USUARIOS',
+            evento: 'PASSWORD_ACTUALIZADO',
+            mensaje: `Contraseña administrativa restablecida para usuario ${req.params.username}`,
+            entidad: 'fg_usuario',
+            documento_referencia: req.params.username
+        });
+
         res.json({ success: true });
     } catch (e) {
         if (e.message === 'USER_NOT_FOUND') {
@@ -127,6 +165,18 @@ exports.eliminarUsuario = async (req, res) => {
         }
 
         const resultado = await service.eliminarUsuario(usuarioObjetivo);
+
+        // Registro de auditoría
+        await auditoriaService.registrarEvento({
+            ...contextoAuditoria(req),
+            categoria: 'USUARIOS',
+            modulo: 'USUARIOS',
+            evento: 'USUARIO_ELIMINADO',
+            mensaje: `Usuario ${usuarioObjetivo} eliminado del sistema`,
+            entidad: 'fg_usuario',
+            documento_referencia: usuarioObjetivo
+        });
+
         return res.json({
             success: true,
             username: resultado?.username ?? usuarioObjetivo,

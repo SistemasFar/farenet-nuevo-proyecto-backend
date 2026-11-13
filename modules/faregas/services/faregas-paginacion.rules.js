@@ -1,7 +1,7 @@
 /**
  * Paginación y filtros de fecha estándar para los listados de FAREGAS.
  *
- * Reglas que este módulo centraliza para que ningún listado se comporta distinto:
+ * Reglas que este módulo centraliza para que ningún listado se comporte distinto:
  *
  *   - Máximo 10 registros por página por defecto (configurable, tope 100).
  *   - El TOTAL siempre viene de un COUNT con los MISMOS filtros que el listado,
@@ -10,6 +10,7 @@
  *     "hoy", no "todo el histórico".
  *   - La fecha es la LOCAL de la aplicación. No se introduce UTC.
  *   - `hasta` cubre el día completo: `>= desde::date AND < (hasta::date + 1 day)`.
+ *   - Soporte para validar que el rango no supere un mes calendario.
  *
  * Se exportan también las piezas puras para poder probarlas sin base de datos.
  */
@@ -58,13 +59,41 @@ exports.hoyLocal = (fecha = new Date()) => {
     return `${y}-${m}-${d}`;
 };
 
-const esFechaValida = (valor) => /^\d{4}-\d{2}-\d{2}$/.test(valor);
+const esFechaValida = (valor) => /^\d{4}-\d{2}-\d{2}$/.test(String(valor || '').trim());
+
+/**
+ * Valida si un rango de fechas en formato YYYY-MM-DD no supera exactamente un mes calendario.
+ * Ejemplos válidos:
+ *   01/11/2026 a 30/11/2026
+ *   15/10/2026 a 13/11/2026
+ *   15/10/2026 a 15/11/2026
+ *   01/02/2026 a 28/02/2026
+ */
+const validarMaximoUnMes = (desdeStr, hastaStr) => {
+    if (!esFechaValida(desdeStr) || !esFechaValida(hastaStr)) return false;
+    const [y1, m1, d1] = desdeStr.split('-').map(Number);
+    const [y2, m2, d2] = hastaStr.split('-').map(Number);
+    const dDesde = new Date(y1, m1 - 1, d1);
+    const dHasta = new Date(y2, m2 - 1, d2);
+    if (dDesde > dHasta) return false;
+
+    // Calcular la fecha límite de exactamente 1 mes calendario hacia adelante
+    const targetY = m1 === 12 ? y1 + 1 : y1;
+    const targetM = m1 === 12 ? 1 : m1 + 1;
+    const diasEnMesDestino = new Date(targetY, targetM, 0).getDate();
+    const targetD = Math.min(d1, diasEnMesDestino);
+    const maxPermitido = new Date(targetY, targetM - 1, targetD);
+
+    return dHasta <= maxPermitido;
+};
+exports.validarMaximoUnMes = validarMaximoUnMes;
 
 /**
  * Normaliza el rango de fechas de un listado transaccional.
  *
  * - Sin rango (o rangos incompletos) => HOY -> HOY. Nunca "todo el histórico".
  * - `desde > hasta` => error explícito. No se intercambian en silencio.
+ * - `maximoUnMes = true` => valida que no exceda 1 mes calendario.
  * - Devuelve `{ fechaDesde, fechaHasta }` en YYYY-MM-DD.
  */
 exports.normalizarRangoFechas = (query = {}, opciones = {}) => {
@@ -82,6 +111,14 @@ exports.normalizarRangoFechas = (query = {}, opciones = {}) => {
         error.codigo = 'RANGO_FECHAS_INVALIDO';
         throw error;
     }
+
+    if (opciones.maximoUnMes && !validarMaximoUnMes(fechaDesde, fechaHasta)) {
+        const error = new Error('El rango de fechas no puede superar un mes calendario.');
+        error.statusCode = 400;
+        error.codigo = 'RANGO_FECHAS_INVALIDO';
+        throw error;
+    }
+
     return { fechaDesde, fechaHasta };
 };
 
@@ -109,4 +146,4 @@ exports.condicionesRangoFechas = (columna, fechaDesde, fechaHasta, params, indic
     return { condiciones, siguienteIndice: indice };
 };
 
-exports._private = { enteroAcotado, esFechaValida, PAGE_SIZE_POR_DEFECTO, PAGE_SIZE_MAXIMO };
+exports._private = { enteroAcotado, esFechaValida, validarMaximoUnMes, PAGE_SIZE_POR_DEFECTO, PAGE_SIZE_MAXIMO };

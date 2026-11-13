@@ -32,6 +32,16 @@ const authFaregasMiddleware = async (req, res, next) => {
             return res.status(403).json({ message: 'Usuario inactivo' });
         }
 
+        if (decoded.session_jti) {
+            const sesionDb = await db.query(
+                'SELECT isactive FROM fg_usuario_sesion WHERE session_jti = $1 AND usuario_username = $2 LIMIT 1',
+                [decoded.session_jti, decoded.username]
+            );
+            if (sesionDb.rowCount > 0 && !sesionDb.rows[0].isactive) {
+                return res.status(401).json({ message: 'Sesión revocada o inactiva' });
+            }
+        }
+
         req.user = decoded;
         next();
     } catch (e) {

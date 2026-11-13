@@ -70,14 +70,14 @@ SET default_table_access_method = heap;
 CREATE TABLE public.fg_auditoria_acceso (
     id bigint NOT NULL,
     username character varying(255),
-    evento character varying(50) NOT NULL,
+    evento character varying(100) NOT NULL,
     exitoso boolean NOT NULL,
     mensaje text,
     planta_key character varying(20),
     ip_direccion character varying(45),
     user_agent character varying(1000),
     fecha_evento timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    categoria character varying(30) DEFAULT 'ACCESO'::character varying NOT NULL,
+    categoria character varying(50) DEFAULT 'ACCESO'::character varying NOT NULL,
     entidad character varying(50),
     entidad_id bigint,
     certificado_id bigint,
@@ -86,7 +86,16 @@ CREATE TABLE public.fg_auditoria_acceso (
     tipo_certificado character varying(50),
     paso character varying(50),
     datos jsonb,
-    perfil character varying(50)
+    perfil character varying(50),
+    usuario_id bigint,
+    modulo character varying(50),
+    resultado character varying(20) DEFAULT 'EXITO'::character varying NOT NULL,
+    motivo_error text,
+    documento_referencia character varying(100),
+    es_automatico boolean DEFAULT false NOT NULL,
+    correlacion_id character varying(100),
+    datos_previos jsonb,
+    datos_nuevos jsonb
 );
 
 
@@ -4024,6 +4033,27 @@ CREATE INDEX idx_fg_auditoria_acceso_fecha_evento ON public.fg_auditoria_acceso 
 --
 
 CREATE INDEX idx_fg_auditoria_acceso_username ON public.fg_auditoria_acceso USING btree (username);
+
+
+--
+-- Name: idx_fg_auditoria_modulo_fecha; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_fg_auditoria_modulo_fecha ON public.fg_auditoria_acceso USING btree (modulo, fecha_evento DESC);
+
+
+--
+-- Name: idx_fg_auditoria_resultado; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_fg_auditoria_resultado ON public.fg_auditoria_acceso USING btree (resultado);
+
+
+--
+-- Name: idx_fg_auditoria_doc_ref; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_fg_auditoria_doc_ref ON public.fg_auditoria_acceso USING btree (documento_referencia);
 
 
 --

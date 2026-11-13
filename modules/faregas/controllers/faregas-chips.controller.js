@@ -1,4 +1,5 @@
 const service = require('../services/faregas-chips.service');
+const auditoriaService = require('../services/faregas-auditoria.service');
 const ventaDirectaValidacionService = require('../services/faregas-venta-directa-validacion.service');
 const ventaDirectaFase2Service = require('../services/faregas-venta-directa-fase2.service');
 const inventarioCantidadService = require('../services/faregas-inventario-cantidad.service');
@@ -71,15 +72,115 @@ exports.editarProductoInventariable = async(req,res)=>{try{res.json({success:tru
 exports.impactoProductoInventariable = async(req,res)=>{try{res.json({success:true,impacto:await service.obtenerImpactoTipoChip(Number(req.params.id))});}catch(e){respond(res,e);}};
 exports.eliminarProductoInventariable = async(req,res)=>{try{res.json({success:true,resultado:await service.eliminarProductoInventariable(Number(req.params.id),req.user,req.ip)});}catch(e){respond(res,e);}};
 exports.consultarDisponibilidad = async(req,res)=>{try{res.json({success:true,chip:await service.consultarDisponibilidad({plantaKey:req.user.planta_key,numeroChip:req.params.numeroChip,certificadoId:req.query.certificadoId},req.user)});}catch(e){respond(res,e);}};
-exports.ingresar = async(req,res)=>{try{res.status(201).json({success:true,chips:await service.ingresar({plantaKey:req.user.planta_key,...req.body},req.user)});}catch(e){respond(res,e);}};
-exports.ingresarCantidad = async(req,res)=>{try{res.status(201).json({success:true,movimiento:await inventarioCantidadService.registrarIngreso({plantaKey:req.user.planta_key,...req.body},req.user)});}catch(e){respond(res,e);}};
+exports.ingresar = async (req, res) => {
+    try {
+        const chips = await service.ingresar({ plantaKey: req.user.planta_key, ...req.body }, req.user);
+        await auditoriaService.registrarEvento({
+            ...auditoriaService.contextoRequest(req),
+            categoria: 'INVENTARIO',
+            modulo: 'INVENTARIO',
+            evento: 'CHIP_INGRESADO',
+            mensaje: `Ingresados ${chips?.length || 1} chips en sede ${req.user.planta_key}`,
+            entidad: 'fg_chip',
+            datos: { cantidad: chips?.length || 1 }
+        });
+        res.status(201).json({ success: true, chips });
+    } catch (e) { respond(res, e); }
+};
+exports.ingresarCantidad = async (req, res) => {
+    try {
+        const movimiento = await inventarioCantidadService.registrarIngreso({ plantaKey: req.user.planta_key, ...req.body }, req.user);
+        await auditoriaService.registrarEvento({
+            ...auditoriaService.contextoRequest(req),
+            categoria: 'INVENTARIO',
+            modulo: 'INVENTARIO',
+            evento: 'INVENTARIO_INGRESO',
+            mensaje: `Ingreso de ${req.body.cantidad} unidades a inventario en sede ${req.user.planta_key}`,
+            entidad: 'fg_inventario_cantidad_movimiento',
+            datos: { cantidad: req.body.cantidad, producto_id: req.body.productoInventariableId }
+        });
+        res.status(201).json({ success: true, movimiento });
+    } catch (e) { respond(res, e); }
+};
 exports.listarMovimientosCantidad = async(req,res)=>{try{res.json({success:true,movimientos:await inventarioCantidadService.listarMovimientos({plantaKey:req.user.planta_key,productoInventariableId:Number(req.params.productoInventariableId),limite:req.query.limite},req.user)});}catch(e){respond(res,e);}};
-exports.transferir = async(req,res)=>{try{res.json({success:true,cantidad:await service.transferir({...req.body,origenKey:req.user.planta_key},req.user)});}catch(e){respond(res,e);}};
-exports.reservar = async(req,res)=>{try{res.json({success:true,chip:await service.reservar({plantaKey:req.user.planta_key,...req.body},req.user)});}catch(e){respond(res,e);}};
-exports.liberar = async(req,res)=>{try{await service.liberar({plantaKey:req.user.planta_key,...req.body},req.user);res.json({success:true});}catch(e){respond(res,e);}};
-exports.vender = async(req,res)=>{try{await service.vender({plantaKey:req.user.planta_key,...req.body},req.user);res.json({success:true});}catch(e){respond(res,e);}};
+exports.transferir = async (req, res) => {
+    try {
+        const cantidad = await service.transferir({ ...req.body, origenKey: req.user.planta_key }, req.user);
+        await auditoriaService.registrarEvento({
+            ...auditoriaService.contextoRequest(req),
+            categoria: 'INVENTARIO',
+            modulo: 'INVENTARIO',
+            evento: 'CHIP_TRANSFERIDO',
+            mensaje: `Transferencia de ${cantidad} chips desde sede ${req.user.planta_key} a sede ${req.body.destinoKey}`,
+            entidad: 'fg_chip',
+            datos: { cantidad, destinoKey: req.body.destinoKey }
+        });
+        res.json({ success: true, cantidad });
+    } catch (e) { respond(res, e); }
+};
+exports.reservar = async (req, res) => {
+    try {
+        const chip = await service.reservar({ plantaKey: req.user.planta_key, ...req.body }, req.user);
+        await auditoriaService.registrarEvento({
+            ...auditoriaService.contextoRequest(req),
+            categoria: 'INVENTARIO',
+            modulo: 'INVENTARIO',
+            evento: 'CHIP_RESERVADO',
+            mensaje: `Chip ${req.body.numeroChip} reservado en sede ${req.user.planta_key}`,
+            entidad: 'fg_chip',
+            documento_referencia: req.body.numeroChip,
+            datos: { numeroChip: req.body.numeroChip, certificadoId: req.body.certificadoId }
+        });
+        res.json({ success: true, chip });
+    } catch (e) { respond(res, e); }
+};
+exports.liberar = async (req, res) => {
+    try {
+        await service.liberar({ plantaKey: req.user.planta_key, ...req.body }, req.user);
+        await auditoriaService.registrarEvento({
+            ...auditoriaService.contextoRequest(req),
+            categoria: 'INVENTARIO',
+            modulo: 'INVENTARIO',
+            evento: 'CHIP_RESERVA_LIBERADA',
+            mensaje: `Reserva liberada para chip ${req.body.numeroChip} en sede ${req.user.planta_key}`,
+            entidad: 'fg_chip',
+            documento_referencia: req.body.numeroChip
+        });
+        res.json({ success: true });
+    } catch (e) { respond(res, e); }
+};
+exports.vender = async (req, res) => {
+    try {
+        await service.vender({ plantaKey: req.user.planta_key, ...req.body }, req.user);
+        await auditoriaService.registrarEvento({
+            ...auditoriaService.contextoRequest(req),
+            categoria: 'INVENTARIO',
+            modulo: 'INVENTARIO',
+            evento: 'CHIP_VENDIDO',
+            mensaje: `Chip ${req.body.numeroChip} marcado como vendido en sede ${req.user.planta_key}`,
+            entidad: 'fg_chip',
+            documento_referencia: req.body.numeroChip
+        });
+        res.json({ success: true });
+    } catch (e) { respond(res, e); }
+};
 exports.iniciarVentaSoloChip = async(req,res)=>{try{res.json({success:true,venta:await service.iniciarVentaSoloChip({plantaKey:req.user.planta_key,...req.body},req.user)});}catch(e){respond(res,e);}};
-exports.baja = async(req,res)=>{try{await service.baja({plantaKey:req.user.planta_key,...req.body},req.user);res.json({success:true});}catch(e){respond(res,e);}};
+exports.baja = async (req, res) => {
+    try {
+        await service.baja({ plantaKey: req.user.planta_key, ...req.body }, req.user);
+        await auditoriaService.registrarEvento({
+            ...auditoriaService.contextoRequest(req),
+            categoria: 'INVENTARIO',
+            modulo: 'INVENTARIO',
+            evento: 'CHIP_DADO_BAJA',
+            mensaje: `Chip ${req.body.numeroChip} dado de baja en sede ${req.user.planta_key}`,
+            entidad: 'fg_chip',
+            documento_referencia: req.body.numeroChip,
+            motivo_error: req.body.motivo
+        });
+        res.json({ success: true });
+    } catch (e) { respond(res, e); }
+};
 exports.historial = async(req,res)=>{try{res.json({success:true,movimientos:await service.historial(Number(req.params.id),req.user)});}catch(e){respond(res,e);}};
 
 exports.listarCatalogoChipsFiscales = async (req, res) => {
@@ -137,6 +238,17 @@ exports.crearVentaDirecta = async (req, res) => {
             { ...req.body, plantaKey: req.user.planta_key },
             req.user
         );
+        const docRef = result.comprobante ? `${result.comprobante.serie}-${result.comprobante.numero || ''}` : null;
+        await auditoriaService.registrarEvento({
+            ...auditoriaService.contextoRequest(req),
+            categoria: 'FACTURACION',
+            modulo: 'FACTURACION',
+            evento: 'VENTA_DIRECTA_EMITIDA',
+            mensaje: `Venta directa emitida en sede ${req.user.planta_key}: ${docRef || 'Operación #' + result.operacionId}`,
+            entidad: 'fg_operacion_comercial',
+            documento_referencia: docRef,
+            datos: { operacionId: result.operacionId, total: result.comprobante?.total }
+        });
         return res.status(Number(result.httpStatus) || 200).json(result);
     } catch (e) {
         return respond(res, e);

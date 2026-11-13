@@ -21,7 +21,7 @@ const auditoriaMiddleware = async (req, res, next) => {
         }
 
         const userDb = await db.query(
-            'SELECT estado, perfil_id FROM fg_usuario WHERE username = $1 LIMIT 1', 
+            'SELECT username, estado, perfil_id FROM fg_usuario WHERE username = $1 LIMIT 1', 
             [decoded.username]
         );
 
@@ -46,7 +46,7 @@ const auditoriaMiddleware = async (req, res, next) => {
             return res.status(403).json({ message: 'No tiene permiso para ver la auditoría (MENU_AUDITORIA)' });
         }
 
-        req.user = { ...decoded, perfil_id: user.perfil_id };
+        req.user = { ...decoded, username: user.username, usuario_id: decoded.usuario_id || null, perfil_id: user.perfil_id };
         next();
     } catch (e) {
         console.error("Error validando token FAREGAS en AUDITORIA", e);
@@ -57,5 +57,7 @@ const auditoriaMiddleware = async (req, res, next) => {
 router.use(auditoriaMiddleware);
 
 router.get('/accesos', controller.listarAccesos);
+router.get('/exportar', controller.exportarAuditoria);
+router.get('/exportar-excel', controller.exportarAuditoria);
 
 module.exports = router;

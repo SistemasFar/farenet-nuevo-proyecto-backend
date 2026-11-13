@@ -450,3 +450,67 @@ exports.refrescarSesion = async (req, res) => {
         return res.status(500).json({ message: 'No se pudo actualizar la sesión FAREGAS.' });
     }
 };
+
+exports.cambiarContrasena = async (req, res) => {
+    try {
+        const username = req.user?.username;
+        if (!username) {
+            return res.status(401).json({ success: false, message: 'Usuario no autenticado en FAREGAS.' });
+        }
+
+        const {
+            currentPassword,
+            newPassword,
+            confirmPassword,
+            contrasenhaActual,
+            contrasenhaNueva,
+            confirmarContrasenha
+        } = req.body || {};
+
+        const actual = contrasenhaActual || currentPassword;
+        const nueva = contrasenhaNueva || newPassword;
+        const confirmacion = confirmarContrasenha || confirmPassword;
+
+        if (!actual || !nueva || !confirmacion) {
+            return res.status(400).json({
+                success: false,
+                message: 'Todos los campos de contraseña son obligatorios.'
+            });
+        }
+
+        if (nueva !== confirmacion) {
+            return res.status(400).json({
+                success: false,
+                message: 'La nueva contraseña y su confirmación no coinciden.'
+            });
+        }
+
+        const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress;
+        const userAgent = req.headers['user-agent'];
+        const sessionJti = req.user?.session_jti;
+        const plantaKey = req.user?.planta_key;
+
+        await faregasAuthService.cambiarContrasenhaUsuario({
+            username,
+            contrasenhaActual: actual,
+            contrasenhaNueva: nueva,
+            confirmarContrasenha: confirmacion,
+            ip,
+            userAgent,
+            sessionJti,
+            plantaKey
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: 'Contraseña actualizada correctamente. Las sesiones activas han sido revocadas.'
+        });
+    } catch (err) {
+        const statusCode = err.statusCode || 400;
+        return res.status(statusCode).json({
+            success: false,
+            message: err.message || 'Error al cambiar la contraseña.',
+            codigo: err.codigo || 'ERROR_CAMBIO_CONTRASENA'
+        });
+    }
+};
