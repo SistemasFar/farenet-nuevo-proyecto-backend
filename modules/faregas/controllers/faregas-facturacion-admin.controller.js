@@ -30,3 +30,18 @@ exports.obtenerDetalle = async (req, res) => {
         return responderError(res, error);
     }
 };
+
+exports.registrarConstanciaDetraccion = async (req, res) => {
+    try {
+        const id = Number(req.params.facturacionId);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ ok: false, message: 'Identificador inválido.' });
+        const { constanciaNro, constanciaFecha } = req.body || {};
+        if (!constanciaNro || !constanciaFecha) {
+            return res.status(400).json({ ok: false, message: 'Debe especificar el número y la fecha de la constancia de detracción.' });
+        }
+        const data = await service.registrarConstanciaDetraccion(id, { constanciaNro, constanciaFecha }, req.user);
+        return res.json({ ok: true, data, message: 'Constancia de detracción registrada correctamente.' });
+    } catch (error) {
+        return responderError(res, error);
+    }
+};

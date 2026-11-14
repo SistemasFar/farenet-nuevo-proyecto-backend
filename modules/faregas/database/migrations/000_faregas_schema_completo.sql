@@ -1025,6 +1025,12 @@ CREATE TABLE public.fg_credito (
     intentos integer DEFAULT 0 NOT NULL,
     fecha_ultimo_intento timestamp without time zone,
     fecha_aceptacion timestamp without time zone,
+    sujeto_detraccion boolean DEFAULT false,
+    detraccion_codigo character varying(10),
+    detraccion_porcentaje numeric(5,2),
+    detraccion_monto numeric(12,2),
+    detraccion_neto numeric(12,2),
+    detraccion_motivo_exclusion character varying(150),
     CONSTRAINT ck_fg_credito_estado CHECK (((estado)::text = ANY ((ARRAY['BORRADOR'::character varying, 'PENDIENTE'::character varying, 'ACEPTADO'::character varying, 'RECHAZADO'::character varying, 'ERROR'::character varying, 'ANULADO'::character varying])::text[]))),
     CONSTRAINT ck_fg_credito_importes CHECK (((base_imponible >= (0)::numeric) AND (igv >= (0)::numeric) AND (importe_total >= (0)::numeric))),
     CONSTRAINT ck_fg_credito_numero CHECK (((numero IS NULL) OR (numero > 0)))
@@ -1604,6 +1610,17 @@ CREATE TABLE public.fg_facturacion (
     enlace_pdf_faregas text,
     facturar_al_dueno_principal boolean,
     fecha_hora_emision timestamp with time zone,
+    sujeto_detraccion boolean DEFAULT false,
+    detraccion_codigo character varying(10),
+    detraccion_descripcion character varying(255),
+    detraccion_porcentaje numeric(5,2),
+    detraccion_base numeric(12,2),
+    detraccion_monto numeric(12,2),
+    detraccion_neto numeric(12,2),
+    detraccion_estado_deposito character varying(30) DEFAULT 'NO_APLICA'::character varying,
+    detraccion_constancia_nro character varying(50),
+    detraccion_constancia_fecha date,
+    detraccion_motivo_exclusion character varying(150),
     CONSTRAINT ck_fg_facturacion_codigo_unico CHECK (((codigo_unico IS NULL) OR ((btrim((codigo_unico)::text) <> ''::text) AND (char_length((codigo_unico)::text) <= 20)))),
     CONSTRAINT ck_fg_facturacion_condicion_pago CHECK (((condicion_pago)::text = ANY ((ARRAY['CONTADO'::character varying, 'CREDITO'::character varying])::text[]))),
     CONSTRAINT ck_fg_facturacion_documento CHECK (((tipo_documento_cliente)::text = ANY ((ARRAY['DNI'::character varying, 'RUC'::character varying, 'CARNETEXTRANJERIA'::character varying])::text[]))),
@@ -2190,6 +2207,9 @@ CREATE TABLE public.fg_producto_facturacion (
     codigo_barras character varying(120),
     codigo_afectacion_isc character varying(20),
     imagen_url text,
+    sujeto_detraccion boolean DEFAULT false,
+    detraccion_codigo character varying(10),
+    detraccion_porcentaje numeric(5,2),
     CONSTRAINT chk_fg_producto_facturacion_afectacion CHECK (((tipo_afectacion_igv IS NULL) OR ((tipo_afectacion_igv)::text ~ '^[0-9]{2}$'::text))),
     CONSTRAINT chk_fg_producto_facturacion_descripcion CHECK ((btrim((descripcion)::text) <> ''::text)),
     CONSTRAINT chk_fg_producto_facturacion_porcentaje_isc CHECK (((porcentaje_isc IS NULL) OR (porcentaje_isc >= (0)::numeric))),
@@ -2434,6 +2454,9 @@ CREATE TABLE public.fg_servicio (
     categoria_id integer NOT NULL,
     tipo_flujo character varying(30) NOT NULL,
     formato_id integer,
+    sujeto_detraccion boolean DEFAULT true,
+    detraccion_codigo character varying(10) DEFAULT '037'::character varying,
+    detraccion_porcentaje numeric(5,2) DEFAULT 12.00,
     CONSTRAINT ck_fg_servicio_tipo_flujo CHECK (((tipo_flujo)::text = ANY ((ARRAY['CERTIFICACION'::character varying, 'SERVICIO_COMPLEMENTARIO'::character varying, 'VEHICULAR_EXISTENTE'::character varying, 'TALLER_INSPECCION'::character varying, 'PRODUCTO_SOLAMENTE'::character varying])::text[])))
 );
 
@@ -4607,6 +4630,10 @@ CREATE INDEX ix_fg_facturacion_cuota_vencimiento ON public.fg_facturacion_cuota 
 --
 
 CREATE INDEX ix_fg_facturacion_pendiente_monitoreo ON public.fg_facturacion USING btree (estado, fecha_ultimo_intento) WHERE ((estado)::text = ANY ((ARRAY['PENDIENTE'::character varying, 'ERROR'::character varying, 'RECHAZADO'::character varying])::text[]));
+
+CREATE INDEX idx_fg_facturacion_detraccion ON public.fg_facturacion USING btree (sujeto_detraccion, detraccion_estado_deposito) WHERE (sujeto_detraccion = true);
+
+CREATE INDEX idx_fg_facturacion_detraccion_constancia ON public.fg_facturacion USING btree (detraccion_constancia_nro) WHERE (detraccion_constancia_nro IS NOT NULL);
 
 
 --

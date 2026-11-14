@@ -153,6 +153,7 @@ router.put('/borradores/:id/pagos', pagosController.guardarPagos);
 router.get('/facturacion/admin/documentos', facturacionAdminMiddleware, facturacionAdminController.listar);
 router.get('/facturacion/admin/readiness', facturacionAdminMiddleware, nubefactReadinessController.obtenerPanel);
 router.get('/facturacion/admin/documentos/:facturacionId', facturacionAdminMiddleware, facturacionAdminController.obtenerDetalle);
+router.post('/facturacion/admin/documentos/:facturacionId/detraccion-constancia', facturacionAdminMiddleware, facturacionAdminController.registrarConstanciaDetraccion);
 router.get('/borradores/:id/facturacion', facturacionController.obtener);
 router.get('/borradores/:id/facturacion/preflight', facturacionController.preflight);
 router.put('/borradores/:id/facturacion', facturacionController.guardar);

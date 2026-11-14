@@ -100,7 +100,18 @@ const mapDocumento = (row) => ({
     fechaSolicitudAnulacion: row.fecha_solicitud_anulacion,
     intentos: Number(row.intentos || 0),
     fechaUltimoIntento: row.fecha_ultimo_intento,
-    fechaCreacion: row.fecha_creacion
+    fechaCreacion: row.fecha_creacion,
+    sujetoDetraccion: Boolean(row.sujeto_detraccion),
+    detraccionCodigo: row.detraccion_codigo || null,
+    detraccionDescripcion: row.detraccion_descripcion || null,
+    detraccionPorcentaje: row.detraccion_porcentaje != null ? Number(row.detraccion_porcentaje) : null,
+    detraccionBase: row.detraccion_base != null ? Number(row.detraccion_base) : null,
+    detraccionMonto: row.detraccion_monto != null ? Number(row.detraccion_monto) : null,
+    detraccionNeto: row.detraccion_neto != null ? Number(row.detraccion_neto) : null,
+    detraccionEstadoDeposito: row.detraccion_estado_deposito || (row.sujeto_detraccion ? 'PENDIENTE' : 'NO_APLICA'),
+    detraccionConstanciaNro: row.detraccion_constancia_nro || null,
+    detraccionConstanciaFecha: row.detraccion_constancia_fecha || null,
+    detraccionMotivoExclusion: row.detraccion_motivo_exclusion || null
 });
 
 exports.listar = async (query, userContext, dependencies = {}) => {
@@ -133,6 +144,13 @@ exports.listar = async (query, userContext, dependencies = {}) => {
             LIMIT 1
         ) anulacion ON TRUE
         WHERE ${filtros.where}`;
+
+
+    const { tieneColumna } = require('./faregas-columna-compat.service');
+    const soportaDetraccion = await tieneColumna('fg_facturacion', 'sujeto_detraccion', queryable);
+    const columnasDetraccion = soportaDetraccion
+        ? 'f.sujeto_detraccion, f.detraccion_codigo, f.detraccion_descripcion, f.detraccion_porcentaje, f.detraccion_base, f.detraccion_monto, f.detraccion_neto, f.detraccion_estado_deposito, f.detraccion_constancia_nro, f.detraccion_constancia_fecha, f.detraccion_motivo_exclusion'
+        : 'false AS sujeto_detraccion, NULL::varchar AS detraccion_codigo, NULL::varchar AS detraccion_descripcion, NULL::numeric AS detraccion_porcentaje, NULL::numeric AS detraccion_base, NULL::numeric AS detraccion_monto, NULL::numeric AS detraccion_neto, \'NO_APLICA\'::varchar AS detraccion_estado_deposito, NULL::varchar AS detraccion_constancia_nro, NULL::date AS detraccion_constancia_fecha, NULL::varchar AS detraccion_motivo_exclusion';
 
     const [listado, totalResult, catalogos] = await Promise.all([
         queryable.query(`
@@ -197,6 +215,13 @@ exports.obtenerDetalle = async (facturacionId, userContext, dependencies = {}) =
     const obtenerPlantas = dependencies.getPlantasPorUsuario || authService.getPlantasPorUsuario;
     const plantas = await obtenerPlantas(userContext.username, userContext.perfil_id);
     const plantasPermitidas = plantas.map(planta => String(planta.key));
+
+    const { tieneColumna } = require('./faregas-columna-compat.service');
+    const soportaDetraccion = await tieneColumna('fg_facturacion', 'sujeto_detraccion', queryable);
+    const columnasDetraccion = soportaDetraccion
+        ? 'f.sujeto_detraccion, f.detraccion_codigo, f.detraccion_descripcion, f.detraccion_porcentaje, f.detraccion_base, f.detraccion_monto, f.detraccion_neto, f.detraccion_estado_deposito, f.detraccion_constancia_nro, f.detraccion_constancia_fecha, f.detraccion_motivo_exclusion'
+        : 'false AS sujeto_detraccion, NULL::varchar AS detraccion_codigo, NULL::varchar AS detraccion_descripcion, NULL::numeric AS detraccion_porcentaje, NULL::numeric AS detraccion_base, NULL::numeric AS detraccion_monto, NULL::numeric AS detraccion_neto, \'NO_APLICA\'::varchar AS detraccion_estado_deposito, NULL::varchar AS detraccion_constancia_nro, NULL::date AS detraccion_constancia_fecha, NULL::varchar AS detraccion_motivo_exclusion';
+
     const documento = await queryable.query(`
         SELECT f.id, f.certificado_id, f.operacion_id, f.planta_key, p.nombre AS planta_nombre,
                p.empresa_key, e.nombre AS empresa_nombre,
@@ -256,3 +281,46 @@ exports.obtenerDetalle = async (facturacionId, userContext, dependencies = {}) =
 };
 
 exports._construirFiltros = construirFiltros;
+
+
+exports.registrarConstanciaDetraccion = async (facturacionId, { constanciaNro, constanciaFecha }, userContext, dependencies = {}) => {
+    const queryable = dependencies.db || db;
+    if (!constanciaNro || !constanciaFecha) {
+        throw Object.assign(new Error('DATOS_CONSTANCIA_INCOMPLETOS'), { statusCode: 400 });
+    }
+    const { registrarAuditoria } = require('./faregas-auditoria.service');
+    
+    const docActual = await queryable.query('SELECT * FROM fg_facturacion WHERE id = $1', [facturacionId]);
+    if (docActual.rowCount === 0) {
+        throw Object.assign(new Error('FACTURACION_NOT_FOUND'), { statusCode: 404 });
+    }
+    
+    const actualizado = await queryable.query(`
+        UPDATE fg_facturacion
+        SET detraccion_estado_deposito = 'DEPOSITADO',
+            detraccion_constancia_nro = $1,
+            detraccion_constancia_fecha = $2::date,
+            usuario_modificacion = $3,
+            fecha_modificacion = CURRENT_TIMESTAMP
+        WHERE id = $4
+        RETURNING *
+    `, [constanciaNro.trim(), constanciaFecha, userContext.username, facturacionId]);
+    
+    try {
+        await registrarAuditoria({
+            usuario: userContext.username,
+            modulo: 'FACTURACION',
+            accion: 'REGISTRAR_CONSTANCIA_DETRACCION',
+            detalle: {
+                facturacionId,
+                nroComprobante: docActual.rows[0].nro_comprobante,
+                constanciaNro: constanciaNro.trim(),
+                constanciaFecha
+            }
+        });
+    } catch (e) {
+        console.warn('[AUDITORIA] No se pudo registrar auditoria de constancia detraccion:', e.message);
+    }
+    
+    return mapDocumento(actualizado.rows[0]);
+};

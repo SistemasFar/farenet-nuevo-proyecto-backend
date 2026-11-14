@@ -42,6 +42,51 @@ const evaluarDatosFacturacion = (data) => {
 
 exports.evaluarDatosFacturacion = evaluarDatosFacturacion;
 
+async function sincronizarDetraccionFacturacion(client, facturacionId, { tipoComprobante, importeTotal, moneda, items = [] }) {
+    try {
+        const { tieneColumna } = require('./faregas-columna-compat.service');
+        const soportaDetraccion = await tieneColumna('fg_facturacion', 'sujeto_detraccion', client);
+        if (!soportaDetraccion) return null;
+        const { evaluarDetraccion } = require('./faregas-detracciones.service');
+        const evaluacion = evaluarDetraccion({
+            tipoComprobante,
+            importeTotal,
+            moneda: moneda || 'PEN',
+            items,
+            esGratuito: Number(importeTotal) <= 0
+        });
+        await client.query(`
+            UPDATE fg_facturacion SET
+                sujeto_detraccion = $1,
+                detraccion_codigo = $2,
+                detraccion_descripcion = $3,
+                detraccion_porcentaje = $4,
+                detraccion_base = $5,
+                detraccion_monto = $6,
+                detraccion_neto = $7,
+                detraccion_estado_deposito = $8,
+                detraccion_motivo_exclusion = $9
+            WHERE id = $10
+        `, [
+            evaluacion.sujeto,
+            evaluacion.codigo,
+            evaluacion.descripcion,
+            evaluacion.porcentaje,
+            evaluacion.base,
+            evaluacion.monto,
+            evaluacion.neto,
+            evaluacion.estadoDeposito,
+            evaluacion.motivoExclusion,
+            facturacionId
+        ]);
+        return evaluacion;
+    } catch (e) {
+        console.warn('[DETRACCION SPOT] No se pudo sincronizar detraccion en fg_facturacion:', e.message);
+        return null;
+    }
+}
+
+
 const obtenerCertificado = async (client, id, userContext, bloquear = false) => {
     const result = await client.query(
         `SELECT c.*, t.clave AS tipo_clave,
@@ -297,6 +342,11 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
             ]
         );
 
+        await sincronizarDetraccionFacturacion(client, result.rows[0].id, {
+            tipoComprobante: normalizada.tipoComprobante,
+            importeTotal: orden.importe_total,
+            moneda: orden.moneda_key
+        });
         await client.query('DELETE FROM fg_facturacion_intento WHERE facturacion_id = $1', [result.rows[0].id]);
         await client.query('DELETE FROM fg_facturacion_cuota WHERE facturacion_id = $1', [result.rows[0].id]);
         for (const cuota of normalizada.cuotas) {
@@ -549,6 +599,23 @@ const reservarEmision = async (certificadoId, userContext, dependencies = {}) =>
             ]
         );
         facturacion = updated.rows[0];
+        const evalSpotCert = await sincronizarDetraccionFacturacion(client, facturacion.id, {
+            tipoComprobante: facturacion.tipo_comprobante,
+            importeTotal: facturacion.importe_total,
+            moneda: facturacion.moneda_key,
+            items: detallesNubefact
+        });
+        if (evalSpotCert) Object.assign(facturacion, {
+            sujeto_detraccion: evalSpotCert.sujeto,
+            detraccion_codigo: evalSpotCert.codigo,
+            detraccion_descripcion: evalSpotCert.descripcion,
+            detraccion_porcentaje: evalSpotCert.porcentaje,
+            detraccion_base: evalSpotCert.base,
+            detraccion_monto: evalSpotCert.monto,
+            detraccion_neto: evalSpotCert.neto,
+            detraccion_estado_deposito: evalSpotCert.estadoDeposito,
+            detraccion_motivo_exclusion: evalSpotCert.motivoExclusion
+        });
 
         const payload = construirPayloadNubefact({
             facturacion,
@@ -888,6 +955,11 @@ exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => 
             ]
         );
 
+        await sincronizarDetraccionFacturacion(client, result.rows[0].id, {
+            tipoComprobante: normalizada.tipoComprobante,
+            importeTotal: orden.importe_total,
+            moneda: orden.moneda_key
+        });
         await client.query('DELETE FROM fg_facturacion_intento WHERE facturacion_id = $1', [result.rows[0].id]);
         await client.query('DELETE FROM fg_facturacion_cuota WHERE facturacion_id = $1', [result.rows[0].id]);
         for (const cuota of normalizada.cuotas) {
@@ -1043,6 +1115,23 @@ const reservarEmisionOperacion = async (operacionId, userContext, opciones = {})
             ]
         );
         facturacion = updated.rows[0];
+        const evalSpotOp = await sincronizarDetraccionFacturacion(client, facturacion.id, {
+            tipoComprobante: facturacion.tipo_comprobante,
+            importeTotal: facturacion.importe_total,
+            moneda: facturacion.moneda_key,
+            items: detallesNubefact
+        });
+        if (evalSpotOp) Object.assign(facturacion, {
+            sujeto_detraccion: evalSpotOp.sujeto,
+            detraccion_codigo: evalSpotOp.codigo,
+            detraccion_descripcion: evalSpotOp.descripcion,
+            detraccion_porcentaje: evalSpotOp.porcentaje,
+            detraccion_base: evalSpotOp.base,
+            detraccion_monto: evalSpotOp.monto,
+            detraccion_neto: evalSpotOp.neto,
+            detraccion_estado_deposito: evalSpotOp.estadoDeposito,
+            detraccion_motivo_exclusion: evalSpotOp.motivoExclusion
+        });
 
         const cuotasResult = await client.query(
             'SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota',

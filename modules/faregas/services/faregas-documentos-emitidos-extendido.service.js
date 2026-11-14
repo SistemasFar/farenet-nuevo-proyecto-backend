@@ -20,6 +20,42 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
         ? "COALESCE(f.fecha_documento, (f.fecha_hora_emision AT TIME ZONE 'America/Lima')::date, f.fecha_creacion::date)"
         : "COALESCE(f.fecha_documento, f.fecha_creacion::date)";
 
+    const soportaDetraccionFact = await tieneColumna('fg_facturacion', 'sujeto_detraccion');
+    const soportaDetraccionCredito = await tieneColumna('fg_credito', 'sujeto_detraccion');
+    const soportaSpotServicio = await tieneColumna('fg_servicio', 'sujeto_spot');
+    const soportaSpotProducto = await tieneColumna('fg_producto_facturacion', 'sujeto_spot');
+
+    const columnasDetraccionFact = soportaDetraccionFact
+        ? `f.sujeto_detraccion, f.detraccion_codigo, f.detraccion_descripcion,
+           f.detraccion_porcentaje, f.detraccion_base, f.detraccion_monto,
+           f.detraccion_neto, f.detraccion_estado_deposito, f.detraccion_constancia_nro,
+           f.detraccion_constancia_fecha, f.detraccion_motivo_exclusion,`
+        : `false AS sujeto_detraccion, NULL::varchar AS detraccion_codigo, NULL::varchar AS detraccion_descripcion,
+           NULL::numeric AS detraccion_porcentaje, NULL::numeric AS detraccion_base, NULL::numeric AS detraccion_monto,
+           NULL::numeric AS detraccion_neto, 'NO_APLICA'::varchar AS detraccion_estado_deposito, NULL::varchar AS detraccion_constancia_nro,
+           NULL::date AS detraccion_constancia_fecha, NULL::varchar AS detraccion_motivo_exclusion,`;
+
+    const columnasDetraccionCredito = soportaDetraccionCredito
+        ? `cr.sujeto_detraccion, cr.detraccion_codigo, cr.detraccion_descripcion,
+           cr.detraccion_porcentaje, cr.detraccion_base, cr.detraccion_monto,
+           cr.detraccion_neto, cr.detraccion_estado_deposito, cr.detraccion_constancia_nro,
+           cr.detraccion_constancia_fecha, cr.detraccion_motivo_exclusion,`
+        : `false AS sujeto_detraccion, NULL::varchar AS detraccion_codigo, NULL::varchar AS detraccion_descripcion,
+           NULL::numeric AS detraccion_porcentaje, NULL::numeric AS detraccion_base, NULL::numeric AS detraccion_monto,
+           NULL::numeric AS detraccion_neto, 'NO_APLICA'::varchar AS detraccion_estado_deposito, NULL::varchar AS detraccion_constancia_nro,
+           NULL::date AS detraccion_constancia_fecha, NULL::varchar AS detraccion_motivo_exclusion,`;
+
+    const columnaSpotServicio = soportaSpotServicio
+        ? `COALESCE(s.sujeto_spot, pf.sujeto_spot, false) AS sujeto_spot, COALESCE(s.codigo_spot, pf.codigo_spot) AS codigo_spot,`
+        : `false AS sujeto_spot, NULL::varchar AS codigo_spot,`;
+    const groupBySpotServicio = soportaSpotServicio
+        ? `, s.sujeto_spot, pf.sujeto_spot, s.codigo_spot, pf.codigo_spot`
+        : ``;
+
+    const columnaSpotProducto = soportaSpotProducto
+        ? `COALESCE(pf.sujeto_spot, false) AS sujeto_spot, pf.codigo_spot AS codigo_spot,`
+        : `false AS sujeto_spot, NULL::varchar AS codigo_spot,`;
+
     const [cabeceras, lineasOperacion, lineasVenta] = await Promise.all([
         db.query(`
             WITH documentos AS (
@@ -37,6 +73,7 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                         f.nro_documento AS numero_documento, f.moneda_key AS moneda,
                        f.base_imponible, f.igv, f.importe_total, f.estado,
                         f.proveedor, f.aceptada_sunat, f.sunat_responsecode, f.sunat_description, f.sunat_soap_error,
+                       
                        f.respuesta_proveedor AS campos_dinamicos,
                        ''::text AS referencia_afectada
                 FROM fg_facturacion f
@@ -60,6 +97,7 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                         f.nombre_razon_social, f.tipo_documento_cliente, f.nro_documento, cr.moneda_key,
                        cr.base_imponible, cr.igv, cr.importe_total, cr.estado, cr.proveedor,
                        cr.aceptada_sunat, cr.sunat_responsecode, cr.sunat_description, cr.sunat_soap_error,
+                       
                        cr.respuesta_proveedor,
                        CONCAT('Afecta ', COALESCE(f.serie, ''), '-', COALESCE(f.numero::text, ''), ' (Facturación ', f.id, ')')
                 FROM fg_credito cr
@@ -239,7 +277,8 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                                     WHEN dup.id IS NOT NULL OR dup.numero_certificado_snapshot IS NOT NULL THEN 'COMPLEMENTARIO DUPLICADO'
                                     WHEN od.tipo_item = 'PRODUCTO' OR (od.certificado_id IS NULL AND od.servicio_id IS NULL) OR UPPER(COALESCE(cs.nombre, cp.nombre, pf.tipo_producto, '')) LIKE '%COMPLEMENTAR%' THEN 'COMPLEMENTARIO VENTA DE PRODUCTO'
                                     ELSE COALESCE(cs.nombre, cp.nombre, pf.tipo_producto)
-                                END AS nombre
+                                END AS nombre,
+                    
                             FROM fg_operacion_detalle od
                             LEFT JOIN fg_certificado_duplicado dup ON dup.operacion_id = od.operacion_id
                             LEFT JOIN fg_servicio s ON s.id = od.servicio_id
@@ -249,7 +288,8 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                             WHERE (d.operacion_id IS NOT NULL AND od.operacion_id = d.operacion_id)
                                OR (d.certificado_id IS NOT NULL AND od.certificado_id = d.certificado_id)
                             UNION
-                            SELECT 'COMPLEMENTARIO VENTA DE PRODUCTO' AS nombre
+                            SELECT 'COMPLEMENTARIO VENTA DE PRODUCTO' AS nombre,
+                   
                             FROM fg_venta_detalle vd
                             WHERE vd.venta_id = d.venta_id
                         ) clase WHERE clase.nombre IS NOT NULL) AS tipos_producto,

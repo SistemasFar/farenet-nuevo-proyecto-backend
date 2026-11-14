@@ -463,8 +463,26 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             WHERE certificado_id=$1 AND estado='RESERVADO'`,
         [certificadoId, orden.id, userContext.username]);
 
+        // Evaluación de SPOT Detracciones para cobro ordinario en caja
+        let tipoComprobante = String(data.tipoComprobante || '').toUpperCase().trim();
+        if (!tipoComprobante) {
+            const rFac = await client.query('SELECT tipo_comprobante FROM fg_facturacion WHERE certificado_id = $1 LIMIT 1', [certificadoId]);
+            if (rFac.rowCount > 0 && rFac.rows[0].tipo_comprobante) {
+                tipoComprobante = String(rFac.rows[0].tipo_comprobante).toUpperCase().trim();
+            }
+        }
+        const { evaluarDetraccion } = require('./faregas-detracciones.service');
+        const evaluacionSpot = evaluarDetraccion({
+            tipoComprobante,
+            importeTotal: Number(orden.importe_total),
+            moneda: 'PEN',
+            items: [],
+            esGratuito: esCortesia
+        });
+        const totalExigibleCaja = esCortesia ? 0 : (evaluacionSpot.sujeto ? evaluacionSpot.neto : Number(orden.importe_total));
+
         const totalPagado = redondear(pagos.reduce((total, pago) => total + pago.importe, 0));
-        if (totalPagado - Number(orden.importe_total) > 0.009) throw new Error('PAGO_EXCEDE_TOTAL');
+        if (totalPagado - totalExigibleCaja > 0.009) throw new Error('PAGO_EXCEDE_TOTAL');
 
         const digitosHistoricos = await obtenerDigitosHistoricos(client, orden.id);
         await client.query('DELETE FROM fg_pago WHERE orden_pago_id = $1', [orden.id]);
@@ -498,7 +516,7 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             ]);
         }
 
-        const saldo = esCortesia ? 0 : redondear(Number(orden.importe_total) - totalPagado);
+        const saldo = esCortesia ? 0 : redondear(Math.max(0, totalExigibleCaja - totalPagado));
         const estado = esCortesia || saldo === 0 ? 'PAGADO' : 'PENDIENTE';
         const ordenActualizada = await client.query(`
             UPDATE fg_orden_pago

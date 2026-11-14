@@ -1,6 +1,7 @@
 const config = require('../../../config/integrations.config');
 const { construirInformacionAdicional } = require('./nubefact-faregas-informacion-adicional');
 const { esGratuidadTallerAutorizada, esFlujoTaller } = require('../services/faregas-gratuidad-taller.policy');
+const { evaluarDetraccion } = require('../services/faregas-detracciones.service');
 
 const dosDecimales = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
@@ -254,6 +255,15 @@ const construirPayloadNubefact = ({
         gratuidadAutorizada
     });
 
+    const evaluacionDetraccion = evaluarDetraccion({
+        tipoComprobante: facturacion.tipo_comprobante,
+        importeTotal: facturacion.importe_total,
+        moneda: facturacion.moneda_key,
+        items: detalles,
+        servicio: certificadoData?.servicio || resumenTributario?.servicio,
+        esGratuito: gratuidadAutorizada || totalGratuita > 0
+    });
+
     return {
         operacion: 'generar_comprobante',
         tipo_de_comprobante: tipoComprobante,
@@ -285,7 +295,13 @@ const construirPayloadNubefact = ({
         percepcion_base_imponible: 0,
         total_percepcion: 0,
         total_incluido_percepcion: 0,
-        detraccion: obtenerIndicadorDetraccion(),
+        detraccion: evaluacionDetraccion.sujeto,
+        ...(evaluacionDetraccion.sujeto ? {
+            detraccion_tipo: evaluacionDetraccion.nubefactTipo || 37,
+            detraccion_porcentaje: evaluacionDetraccion.porcentaje,
+            detraccion_total: evaluacionDetraccion.monto,
+            medio_de_pago_detraccion: '001'
+        } : {}),
         observaciones: informacionAdicional.texto || (certificadoData.id
             ? `EXPEDIENTE FAREGAS ${certificadoData.id}`
             : `OPERACION FAREGAS ${facturacion.operacion_id || facturacion.id}`),
