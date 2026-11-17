@@ -46,6 +46,45 @@ const idCategoria = (value) => {
     return id;
 };
 
+const normalizarSpot = (body) => {
+    const keys = ['sujeto_detraccion', 'detraccion_codigo', 'detraccion_porcentaje'];
+    const configurado = keys.some((key) => Object.prototype.hasOwnProperty.call(body, key));
+    const sujeto = body.sujeto_detraccion == null
+        ? null
+        : booleano(body.sujeto_detraccion, 'Sujeto a detracción', null);
+    const codigo = textoNullable(body.detraccion_codigo);
+    const porcentaje = numeroNullable(body.detraccion_porcentaje, 'Porcentaje de detracción');
+    const tasas = {
+        '002': 4, '004': 10, '005': 10, '006': 15, '007': 10, '009': 4,
+        '011': 10, '012': 4, '015': 4, '017': 10,
+        '021': 1.5, '023': 15
+    };
+
+    if (sujeto === true) {
+        if (!codigo || tasas[codigo] === undefined || porcentaje === null) {
+            const error = new Error('La clasificación SPOT del producto está incompleta: seleccione un código válido y su tasa.');
+            error.status = 400;
+            throw error;
+        }
+        if (Number(porcentaje) !== tasas[codigo]) {
+            const error = new Error(`La tasa SPOT para el código ${codigo} debe ser ${tasas[codigo]}%.`);
+            error.status = 400;
+            throw error;
+        }
+    } else if (codigo !== null || porcentaje !== null) {
+        const error = new Error('Un producto pendiente o no sujeto no puede tener código ni tasa SPOT.');
+        error.status = 400;
+        throw error;
+    }
+
+    return {
+        sujeto_detraccion: sujeto,
+        detraccion_codigo: sujeto === true ? codigo : null,
+        detraccion_porcentaje: sujeto === true ? porcentaje : null,
+        spot_configurado: configurado
+    };
+};
+
 const normalizar = (body, { crear = false } = {}) => {
     const codigoSku = textoNullable(body.codigo_sku);
     const descripcion = textoNullable(body.descripcion);
@@ -108,7 +147,8 @@ const normalizar = (body, { crear = false } = {}) => {
         activo: booleano(body.activo, 'Activo', crear ? true : undefined),
         requiere_chip: requiereChip,
         producto_chip_id: productoChipId,
-        precio_chip: precioChip
+        precio_chip: precioChip,
+        ...normalizarSpot(body)
     };
 };
 
@@ -142,6 +182,8 @@ const responderError = (res, error, fallback) => {
         ...(error.detalles ? { detalles: error.detalles } : {})
     });
 };
+
+exports._private = { normalizar };
 
 exports.listar = async (req, res) => {
     try {

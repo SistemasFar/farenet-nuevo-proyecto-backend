@@ -61,6 +61,11 @@ const construirCatalogo = (sede, rows) => {
             requiere_vehiculo: Boolean(row.requiere_vehiculo),
             tipo_certificado_clave: row.tipo_certificado_clave,
             modalidad: row.modalidad,
+            spot: {
+                sujetoDetraccion: row.spot_sujeto === null ? null : Boolean(row.spot_sujeto),
+                codigo: row.spot_codigo || null,
+                porcentaje: row.spot_porcentaje === null ? null : Number(row.spot_porcentaje)
+            },
             tarifa: {
                 id: Number(row.tarifa_id),
                 codigo: row.tarifa_codigo,
@@ -89,6 +94,12 @@ const construirCatalogo = (sede, rows) => {
 };
 
 exports.obtenerCatalogoPorPlanta = async (plantaKey, queryable = db) => {
+    const { tieneColumna } = require('./faregas-columna-compat.service');
+    const spotConfigDisponible = (await Promise.all([
+        tieneColumna('fg_servicio', 'sujeto_detraccion', queryable),
+        tieneColumna('fg_servicio', 'detraccion_codigo', queryable),
+        tieneColumna('fg_servicio', 'detraccion_porcentaje', queryable)
+    ])).every(Boolean);
     const sedeResult = await queryable.query(
         'SELECT key, nombre FROM fg_planta WHERE key = $1 AND activo = TRUE',
         [plantaKey]
@@ -109,6 +120,9 @@ exports.obtenerCatalogoPorPlanta = async (plantaKey, queryable = db) => {
             s.requiere_vehiculo,
             s.tipo_certificado_clave,
             s.modalidad,
+            ${spotConfigDisponible ? 's.sujeto_detraccion' : 'NULL::boolean'} AS spot_sujeto,
+            ${spotConfigDisponible ? 's.detraccion_codigo' : 'NULL::varchar'} AS spot_codigo,
+            ${spotConfigDisponible ? 's.detraccion_porcentaje' : 'NULL::numeric'} AS spot_porcentaje,
             t.id AS tarifa_id,
             t.codigo AS tarifa_codigo,
             t.precio AS precio_tarifa,
@@ -163,6 +177,12 @@ exports.obtenerCatalogoPorPlanta = async (plantaKey, queryable = db) => {
 };
 
 exports.obtenerTarifaOperativaPorCodigo = async (plantaKey, tarifaCodigo, queryable = db) => {
+    const { tieneColumna } = require('./faregas-columna-compat.service');
+    const spotConfigDisponible = (await Promise.all([
+        tieneColumna('fg_servicio', 'sujeto_detraccion', queryable),
+        tieneColumna('fg_servicio', 'detraccion_codigo', queryable),
+        tieneColumna('fg_servicio', 'detraccion_porcentaje', queryable)
+    ])).every(Boolean);
     const result = await queryable.query(`
         SELECT
             t.id,
@@ -177,6 +197,9 @@ exports.obtenerTarifaOperativaPorCodigo = async (plantaKey, tarifaCodigo, querya
             s.tipo_flujo,
             s.tipo_certificado_clave,
             s.modalidad,
+            ${spotConfigDisponible ? 's.sujeto_detraccion' : 'NULL::boolean'} AS spot_sujeto,
+            ${spotConfigDisponible ? 's.detraccion_codigo' : 'NULL::varchar'} AS spot_codigo,
+            ${spotConfigDisponible ? 's.detraccion_porcentaje' : 'NULL::numeric'} AS spot_porcentaje,
             s.requiere_certificado,
             s.requiere_vehiculo,
             c.codigo AS categoria_codigo,

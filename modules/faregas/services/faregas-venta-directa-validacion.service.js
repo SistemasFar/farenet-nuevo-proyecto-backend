@@ -23,6 +23,7 @@ const construirItem = (numeroChip) => ({
     plantaKey: null,
     plantaNombre: null,
     productoInventariableId: null,
+    productoFacturacionId: null,
     productoCodigo: null,
     productoNombre: null,
     precio: null,
@@ -46,6 +47,7 @@ const construirItemEncontrado = (row) => {
         plantaKey: String(row.planta_actual_key || '').trim() || null,
         plantaNombre: row.planta_nombre || null,
         productoInventariableId: numeroOpcional(row.producto_inventariable_id),
+        productoFacturacionId: numeroOpcional(row.producto_facturacion_id),
         productoCodigo: row.producto_codigo || null,
         productoNombre: row.producto_nombre || null,
         precio: precioConfigurado ? redondear(precio) : null,
@@ -61,6 +63,9 @@ const construirItemEncontrado = (row) => {
             tipo_afectacion_igv: row.tipo_afectacion_igv,
             codigo_clasificacion_sunat: row.codigo_clasificacion_sunat
         }),
+        spotSujeto: row.sujeto_detraccion ?? null,
+        spotCodigo: row.detraccion_codigo || null,
+        spotPorcentaje: row.detraccion_porcentaje == null ? null : Number(row.detraccion_porcentaje),
         validoParaVenta: false,
         codigo: null,
         motivo: null
@@ -180,6 +185,7 @@ const validarVentaDirecta = async (payload, userContext, queryable = db) => {
                 plantaKey,
                 plantaNombre: planta.nombre || 'SURCO',
                 productoInventariableId: Number(config.id),
+                productoFacturacionId: config.producto_facturacion_id == null ? null : Number(config.producto_facturacion_id),
                 productoCodigo: config.codigo,
                 productoNombre: config.nombre,
                 cantidad,
@@ -189,6 +195,9 @@ const validarVentaDirecta = async (payload, userContext, queryable = db) => {
                 stockPermitido: true,
                 ventaHabilitada: true,
                 productoFiscalValido: true,
+                spotSujeto: config.sujeto_detraccion ?? null,
+                spotCodigo: config.detraccion_codigo || null,
+                spotPorcentaje: config.detraccion_porcentaje == null ? null : Number(config.detraccion_porcentaje),
                 validoParaVenta,
                 codigo: validoParaVenta ? null : 'STOCK_INSUFICIENTE',
                 motivo: validoParaVenta ? null : 'Stock insuficiente.'
@@ -231,6 +240,7 @@ const validarVentaDirecta = async (payload, userContext, queryable = db) => {
                pf.precio_referencia AS precio_venta_fiscal,
                pf.codigo_sku, pf.descripcion, pf.unidad,
                pf.tipo_afectacion_igv, pf.codigo_clasificacion_sunat,
+               pf.sujeto_detraccion, pf.detraccion_codigo, pf.detraccion_porcentaje,
                pf.activo AS fiscal_activo, pf.es_para_venta
         FROM fg_chip c
         JOIN fg_planta p

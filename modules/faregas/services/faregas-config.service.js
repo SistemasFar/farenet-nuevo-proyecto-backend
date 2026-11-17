@@ -310,7 +310,35 @@ exports.cambiarEstadoSede = async (key, activo, username, ip_direccion) => {
 
 // SERVICIOS
 
+const tasasSpotPorCodigo = { '020': 12, '022': 12, '025': 10, '037': 12 };
+
+const obtenerSoporteSpotServicio = async (queryable = db) => {
+    const { tieneColumna } = require('./faregas-columna-compat.service');
+    return (await Promise.all([
+        tieneColumna('fg_servicio', 'sujeto_detraccion', queryable),
+        tieneColumna('fg_servicio', 'detraccion_codigo', queryable),
+        tieneColumna('fg_servicio', 'detraccion_porcentaje', queryable)
+    ])).every(Boolean);
+};
+
+const normalizarClasificacionSpotServicio = (servicio) => {
+    const sujeto = servicio.sujeto_detraccion == null ? null : Boolean(servicio.sujeto_detraccion);
+    const codigo = sujeto === true ? String(servicio.detraccion_codigo || '').trim() : null;
+    const porcentaje = sujeto === true ? Number(servicio.detraccion_porcentaje) : null;
+    if (sujeto === true && (!codigo || !Number.isFinite(porcentaje) || porcentaje <= 0)) {
+        throw new Error('CLASIFICACION_SPOT_INCOMPLETA');
+    }
+    if (sujeto === true && !tasasSpotPorCodigo[codigo]) {
+        throw new Error('CLASIFICACION_SPOT_NO_RECONOCIDA');
+    }
+    if (sujeto === true && tasasSpotPorCodigo[codigo] !== porcentaje) {
+        throw new Error('CLASIFICACION_SPOT_INCONSISTENTE');
+    }
+    return { sujeto, codigo, porcentaje };
+};
+
 exports.getServicios = async () => {
+    const soportaSpot = await obtenerSoporteSpotServicio(db);
     const result = await db.query(`
         SELECT 
             s.id, s.codigo, s.nombre, s.familia, s.categoria_id,
@@ -318,7 +346,10 @@ exports.getServicios = async () => {
             s.tipo_flujo, s.tipo_certificado_clave, s.modalidad, s.requiere_certificado,
             s.formato_id, f.codigo AS formato_codigo, f.nombre AS formato_nombre,
             f.motor AS formato_motor,
-            s.requiere_vehiculo, s.activo, s.orden
+            s.requiere_vehiculo, s.activo, s.orden,
+            ${soportaSpot ? 's.sujeto_detraccion' : 'NULL::boolean'} AS sujeto_detraccion,
+            ${soportaSpot ? 's.detraccion_codigo' : 'NULL::varchar'} AS detraccion_codigo,
+            ${soportaSpot ? 's.detraccion_porcentaje' : 'NULL::numeric'} AS detraccion_porcentaje
         FROM fg_servicio s
         JOIN fg_categoria_servicio c ON c.id = s.categoria_id
         LEFT JOIN fg_certificado_formato f ON f.id = s.formato_id
@@ -345,6 +376,9 @@ exports.crearServicio = async (servicio, username, ip_direccion) => {
         if (check.rows.length > 0) throw new Error('Ya existe un servicio con ese código.');
         const categoria = await obtenerCategoriaActiva(client, servicio.categoria_id);
         await validarConfiguracionServicio(client, servicio);
+        const spot = normalizarClasificacionSpotServicio(servicio);
+        const soportaSpot = await obtenerSoporteSpotServicio(client);
+        if (!soportaSpot && spot.sujeto !== null) throw new Error('MIGRACION_DETRACCIONES_REQUERIDA');
 
         let familia = categoria.codigo;
         if (servicio.tipo_certificado_clave === 'GNV_ANUAL') familia = 'GNV';
@@ -355,13 +389,15 @@ exports.crearServicio = async (servicio, username, ip_direccion) => {
             INSERT INTO fg_servicio (
                 codigo, nombre, familia, categoria_id, tipo_flujo, tipo_certificado_clave,
                 modalidad, requiere_certificado, formato_id, requiere_vehiculo, activo, orden
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                ${soportaSpot ? ', sujeto_detraccion, detraccion_codigo, detraccion_porcentaje' : ''}
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12${soportaSpot ? ', $13, $14, $15' : ''})
             RETURNING id, formato_id
         `, [
             servicio.codigo, servicio.nombre, familia, categoria.id,
             servicio.tipo_flujo, servicio.tipo_certificado_clave, servicio.modalidad,
             servicio.requiere_certificado, servicio.formato_id ?? null,
-            servicio.requiere_vehiculo, true, servicio.orden
+            servicio.requiere_vehiculo, true, servicio.orden,
+            ...(soportaSpot ? [spot.sujeto, spot.codigo, spot.porcentaje] : [])
         ]);
 
         await this.registrarAuditoria(client, {
@@ -394,6 +430,9 @@ exports.editarServicio = async (id, servicio, username, ip_direccion) => {
         const anterior = check.rows[0];
         const categoria = await obtenerCategoriaActiva(client, servicio.categoria_id);
         await validarConfiguracionServicio(client, servicio);
+        const spot = normalizarClasificacionSpotServicio(servicio);
+        const soportaSpot = await obtenerSoporteSpotServicio(client);
+        if (!soportaSpot && spot.sujeto !== null) throw new Error('MIGRACION_DETRACCIONES_REQUERIDA');
 
         let familia = categoria.codigo;
         if (servicio.tipo_certificado_clave === 'GNV_ANUAL') familia = 'GNV';
@@ -429,12 +468,14 @@ exports.editarServicio = async (id, servicio, username, ip_direccion) => {
                 formato_id = $8,
                 requiere_vehiculo = $9,
                 orden = $10
-            WHERE id = $11
+                ${soportaSpot ? ', sujeto_detraccion = $11, detraccion_codigo = $12, detraccion_porcentaje = $13' : ''}
+            WHERE id = $${soportaSpot ? '14' : '11'}
             RETURNING id, formato_id
         `, [
             servicio.nombre, familia, categoria.id, servicio.tipo_flujo, servicio.tipo_certificado_clave,
             servicio.modalidad, servicio.requiere_certificado, formatoFinal,
-            servicio.requiere_vehiculo, servicio.orden, id
+            servicio.requiere_vehiculo, servicio.orden,
+            ...(soportaSpot ? [spot.sujeto, spot.codigo, spot.porcentaje, id] : [id])
         ]);
 
         await this.registrarAuditoria(client, {

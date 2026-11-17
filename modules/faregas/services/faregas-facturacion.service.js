@@ -3,6 +3,10 @@ const nubefactService = require('../../../services/integrations/nubefact.service
 const nubefactConfigService = require('./faregas-nubefact-config.service');
 const resumenTributarioService = require('./faregas-resumen-tributario.service');
 const correlativosNubefactService = require('./faregas-correlativos-nubefact.service');
+const {
+    validarCorrelativoDisponible,
+    _private: { esNoEncontrado: esDocumentoNoEncontradoNubefact }
+} = require('./faregas-nubefact-correlativo-guard.service');
 const readinessService = require('./faregas-nubefact-readiness.service');
 const facturacionSnapshotService = require('./faregas-facturacion-snapshot.service');
 const integrationsConfig = require('../../../config/integrations.config');
@@ -42,48 +46,79 @@ const evaluarDatosFacturacion = (data) => {
 
 exports.evaluarDatosFacturacion = evaluarDatosFacturacion;
 
-async function sincronizarDetraccionFacturacion(client, facturacionId, { tipoComprobante, importeTotal, moneda, items = [] }) {
-    try {
-        const { tieneColumna } = require('./faregas-columna-compat.service');
-        const soportaDetraccion = await tieneColumna('fg_facturacion', 'sujeto_detraccion', client);
-        if (!soportaDetraccion) return null;
-        const { evaluarDetraccion } = require('./faregas-detracciones.service');
-        const evaluacion = evaluarDetraccion({
-            tipoComprobante,
-            importeTotal,
-            moneda: moneda || 'PEN',
-            items,
-            esGratuito: Number(importeTotal) <= 0
-        });
-        await client.query(`
-            UPDATE fg_facturacion SET
-                sujeto_detraccion = $1,
-                detraccion_codigo = $2,
-                detraccion_descripcion = $3,
-                detraccion_porcentaje = $4,
-                detraccion_base = $5,
-                detraccion_monto = $6,
-                detraccion_neto = $7,
-                detraccion_estado_deposito = $8,
-                detraccion_motivo_exclusion = $9
-            WHERE id = $10
-        `, [
-            evaluacion.sujeto,
-            evaluacion.codigo,
-            evaluacion.descripcion,
-            evaluacion.porcentaje,
-            evaluacion.base,
-            evaluacion.monto,
-            evaluacion.neto,
-            evaluacion.estadoDeposito,
-            evaluacion.motivoExclusion,
-            facturacionId
-        ]);
-        return evaluacion;
-    } catch (e) {
-        console.warn('[DETRACCION SPOT] No se pudo sincronizar detraccion en fg_facturacion:', e.message);
-        return null;
+async function sincronizarDetraccionFacturacion(client, facturacionId, { tipoComprobante, importeTotal, moneda, items = [], operacionId = null }) {
+    const { tieneColumna } = require('./faregas-columna-compat.service');
+    const soportaDetraccion = await tieneColumna('fg_facturacion', 'sujeto_detraccion', client);
+    const soportaClasificacionServicio = (await Promise.all([
+        tieneColumna('fg_servicio', 'sujeto_detraccion', client),
+        tieneColumna('fg_servicio', 'detraccion_codigo', client),
+        tieneColumna('fg_servicio', 'detraccion_porcentaje', client)
+    ])).every(Boolean);
+
+    let itemsEvaluacion = items;
+    let servicio = null;
+    if (operacionId) {
+        const soportaClasificacionProducto = (await Promise.all([
+            tieneColumna('fg_producto_facturacion', 'sujeto_detraccion', client),
+            tieneColumna('fg_producto_facturacion', 'detraccion_codigo', client),
+            tieneColumna('fg_producto_facturacion', 'detraccion_porcentaje', client)
+        ])).every(Boolean);
+        const productos = await client.query(`
+            SELECT od.tipo_item, pf.sujeto_detraccion, pf.detraccion_codigo, pf.detraccion_porcentaje
+            FROM fg_operacion_detalle od
+            LEFT JOIN fg_producto_facturacion pf ON pf.id = od.producto_facturacion_id
+            WHERE od.operacion_id = $1
+            ORDER BY od.orden, od.id
+        `, [operacionId]);
+        if (productos.rowCount > 0 && productos.rows.every(row => String(row.tipo_item).toUpperCase() === 'PRODUCTO')) {
+            itemsEvaluacion = productos.rows.map(row => ({
+                tipo_item: 'PRODUCTO',
+                productoSpot: soportaClasificacionProducto ? row : {
+                    sujeto_detraccion: null, detraccion_codigo: null, detraccion_porcentaje: null
+                }
+            }));
+        } else {
+            servicio = null;
+        }
+    } else {
+        const servicioResult = soportaClasificacionServicio ? await client.query(`
+        SELECT s.sujeto_detraccion, s.detraccion_codigo, s.detraccion_porcentaje,
+               s.tipo_flujo, cs.codigo AS familia
+        FROM fg_facturacion f
+        LEFT JOIN fg_certificado c ON c.id = f.certificado_id
+        LEFT JOIN fg_operacion_detalle od ON od.operacion_id = f.operacion_id
+        LEFT JOIN fg_certificado c_op ON c_op.id = od.certificado_id
+        JOIN fg_tarifa t ON t.planta_key = COALESCE(c.planta_key, c_op.planta_key)
+                         AND t.codigo = COALESCE(c.tarifa_codigo, c_op.tarifa_codigo)
+        JOIN fg_servicio s ON s.id = t.servicio_id
+        LEFT JOIN fg_categoria_servicio cs ON cs.id = s.categoria_id
+        WHERE f.id = $1 LIMIT 1
+        `, [facturacionId]) : { rows: [] };
+        servicio = servicioResult.rows[0] || null;
     }
+    const { evaluarDetraccion } = require('./faregas-detracciones.service');
+    const evaluacion = evaluarDetraccion({
+        tipoComprobante, importeTotal, moneda: moneda || 'PEN', items: itemsEvaluacion, servicio,
+        esGratuito: Number(importeTotal) <= 0
+    });
+    if (evaluacion.requiereRevision) throw errorNegocio(evaluacion.motivoExclusion, 409,
+        operacionId
+            ? 'La clasificación SPOT del producto vendido no está verificada o no corresponde a una categoría de bienes compatible. Revise Configuración → Productos antes de emitir.'
+            : 'La clasificación SPOT del servicio no está verificada; complete la configuración tributaria antes de emitir.');
+    if (!soportaDetraccion && evaluacion.sujeto) throw errorNegocio('MIGRACION_DETRACCIONES_REQUERIDA', 503,
+        'La migración FAREGAS 004 no está aplicada: la factura sujeta a SPOT no se puede guardar ni emitir hasta habilitar su persistencia.');
+    if (!soportaDetraccion) return evaluacion;
+    await client.query(`
+        UPDATE fg_facturacion SET
+            sujeto_detraccion = $1, detraccion_codigo = $2, detraccion_descripcion = $3,
+            detraccion_porcentaje = $4, detraccion_base = $5, detraccion_monto = $6,
+            detraccion_neto = $7, detraccion_estado_deposito = $8,
+            detraccion_motivo_exclusion = $9
+        WHERE id = $10
+    `, [evaluacion.sujeto, evaluacion.codigo, evaluacion.descripcion, evaluacion.porcentaje,
+        evaluacion.base, evaluacion.monto, evaluacion.neto, evaluacion.estadoDeposito,
+        evaluacion.motivoExclusion, facturacionId]);
+    return evaluacion;
 }
 
 
@@ -505,20 +540,38 @@ const reservarEmision = async (certificadoId, userContext, dependencies = {}) =>
             });
         }
 
+        let correlativoVerificadoEnNubeFact = false;
         if (!facturacion.serie || facturacion.numero === null) {
             if (!integrationsConfig.nubefact.correlativosV2Enabled) {
                 throw errorNegocio('MOTOR_SERIES_V2_DESHABILITADO', 503, 'El motor de series legacy fue retirado. Habilite V2.');
             }
-            const reservaCorrelativo = await correlativosNubefactService.reservarSiguiente({
+            const argumentosCorrelativo = {
                 plantaKey: certificado.planta_key,
                 empresaKey: configuracionEmisor.empresaKey,
                 tipoComprobante: facturacion.tipo_comprobante,
                 environment: configuracionEmisor.environment
-            }, client);
+            };
+            const reservaCorrelativo = ['FACTURA', 'BOLETA'].includes(facturacion.tipo_comprobante)
+                ? await correlativosNubefactService.reservarSiguienteDisponible({
+                    ...argumentosCorrelativo,
+                    provider: nubefact,
+                    credentials: configuracionEmisor.credentials
+                }, client)
+                : await correlativosNubefactService.reservarSiguiente(argumentosCorrelativo, client);
             facturacion.serie = reservaCorrelativo.serie;
             facturacion.numero = reservaCorrelativo.numero;
             facturacion.nro_comprobante = reservaCorrelativo.nroComprobante;
             facturacion.serie_comprobante_id = reservaCorrelativo.id;
+            correlativoVerificadoEnNubeFact = reservaCorrelativo.disponibleEnNubefact === true;
+        }
+
+        if (!correlativoVerificadoEnNubeFact) {
+            await validarCorrelativoDisponible(nubefact, {
+                tipoComprobante: facturacion.tipo_comprobante,
+                serie: facturacion.serie,
+                numero: facturacion.numero,
+                credentials: configuracionEmisor.credentials
+            });
         }
 
         const codigoUnico = facturacion.codigo_unico || crearCodigoUnico(facturacion.id);
@@ -676,8 +729,15 @@ const consultarEmisionIncierta = async (proveedor, reserva, resultadoEmision) =>
         numero: reserva.facturacion.numero
     }, { credentials: reserva.credentials });
 
+    const data = consulta?.data || {};
+    const consultaConfirmaDocumento = ['ACCEPTED', 'PENDING_SUNAT'].includes(consulta?.status)
+        || (consulta?.status === 'REJECTED'
+            && !esDocumentoNoEncontradoNubefact(consulta)
+            && Boolean(data.serie || data.numero || data.sunat_responsecode
+                || data.codigo_hash || data.enlace_del_pdf || data.enlace_pdf));
+
     return {
-        resultado: ['ACCEPTED', 'PENDING_SUNAT'].includes(consulta.status) ? consulta : resultadoEmision,
+        resultado: consultaConfirmaDocumento ? consulta : resultadoEmision,
         consulta
     };
 };
@@ -958,7 +1018,8 @@ exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => 
         await sincronizarDetraccionFacturacion(client, result.rows[0].id, {
             tipoComprobante: normalizada.tipoComprobante,
             importeTotal: orden.importe_total,
-            moneda: orden.moneda_key
+            moneda: orden.moneda_key,
+            operacionId
         });
         await client.query('DELETE FROM fg_facturacion_intento WHERE facturacion_id = $1', [result.rows[0].id]);
         await client.query('DELETE FROM fg_facturacion_cuota WHERE facturacion_id = $1', [result.rows[0].id]);
@@ -1009,8 +1070,9 @@ const validarCodigosSunatOperacion = (detalles = []) => {
     return errores;
 };
 
-const reservarEmisionOperacion = async (operacionId, userContext, opciones = {}) => {
-    if (!nubefactService.obtenerEstadoConfiguracion().enabled) throw errorNegocio('NUBEFACT_DESHABILITADO', 503);
+const reservarEmisionOperacion = async (operacionId, userContext, opciones = {}, dependencies = {}) => {
+    const proveedor = dependencies.nubefactService || nubefactService;
+    if (!proveedor.obtenerEstadoConfiguracion().enabled) throw errorNegocio('NUBEFACT_DESHABILITADO', 503);
     const client = await db.connect();
     try {
         await client.query('BEGIN');
@@ -1076,20 +1138,38 @@ const reservarEmisionOperacion = async (operacionId, userContext, opciones = {})
                 maximo: integrationsConfig.nubefact.maxAttempts
             });
         }
+        let correlativoVerificadoEnNubeFact = false;
         if (!facturacion.serie || facturacion.numero === null) {
             if (!integrationsConfig.nubefact.correlativosV2Enabled) {
                 throw errorNegocio('MOTOR_SERIES_V2_DESHABILITADO', 503, 'El motor de series legacy fue retirado. Habilite V2.');
             }
-            const reservaCorrelativo = await correlativosNubefactService.reservarSiguiente({
+            const argumentosCorrelativo = {
                 plantaKey: op.planta_key,
                 empresaKey: configuracionEmisor.empresaKey,
                 tipoComprobante: facturacion.tipo_comprobante,
                 environment: configuracionEmisor.environment
-            }, client);
+            };
+            const reservaCorrelativo = ['FACTURA', 'BOLETA'].includes(facturacion.tipo_comprobante)
+                ? await correlativosNubefactService.reservarSiguienteDisponible({
+                    ...argumentosCorrelativo,
+                    provider: proveedor,
+                    credentials: configuracionEmisor.credentials
+                }, client)
+                : await correlativosNubefactService.reservarSiguiente(argumentosCorrelativo, client);
             facturacion.serie = reservaCorrelativo.serie;
             facturacion.numero = reservaCorrelativo.numero;
             facturacion.nro_comprobante = reservaCorrelativo.nroComprobante;
             facturacion.serie_comprobante_id = reservaCorrelativo.id;
+            correlativoVerificadoEnNubeFact = reservaCorrelativo.disponibleEnNubefact === true;
+        }
+
+        if (!correlativoVerificadoEnNubeFact) {
+            await validarCorrelativoDisponible(proveedor, {
+                tipoComprobante: facturacion.tipo_comprobante,
+                serie: facturacion.serie,
+                numero: facturacion.numero,
+                credentials: configuracionEmisor.credentials
+            });
         }
 
         const codigoUnico = facturacion.codigo_unico || crearCodigoUnico(facturacion.id);
@@ -1119,7 +1199,8 @@ const reservarEmisionOperacion = async (operacionId, userContext, opciones = {})
             tipoComprobante: facturacion.tipo_comprobante,
             importeTotal: facturacion.importe_total,
             moneda: facturacion.moneda_key,
-            items: detallesNubefact
+            items: detallesNubefact,
+            operacionId
         });
         if (evalSpotOp) Object.assign(facturacion, {
             sujeto_detraccion: evalSpotOp.sujeto,
@@ -1187,14 +1268,14 @@ const ejecutarEmisionOperacion = async (reserva, userContext, dependencies = {})
 };
 
 exports.emitirFacturacionOperacion = async (operacionId, userContext, dependencies = {}) => {
-    const reserva = await reservarEmisionOperacion(operacionId, userContext);
+    const reserva = await reservarEmisionOperacion(operacionId, userContext, {}, dependencies);
     return ejecutarEmisionOperacion(reserva, userContext, dependencies);
 };
 
 exports.reintentarFacturacionOperacion = async (operacionId, userContext, dependencies = {}) => {
     const reserva = await reservarEmisionOperacion(operacionId, userContext, {
         reintentarRechazada: true
-    });
+    }, dependencies);
     return ejecutarEmisionOperacion(reserva, userContext, dependencies);
 };
 
@@ -1203,7 +1284,8 @@ exports._private = {
     errorNegocio,
     esPosibleDuplicadoNubefact,
     consultarEmisionIncierta,
-    validarCodigosSunatOperacion
+    validarCodigosSunatOperacion,
+    sincronizarDetraccionFacturacion
 };
 
 

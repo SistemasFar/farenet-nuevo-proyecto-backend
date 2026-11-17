@@ -22,17 +22,25 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
 
     const soportaDetraccionFact = await tieneColumna('fg_facturacion', 'sujeto_detraccion');
     const soportaDetraccionCredito = await tieneColumna('fg_credito', 'sujeto_detraccion');
-    const soportaSpotServicio = await tieneColumna('fg_servicio', 'sujeto_spot');
-    const soportaSpotProducto = await tieneColumna('fg_producto_facturacion', 'sujeto_spot');
+    const soportaSpotServicio = (await Promise.all([
+        tieneColumna('fg_servicio', 'sujeto_detraccion'),
+        tieneColumna('fg_servicio', 'detraccion_codigo'),
+        tieneColumna('fg_producto_facturacion', 'sujeto_detraccion'),
+        tieneColumna('fg_producto_facturacion', 'detraccion_codigo')
+    ])).every(Boolean);
+    const soportaSpotProducto = (await Promise.all([
+        tieneColumna('fg_producto_facturacion', 'sujeto_detraccion'),
+        tieneColumna('fg_producto_facturacion', 'detraccion_codigo')
+    ])).every(Boolean);
 
     const columnasDetraccionFact = soportaDetraccionFact
         ? `f.sujeto_detraccion, f.detraccion_codigo, f.detraccion_descripcion,
            f.detraccion_porcentaje, f.detraccion_base, f.detraccion_monto,
            f.detraccion_neto, f.detraccion_estado_deposito, f.detraccion_constancia_nro,
            f.detraccion_constancia_fecha, f.detraccion_motivo_exclusion,`
-        : `false AS sujeto_detraccion, NULL::varchar AS detraccion_codigo, NULL::varchar AS detraccion_descripcion,
+        : `NULL::boolean AS sujeto_detraccion, NULL::varchar AS detraccion_codigo, NULL::varchar AS detraccion_descripcion,
            NULL::numeric AS detraccion_porcentaje, NULL::numeric AS detraccion_base, NULL::numeric AS detraccion_monto,
-           NULL::numeric AS detraccion_neto, 'NO_APLICA'::varchar AS detraccion_estado_deposito, NULL::varchar AS detraccion_constancia_nro,
+           NULL::numeric AS detraccion_neto, 'NO_VERIFICADO'::varchar AS detraccion_estado_deposito, NULL::varchar AS detraccion_constancia_nro,
            NULL::date AS detraccion_constancia_fecha, NULL::varchar AS detraccion_motivo_exclusion,`;
 
     const columnasDetraccionCredito = soportaDetraccionCredito
@@ -40,21 +48,21 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
            cr.detraccion_porcentaje, cr.detraccion_base, cr.detraccion_monto,
            cr.detraccion_neto, cr.detraccion_estado_deposito, cr.detraccion_constancia_nro,
            cr.detraccion_constancia_fecha, cr.detraccion_motivo_exclusion,`
-        : `false AS sujeto_detraccion, NULL::varchar AS detraccion_codigo, NULL::varchar AS detraccion_descripcion,
+        : `NULL::boolean AS sujeto_detraccion, NULL::varchar AS detraccion_codigo, NULL::varchar AS detraccion_descripcion,
            NULL::numeric AS detraccion_porcentaje, NULL::numeric AS detraccion_base, NULL::numeric AS detraccion_monto,
-           NULL::numeric AS detraccion_neto, 'NO_APLICA'::varchar AS detraccion_estado_deposito, NULL::varchar AS detraccion_constancia_nro,
+           NULL::numeric AS detraccion_neto, 'NO_VERIFICADO'::varchar AS detraccion_estado_deposito, NULL::varchar AS detraccion_constancia_nro,
            NULL::date AS detraccion_constancia_fecha, NULL::varchar AS detraccion_motivo_exclusion,`;
 
     const columnaSpotServicio = soportaSpotServicio
-        ? `COALESCE(s.sujeto_spot, pf.sujeto_spot, false) AS sujeto_spot, COALESCE(s.codigo_spot, pf.codigo_spot) AS codigo_spot,`
-        : `false AS sujeto_spot, NULL::varchar AS codigo_spot,`;
+        ? `COALESCE(s.sujeto_detraccion, pf.sujeto_detraccion, false) AS sujeto_spot, COALESCE(s.detraccion_codigo, pf.detraccion_codigo) AS codigo_spot,`
+        : `NULL::boolean AS sujeto_spot, NULL::varchar AS codigo_spot,`;
     const groupBySpotServicio = soportaSpotServicio
-        ? `, s.sujeto_spot, pf.sujeto_spot, s.codigo_spot, pf.codigo_spot`
+        ? `, s.sujeto_detraccion, pf.sujeto_detraccion, s.detraccion_codigo, pf.detraccion_codigo`
         : ``;
 
     const columnaSpotProducto = soportaSpotProducto
-        ? `COALESCE(pf.sujeto_spot, false) AS sujeto_spot, pf.codigo_spot AS codigo_spot,`
-        : `false AS sujeto_spot, NULL::varchar AS codigo_spot,`;
+        ? `COALESCE(pf.sujeto_detraccion, false) AS sujeto_spot, pf.detraccion_codigo AS codigo_spot,`
+        : `NULL::boolean AS sujeto_spot, NULL::varchar AS codigo_spot,`;
 
     const [cabeceras, lineasOperacion, lineasVenta] = await Promise.all([
         db.query(`
@@ -277,7 +285,7 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                                     WHEN dup.id IS NOT NULL OR dup.numero_certificado_snapshot IS NOT NULL THEN 'COMPLEMENTARIO DUPLICADO'
                                     WHEN od.tipo_item = 'PRODUCTO' OR (od.certificado_id IS NULL AND od.servicio_id IS NULL) OR UPPER(COALESCE(cs.nombre, cp.nombre, pf.tipo_producto, '')) LIKE '%COMPLEMENTAR%' THEN 'COMPLEMENTARIO VENTA DE PRODUCTO'
                                     ELSE COALESCE(cs.nombre, cp.nombre, pf.tipo_producto)
-                                END AS nombre,
+                                END AS nombre
                     
                             FROM fg_operacion_detalle od
                             LEFT JOIN fg_certificado_duplicado dup ON dup.operacion_id = od.operacion_id
@@ -288,7 +296,7 @@ async function obtenerDocumentosEmitidosExtendido({ plantasAutorizadas, plantasF
                             WHERE (d.operacion_id IS NOT NULL AND od.operacion_id = d.operacion_id)
                                OR (d.certificado_id IS NOT NULL AND od.certificado_id = d.certificado_id)
                             UNION
-                            SELECT 'COMPLEMENTARIO VENTA DE PRODUCTO' AS nombre,
+                            SELECT 'COMPLEMENTARIO VENTA DE PRODUCTO' AS nombre
                    
                             FROM fg_venta_detalle vd
                             WHERE vd.venta_id = d.venta_id

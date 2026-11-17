@@ -1,4 +1,4 @@
-const { readFileSync } = require('node:fs');
+const { readFileSync, writeFileSync, mkdirSync } = require('node:fs');
 const path = require('node:path');
 const PizZip = require('pizzip');
 const { DOMParser } = require('@xmldom/xmldom');
@@ -57,6 +57,31 @@ const leerFilas = (archivo) => {
 const resumenConEjemplos = (vista) => ({
     total: vista.total,
     resumen: vista.resumen,
+    correlativos: {
+        iguales: vista.filas.filter((row) => row.estado === 'YA_EXISTE' && row.ultimo_numero_faregas === row.ultimo_numero_dms).length,
+        excel_mayor: vista.filas.filter((row) => row.estado === 'YA_EXISTE' && row.ultimo_numero_dms > row.ultimo_numero_faregas).length,
+        faregas_mayor: vista.filas.filter((row) => row.estado === 'YA_EXISTE' && row.ultimo_numero_faregas > row.ultimo_numero_dms).length,
+        diferencias_excel_mayor: vista.filas
+            .filter((row) => row.estado === 'YA_EXISTE' && row.ultimo_numero_dms > row.ultimo_numero_faregas)
+            .map((row) => ({
+                fila: row.fila,
+                local: row.nombre_local_dms,
+                serie: row.serie,
+                ultimoFaregas: row.ultimo_numero_faregas,
+                ultimoExcel: row.ultimo_numero_dms
+            }))
+    },
+    campos_distintos: vista.filas
+        .filter((row) => row.estado === 'YA_EXISTE')
+        .flatMap((row) => (row.diferencias || []).filter((campo) => campo !== 'ultimo_numero'))
+        .reduce((resumen, campo) => ({ ...resumen, [campo]: (resumen[campo] || 0) + 1 }), {}),
+    origenes_actuales: vista.filas
+        .filter((row) => row.estado === 'YA_EXISTE')
+        .reduce((resumen, row) => {
+            const origen = `${row.proveedor_emision_actual}/${row.entorno_emision_actual}`;
+            resumen[origen] = (resumen[origen] || 0) + 1;
+            return resumen;
+        }, {}),
     ejemplos: vista.filas
         .filter((row) => ['FAREGAS - SANTA ANITA', 'FAREGAS - SAN BORJA', 'FAREGAS - SURCO', 'FAREGAS - ICA'].includes(row.nombre_local_dms))
         .map((row) => ({
@@ -75,8 +100,108 @@ const resumenConEjemplos = (vista) => ({
         })),
     pendientes: vista.filas
         .filter((row) => ['SEDE_NO_HOMOLOGADA', 'REVISAR_MANUAL'].includes(row.estado))
-        .map((row) => ({ fila: row.fila, estado: row.estado, motivo: row.motivo, nombre: row.origen.Nombre, local: row.origen['Nombre del Local'] }))
+        .map((row) => ({
+            fila: row.fila,
+            estado: row.estado,
+            motivo: row.motivo,
+            empresaReal: row.empresa_real,
+            nombre: row.origen.Nombre,
+            tipoDocumento: row.origen['Tipo de Documento'],
+            referencia: row.origen['Tipo de Documento de Referencia'],
+            numeroExcel: row.origen['Número'],
+            serieInterna: row.serie,
+            ultimoNumero: row.origen['Último Número Generado'],
+            codigoLocal: row.origen['Código del Local'],
+            local: row.origen['Nombre del Local']
+        }))
 });
+
+const escaparCsv = (value) => {
+    const texto = value === null || value === undefined ? '' : String(value);
+    return `"${texto.replace(/"/g, '""')}"`;
+};
+
+const emitirReporteCsv = async (vista, archivo) => {
+    const client = await db.connect();
+    let emisiones;
+    try {
+        await client.query('BEGIN READ ONLY');
+        const result = await client.query(`
+            SELECT f.empresa_key, f.planta_key, f.tipo_comprobante, f.serie,
+                   COUNT(*)::int AS documentos,
+                   MAX(f.numero)::bigint AS max_numero,
+                   MAX(f.fecha_hora_emision) AS ultima_emision
+            FROM fg_facturacion f
+            LEFT JOIN fg_planta p ON p.key::text = f.planta_key::text
+            WHERE COALESCE(f.empresa_key, p.empresa_key) = 'FAREGAS'
+            GROUP BY f.empresa_key, f.planta_key, f.tipo_comprobante, f.serie
+        `);
+        emisiones = result.rows;
+        await client.query('ROLLBACK');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+
+    const emisionesPorSerie = new Map(emisiones.map((item) => [
+        `${item.planta_key}|${item.tipo_comprobante}|${item.serie}`,
+        item
+    ]));
+    const headers = [
+        'fila_excel', 'local_excel', 'codigo_local', 'empresa_real_planta', 'planta_key',
+        'tipo_documento', 'tipo_referencia', 'numero_excel', 'serie_interna', 'estado', 'motivo',
+        'ultimo_numero_excel', 'ultimo_numero_postgres', 'diferencia_excel_menos_postgres',
+        'proveedor_postgres', 'entorno_postgres', 'documentos_emitidos_faregas',
+        'max_numero_emitido_faregas', 'ultima_emision_faregas', 'nubefact_remoto_verificado'
+    ];
+    const rows = vista.filas.map((row) => {
+        let identidad = row;
+        if (!row.serie) {
+            try {
+                identidad = service._private.identidadDocumento(
+                    row.origen.Nombre,
+                    row.origen['Tipo de Documento'],
+                    row.origen['Tipo de Documento de Referencia'],
+                    row.origen['Número'],
+                    row.fila
+                );
+            } catch { /* La fila queda sin serie inferible y requiere revisión. */ }
+        }
+        const emision = row.planta_key && identidad.tipo_comprobante && identidad.serie
+            ? emisionesPorSerie.get(`${row.planta_key}|${identidad.tipo_comprobante}|${identidad.serie}`)
+            : null;
+        const actual = row.ultimo_numero_faregas;
+        const dms = row.ultimo_numero_dms ?? Number(row.origen['Último Número Generado']);
+        return [
+            row.fila,
+            row.origen['Nombre del Local'],
+            row.codigo_local_dms ?? row.origen['Código del Local'],
+            row.empresa_real ?? row.empresa_key ?? '',
+            row.planta_key ?? '',
+            row.tipo_documento ?? row.origen['Tipo de Documento'],
+            row.tipo_documento_referencia ?? row.origen['Tipo de Documento de Referencia'],
+            row.origen['Número'],
+            identidad.serie ?? '',
+            row.estado,
+            row.motivo ?? '',
+            dms,
+            actual,
+            Number.isFinite(Number(dms)) && actual !== null && actual !== undefined ? Number(dms) - Number(actual) : '',
+            row.proveedor_emision_actual ?? '',
+            row.entorno_emision_actual ?? '',
+            emision?.documentos ?? 0,
+            emision?.max_numero ?? '',
+            emision?.ultima_emision?.toISOString?.() ?? '',
+            'NO CONSULTADO: API pública de NubeFact no documenta administración/consulta de series'
+        ].map(escaparCsv).join(',');
+    });
+    const target = path.resolve(archivo);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, `${[headers, ...rows].map((row) => Array.isArray(row) ? row.map(escaparCsv).join(',') : row).join('\r\n')}\r\n`, 'utf8');
+    return target;
+};
 
 const main = async () => {
     const apply = process.argv.includes('--apply');
@@ -84,9 +209,26 @@ const main = async () => {
     const archivo = path.resolve(fileArg ? fileArg.slice('--file='.length) : ARCHIVO_POR_DEFECTO);
     const filas = leerFilas(archivo);
     const previa = await service.previsualizar(filas);
+    const vista = resumenConEjemplos(previa);
+    const compacta = process.argv.includes('--summary-only');
+    const reportArg = process.argv.find((arg) => arg.startsWith('--report='));
+    const reportPath = reportArg ? await emitirReporteCsv(previa, reportArg.slice('--report='.length)) : null;
     console.log(JSON.stringify(apply
         ? { fase: 'PREVISUALIZACION', archivo, total: previa.total, resumen: previa.resumen }
-        : { fase: 'PREVISUALIZACION', archivo, ...resumenConEjemplos(previa) }, null, 2));
+        : compacta
+            ? {
+                fase: 'PREVISUALIZACION', archivo, total: vista.total, resumen: vista.resumen,
+                correlativos: {
+                    iguales: vista.correlativos.iguales,
+                    excel_mayor: vista.correlativos.excel_mayor,
+                    faregas_mayor: vista.correlativos.faregas_mayor
+                },
+                campos_distintos: vista.campos_distintos,
+                origenes_actuales: vista.origenes_actuales,
+                reporte_fila_a_fila: reportPath,
+                pendientes: vista.pendientes
+            }
+            : { fase: 'PREVISUALIZACION', archivo, ...vista, reporte_fila_a_fila: reportPath }, null, 2));
     if (!apply) return;
     const resultado = await service.aplicar(filas, {
         confirmar: true,

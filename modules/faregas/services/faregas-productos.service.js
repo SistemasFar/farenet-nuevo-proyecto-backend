@@ -18,6 +18,7 @@ const mapearProducto = (producto) => ({
     precio_referencia: producto.precio_referencia === null ? null : Number(producto.precio_referencia),
     valor_referencial_unitario: producto.valor_referencial_unitario === null ? null : Number(producto.valor_referencial_unitario),
     porcentaje_isc: producto.porcentaje_isc === null ? null : Number(producto.porcentaje_isc),
+    detraccion_porcentaje: producto.detraccion_porcentaje == null ? null : Number(producto.detraccion_porcentaje),
     precio_chip: producto.precio_chip === null ? null : Number(producto.precio_chip)
 });
 
@@ -127,6 +128,7 @@ exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId, page, 
                p.precio_unitario, p.precio_referencia,
                p.valor_referencial_unitario, p.codigo_clasificacion_sunat,
                p.tipo_afectacion_igv, p.codigo_afectacion_isc, p.porcentaje_isc,
+               p.sujeto_detraccion, p.detraccion_codigo, p.detraccion_porcentaje,
                p.disponible_pos, p.es_para_venta, p.es_para_compra,
                p.tiene_icbper, p.imagen_url, p.activo,
                p.requiere_chip, p.producto_chip_id, p.precio_chip,
@@ -190,6 +192,7 @@ exports.listarPorCategoria = async () => {
                p.precio_unitario, p.precio_referencia,
                p.valor_referencial_unitario, p.codigo_clasificacion_sunat,
                p.tipo_afectacion_igv, p.codigo_afectacion_isc, p.porcentaje_isc,
+               p.sujeto_detraccion, p.detraccion_codigo, p.detraccion_porcentaje,
                p.disponible_pos, p.es_para_venta, p.es_para_compra,
                p.tiene_icbper, p.imagen_url, p.activo,
                p.requiere_chip, p.producto_chip_id, p.precio_chip,
@@ -272,11 +275,12 @@ const insertarProducto = async (producto, username, ip_direccion, { validarCateg
                 tipo_afectacion_igv, codigo_afectacion_isc, porcentaje_isc,
                 disponible_pos, es_para_venta, es_para_compra, tiene_icbper,
                 imagen_url, activo,
-                requiere_chip, producto_chip_id, precio_chip
+                requiere_chip, producto_chip_id, precio_chip,
+                sujeto_detraccion, detraccion_codigo, detraccion_porcentaje
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                 $11, $12, $13, $14, $15, $16, $17, $18, $19,
-                $20, $21, $22, $23, $24
+                $20, $21, $22, $23, $24, $25, $26, $27
             ) RETURNING id
         `, [
             producto.codigo_sku, producto.descripcion, producto.tipo_producto,
@@ -289,7 +293,8 @@ const insertarProducto = async (producto, username, ip_direccion, { validarCateg
             producto.disponible_pos, producto.es_para_venta,
             producto.es_para_compra, producto.tiene_icbper, producto.imagen_url,
             producto.activo,
-            Boolean(producto.requiere_chip), productoChipIdValidado, precioChipValidado
+            Boolean(producto.requiere_chip), productoChipIdValidado, precioChipValidado,
+            producto.sujeto_detraccion, producto.detraccion_codigo, producto.detraccion_porcentaje
         ]);
         await configService.registrarAuditoria(client, {
             username, entidad: 'PRODUCTO_FACTURACION', accion: 'CREAR_PRODUCTO',
@@ -363,8 +368,11 @@ exports.editar = async (id, producto, username, ip_direccion) => {
                 es_para_compra = $17, tiene_icbper = $18, imagen_url = $19,
                 activo = $20, requiere_chip = $21,
                 producto_chip_id = $22, precio_chip = $23,
+                sujeto_detraccion = CASE WHEN $27 THEN $24 ELSE sujeto_detraccion END,
+                detraccion_codigo = CASE WHEN $27 THEN $25 ELSE detraccion_codigo END,
+                detraccion_porcentaje = CASE WHEN $27 THEN $26 ELSE detraccion_porcentaje END,
                 fecha_modificacion = CURRENT_TIMESTAMP
-            WHERE id = $24
+            WHERE id = $28
         `, [
             producto.descripcion, producto.tipo_producto, producto.categoria_dms,
             producto.categoria_id, producto.cuenta_por_cobrar,
@@ -376,7 +384,9 @@ exports.editar = async (id, producto, username, ip_direccion) => {
             producto.es_para_venta, producto.es_para_compra,
             producto.tiene_icbper, producto.imagen_url, activo,
             Boolean(producto.requiere_chip), productoChipIdValidado,
-            precioChipValidado, id
+            precioChipValidado,
+            producto.sujeto_detraccion, producto.detraccion_codigo,
+            producto.detraccion_porcentaje, Boolean(producto.spot_configurado), id
         ]);
         await configService.registrarAuditoria(client, {
             username, entidad: 'PRODUCTO_FACTURACION', accion: 'EDITAR_PRODUCTO',

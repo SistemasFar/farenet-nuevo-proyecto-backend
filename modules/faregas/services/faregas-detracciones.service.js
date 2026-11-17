@@ -15,11 +15,31 @@
  */
 
 const CAT_SPOT = {
-    '037': { codigo: '037', descripcion: 'Demás servicios gravados con el IGV', porcentaje: 12.00, nubefactTipo: 37 },
+    // NubeFact usa su enumeración interna: tipo 35 corresponde al código
+    // SUNAT 037 (Demás servicios gravados con IGV).
+    '037': { codigo: '037', descripcion: 'Demás servicios gravados con el IGV', porcentaje: 12.00, nubefactTipo: 35 },
     '020': { codigo: '020', descripcion: 'Mantenimiento y reparación de bienes muebles', porcentaje: 12.00, nubefactTipo: 20 },
     '022': { codigo: '022', descripcion: 'Otros servicios empresariales', porcentaje: 12.00, nubefactTipo: 22 },
     '025': { codigo: '025', descripcion: 'Fabricación de bienes por encargo', porcentaje: 10.00, nubefactTipo: 25 },
 };
+
+// Códigos de bienes del Anexo 2 con tasa fija y sin colisión con el catálogo
+// de servicios que este adaptador envía a NubeFact. Se excluyen los códigos
+// ambiguos entre anexos hasta que el proveedor permita distinguirlos.
+const CAT_SPOT_BIENES = Object.freeze({
+    '002': { descripcion: 'Maíz amarillo duro', porcentaje: 4 },
+    '004': { descripcion: 'Caña de azúcar', porcentaje: 10 },
+    '005': { descripcion: 'Arena y piedra', porcentaje: 10 },
+    '006': { descripcion: 'Residuos y subproductos', porcentaje: 15 },
+    '007': { descripcion: 'Bienes gravados por renuncia a la exoneración', porcentaje: 10 },
+    '009': { descripcion: 'Carnes y despojos comestibles', porcentaje: 4 },
+    '011': { descripcion: 'Aceite de pescado', porcentaje: 10 },
+    '012': { descripcion: 'Harina y pellets de pescado', porcentaje: 4 },
+    '015': { descripcion: 'Madera', porcentaje: 4 },
+    '017': { descripcion: 'Páprika y frutos capsicum o pimienta', porcentaje: 10 },
+    '021': { descripcion: 'Oro y minerales metálicos exonerados', porcentaje: 1.5 },
+    '023': { descripcion: 'Plomo', porcentaje: 15 }
+});
 
 const redondear = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
@@ -70,82 +90,102 @@ function evaluarDetraccion({
         };
     }
 
-    // 3. Validar umbral de monto (Debe superar S/ 700.00)
+    // Los productos físicos se clasifican desde fg_producto_facturacion. Nunca
+    // se consultan como servicio ni se deduce SPOT por SKU, descripción o monto.
+    const sonProductos = items.length > 0 && items.every(item =>
+        String(item.tipo_item || item.tipoItem || '').toUpperCase() === 'PRODUCTO'
+    );
+    if (sonProductos) {
+        const clasificaciones = items.map(item => item.productoSpot || item);
+        if (clasificaciones.some(producto => producto.sujeto_detraccion == null)) {
+            return { sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
+                neto: total, estadoDeposito: 'NO_VERIFICADO', motivoExclusion: 'CLASIFICACION_SPOT_NO_VERIFICADA', requiereRevision: true };
+        }
+        if (clasificaciones.every(producto => producto.sujeto_detraccion === false)) {
+            return { sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
+                neto: total, estadoDeposito: 'NO_APLICA', motivoExclusion: 'BIEN_MUEBLE_NO_SUJETO_A_SPOT', requiereRevision: false };
+        }
+        const first = clasificaciones[0];
+        if (clasificaciones.some(producto => producto.sujeto_detraccion !== true
+            || producto.detraccion_codigo !== first.detraccion_codigo
+            || Number(producto.detraccion_porcentaje) !== Number(first.detraccion_porcentaje))) {
+            return { sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
+                neto: total, estadoDeposito: 'NO_VERIFICADO', motivoExclusion: 'CLASIFICACION_SPOT_INCONSISTENTE', requiereRevision: true };
+        }
+        const definicion = CAT_SPOT_BIENES[first.detraccion_codigo];
+        if (!definicion || Number(definicion.porcentaje) !== Number(first.detraccion_porcentaje)) {
+            return { sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
+                neto: total, estadoDeposito: 'NO_VERIFICADO', motivoExclusion: 'CLASIFICACION_SPOT_NO_RECONOCIDA', requiereRevision: true };
+        }
+        // Para ciertos numerales de bienes del Anexo 2 la excepción de S/ 700
+        // no aplica; los demás requieren superar ese monto.
+        if (total <= 700 && !['006', '021'].includes(first.detraccion_codigo)) {
+            return { sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
+                neto: total, estadoDeposito: 'NO_APLICA', motivoExclusion: 'IMPORTE_MENOR_O_IGUAL_A_700', requiereRevision: false };
+        }
+        const monto = Math.round(total * definicion.porcentaje / 100);
+        return { sujeto: true, codigo: first.detraccion_codigo, descripcion: definicion.descripcion,
+            porcentaje: definicion.porcentaje, base: total, monto, neto: redondear(total - monto),
+            estadoDeposito: 'PENDIENTE', constanciaNro: null, constanciaFecha: null,
+            motivoExclusion: null, medioPagoDetraccion: '001', nubefactTipo: Number(first.detraccion_codigo), requiereRevision: false };
+    }
+
+    // 3. Servicios del Anexo 3: el umbral es superior a S/ 700.
     if (total <= 700.00) {
         return {
-            sujeto: false,
-            codigo: null,
-            descripcion: null,
-            porcentaje: 0,
-            base: total,
-            monto: 0,
-            neto: total,
-            estadoDeposito: 'NO_APLICA',
-            motivoExclusion: 'IMPORTE_MENOR_O_IGUAL_A_700',
-            requiereRevision: false
+            sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total,
+            monto: 0, neto: total, estadoDeposito: 'NO_APLICA',
+            motivoExclusion: 'IMPORTE_MENOR_O_IGUAL_A_700', requiereRevision: false
         };
     }
 
-    // 4. Validar naturaleza de los items facturados (Servicio vs Bienes muebles puros)
-    const soloBienesPuros = items.length > 0 && items.every(item => {
-        const sku = String(item.codigo_sku_snapshot || item.codigo_sku || item.codigo || '').toUpperCase();
-        const desc = String(item.descripcion_snapshot || item.descripcion || item.producto || '').toUpperCase();
-        return (sku.includes('CHIP') || desc.includes('CHIP') || item.tipo_item === 'PRODUCTO') 
-            && !desc.includes('CERTIFICADO') && !desc.includes('CONVERSION') && !desc.includes('CONFORMIDAD') && !desc.includes('TALLER');
-    });
-
-    if (soloBienesPuros) {
+    // La clasificación del servicio debe estar confirmada en el catálogo.
+    // No se infiere el código fiscal por el importe ni por ser una factura.
+    if (!servicio || servicio.sujeto_detraccion === null || servicio.sujeto_detraccion === undefined) {
         return {
-            sujeto: false,
-            codigo: null,
-            descripcion: null,
-            porcentaje: 0,
-            base: total,
-            monto: 0,
-            neto: total,
-            estadoDeposito: 'NO_APLICA',
-            motivoExclusion: 'BIEN_MUEBLE_NO_SUJETO_A_SPOT',
-            requiereRevision: false
+            sujeto: false, codigo: null, descripcion: null, porcentaje: 0,
+            base: total, monto: 0, neto: total, estadoDeposito: 'NO_VERIFICADO',
+            motivoExclusion: 'CLASIFICACION_SPOT_NO_VERIFICADA', requiereRevision: true
+        };
+    }
+
+    if (servicio.sujeto_detraccion === false) {
+        return {
+            sujeto: false, codigo: null, descripcion: null, porcentaje: 0,
+            base: total, monto: 0, neto: total, estadoDeposito: 'NO_APLICA',
+            motivoExclusion: 'SERVICIO_EXCLUIDO_POR_CONFIGURACION', requiereRevision: false
         };
     }
 
     // 5. Determinar clasificación SPOT aplicable
-    let spotCodigo = '037';
-    let spotPorcentaje = 12.00;
+    let spotCodigo = servicio.detraccion_codigo;
+    let spotPorcentaje = Number(servicio.detraccion_porcentaje);
 
     if (servicio) {
-        if (servicio.sujeto_detraccion === false) {
+        if (!spotCodigo || !Number.isFinite(spotPorcentaje) || spotPorcentaje <= 0) {
             return {
-                sujeto: false,
-                codigo: null,
-                descripcion: null,
-                porcentaje: 0,
-                base: total,
-                monto: 0,
-                neto: total,
-                estadoDeposito: 'NO_APLICA',
-                motivoExclusion: 'SERVICIO_EXCLUIDO_POR_CONFIGURACION',
-                requiereRevision: false
+                sujeto: false, codigo: null, descripcion: null, porcentaje: 0,
+                base: total, monto: 0, neto: total, estadoDeposito: 'NO_VERIFICADO',
+                motivoExclusion: 'CLASIFICACION_SPOT_INCOMPLETA', requiereRevision: true
             };
         }
-        if (servicio.detraccion_codigo) {
-            spotCodigo = servicio.detraccion_codigo;
-        } else if (servicio.familia === 'TALLER' || servicio.tipo_flujo === 'TALLER_INSPECCION') {
-            spotCodigo = '020';
-        }
-        if (servicio.detraccion_porcentaje) {
-            spotPorcentaje = Number(servicio.detraccion_porcentaje);
-        }
-    } else if (items.some(i => String(i.familia || '').toUpperCase() === 'TALLER' || String(i.descripcion || '').toUpperCase().includes('TALLER'))) {
-        spotCodigo = '020';
     }
 
-    const definicion = CAT_SPOT[spotCodigo] || {
-        codigo: spotCodigo,
-        descripcion: 'Demás servicios gravados con el IGV',
-        porcentaje: spotPorcentaje,
-        nubefactTipo: parseInt(spotCodigo, 10) || 37
-    };
+    const definicion = CAT_SPOT[spotCodigo];
+    if (!definicion) {
+        return {
+            sujeto: false, codigo: null, descripcion: null, porcentaje: 0,
+            base: total, monto: 0, neto: total, estadoDeposito: 'NO_VERIFICADO',
+            motivoExclusion: 'CLASIFICACION_SPOT_NO_RECONOCIDA', requiereRevision: true
+        };
+    }
+    if (Number(definicion.porcentaje) !== spotPorcentaje) {
+        return {
+            sujeto: false, codigo: null, descripcion: null, porcentaje: 0,
+            base: total, monto: 0, neto: total, estadoDeposito: 'NO_VERIFICADO',
+            motivoExclusion: 'CLASIFICACION_SPOT_INCONSISTENTE', requiereRevision: true
+        };
+    }
 
     // 6. Cálculo legal oficial: Base total, porcentaje y redondeo al número entero SUNAT
     const base = total;
@@ -179,10 +219,16 @@ function aplicarDetraccionPayloadNubefact(payload, evaluacion) {
     if (!payload || typeof payload !== 'object') return payload;
 
     if (evaluacion && evaluacion.sujeto === true) {
+        const porcentaje = Number(evaluacion.porcentaje);
+        const monto = Number(evaluacion.monto);
+        const tipo = Number(evaluacion.nubefactTipo || parseInt(evaluacion.codigo, 10));
+        if (!Number.isFinite(porcentaje) || porcentaje <= 0 || !Number.isFinite(monto) || monto < 0 || !Number.isFinite(tipo)) {
+            throw new Error('CLASIFICACION_SPOT_INCOMPLETA');
+        }
         payload.detraccion = true;
-        payload.detraccion_tipo = evaluacion.nubefactTipo || parseInt(evaluacion.codigo, 10) || 37;
-        payload.detraccion_porcentaje = Number(evaluacion.porcentaje || 12);
-        payload.detraccion_total = Number(evaluacion.monto || 0);
+        payload.detraccion_tipo = tipo;
+        payload.detraccion_porcentaje = porcentaje;
+        payload.detraccion_total = monto;
         payload.medio_de_pago_detraccion = '001';
     } else {
         payload.detraccion = false;
@@ -210,14 +256,18 @@ function evaluarNotaCreditoDetraccion(facturaOriginal, importeNotaCredito) {
         };
     }
 
+    if (!facturaOriginal.detraccion_codigo || !Number.isFinite(Number(facturaOriginal.detraccion_porcentaje)) || Number(facturaOriginal.detraccion_porcentaje) <= 0) {
+        throw new Error('CLASIFICACION_SPOT_INCOMPLETA');
+    }
+
     const base = redondear(importeNotaCredito);
-    const porcentaje = Number(facturaOriginal.detraccion_porcentaje || 12.00);
+    const porcentaje = Number(facturaOriginal.detraccion_porcentaje);
     const monto = Math.round((base * porcentaje) / 100);
     const neto = redondear(base - monto);
 
     return {
         sujeto: true,
-        codigo: facturaOriginal.detraccion_codigo || '037',
+        codigo: facturaOriginal.detraccion_codigo,
         porcentaje: porcentaje,
         base: base,
         monto: monto,
@@ -228,6 +278,7 @@ function evaluarNotaCreditoDetraccion(facturaOriginal, importeNotaCredito) {
 
 module.exports = {
     CAT_SPOT,
+    CAT_SPOT_BIENES,
     evaluarDetraccion,
     aplicarDetraccionPayloadNubefact,
     evaluarNotaCreditoDetraccion

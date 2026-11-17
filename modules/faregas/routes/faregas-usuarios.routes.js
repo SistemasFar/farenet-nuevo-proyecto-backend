@@ -36,6 +36,11 @@ const adminMiddleware = async (req, res, next) => {
             return res.status(403).json({ message: 'Usuario inactivo' });
         }
 
+        if (decoded.session_jti) {
+            const sesion = await db.query('SELECT isactive FROM fg_usuario_sesion WHERE session_jti=$1 AND usuario_username=$2 LIMIT 1', [decoded.session_jti, decoded.username]);
+            if (!sesion.rowCount || !sesion.rows[0].isactive) return res.status(401).json({ message: 'Sesión revocada o inactiva' });
+        }
+
         // MENU_USUARIOS es la única autorización para administrar usuarios y
         // perfiles. Los permisos sensibles se gestionan desde este mismo editor.
         const permisosDb = await db.query(
@@ -73,11 +78,14 @@ router.get('/', controller.obtenerUsuarios);
 router.post('/', controller.crearUsuario);
 router.put('/:username', controller.actualizarUsuario);
 router.patch('/:username/password', controller.cambiarPassword);
+router.post('/:username/desactivar', controller.desactivarUsuario);
+router.post('/:username/activar', controller.activarUsuario);
 router.delete('/:username', controller.eliminarUsuario);
 
 router.get('/permisos', controller.obtenerPermisos);
 
 router.get('/perfiles', controller.obtenerPerfiles);
+router.get('/perfiles/:clave/usuarios', controller.obtenerUsuariosPorPerfil);
 router.post('/perfiles', controller.crearPerfil);
 router.put('/perfiles/:clave', controller.actualizarPerfil);
 router.delete('/perfiles/:clave', controller.eliminarPerfil);

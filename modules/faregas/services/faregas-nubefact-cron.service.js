@@ -93,11 +93,17 @@ const reclamarLote = async ({
                    f.numero,
                    f.tipo_comprobante,
                    f.operacion_id,
-                   c.planta_key
+                   COALESCE(c.planta_key, oc.planta_key) AS planta_key
               FROM fg_facturacion f
-              JOIN fg_certificado c ON c.id = f.certificado_id
+              LEFT JOIN fg_certificado c ON c.id = f.certificado_id
+              LEFT JOIN fg_operacion_comercial oc ON oc.id = f.operacion_id
              WHERE f.entorno_facturador = $1
                AND f.estado IN ('PENDIENTE', 'PENDIENTE_SUNAT')
+               AND COALESCE(c.planta_key, oc.planta_key) IS NOT NULL
+               AND (
+                    f.certificado_id IS NOT NULL
+                    OR (f.operacion_id IS NOT NULL AND f.tipo_comprobante IN ('FACTURA', 'BOLETA'))
+               )
                AND (
                     (f.estado = 'PENDIENTE'
                      AND COALESCE(f.fecha_ultimo_intento, f.fecha_modificacion, f.fecha_creacion)

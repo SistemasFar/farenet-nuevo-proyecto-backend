@@ -59,6 +59,7 @@ const obtenerConfiguracion = async (queryable, productoInventariableId, plantaKe
                pis.producto_facturacion_id,
                pf.codigo_sku, pf.descripcion, pf.unidad,
                pf.tipo_afectacion_igv, pf.codigo_clasificacion_sunat,
+               pf.sujeto_detraccion, pf.detraccion_codigo, pf.detraccion_porcentaje,
                pf.activo AS fiscal_activo, pf.es_para_venta,
                pf.precio_unitario AS valor_unitario_fiscal,
                pf.precio_referencia
@@ -104,7 +105,12 @@ const construirDetalleCantidad = (config, cantidadValue) => {
         valorUnitario: redondear(precioUnitario / 1.18),
         baseImponible,
         igv,
-        importeTotal
+        importeTotal,
+        productoSpot: {
+            sujeto_detraccion: config.sujeto_detraccion ?? null,
+            detraccion_codigo: config.detraccion_codigo || null,
+            detraccion_porcentaje: config.detraccion_porcentaje == null ? null : Number(config.detraccion_porcentaje)
+        }
     };
 };
 

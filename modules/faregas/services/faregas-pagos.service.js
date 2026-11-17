@@ -472,13 +472,24 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             }
         }
         const { evaluarDetraccion } = require('./faregas-detracciones.service');
+        const tarifaSpot = certificado.tarifa_codigo
+            ? await tarifasService.obtenerTarifaOperativaPorCodigo(certificado.planta_key, certificado.tarifa_codigo, client)
+            : null;
         const evaluacionSpot = evaluarDetraccion({
             tipoComprobante,
             importeTotal: Number(orden.importe_total),
             moneda: 'PEN',
             items: [],
+            servicio: tarifaSpot ? {
+                sujeto_detraccion: tarifaSpot.spot_sujeto,
+                detraccion_codigo: tarifaSpot.spot_codigo,
+                detraccion_porcentaje: tarifaSpot.spot_porcentaje,
+                tipo_flujo: tarifaSpot.tipo_flujo,
+                familia: tarifaSpot.categoria_codigo
+            } : null,
             esGratuito: esCortesia
         });
+        if (evaluacionSpot.requiereRevision) throw new Error('CLASIFICACION_SPOT_NO_VERIFICADA');
         const totalExigibleCaja = esCortesia ? 0 : (evaluacionSpot.sujeto ? evaluacionSpot.neto : Number(orden.importe_total));
 
         const totalPagado = redondear(pagos.reduce((total, pago) => total + pago.importe, 0));

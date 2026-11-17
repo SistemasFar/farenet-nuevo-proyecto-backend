@@ -10,6 +10,8 @@ const {
     evaluarNotaCreditoDetraccion
 } = require('../services/faregas-detracciones.service');
 
+const SERVICIO_SPOT_037 = { sujeto_detraccion: true, detraccion_codigo: '037', detraccion_porcentaje: 12 };
+
 describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) — FAREGAS', () => {
 
     // 1. Umbral menor o igual a S/ 700.00 (Caso 699.99)
@@ -44,7 +46,8 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
         const resultado = evaluarDetraccion({
             tipoComprobante: 'FACTURA',
             importeTotal: 700.01,
-            items: [{ descripcion: 'CERTIFICACION GNV ANUAL', tipo_item: 'SERVICIO' }]
+            items: [{ descripcion: 'CERTIFICACION GNV ANUAL', tipo_item: 'SERVICIO' }],
+            servicio: SERVICIO_SPOT_037
         });
         assert.equal(resultado.sujeto, true);
         assert.equal(resultado.codigo, '037');
@@ -60,7 +63,7 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
         const resultado = evaluarDetraccion({
             tipoComprobante: 'FACTURA',
             importeTotal: 1200.00,
-            servicio: { detraccion_codigo: '037', detraccion_porcentaje: 12 }
+            servicio: SERVICIO_SPOT_037
         });
         assert.equal(resultado.sujeto, true);
         assert.equal(resultado.codigo, '037');
@@ -75,7 +78,7 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
         const resultado = evaluarDetraccion({
             tipoComprobante: 'FACTURA',
             importeTotal: 1500.00,
-            servicio: { familia: 'TALLER', detraccion_codigo: '020', detraccion_porcentaje: 12 }
+            servicio: { ...SERVICIO_SPOT_037, familia: 'TALLER', detraccion_codigo: '020' }
         });
         assert.equal(resultado.sujeto, true);
         assert.equal(resultado.codigo, '020');
@@ -104,13 +107,21 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
             tipoComprobante: 'FACTURA',
             importeTotal: 850.00,
             items: [
-                { codigo_sku: 'CHIP-GNV-01', descripcion: 'DISPOSITIVO DE CARGA CHIP GNV', tipo_item: 'PRODUCTO' }
+                { codigo_sku: 'CHIP-GNV-01', descripcion: 'DISPOSITIVO DE CARGA CHIP GNV', tipo_item: 'PRODUCTO',
+                    productoSpot: { sujeto_detraccion: false, detraccion_codigo: null, detraccion_porcentaje: null } }
             ]
         });
         assert.equal(resultado.sujeto, false);
         assert.equal(resultado.monto, 0);
         assert.equal(resultado.neto, 850.00);
         assert.equal(resultado.motivoExclusion, 'BIEN_MUEBLE_NO_SUJETO_A_SPOT');
+
+        const pendiente = evaluarDetraccion({
+            tipoComprobante: 'FACTURA', importeTotal: 850.00,
+            items: [{ codigo_sku: 'CHIP-GNV-01', descripcion: 'DISPOSITIVO DE CARGA CHIP GNV', tipo_item: 'PRODUCTO' }]
+        });
+        assert.equal(pendiente.requiereRevision, true);
+        assert.equal(pendiente.motivoExclusion, 'CLASIFICACION_SPOT_NO_VERIFICADA');
     });
 
     // 8. Concepto sin clasificación tributaria SPOT o explícitamente excluido
@@ -128,15 +139,15 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
     // 9. Redondeo legal SUNAT (Art. 19 R.S. 183-2004/SUNAT: entero en moneda nacional)
     it('Escenario 9: Verificación de redondeo legal SUNAT al número entero en moneda nacional', () => {
         // Base S/ 704.00 * 12% = 84.48 -> Redondea a S/ 84
-        const res1 = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: 704.00 });
+        const res1 = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: 704.00, servicio: SERVICIO_SPOT_037 });
         assert.equal(res1.monto, 84);
 
         // Base S/ 705.00 * 12% = 84.60 -> Redondea a S/ 85
-        const res2 = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: 705.00 });
+        const res2 = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: 705.00, servicio: SERVICIO_SPOT_037 });
         assert.equal(res2.monto, 85);
 
         // Base S/ 704.20 * 12% = 84.504 -> Redondea a S/ 85
-        const res3 = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: 704.20 });
+        const res3 = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: 704.20, servicio: SERVICIO_SPOT_037 });
         assert.equal(res3.monto, 85);
     });
 
@@ -144,7 +155,7 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
     it('Escenario 10: Importe neto debe ser exactamente Base - Monto Detracción', () => {
         const resultado = evaluarDetraccion({
             tipoComprobante: 'FACTURA',
-            importeTotal: 847.50
+            importeTotal: 847.50, servicio: SERVICIO_SPOT_037
         });
         // Base = 847.50 * 12% = 101.70 -> Redondeo entero = 102
         assert.equal(resultado.monto, 102);
@@ -161,7 +172,7 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
             items: [
                 { descripcion: 'CERTIFICACION GNV INICIAL', tipo_item: 'SERVICIO' },
                 { codigo_sku: 'CHIP-01', descripcion: 'CHIP GNV', tipo_item: 'PRODUCTO' }
-            ]
+            ], servicio: SERVICIO_SPOT_037
         });
         assert.equal(resultado.sujeto, true);
         assert.equal(resultado.codigo, '037');
@@ -190,12 +201,12 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
         // Sujeto
         const payloadSujeto = aplicarDetraccionPayloadNubefact({ total: 1000 }, {
             sujeto: true,
-            nubefactTipo: 37,
+            nubefactTipo: 35,
             porcentaje: 12,
             monto: 120
         });
         assert.equal(payloadSujeto.detraccion, true);
-        assert.equal(payloadSujeto.detraccion_tipo, 37);
+        assert.equal(payloadSujeto.detraccion_tipo, 35);
         assert.equal(payloadSujeto.detraccion_porcentaje, 12);
         assert.equal(payloadSujeto.detraccion_total, 120);
         assert.equal(payloadSujeto.medio_de_pago_detraccion, '001');
@@ -290,6 +301,7 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
         const resFactura = evaluarDetraccion({
             tipoComprobante: 'FACTURA',
             importeTotal: 1260.00,
+            servicio: SERVICIO_SPOT_037,
             items: [{ descripcion: 'CERTIFICACION CONFORMIDAD VEHICULAR', tipo_item: 'SERVICIO' }]
         });
         assert.equal(resFactura.sujeto, true);
@@ -309,8 +321,8 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
 
         // Verificar que el frontend tiene evaluarSpotWizard
         assert.ok(contenidoFrontend.includes('evaluarSpotWizard'), 'Frontend debe tener función evaluarSpotWizard');
-        assert.ok(contenidoFrontend.includes('codigoSpot: \'037\''), 'Frontend debe mapear código 037');
-        assert.ok(contenidoFrontend.includes('porcentaje = 12'), 'Frontend debe calcular con 12%');
+        assert.ok(contenidoFrontend.includes('codigoSpot: servicio.codigoSpot'), 'Frontend debe usar el código configurado para el servicio');
+        assert.ok(contenidoFrontend.includes('Number(servicio.porcentajeSpot)'), 'Frontend debe usar la tasa configurada');
         assert.ok(contenidoFrontend.includes('Math.round((totalRedondeado * porcentaje) / 100)'), 'Frontend debe redondear según regla oficial SUNAT');
 
         // Simular cálculo frontend
@@ -319,7 +331,7 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
         const montoDetraccion = Math.round((total * porcentaje) / 100);
         const netoCobrar = total - montoDetraccion;
 
-        const resBackend = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: total });
+        const resBackend = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: total, servicio: SERVICIO_SPOT_037 });
         assert.equal(montoDetraccion, resBackend.monto);
         assert.equal(netoCobrar, resBackend.neto);
         assert.equal(montoDetraccion, 151);
@@ -346,6 +358,13 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
         assert.ok(contenido.includes('sujeto_detraccion'), 'Debe definir sujeto_detraccion');
         assert.ok(contenido.includes('detraccion_monto'), 'Debe definir detraccion_monto');
         assert.ok(contenido.includes('detraccion_neto'), 'Debe definir detraccion_neto');
+        assert.ok(!/UPDATE\s+public\.fg_servicio/i.test(contenido), 'No debe marcar todos los servicios como sujetos sin clasificación individual');
+        assert.ok(!/sujeto_detraccion\s+boolean\s+DEFAULT\s+true/i.test(contenido), 'No debe presumir que cada servicio está sujeto');
+        assert.ok(contenido.includes('detraccion_constancia_nro'), 'Debe permitir el registro posterior de constancia');
+
+        const rutaSchema = path.resolve(__dirname, '../database/migrations/000_faregas_schema_completo.sql');
+        const schemaCompleto = fs.readFileSync(rutaSchema, 'utf8');
+        assert.ok(!/sujeto_detraccion\s+boolean\s+DEFAULT\s+true/i.test(schemaCompleto), 'El esquema maestro tampoco debe presumir sujeción SPOT');
     });
 
 });

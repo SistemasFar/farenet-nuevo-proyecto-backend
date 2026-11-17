@@ -101,14 +101,14 @@ const mapDocumento = (row) => ({
     intentos: Number(row.intentos || 0),
     fechaUltimoIntento: row.fecha_ultimo_intento,
     fechaCreacion: row.fecha_creacion,
-    sujetoDetraccion: Boolean(row.sujeto_detraccion),
+    sujetoDetraccion: row.sujeto_detraccion == null ? null : Boolean(row.sujeto_detraccion),
     detraccionCodigo: row.detraccion_codigo || null,
     detraccionDescripcion: row.detraccion_descripcion || null,
     detraccionPorcentaje: row.detraccion_porcentaje != null ? Number(row.detraccion_porcentaje) : null,
     detraccionBase: row.detraccion_base != null ? Number(row.detraccion_base) : null,
     detraccionMonto: row.detraccion_monto != null ? Number(row.detraccion_monto) : null,
     detraccionNeto: row.detraccion_neto != null ? Number(row.detraccion_neto) : null,
-    detraccionEstadoDeposito: row.detraccion_estado_deposito || (row.sujeto_detraccion ? 'PENDIENTE' : 'NO_APLICA'),
+    detraccionEstadoDeposito: row.detraccion_estado_deposito || (row.sujeto_detraccion == null ? 'NO_VERIFICADO' : (row.sujeto_detraccion ? 'PENDIENTE' : 'NO_APLICA')),
     detraccionConstanciaNro: row.detraccion_constancia_nro || null,
     detraccionConstanciaFecha: row.detraccion_constancia_fecha || null,
     detraccionMotivoExclusion: row.detraccion_motivo_exclusion || null
@@ -150,7 +150,7 @@ exports.listar = async (query, userContext, dependencies = {}) => {
     const soportaDetraccion = await tieneColumna('fg_facturacion', 'sujeto_detraccion', queryable);
     const columnasDetraccion = soportaDetraccion
         ? 'f.sujeto_detraccion, f.detraccion_codigo, f.detraccion_descripcion, f.detraccion_porcentaje, f.detraccion_base, f.detraccion_monto, f.detraccion_neto, f.detraccion_estado_deposito, f.detraccion_constancia_nro, f.detraccion_constancia_fecha, f.detraccion_motivo_exclusion'
-        : 'false AS sujeto_detraccion, NULL::varchar AS detraccion_codigo, NULL::varchar AS detraccion_descripcion, NULL::numeric AS detraccion_porcentaje, NULL::numeric AS detraccion_base, NULL::numeric AS detraccion_monto, NULL::numeric AS detraccion_neto, \'NO_APLICA\'::varchar AS detraccion_estado_deposito, NULL::varchar AS detraccion_constancia_nro, NULL::date AS detraccion_constancia_fecha, NULL::varchar AS detraccion_motivo_exclusion';
+        : 'NULL::boolean AS sujeto_detraccion, NULL::varchar AS detraccion_codigo, NULL::varchar AS detraccion_descripcion, NULL::numeric AS detraccion_porcentaje, NULL::numeric AS detraccion_base, NULL::numeric AS detraccion_monto, NULL::numeric AS detraccion_neto, \'NO_VERIFICADO\'::varchar AS detraccion_estado_deposito, NULL::varchar AS detraccion_constancia_nro, NULL::date AS detraccion_constancia_fecha, NULL::varchar AS detraccion_motivo_exclusion';
 
     const [listado, totalResult, catalogos] = await Promise.all([
         queryable.query(`
@@ -220,7 +220,7 @@ exports.obtenerDetalle = async (facturacionId, userContext, dependencies = {}) =
     const soportaDetraccion = await tieneColumna('fg_facturacion', 'sujeto_detraccion', queryable);
     const columnasDetraccion = soportaDetraccion
         ? 'f.sujeto_detraccion, f.detraccion_codigo, f.detraccion_descripcion, f.detraccion_porcentaje, f.detraccion_base, f.detraccion_monto, f.detraccion_neto, f.detraccion_estado_deposito, f.detraccion_constancia_nro, f.detraccion_constancia_fecha, f.detraccion_motivo_exclusion'
-        : 'false AS sujeto_detraccion, NULL::varchar AS detraccion_codigo, NULL::varchar AS detraccion_descripcion, NULL::numeric AS detraccion_porcentaje, NULL::numeric AS detraccion_base, NULL::numeric AS detraccion_monto, NULL::numeric AS detraccion_neto, \'NO_APLICA\'::varchar AS detraccion_estado_deposito, NULL::varchar AS detraccion_constancia_nro, NULL::date AS detraccion_constancia_fecha, NULL::varchar AS detraccion_motivo_exclusion';
+        : 'NULL::boolean AS sujeto_detraccion, NULL::varchar AS detraccion_codigo, NULL::varchar AS detraccion_descripcion, NULL::numeric AS detraccion_porcentaje, NULL::numeric AS detraccion_base, NULL::numeric AS detraccion_monto, NULL::numeric AS detraccion_neto, \'NO_VERIFICADO\'::varchar AS detraccion_estado_deposito, NULL::varchar AS detraccion_constancia_nro, NULL::date AS detraccion_constancia_fecha, NULL::varchar AS detraccion_motivo_exclusion';
 
     const documento = await queryable.query(`
         SELECT f.id, f.certificado_id, f.operacion_id, f.planta_key, p.nombre AS planta_nombre,
@@ -285,14 +285,26 @@ exports._construirFiltros = construirFiltros;
 
 exports.registrarConstanciaDetraccion = async (facturacionId, { constanciaNro, constanciaFecha }, userContext, dependencies = {}) => {
     const queryable = dependencies.db || db;
+    const { tieneColumna } = require('./faregas-columna-compat.service');
+    const soportaConstancia = await tieneColumna('fg_facturacion', 'detraccion_constancia_nro', queryable);
+    if (!soportaConstancia) {
+        throw Object.assign(new Error('La migración FAREGAS 004 no está aplicada; no se puede registrar la constancia de detracción.'), {
+            code: 'MIGRACION_DETRACCIONES_REQUERIDA', statusCode: 503
+        });
+    }
     if (!constanciaNro || !constanciaFecha) {
         throw Object.assign(new Error('DATOS_CONSTANCIA_INCOMPLETOS'), { statusCode: 400 });
     }
-    const { registrarAuditoria } = require('./faregas-auditoria.service');
+    const registrarAuditoria = dependencies.registrarAuditoria || require('./faregas-auditoria.service').registrarAuditoria;
     
     const docActual = await queryable.query('SELECT * FROM fg_facturacion WHERE id = $1', [facturacionId]);
     if (docActual.rowCount === 0) {
         throw Object.assign(new Error('FACTURACION_NOT_FOUND'), { statusCode: 404 });
+    }
+    if (docActual.rows[0].sujeto_detraccion !== true) {
+        throw Object.assign(new Error('El comprobante no está marcado como sujeto a detracción.'), {
+            code: 'COMPROBANTE_NO_SUJETO_A_DETRACCION', statusCode: 409
+        });
     }
     
     const actualizado = await queryable.query(`

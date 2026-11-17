@@ -1025,11 +1025,16 @@ CREATE TABLE public.fg_credito (
     intentos integer DEFAULT 0 NOT NULL,
     fecha_ultimo_intento timestamp without time zone,
     fecha_aceptacion timestamp without time zone,
-    sujeto_detraccion boolean DEFAULT false,
+    sujeto_detraccion boolean,
     detraccion_codigo character varying(10),
+    detraccion_descripcion character varying(255),
     detraccion_porcentaje numeric(5,2),
+    detraccion_base numeric(12,2),
     detraccion_monto numeric(12,2),
     detraccion_neto numeric(12,2),
+    detraccion_estado_deposito character varying(30),
+    detraccion_constancia_nro character varying(50),
+    detraccion_constancia_fecha date,
     detraccion_motivo_exclusion character varying(150),
     CONSTRAINT ck_fg_credito_estado CHECK (((estado)::text = ANY ((ARRAY['BORRADOR'::character varying, 'PENDIENTE'::character varying, 'ACEPTADO'::character varying, 'RECHAZADO'::character varying, 'ERROR'::character varying, 'ANULADO'::character varying])::text[]))),
     CONSTRAINT ck_fg_credito_importes CHECK (((base_imponible >= (0)::numeric) AND (igv >= (0)::numeric) AND (importe_total >= (0)::numeric))),
@@ -1610,14 +1615,14 @@ CREATE TABLE public.fg_facturacion (
     enlace_pdf_faregas text,
     facturar_al_dueno_principal boolean,
     fecha_hora_emision timestamp with time zone,
-    sujeto_detraccion boolean DEFAULT false,
+    sujeto_detraccion boolean,
     detraccion_codigo character varying(10),
     detraccion_descripcion character varying(255),
     detraccion_porcentaje numeric(5,2),
     detraccion_base numeric(12,2),
     detraccion_monto numeric(12,2),
     detraccion_neto numeric(12,2),
-    detraccion_estado_deposito character varying(30) DEFAULT 'NO_APLICA'::character varying,
+    detraccion_estado_deposito character varying(30),
     detraccion_constancia_nro character varying(50),
     detraccion_constancia_fecha date,
     detraccion_motivo_exclusion character varying(150),
@@ -2207,7 +2212,7 @@ CREATE TABLE public.fg_producto_facturacion (
     codigo_barras character varying(120),
     codigo_afectacion_isc character varying(20),
     imagen_url text,
-    sujeto_detraccion boolean DEFAULT false,
+    sujeto_detraccion boolean,
     detraccion_codigo character varying(10),
     detraccion_porcentaje numeric(5,2),
     CONSTRAINT chk_fg_producto_facturacion_afectacion CHECK (((tipo_afectacion_igv IS NULL) OR ((tipo_afectacion_igv)::text ~ '^[0-9]{2}$'::text))),
@@ -2454,9 +2459,9 @@ CREATE TABLE public.fg_servicio (
     categoria_id integer NOT NULL,
     tipo_flujo character varying(30) NOT NULL,
     formato_id integer,
-    sujeto_detraccion boolean DEFAULT true,
-    detraccion_codigo character varying(10) DEFAULT '037'::character varying,
-    detraccion_porcentaje numeric(5,2) DEFAULT 12.00,
+    sujeto_detraccion boolean,
+    detraccion_codigo character varying(10),
+    detraccion_porcentaje numeric(5,2),
     CONSTRAINT ck_fg_servicio_tipo_flujo CHECK (((tipo_flujo)::text = ANY ((ARRAY['CERTIFICACION'::character varying, 'SERVICIO_COMPLEMENTARIO'::character varying, 'VEHICULAR_EXISTENTE'::character varying, 'TALLER_INSPECCION'::character varying, 'PRODUCTO_SOLAMENTE'::character varying])::text[])))
 );
 
@@ -5207,7 +5212,7 @@ ALTER TABLE ONLY public.fg_orden_pago
 --
 
 ALTER TABLE ONLY public.fg_perfil_planta
-    ADD CONSTRAINT fg_perfil_planta_perfil_clave_fkey FOREIGN KEY (perfil_clave) REFERENCES public.fg_perfil(clave);
+    ADD CONSTRAINT fg_perfil_planta_perfil_clave_fkey FOREIGN KEY (perfil_clave) REFERENCES public.fg_perfil(clave) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -5286,8 +5291,11 @@ ALTER TABLE ONLY public.fg_venta_detalle
 -- Name: fg_auditoria_config fk_auditoria_usuario; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.fg_auditoria_config
-    ADD CONSTRAINT fk_auditoria_usuario FOREIGN KEY (username) REFERENCES public.fg_usuario(username);
+-- NOTA MIGRACIÓN 005: fk_auditoria_usuario desvinculada para permitir que los
+-- eventos de auditoría se conserven como snapshots históricos inmutables sin bloquear
+-- la baja técnica de cuentas de usuarios.
+-- ALTER TABLE ONLY public.fg_auditoria_config
+--     ADD CONSTRAINT fk_auditoria_usuario FOREIGN KEY (username) REFERENCES public.fg_usuario(username);
 
 
 --
@@ -6053,7 +6061,7 @@ ALTER TABLE ONLY public.fg_planta
 --
 
 ALTER TABLE ONLY public.fg_perfil_permiso
-    ADD CONSTRAINT fk_fg_pp_perfil FOREIGN KEY (perfil_clave) REFERENCES public.fg_perfil(clave);
+    ADD CONSTRAINT fk_fg_pp_perfil FOREIGN KEY (perfil_clave) REFERENCES public.fg_perfil(clave) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --

@@ -71,6 +71,16 @@ const mensajeError = (error, facturacion) => {
     if (error?.code === 'DATOS_NUBEFACT_INVALIDOS') {
         return 'La venta local quedó registrada, pero el producto o los datos tributarios no están listos para Nubefact.';
     }
+    if (error?.code === 'CLASIFICACION_SPOT_NO_VERIFICADA') {
+        return typeof error.detalles === 'string'
+            ? error.detalles
+            : 'La venta quedó registrada, pero falta clasificar el producto en Configuración → Productos antes de emitir la factura.';
+    }
+    if (error?.code === 'CLASIFICACION_SPOT_NO_RECONOCIDA' || error?.code === 'CLASIFICACION_SPOT_INCONSISTENTE') {
+        return typeof error.detalles === 'string'
+            ? error.detalles
+            : 'La venta quedó registrada, pero la clasificación SPOT del producto no corresponde a una categoría de bienes compatible.';
+    }
     if (error?.code === 'SERIE_COMPROBANTE_NO_CONFIGURADA' || error?.code === 'SERIE_PRODUCCION_NO_CONFIRMADA') {
         return `La venta local quedó registrada, pero la serie no está disponible: ${motivo || error.message}.`;
     }

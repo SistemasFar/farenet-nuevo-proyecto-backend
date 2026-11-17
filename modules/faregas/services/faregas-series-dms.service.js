@@ -2,6 +2,7 @@ const db = require('../../../config/database');
 const configService = require('./faregas-config.service');
 
 const TOTAL_FILAS_DMS = 114;
+const EMPRESA_FAREGAS = 'FAREGAS';
 
 // Mapa explícito auditado. No se aplica coincidencia difusa.
 const MAPA_LOCAL_PLANTA = Object.freeze({
@@ -141,7 +142,7 @@ const normalizarFila = (origen, indice) => {
     }
 };
 
-const clave = (row) => `${row.planta_key}|${row.tipo_comprobante}|${row.serie}`;
+const clave = (row) => `${EMPRESA_FAREGAS}|${row.planta_key}|${row.tipo_comprobante}|${row.serie}|${row.tipo_documento_referencia || ''}`;
 const igual = (a, b) => (a ?? null) === (b ?? null);
 
 const analizar = async (filas, queryable = db, { bloquear = false } = {}) => {
@@ -158,19 +159,34 @@ const analizar = async (filas, queryable = db, { bloquear = false } = {}) => {
 
     const plantasEsperadas = [...new Set(seguras.map((row) => row.planta_key))];
     const plantasResult = await queryable.query(
-        'SELECT key::text AS key FROM fg_planta WHERE key::text = ANY($1::text[])',
+        'SELECT key::text AS key, empresa_key FROM fg_planta WHERE key::text = ANY($1::text[])',
         [plantasEsperadas]
     );
-    const plantasExistentes = new Set(plantasResult.rows.map((row) => String(row.key)));
+    const empresasPorPlanta = new Map(plantasResult.rows.map((row) => [String(row.key), row.empresa_key]));
+    const plantasExistentes = new Set(empresasPorPlanta.keys());
     const plantasFaltantes = plantasEsperadas.filter((plantaKey) => !plantasExistentes.has(plantaKey));
     if (plantasFaltantes.length > 0) {
         throw new Error(`HOMOLOGACION_DMS_PLANTAS_INEXISTENTES_${plantasFaltantes.join('_')}`);
     }
 
+    // Una clave puede existir en FARENET o en otra empresa. Nunca se considera
+    // homologada solo porque fg_planta.key coincida con el mapa del DMS.
+    for (const row of seguras) {
+        const empresaReal = empresasPorPlanta.get(String(row.planta_key));
+        if (empresaReal !== EMPRESA_FAREGAS) {
+            row.estado = 'SEDE_NO_HOMOLOGADA';
+            row.motivo = 'PLANTA_PERTENECE_A_OTRA_EMPRESA';
+            row.empresa_real = empresaReal;
+        } else {
+            row.empresa_key = EMPRESA_FAREGAS;
+        }
+    }
     const actualesResult = await queryable.query(`
-        SELECT * FROM fg_serie_comprobante
-        ${bloquear ? 'FOR UPDATE' : ''}
-    `);
+        SELECT s.* FROM fg_serie_comprobante s
+        JOIN fg_planta p ON p.key::text = s.planta_key::text
+        WHERE COALESCE(s.empresa_key, p.empresa_key) = $1
+        ${bloquear ? 'FOR UPDATE OF s' : ''}
+    `, [EMPRESA_FAREGAS]);
     const actuales = new Map(actualesResult.rows.map((row) => [clave(row), row]));
 
     const filasAnalizadas = normalizadas.map((row) => {
@@ -183,14 +199,17 @@ const analizar = async (filas, queryable = db, { bloquear = false } = {}) => {
             'correo_local_dms', 'direccion_comercial_dms', 'autogenerada', 'activo',
             'tipo_documento_referencia', 'serie_pos', 'contingencia'
         ];
-        const cambia = final !== Number(actual.ultimo_numero)
-            || campos.some((campo) => !igual(actual[campo], row[campo]));
+        const diferencias = campos.filter((campo) => !igual(actual[campo], row[campo]));
+        if (final !== Number(actual.ultimo_numero)) diferencias.push('ultimo_numero');
         return {
             ...row,
-            estado: cambia ? 'ACTUALIZAR' : 'YA_EXISTE',
+            // La importación solo agrega filas faltantes. Diferencias quedan
+            // reportadas para revisión; no se pisan series ya configuradas.
+            estado: 'YA_EXISTE',
+            diferencias,
             serie_id: Number(actual.id),
             ultimo_numero_faregas: Number(actual.ultimo_numero),
-            ultimo_numero_final: final,
+            ultimo_numero_final: Number(actual.ultimo_numero),
             proveedor_emision_actual: actual.proveedor_emision,
             entorno_emision_actual: actual.entorno_emision
         };
@@ -229,8 +248,8 @@ const aplicar = async (filas, { confirmar, username, ipDireccion }, dependencies
         await client.query('BEGIN');
         const antes = await analizar(filas, client, { bloquear: true });
         const pendientes = antes.resumen.SEDE_NO_HOMOLOGADA + antes.resumen.REVISAR_MANUAL;
-        if (antes.total !== TOTAL_FILAS_DMS || pendientes !== 7) {
-            throw new Error('HOMOLOGACION_DMS_PREVISUALIZACION_INCONSISTENTE');
+        if (antes.total !== TOTAL_FILAS_DMS || pendientes !== 0) {
+            throw new Error('HOMOLOGACION_DMS_REQUIERE_RESOLVER_HOMOLOGACIONES');
         }
 
         for (const row of antes.filas.filter((item) => item.estado === 'CREAR')) {
@@ -242,7 +261,7 @@ const aplicar = async (filas, { confirmar, username, ipDireccion }, dependencies
                     nombre_dms, codigo_local_dms, nombre_local_dms, telefono_local_dms,
                     correo_local_dms, direccion_comercial_dms
                 ) VALUES (
-                    $1::text, (SELECT empresa_key FROM fg_planta WHERE key::text = $1::text), $2, $3, $4,
+                    $1::text, (SELECT empresa_key FROM fg_planta WHERE key::text = $1::text AND empresa_key = $16), $2, $3, $4,
                     FALSE, $5, $6, $7, 'LEGACY', 'PRODUCCION', $8, $9,
                     $10, $11, $12, $13, $14, $15
                 ) RETURNING *
@@ -251,8 +270,10 @@ const aplicar = async (filas, { confirmar, username, ipDireccion }, dependencies
                 row.autogenerada, row.contingencia, row.activo,
                 row.tipo_documento_referencia, row.serie_pos, row.nombre_dms,
                 row.codigo_local_dms, row.nombre_local_dms, row.telefono_local_dms,
-                row.correo_local_dms, row.direccion_comercial_dms
+                row.correo_local_dms, row.direccion_comercial_dms,
+                EMPRESA_FAREGAS
             ]);
+            if (!insertado.rows[0]) throw new Error('HOMOLOGACION_DMS_PLANTA_NO_ES_FAREGAS');
             await configService.registrarAuditoria(client, {
                 username,
                 entidad: 'SERIE_COMPROBANTE',
@@ -265,37 +286,9 @@ const aplicar = async (filas, { confirmar, username, ipDireccion }, dependencies
             row.serie_id = Number(insertado.rows[0].id);
         }
 
-        for (const row of antes.filas.filter((item) => item.estado === 'ACTUALIZAR')) {
-            const actual = await client.query('SELECT * FROM fg_serie_comprobante WHERE id = $1', [row.serie_id]);
-            await client.query(`
-                UPDATE fg_serie_comprobante
-                SET ultimo_numero = GREATEST(ultimo_numero, $1),
-                    autogenerada = $2, contingencia = $3, activo = $4,
-                    tipo_documento_referencia = $5, serie_pos = $6,
-                    nombre_dms = $7, codigo_local_dms = $8, nombre_local_dms = $9,
-                    telefono_local_dms = $10, correo_local_dms = $11,
-                    direccion_comercial_dms = $12, fecha_modificacion = CURRENT_TIMESTAMP
-                WHERE id = $13
-            `, [
-                row.ultimo_numero_dms, row.autogenerada, row.contingencia, row.activo,
-                row.tipo_documento_referencia, row.serie_pos, row.nombre_dms,
-                row.codigo_local_dms, row.nombre_local_dms, row.telefono_local_dms,
-                row.correo_local_dms, row.direccion_comercial_dms, row.serie_id
-            ]);
-            await configService.registrarAuditoria(client, {
-                username,
-                entidad: 'SERIE_COMPROBANTE',
-                accion: 'HOMOLOGAR_SERIE_DMS_ACTUALIZAR',
-                identificador: clave(row),
-                detalles: { filaDms: row.fila, antes: actual.rows[0], despues: destinoAuditoria(row) },
-                planta_key: row.planta_key,
-                ip_direccion: ipDireccion
-            });
-        }
-
         const despues = await analizar(filas, client);
         if (despues.resumen.CREAR !== 0 || despues.resumen.ACTUALIZAR !== 0
-            || despues.resumen.YA_EXISTE !== TOTAL_FILAS_DMS - 7) {
+            || despues.resumen.YA_EXISTE !== TOTAL_FILAS_DMS) {
             throw new Error('HOMOLOGACION_DMS_VERIFICACION_FINAL_FALLIDA');
         }
         await client.query('COMMIT');

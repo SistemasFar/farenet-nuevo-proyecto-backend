@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const integrationsConfig = require('../../../config/integrations.config');
+const { validarCorrelativoDisponible } = require('./faregas-nubefact-correlativo-guard.service');
 
 const TIPOS_PERMITIDOS = new Set([
     'FACTURA',
@@ -157,6 +158,95 @@ exports.reservarSiguiente = async ({ plantaKey, tipoComprobante, environment, em
     };
 };
 
+exports.reservarSiguienteDisponible = async ({
+    plantaKey,
+    tipoComprobante,
+    environment,
+    empresaKey = null,
+    provider,
+    credentials,
+    maxCandidatos = 5
+}, executor = db) => {
+    const entorno = normalizarEntorno(environment);
+    const tipo = validarTipo(tipoComprobante);
+    if (!['FACTURA', 'BOLETA'].includes(tipo)) {
+        throw errorCorrelativo('TIPO_COMPROBANTE_NO_SOPORTADO_PARA_BUSQUEDA_SEGURA');
+    }
+    const limite = Math.max(1, Math.min(10, Number.parseInt(maxCandidatos, 10) || 5));
+    const serie = await consultarSerie({
+        plantaKey,
+        tipoComprobante: tipo,
+        environment: entorno,
+        empresaKey,
+        bloquear: true
+    }, executor);
+    validarSerieOperativa(serie, entorno);
+
+    for (let intento = 1; intento <= limite; intento += 1) {
+        const numero = serie.ultimoNumero + intento;
+        if (!Number.isSafeInteger(numero) || numero <= 0) {
+            throw errorCorrelativo('CORRELATIVO_COMPROBANTE_INVALIDO');
+        }
+
+        // Si el contador está por detrás de una reserva local, no se salta sin
+        // investigar: puede existir una emisión o intento pendiente de esta sede.
+        const local = await executor.query(`
+            SELECT id, estado
+              FROM fg_facturacion
+             WHERE numero = $2
+               AND (
+                    serie_comprobante_id = $1
+                    OR (serie = $3 AND empresa_key = $4 AND entorno_facturador = $5)
+               )
+             LIMIT 1
+        `, [serie.id, numero, serie.serie, serie.empresaKey, entorno]);
+        if (local.rowCount > 0) {
+            throw errorCorrelativo('CORRELATIVO_RESERVADO_LOCALMENTE', {
+                serie: serie.serie,
+                numero,
+                facturacionId: Number(local.rows[0].id),
+                estado: local.rows[0].estado
+            });
+        }
+
+        try {
+            await validarCorrelativoDisponible(provider, {
+                tipoComprobante: tipo,
+                serie: serie.serie,
+                numero,
+                credentials
+            });
+        } catch (error) {
+            if (error.code !== 'NUBEFACT_CORRELATIVO_OCUPADO') throw error;
+            if (intento === limite) break;
+            continue;
+        }
+
+        const actualizado = await executor.query(`
+            UPDATE fg_serie_comprobante
+               SET ultimo_numero = $1,
+                   fecha_modificacion = CURRENT_TIMESTAMP
+             WHERE id = $2 AND ultimo_numero = $3
+             RETURNING id
+        `, [numero, serie.id, serie.ultimoNumero]);
+        if (actualizado.rowCount !== 1) throw errorCorrelativo('CORRELATIVO_CONCURRENCIA');
+
+        return {
+            ...serie,
+            numero,
+            nroComprobante: `${serie.serie}-${String(numero).padStart(8, '0')}`,
+            disponibleEnNubefact: true,
+            candidatosOcupados: intento - 1
+        };
+    }
+
+    throw errorCorrelativo('NUBEFACT_SIN_CORRELATIVO_DISPONIBLE', {
+        serie: serie.serie,
+        ultimoNumero: serie.ultimoNumero,
+        candidatosConsultados: limite
+    });
+};
+
 exports._private = {
     TIPOS_PERMITIDOS,
     consultarSerie,
@@ -165,5 +255,6 @@ exports._private = {
     mapSerie,
     validarSerieTributaria,
     normalizarEntorno,
-    errorCorrelativo
+    errorCorrelativo,
+    consultarSerie
 };

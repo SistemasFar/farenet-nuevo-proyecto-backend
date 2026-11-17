@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const bcrypt = require('bcryptjs');
+const integridad = require('./faregas-cuentas-integridad.service');
 const paginacion = require('./faregas-paginacion.rules');
 const validacion = require('./faregas-usuarios-validacion.service');
 const perfilRepository = require('./faregas-usuario-perfil.repository');
@@ -268,7 +269,7 @@ exports.crearUsuario = async (data, _creadorUsername) => {
     }
 };
 
-exports.actualizarUsuario = async (oldUsername, data, _modificadorUsername) => {
+exports.actualizarUsuario = async (oldUsername, data, modificadorUsername) => {
     const { perfil_id, estado, sedes, user_type, nombres, apellidos, nombreRazonSocial } = data;
 
     // Mismas reglas que en la creación. `modo: 'editar'` deja pasar la contraseña
@@ -283,6 +284,14 @@ exports.actualizarUsuario = async (oldUsername, data, _modificadorUsername) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+        await integridad.bloquearCuentas(client);
+        const previo = await client.query('SELECT username,perfil_id,estado FROM fg_usuario WHERE username=$1 FOR UPDATE', [oldUsername]);
+        if (!previo.rowCount) throw integridad.error('USER_NOT_FOUND', 'El usuario no existe.', 404);
+        await integridad.protegerCuenta(client, previo.rows[0], modificadorUsername, { estado: estadoBool, perfil: cleanPerfil });
+        if (!estadoBool || cleanPerfil !== previo.rows[0].perfil_id || newUsername !== oldUsername) {
+            await integridad.revocarSesiones(client, oldUsername);
+        }
+
 
         if (newUsername !== oldUsername) {
             const r = await client.query('SELECT 1 FROM fg_usuario WHERE username = $1', [newUsername]);
@@ -475,6 +484,11 @@ exports.actualizarPerfil = async (clave, data, actor = null, contexto = {}) => {
 
     try {
         await client.query('BEGIN');
+        await integridad.bloquearCuentas(client);
+        const teniaAdminActivo = (await client.query(`SELECT 1 FROM fg_usuario u WHERE u.estado=TRUE
+            AND EXISTS (SELECT 1 FROM fg_perfil_permiso pp JOIN fg_permiso p ON p.clave=pp.permiso_clave
+              WHERE pp.perfil_clave=u.perfil_id AND pp.permiso_clave='MENU_USUARIOS' AND p.activo=TRUE) LIMIT 1`)).rowCount > 0;
+
 
         // Bloqueo de la fila del perfil: dos administradores que guarden a la
         // vez no pueden calcular el diff sobre estados distintos ni dejar
@@ -567,6 +581,13 @@ exports.actualizarPerfil = async (clave, data, actor = null, contexto = {}) => {
             contexto
         });
 
+        if (teniaAdminActivo) {
+            const quedan = await client.query(`SELECT 1 FROM fg_usuario u WHERE u.estado=TRUE
+                AND EXISTS (SELECT 1 FROM fg_perfil_permiso pp JOIN fg_permiso p ON p.clave=pp.permiso_clave
+                  WHERE pp.perfil_clave=u.perfil_id AND pp.permiso_clave='MENU_USUARIOS' AND p.activo=TRUE) LIMIT 1`);
+            if (!quedan.rowCount) throw integridad.error('ULTIMO_ADMIN', 'El cambio dejaría el sistema sin una cuenta administradora activa.');
+        }
+
         await client.query('COMMIT');
         return { clave };
     } catch (e) {
@@ -577,16 +598,73 @@ exports.actualizarPerfil = async (clave, data, actor = null, contexto = {}) => {
     }
 };
 
-exports.eliminarPerfil = async (clave) => {
-    if (clave === 'SISTEMAS') {
-        throw new Error('NO_DELETE_SISTEMAS');
+exports.obtenerUsuariosPorPerfil = async (clave, executor = db) => {
+    const existe = await executor.query('SELECT 1 FROM fg_perfil WHERE clave=$1', [clave]);
+    if (!existe.rowCount) throw integridad.error('PERFIL_NO_EXISTE', 'El perfil no existe.', 404);
+    const propio = await perfilRepository.estaDisponible(executor);
+    const res = await executor.query(`
+        SELECT u.username, u.estado, u.user_type,
+            ${propio ? 'COALESCE(up.nombres,p.nombres)' : 'p.nombres'} nombres,
+            ${propio ? 'COALESCE(up.apellidos,p.apellidos)' : 'p.apellidos'} apellidos
+        FROM fg_usuario u
+        LEFT JOIN persona p ON p.nrodocumentoidentidad=u.persona_nrodocumentoidentidad
+        ${propio ? 'LEFT JOIN fg_usuario_perfil up ON up.usuario_username=u.username' : ''}
+        WHERE u.perfil_id=$1 ORDER BY u.username`, [clave]);
+    return res.rows;
+};
+
+exports.eliminarPerfil = async (clave, { nuevoPerfilClave = null } = {}, actor = null, contexto = {}) => {
+    if (clave === 'SISTEMAS') throw integridad.error('NO_DELETE_SISTEMAS', 'No se permite eliminar el perfil base SISTEMAS.', 403);
+    if (nuevoPerfilClave !== null && (typeof nuevoPerfilClave !== 'string' || !nuevoPerfilClave.trim() || nuevoPerfilClave === clave)) {
+        throw integridad.error('PERFIL_REEMPLAZO_INVALIDO', 'Seleccione un perfil de reemplazo diferente y válido.', 400);
     }
+    const client = await db.connect();
     try {
-        await db.query('DELETE FROM fg_perfil WHERE clave = $1', [clave]);
+        await client.query('BEGIN');
+        await integridad.bloquearCuentas(client);
+        await permisosSensiblesService.verificarAutorizacionPerfiles({ executor: client, actor, contexto, perfilClave: clave });
+        // Orden estable para evitar bloqueos cruzados entre perfiles.
+        const perfiles = await client.query('SELECT clave FROM fg_perfil WHERE clave = ANY($1::varchar[]) ORDER BY clave FOR UPDATE', [[clave, nuevoPerfilClave].filter(Boolean)]);
+        if (!perfiles.rows.some(p => p.clave === clave)) throw integridad.error('PERFIL_NO_EXISTE', 'El perfil no existe.', 404);
+        if (nuevoPerfilClave && !perfiles.rows.some(p => p.clave === nuevoPerfilClave)) {
+            throw integridad.error('PERFIL_REEMPLAZO_INVALIDO', 'El perfil de reemplazo no existe.', 400);
+        }
+        const usuarios = await exports.obtenerUsuariosPorPerfil(clave, client);
+        if (usuarios.length && !nuevoPerfilClave) {
+            throw Object.assign(integridad.error('PERFIL_CON_USUARIOS', 'Seleccione un perfil de reemplazo para los usuarios vinculados.'), { perfil: clave, usuarios });
+        }
+        if (usuarios.length) {
+            // No ampliar el perfil de destino ni descartar sedes silenciosamente.
+            const incompatibles = await client.query(`
+                SELECT up.usuario_username, up.plantas_key FROM fg_usuario_planta up
+                JOIN fg_usuario u ON u.username=up.usuario_username
+                WHERE u.perfil_id=$1 AND NOT EXISTS (
+                    SELECT 1 FROM fg_perfil_planta pp WHERE pp.perfil_clave=$2 AND pp.planta_key=up.plantas_key
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM fg_perfil_permiso pp JOIN fg_permiso p ON p.clave=pp.permiso_clave AND p.activo=TRUE
+                    WHERE pp.perfil_clave=$2 AND pp.permiso_clave='FAREGAS_ACCESO_GLOBAL_SEDES'
+                )`, [clave, nuevoPerfilClave]);
+            if (incompatibles.rowCount) throw integridad.error('PERFIL_SEDES_INCOMPATIBLES', 'El reemplazo no permite todas las sedes asignadas. Revise las sedes antes de continuar.', 409, incompatibles.rows);
+            // Evalúa el resultado completo de la reasignación, no usuario por usuario.
+            if (await integridad.esAdministrador(client, clave) && !await integridad.esAdministrador(client, nuevoPerfilClave)) {
+                const restantes = await client.query(`SELECT 1 FROM fg_usuario u WHERE u.estado=TRUE AND u.perfil_id<>$1
+                    AND EXISTS (SELECT 1 FROM fg_perfil_permiso pp JOIN fg_permiso p ON p.clave=pp.permiso_clave
+                      WHERE pp.perfil_clave=u.perfil_id AND pp.permiso_clave='MENU_USUARIOS' AND p.activo=TRUE) LIMIT 1`, [clave]);
+                if (!restantes.rowCount && usuarios.some(u=>u.estado)) throw integridad.error('ULTIMO_ADMIN_PERFIL', 'La reasignación dejaría el sistema sin una cuenta administradora activa.', 403);
+            }
+            await client.query('UPDATE fg_usuario SET perfil_id=$1 WHERE perfil_id=$2', [nuevoPerfilClave, clave]);
+            for (const u of usuarios) await integridad.revocarSesiones(client, u.username);
+        }
+        await client.query('DELETE FROM fg_perfil_permiso WHERE perfil_clave=$1', [clave]);
+        await client.query('DELETE FROM fg_perfil_planta WHERE perfil_clave=$1', [clave]);
+        await client.query('DELETE FROM fg_perfil WHERE clave=$1', [clave]);
+        await client.query('COMMIT');
+        return { perfilEliminado: clave, usuariosReasignados: usuarios.length, nuevoPerfilClave };
     } catch (e) {
-        if (e.code === '23503') throw new Error('IN_USE');
+        await client.query('ROLLBACK');
+        if (e.code === '23503') throw integridad.error('PERFIL_CON_DEPENDENCIAS', 'El perfil conserva otras dependencias; no se realizaron cambios.');
         throw e;
-    }
+    } finally { client.release(); }
 };
 
 exports.obtenerPlantas = async () => {
@@ -610,9 +688,8 @@ exports.obtenerPermisos = async () => {
 
 /**
  * Tablas cuyo historial de negocio impide borrar un usuario, con la etiqueta que
- * se muestra al operador. Se deriva de las FK reales hacia `fg_usuario`: 30
- * constraints en 17 tablas, todas `RESTRICT` o `NO ACTION` (ninguna `CASCADE`,
- * para que el historial nunca se borre en silencio).
+ * se muestra al operador. La detección se completa con las FK reales de cada
+ * instalación, incluso cuando una FK nueva declara borrado en cascada.
  *
  * `fg_usuario_sesion` y `fg_usuario_planta` NO aparecen: son dependencias
  * operativas del acceso, no historial, y se limpian antes de intentar el borrado.
@@ -651,36 +728,46 @@ const COLUMNAS_REFERENCIA = {
     fg_descuentodetalle: ['usuario_creacion', 'usuario_modificacion'],
     fg_documento_anulacion: ['usuario_creacion', 'usuario_modificacion'],
     fg_documento_electronico_operacion: ['usuario_creacion'],
+    fg_facturacion: ['usuario_creacion', 'usuario_modificacion'],
+    fg_orden_pago: ['usuariocreacion_username', 'usuariomodi_username'],
     fg_auditoria_config: ['username']
 };
 
 /**
  * Consulta qué historial bloquea a un usuario, para poder decirlo en el mensaje
  * en vez de devolver un 500 genérico. Usa `to_regclass` para no fallar si una
- * tabla llegara a no existir en alguna instalación.
+ * tabla llegara a no existir en alguna instalación. Se consultan las columnas
+ * presentes para tolerar diferencias entre versiones del esquema.
  */
 const detectarHistorial = async (username, executor) => {
+    const metadata = await executor.query(`SELECT ns.nspname esquema, rel.relname tabla, att.attname columna
+        FROM pg_constraint fk JOIN pg_class rel ON rel.oid=fk.conrelid
+        JOIN pg_namespace ns ON ns.oid=rel.relnamespace
+        JOIN LATERAL unnest(fk.conkey) k(num) ON TRUE
+        JOIN pg_attribute att ON att.attrelid=rel.oid AND att.attnum=k.num
+        WHERE fk.contype='f' AND fk.confrelid='public.fg_usuario'::regclass`);
+    const columnas = await executor.query(`SELECT table_name tabla,column_name columna FROM information_schema.columns
+        WHERE table_schema='public' AND table_name=ANY($1::text[])`, [Object.keys(COLUMNAS_REFERENCIA)]);
+    const grupos = new Map();
+    const acceso = new Set(['fg_usuario_planta','fg_usuario_sesion','fg_usuario_perfil']);
+    for (const ref of [...metadata.rows, ...columnas.rows.filter(r=>COLUMNAS_REFERENCIA[r.tabla]?.includes(r.columna)).map(r=>({...r, esquema:'public'}))]) {
+        if (ref.esquema === 'public' && acceso.has(ref.tabla)) continue;
+        const key = JSON.stringify([ref.esquema,ref.tabla]);
+        if (!grupos.has(key)) grupos.set(key, { ...ref, columnas: new Set() });
+        grupos.get(key).columnas.add(ref.columna);
+    }
+    const q = x => '"'+x.replace(/"/g,'""')+'"';
     const bloqueos = [];
-    for (const { tabla, etiqueta } of HISTORIAL_USUARIO) {
-        const columnas = COLUMNAS_REFERENCIA[tabla] || ['username'];
-        const existe = (await executor.query(
-            `SELECT to_regclass($1::text) IS NOT NULL AS existe`, [`public.${tabla}`])).rows[0].existe;
-        if (!existe) continue;
-        // Los parámetros empiezan en $1: el nombre de la tabla va interpolado en
-        // el FROM porque no puede ser un parámetro de binding.
-        const condiciones = columnas
-            .map((columna, indice) => `${columna} = $${indice + 1}`)
-            .join(' OR ');
-        const total = (await executor.query(
-            `SELECT COUNT(*)::int AS n FROM ${tabla} WHERE ${condiciones}`,
-            columnas.map(() => username))).rows[0].n;
-        if (total > 0) bloqueos.push({ tabla, etiqueta, total });
+    for (const ref of grupos.values()) {
+        const condiciones = [...ref.columnas].map(c=>q(c)+' = $1').join(' OR ');
+        const total = Number((await executor.query('SELECT COUNT(*)::int AS n FROM '+q(ref.esquema)+'.'+q(ref.tabla)+' WHERE '+condiciones,[username])).rows[0].n);
+        if (total) bloqueos.push({ tabla: ref.tabla, etiqueta: HISTORIAL_USUARIO.find(t=>t.tabla===ref.tabla)?.etiqueta || ref.tabla, total });
     }
     return bloqueos;
 };
 
 const errorHistorial = (username, bloqueos) => {
-    const error = new Error('HAS_HISTORIAL');
+    const error = new Error(`El usuario conserva referencias: ${bloqueos.map(b => `${b.total} ${b.etiqueta}`).join(', ')}. Puedes desactivarlo para conservar ese historial.`);
     error.code = 'USUARIO_CON_HISTORIAL';
     error.statusCode = 409;
     error.username = username;
@@ -688,40 +775,54 @@ const errorHistorial = (username, bloqueos) => {
     return error;
 };
 
-exports.eliminarUsuario = async (username) => {
+exports.desactivarUsuario = async (username, actor = null) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-
-        // Las sesiones registradas ya no bloquean el borrado: se cierran. Son
-        // dependencias del acceso, no historial de negocio, y dejarlas impedía
-        // retirar a un usuario que ya cerró sesión.
-        // Ojo con el nombre: en `fg_usuario_sesion` y `fg_usuario_planta` la FK
-        // se llama `usuario_username`; sólo `fg_usuario` usa `username` (su PK).
-        const sesiones = await client.query(
-            'DELETE FROM fg_usuario_sesion WHERE usuario_username = $1 RETURNING id', [username]);
-        await client.query('DELETE FROM fg_usuario_planta WHERE usuario_username = $1', [username]);
-
-        // Antes de borrar, se comprueba el historial. Si existe, se aborta con
-        // 409 y la transacción se revierte: no se toca ni un registro histórico.
-        const bloqueos = await detectarHistorial(username, client);
-        if (bloqueos.length > 0) throw errorHistorial(username, bloqueos);
-
-        const eliminado = await client.query(
-            'DELETE FROM fg_usuario WHERE username = $1 RETURNING username', [username]);
-
+        await integridad.bloquearCuentas(client);
+        const r = await client.query('SELECT username,perfil_id,estado FROM fg_usuario WHERE username=$1 FOR UPDATE', [username]);
+        if (!r.rowCount) throw integridad.error('USER_NOT_FOUND', 'El usuario no existe.', 404);
+        await integridad.protegerCuenta(client, r.rows[0], actor);
+        const sesiones = await integridad.revocarSesiones(client, username);
+        await client.query('UPDATE fg_usuario SET estado=FALSE WHERE username=$1', [username]);
         await client.query('COMMIT');
-        return {
-            username: eliminado.rows[0]?.username ?? username,
-            sesionesCerradas: sesiones.rowCount,
-            sedesEliminadas: true
-        };
-    } catch (e) {
-        await client.query('ROLLBACK');
-        throw e;
-    } finally {
-        client.release();
-    }
+        return { username, estado: false, sesionesCerradas: sesiones.rowCount, mensaje: 'Usuario desactivado y sesiones revocadas.' };
+    } catch (e) { await client.query('ROLLBACK'); throw e; }
+    finally { client.release(); }
+};
+
+exports.activarUsuario = async (username) => {
+    const res = await db.query('UPDATE fg_usuario SET estado = true WHERE username = $1 RETURNING username, estado', [username]);
+    if (!res.rowCount) throw integridad.error('USER_NOT_FOUND', 'El usuario no existe.', 404);
+    return { success: true, ...res.rows[0] };
+};
+
+exports.eliminarUsuario = async (username, actor = null) => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        await integridad.bloquearCuentas(client);
+        const r = await client.query('SELECT username,perfil_id,estado FROM fg_usuario WHERE username=$1 FOR UPDATE', [username]);
+        if (!r.rowCount) throw integridad.error('USER_NOT_FOUND', 'El usuario no existe.', 404);
+        await integridad.protegerCuenta(client, r.rows[0], actor);
+        const bloqueos = await detectarHistorial(username, client);
+        if (bloqueos.length) throw errorHistorial(username, bloqueos);
+        // El savepoint permite recuperar una FK nueva sin operar una transacción abortada.
+        await client.query('SAVEPOINT baja_usuario');
+        await client.query('DELETE FROM fg_usuario_sesion WHERE usuario_username=$1', [username]);
+        await client.query('DELETE FROM fg_usuario_planta WHERE usuario_username=$1', [username]);
+        if (await perfilRepository.estaDisponible(client)) await client.query('DELETE FROM fg_usuario_perfil WHERE usuario_username=$1', [username]);
+        try {
+            await client.query('DELETE FROM fg_usuario WHERE username=$1', [username]);
+        } catch (e) {
+            if (e.code !== '23503') throw e;
+            await client.query('ROLLBACK TO SAVEPOINT baja_usuario');
+            throw errorHistorial(username, [{ tabla: e.table || 'referencias históricas', etiqueta: 'referencias históricas', total: 1 }]);
+        }
+        await client.query('COMMIT');
+        return { accion: 'ELIMINADO', username, mensaje: 'Usuario eliminado de FAREGAS.' };
+    } catch (e) { await client.query('ROLLBACK'); throw e; }
+    finally { client.release(); }
 };
 
 exports._private = { HISTORIAL_USUARIO, COLUMNAS_REFERENCIA, detectarHistorial };

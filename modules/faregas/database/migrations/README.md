@@ -10,13 +10,19 @@ La carpeta `farenetBackend/modules/faregas/database/migrations/` contiene los sc
 
 | Archivo | Propósito | Características |
 |---|---|---|
-| `000_faregas_schema_completo.sql` | Instalación DDL completa de estructuras | 70 tablas propias (69 operativas + `fg_usuario_perfil`), 32 secuencias, 188 FKs (176 internas + 12 externas a stubs), 44 UNIQUEs, 118 índices secundarios, 2 funciones PL/pgSQL y 2 triggers de inmutabilidad. |
+| `000_faregas_schema_completo.sql` | Instalación DDL completa de estructuras | Incluye soporte SPOT en `fg_facturacion`, `fg_credito`, `fg_servicio` y `fg_producto_facturacion`, con índices de facturación. La clasificación comienza en `NULL`; no asigna código ni tasa por defecto. |
 | `001_faregas_datos_iniciales.sql` | Carga inicial de catálogos y reglas RBAC | 11 perfiles (`fg_perfil`), 51 permisos (`fg_permiso`), 221 asignaciones RBAC (`fg_perfil_permiso`), 7 tipos de certificado (`fg_tipo_certificado`), usuario técnico de sistema deshabilitado y descuento inicial `CORTESIA_FAREGAS`. 100% idempotente (`ON CONFLICT`). Cero datos confidenciales. |
+| `002_ampliacion_auditoria_integral.sql` | Ampliación de auditoría FAREGAS | Extiende auditoría e índices propios `fg_*`. |
+| `003_migracion_fg_usuario_perfil_independiente.sql` | Perfil propio de usuario FAREGAS | Crea `fg_usuario_perfil` y realiza backfill inicial condicional. No es dependencia de SPOT; 004 no toca usuarios ni perfiles. |
+| `004_implementacion_detracciones_spot.sql` | Migración incremental SPOT para instalaciones existentes | Añade columnas nullable e índices en tablas `fg_*`; es transaccional e idempotente. No contiene `UPDATE`, `DELETE`, defaults de clasificación ni cambios a tablas FARENET. |
+| `005_optimizacion_eliminacion_usuarios_perfiles.sql` | Optimización de eliminación y reasignación de perfiles/usuarios | Configura `ON DELETE CASCADE` en `fg_perfil_permiso` y `fg_perfil_planta`; desvincula FK en `fg_auditoria_config` para snapshots históricos inmutables sin bloqueos. |
 | `README.md` | Guía de arquitectura, dependencias y ejecución | Este documento técnico. |
 
 > [!WARNING]
 > **ADVERTENCIA DE SEGURIDAD OPERATIVA:**
 > Los scripts `000_faregas_schema_completo.sql` y `001_faregas_datos_iniciales.sql` están diseñados **EXCLUSIVAMENTE** para su ejecución en una nueva base de datos PostgreSQL independiente. **NO EJECUTAR** estos scripts en la base compartida de producción `inspeccion` (`192.168.14.19`).
+
+> La migración `004_implementacion_detracciones_spot.sql` es únicamente para una instalación existente que requiera habilitar SPOT y cuyas tablas FAREGAS objetivo ya existan. No ejecute `000` sobre una base existente. Antes de ejecutar 004, confirme base/servidor, respalde la base y verifique las tablas/columnas. El script solo altera `fg_facturacion`, `fg_credito`, `fg_servicio` y `fg_producto_facturacion`; no clasifica registros existentes.
 
 ---
 
@@ -131,6 +137,41 @@ Si se requiere poblar el catálogo base de productos de facturación y SKUs de v
 ```bash
 node farenetBackend/modules/faregas/database/scripts/import_faregas_productos.js
 ```
+
+### Migraciones incrementales para una instalación existente
+
+El orden histórico de migraciones FAREGAS es `002` → `003` → `004` después de la instalación base y los datos iniciales. Para SPOT, la única migración requerida es `004_implementacion_detracciones_spot.sql`; `000` y otras migraciones no deben repetirse para habilitar esta función. La 004 no depende de `fg_usuario_perfil` de la 003 y no modifica esa tabla.
+
+Antes de la ejecución, compruebe que el respaldo sea restaurable y que existan `public.fg_facturacion`, `public.fg_credito`, `public.fg_servicio` y `public.fg_producto_facturacion`. La migración requiere PostgreSQL 13 o superior y se ejecuta en una transacción (`BEGIN`/`COMMIT`). Sus columnas SPOT se agregan sin `DEFAULT`, por lo que los valores existentes quedan intactos y la clasificación de servicios/productos permanece `NULL` hasta su configuración explícita.
+
+Ejecute solo el archivo incremental, con detención ante errores:
+
+```bash
+psql -h <HOST> -p <PUERTO> -U <USUARIO> -d inspeccion -v ON_ERROR_STOP=1 -f 004_implementacion_detracciones_spot.sql
+```
+
+Verifique la estructura, ausencia de defaults y pendientes de clasificación:
+
+```sql
+SELECT table_name, column_name, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name IN ('fg_facturacion', 'fg_credito', 'fg_servicio', 'fg_producto_facturacion')
+  AND (column_name = 'sujeto_detraccion' OR column_name LIKE 'detraccion_%')
+ORDER BY table_name, ordinal_position;
+
+SELECT indexname
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND indexname IN ('idx_fg_facturacion_detraccion', 'idx_fg_facturacion_detraccion_constancia')
+ORDER BY indexname;
+
+SELECT count(*) AS servicios_pendientes_de_clasificar
+FROM public.fg_servicio
+WHERE sujeto_detraccion IS NULL;
+```
+
+La instalación nueva (`000`) y la migración incremental (`004`) declaran los mismos campos e índices SPOT. La repetición de `ADD COLUMN/INDEX IF NOT EXISTS` dentro de 004 sirve para despliegues existentes y no duplica objetos. No se agregan restricciones SPOT: un servicio sin clasificación debe permanecer pendiente y el backend impide emitir una factura sujeta hasta completar su configuración.
 
 ---
 

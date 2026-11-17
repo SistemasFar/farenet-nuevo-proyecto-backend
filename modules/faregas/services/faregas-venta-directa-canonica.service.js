@@ -12,12 +12,23 @@ const {
 } = require('./faregas-chips-fiscal.rules');
 const inventarioCantidadService = require('./faregas-inventario-cantidad.service');
 const { validarCuentaFaregas } = require('./faregas-cuenta-bancaria.service');
+const { evaluarDetraccion } = require('./faregas-detracciones.service');
+const { validarTelefonoVentaChips } = require('./faregas-telefono-venta-chips.rules');
 
 const texto = (value) => String(value ?? '').trim();
 
 const calcularBaseIgv = (importe) => {
     const base = redondear(Number(importe) / 1.18);
     return { base, igv: redondear(Number(importe) - base) };
+};
+
+const calcularResumenPagoVenta = ({ importeTotal, totalPagado, condicionPago, evaluacionSpot }) => {
+    const totalExigible = evaluacionSpot?.sujeto ? evaluacionSpot.neto : importeTotal;
+    if (totalPagado - totalExigible > 0.009) throw new Error('PAGO_EXCEDE_TOTAL');
+    if (condicionPago === 'CONTADO' && totalExigible - totalPagado > 0.009) throw new Error('PAGO_INCOMPLETO');
+    const saldoPendiente = redondear(Math.max(0, totalExigible - totalPagado));
+    const importeAcreditado = redondear(totalPagado + (evaluacionSpot?.sujeto ? evaluacionSpot.monto : 0));
+    return { totalExigible, saldoPendiente, importeAcreditado };
 };
 
 const construirDetalleChip = (chip, config) => {
@@ -35,7 +46,12 @@ const construirDetalleChip = (chip, config) => {
         valorUnitario: calculo.base,
         baseImponible: calculo.base,
         igv: calculo.igv,
-        importeTotal: config.precio
+        importeTotal: config.precio,
+        productoSpot: {
+            sujeto_detraccion: config.sujeto_detraccion ?? null,
+            detraccion_codigo: config.detraccion_codigo || null,
+            detraccion_porcentaje: config.detraccion_porcentaje == null ? null : Number(config.detraccion_porcentaje)
+        }
     };
 };
 
@@ -99,6 +115,7 @@ const obtenerConfiguracionProducto = async (client, plantaKey, productoInventari
                pis.producto_facturacion_id,
                pf.codigo_sku, pf.descripcion, pf.unidad,
                pf.tipo_afectacion_igv, pf.codigo_clasificacion_sunat,
+               pf.sujeto_detraccion, pf.detraccion_codigo, pf.detraccion_porcentaje,
                pf.activo AS fiscal_activo, pf.es_para_venta,
                pf.precio_unitario AS valor_unitario_fiscal,
                pf.precio_referencia AS precio_referencia
@@ -129,6 +146,7 @@ const obtenerConfiguracionProducto = async (client, plantaKey, productoInventari
 const crearVentaDirecta = async (payload, userContext) => {
     const plantaKey = userContext?.planta_key;
     if (!plantaKey) throw new Error('PLANTA_REQUERIDA');
+    const telefono = validarTelefonoVentaChips(payload.telefono);
     const tieneChips = Array.isArray(payload.chips) && payload.chips.length > 0;
     const tieneCantidad = payload.productoInventariableId != null || payload.cantidad != null;
     if (tieneChips === tieneCantidad) throw new Error('MODO_VENTA_INVALIDO');
@@ -228,10 +246,26 @@ const crearVentaDirecta = async (payload, userContext) => {
             importeTotal = redondear(importeTotal + detalle.importeTotal);
         }
 
+        let evaluacionSpotProducto = null;
+        if (texto(payload.tipoComprobante).toUpperCase() === 'FACTURA' && importeTotal > 700) {
+            evaluacionSpotProducto = evaluarDetraccion({
+                tipoComprobante: 'FACTURA',
+                importeTotal,
+                items: detalles.map(detalle => ({ tipo_item: 'PRODUCTO', productoSpot: detalle.productoSpot }))
+            });
+            if (evaluacionSpotProducto.requiereRevision) {
+                const error = new Error(evaluacionSpotProducto.motivoExclusion);
+                error.code = evaluacionSpotProducto.motivoExclusion;
+                error.statusCode = 409;
+                error.detalles = 'Configure y guarde la clasificación SPOT del producto en Configuración → Productos antes de confirmar esta factura.';
+                throw error;
+            }
+        }
+
         const totalPagado = redondear(pagos.reduce((total, pago) => total + pago.importe, 0));
-        if (totalPagado - importeTotal > 0.009) throw new Error('PAGO_EXCEDE_TOTAL');
-        if (condicionPago === 'CONTADO' && importeTotal - totalPagado > 0.009) throw new Error('PAGO_INCOMPLETO');
-        const saldoPendiente = redondear(Math.max(0, importeTotal - totalPagado));
+        const { saldoPendiente, importeAcreditado } = calcularResumenPagoVenta({
+            importeTotal, totalPagado, condicionPago, evaluacionSpot: evaluacionSpotProducto
+        });
         if (condicionPago === 'CREDITO' && saldoPendiente <= 0.009) {
             const err = new Error('VENTA_CREDITO_SIN_SALDO');
             err.code = 'VENTA_CREDITO_SIN_SALDO';
@@ -250,7 +284,7 @@ const crearVentaDirecta = async (payload, userContext) => {
             nombreRazonSocial: cliente.nombre,
             direccion: cliente.direccion,
             correo: payload.email,
-            telefono: payload.telefono
+            telefono
         }, client);
 
         const estadoOperacion = saldoPendiente > 0.009 ? 'PENDIENTE' : 'PAGADO';
@@ -337,7 +371,7 @@ const crearVentaDirecta = async (payload, userContext) => {
             importeTotal,
             baseImponible,
             igv,
-            totalPagado,
+            importeAcreditado,
             saldoPendiente,
             formaPagoKey,
             estadoOperacion,
@@ -436,5 +470,5 @@ const crearVentaDirecta = async (payload, userContext) => {
 
 module.exports = {
     crearVentaDirecta,
-    _private: Object.freeze({ obtenerConfiguracionProducto, calcularBaseIgv, construirDetalleChip, validarPago })
+    _private: Object.freeze({ obtenerConfiguracionProducto, calcularBaseIgv, construirDetalleChip, validarPago, calcularResumenPagoVenta, validarTelefonoVentaChips })
 };

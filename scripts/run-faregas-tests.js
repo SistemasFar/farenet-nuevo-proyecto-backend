@@ -11,6 +11,7 @@ const nubefactFiles = new Set([
     'faregas-swagger.test.js',
     'faregas-catalogo-fiscal-import.test.js',
     'faregas-correlativos-nubefact.test.js',
+    'faregas-nubefact-correlativo-guard.test.js',
     'faregas-documentos-electronicos.test.js',
     'faregas-facturacion-admin.test.js',
     'faregas-facturacion.test.js',

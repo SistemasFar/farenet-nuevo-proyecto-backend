@@ -1,7 +1,7 @@
 const config = require('../../../config/integrations.config');
 const { construirInformacionAdicional } = require('./nubefact-faregas-informacion-adicional');
 const { esGratuidadTallerAutorizada, esFlujoTaller } = require('../services/faregas-gratuidad-taller.policy');
-const { evaluarDetraccion } = require('../services/faregas-detracciones.service');
+const { evaluarDetraccion, CAT_SPOT, CAT_SPOT_BIENES } = require('../services/faregas-detracciones.service');
 
 const dosDecimales = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
@@ -255,21 +255,60 @@ const construirPayloadNubefact = ({
         gratuidadAutorizada
     });
 
-    const evaluacionDetraccion = evaluarDetraccion({
-        tipoComprobante: facturacion.tipo_comprobante,
-        importeTotal: facturacion.importe_total,
-        moneda: facturacion.moneda_key,
-        items: detalles,
-        servicio: certificadoData?.servicio || resumenTributario?.servicio,
-        esGratuito: gratuidadAutorizada || totalGratuita > 0
-    });
+    const evaluacionDetraccion = typeof facturacion.sujeto_detraccion === 'boolean'
+        ? (() => {
+            if (!facturacion.sujeto_detraccion) {
+                return { sujeto: false, codigo: null, porcentaje: 0, base: Number(facturacion.importe_total),
+                    monto: 0, neto: Number(facturacion.importe_total), requiereRevision: false };
+            }
+            const codigo = String(facturacion.detraccion_codigo || '').trim().padStart(3, '0');
+            const definicion = CAT_SPOT[codigo] || CAT_SPOT_BIENES[codigo];
+            const tipo = Number(definicion?.nubefactTipo ?? codigo);
+            const porcentaje = Number(facturacion.detraccion_porcentaje);
+            const base = Number(facturacion.detraccion_base);
+            const monto = Number(facturacion.detraccion_monto);
+            const neto = Number(facturacion.detraccion_neto);
+            const montoEsperado = Math.round((base * porcentaje) / 100);
+            const requiereRevision = !definicion
+                || !Number.isInteger(tipo) || tipo <= 0
+                || !Number.isFinite(porcentaje) || porcentaje <= 0
+                || Number(definicion.porcentaje) !== porcentaje
+                || !Number.isFinite(base) || base <= 0
+                || !Number.isFinite(monto) || monto < 0 || monto !== montoEsperado
+                || !Number.isFinite(neto) || neto < 0 || dosDecimales(base - monto) !== dosDecimales(neto);
+            return {
+                sujeto: true,
+                codigo,
+                descripcion: facturacion.detraccion_descripcion || definicion?.descripcion || null,
+                porcentaje,
+                base,
+                monto,
+                neto,
+                estadoDeposito: facturacion.detraccion_estado_deposito,
+                nubefactTipo: tipo,
+                requiereRevision
+            };
+        })()
+        : evaluarDetraccion({
+            tipoComprobante: facturacion.tipo_comprobante,
+            importeTotal: facturacion.importe_total,
+            moneda: facturacion.moneda_key,
+            items: detalles,
+            servicio: certificadoData?.servicio || resumenTributario?.servicio,
+            esGratuito: gratuidadAutorizada || totalGratuita > 0
+        });
+    if (evaluacionDetraccion.requiereRevision) {
+        const error = new Error('CLASIFICACION_SPOT_NO_VERIFICADA');
+        error.code = 'CLASIFICACION_SPOT_NO_VERIFICADA';
+        throw error;
+    }
 
     return {
         operacion: 'generar_comprobante',
         tipo_de_comprobante: tipoComprobante,
         serie: facturacion.serie,
         numero: Number(facturacion.numero),
-        sunat_transaction: 1,
+        sunat_transaction: evaluacionDetraccion.sujeto ? 30 : 1,
         cliente_tipo_de_documento: tipoDocumento,
         cliente_numero_de_documento: facturacion.nro_documento,
         cliente_denominacion: facturacion.nombre_razon_social,
@@ -297,7 +336,7 @@ const construirPayloadNubefact = ({
         total_incluido_percepcion: 0,
         detraccion: evaluacionDetraccion.sujeto,
         ...(evaluacionDetraccion.sujeto ? {
-            detraccion_tipo: evaluacionDetraccion.nubefactTipo || 37,
+            detraccion_tipo: evaluacionDetraccion.nubefactTipo,
             detraccion_porcentaje: evaluacionDetraccion.porcentaje,
             detraccion_total: evaluacionDetraccion.monto,
             medio_de_pago_detraccion: '001'

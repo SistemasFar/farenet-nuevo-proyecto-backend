@@ -10,7 +10,9 @@ const responderErrorPerfil = (res, e) => {
             success: false,
             codigo: e.code,
             message: e.message,
-            ...(e.detalles !== undefined ? { detalles: e.detalles } : {})
+            ...(e.detalles !== undefined ? { detalles: e.detalles } : {}),
+            ...(e.bloqueos ? { bloqueos: e.bloqueos } : {}),
+            ...(e.usuarios ? { usuarios: e.usuarios, totalUsuarios: e.usuarios.length } : {})
         });
     }
     console.error(e);
@@ -107,6 +109,7 @@ exports.actualizarUsuario = async (req, res) => {
 
         res.json(result);
     } catch (e) {
+        if (e.statusCode) return responderErrorPerfil(res, e);
         if (e.code === 'MIGRACION_PERFIL_FAREGAS_PENDIENTE') {
             return res.status(503).json({ message: e.message, codigo: e.code });
         }
@@ -164,31 +167,37 @@ exports.eliminarUsuario = async (req, res) => {
             return res.status(409).json({ message: 'No puedes eliminar tu propio usuario mientras tienes una sesión activa.' });
         }
 
-        const resultado = await service.eliminarUsuario(usuarioObjetivo);
+        const resultado = await service.eliminarUsuario(usuarioObjetivo, req.user);
 
         // Registro de auditoría
         await auditoriaService.registrarEvento({
             ...contextoAuditoria(req),
             categoria: 'USUARIOS',
             modulo: 'USUARIOS',
-            evento: 'USUARIO_ELIMINADO',
-            mensaje: `Usuario ${usuarioObjetivo} eliminado del sistema`,
+            evento: resultado?.accion === 'DESACTIVADO' ? 'USUARIO_DESACTIVADO' : 'USUARIO_ELIMINADO',
+            mensaje: resultado?.accion === 'DESACTIVADO'
+                ? `Usuario ${usuarioObjetivo} desactivado preventivamente por contar con historial operativo`
+                : `Usuario ${usuarioObjetivo} eliminado del sistema`,
             entidad: 'fg_usuario',
-            documento_referencia: usuarioObjetivo
+            documento_referencia: usuarioObjetivo,
+            datos: resultado
         });
 
         return res.json({
             success: true,
-            username: resultado?.username ?? usuarioObjetivo,
-            // Las sesiones se cierran solas; se informa cuántas para que el
-            // operador no las busque después.
-            sesiones_cerradas: resultado?.sesionesCerradas ?? 0
+            ...resultado
         });
     } catch (e) {
-        // El historial de negocio se detecta antes del DELETE, así que el
-        // servicio responde 409 con el detalle de qué lo bloquea. Este camino
-        // cubre además el 23503 que devolviera la base de datos, para no
-        // degradarlo a un 500 genérico.
+        if (e.statusCode) return responderErrorPerfil(res, e);
+        if (e.code === 'AUTO_ELIMINACION_PROHIBIDA') {
+            return res.status(409).json({ message: e.message });
+        }
+        if (e.code === 'ULTIMO_ADMIN') {
+            return res.status(403).json({ message: e.message });
+        }
+        if (e.message === 'USER_NOT_FOUND' || e.code === 'USER_NOT_FOUND') {
+            return res.status(404).json({ message: 'El usuario no existe' });
+        }
         const historialPorServicio = e.code === 'USUARIO_CON_HISTORIAL';
         const historialPorFk = e.code === '23503';
         if (historialPorServicio || historialPorFk) {
@@ -204,6 +213,57 @@ exports.eliminarUsuario = async (req, res) => {
         }
         console.error(e);
         return res.status(500).json({ message: 'Error interno del servidor' });
+    }
+};
+
+exports.desactivarUsuario = async (req, res) => {
+    try {
+        const usuarioObjetivo = req.params.username;
+        if (req.user.username === usuarioObjetivo) {
+            return res.status(409).json({ message: 'No puedes desactivar tu propio usuario mientras tienes una sesión activa.' });
+        }
+        const resultado = await service.desactivarUsuario(usuarioObjetivo, req.user);
+
+        await auditoriaService.registrarEvento({
+            ...contextoAuditoria(req),
+            categoria: 'USUARIOS',
+            modulo: 'USUARIOS',
+            evento: 'USUARIO_DESACTIVADO',
+            mensaje: `Usuario ${usuarioObjetivo} desactivado administrativamente`,
+            entidad: 'fg_usuario',
+            documento_referencia: usuarioObjetivo
+        });
+
+        res.json({ success: true, ...resultado });
+    } catch (e) {
+        if (e.statusCode) return responderErrorPerfil(res, e);
+        if (e.code === 'USER_NOT_FOUND') return res.status(404).json({ message: 'El usuario no existe.' });
+        if (e.code === 'ULTIMO_ADMIN') return res.status(403).json({ message: e.message });
+        console.error(e);
+        res.status(500).json({ message: 'Error interno del servidor' });
+    }
+};
+
+exports.activarUsuario = async (req, res) => {
+    try {
+        const usuarioObjetivo = req.params.username;
+        const resultado = await service.activarUsuario(usuarioObjetivo);
+
+        await auditoriaService.registrarEvento({
+            ...contextoAuditoria(req),
+            categoria: 'USUARIOS',
+            modulo: 'USUARIOS',
+            evento: 'USUARIO_ACTIVADO',
+            mensaje: `Usuario ${usuarioObjetivo} reactivado`,
+            entidad: 'fg_usuario',
+            documento_referencia: usuarioObjetivo
+        });
+
+        res.json({ success: true, ...resultado });
+    } catch (e) {
+        if (e.code === 'USER_NOT_FOUND') return res.status(404).json({ message: 'El usuario no existe.' });
+        console.error(e);
+        res.status(500).json({ message: 'Error interno del servidor' });
     }
 };
 
@@ -253,19 +313,72 @@ exports.actualizarPerfil = async (req, res) => {
     }
 };
 
-exports.eliminarPerfil = async (req, res) => {
+exports.obtenerUsuariosPorPerfil = async (req, res) => {
     try {
-        await service.eliminarPerfil(req.params.clave);
-        res.json({ success: true });
+        const usuarios = await service.obtenerUsuariosPorPerfil(req.params.clave);
+        res.json({
+            success: true,
+            perfil: req.params.clave,
+            usuarios,
+            totalUsuarios: usuarios.length
+        });
     } catch (e) {
-        if (e.message === 'NO_DELETE_SISTEMAS') {
-            return res.status(403).json({ message: 'No se permite eliminar el perfil SISTEMAS' });
-        }
-        if (e.message === 'IN_USE') {
-            return res.status(409).json({ message: 'No se puede eliminar el perfil porque tiene usuarios asignados.' });
+        if (e.code === 'PERFIL_NO_EXISTE') {
+            return res.status(404).json({ success: false, message: e.message });
         }
         console.error(e);
-        res.status(500).json({ message: 'Error interno del servidor' });
+        res.status(500).json({ success: false, message: 'Error interno del servidor' });
+    }
+};
+
+exports.eliminarPerfil = async (req, res) => {
+    try {
+        const { nuevoPerfilClave } = req.body || {};
+        const clave = req.params.clave;
+        const resultado = await service.eliminarPerfil(clave, { nuevoPerfilClave }, req.user, contextoAuditoria(req));
+
+        // Auditoría
+        await auditoriaService.registrarEvento({
+            ...contextoAuditoria(req),
+            categoria: 'PERFILES',
+            modulo: 'USUARIOS',
+            evento: 'PERFIL_ELIMINADO',
+            mensaje: `Perfil ${clave} eliminado${resultado.usuariosReasignados > 0 ? ` (Reasignados ${resultado.usuariosReasignados} usuarios a ${resultado.nuevoPerfilClave})` : ''}`,
+            entidad: 'fg_perfil',
+            documento_referencia: clave,
+            datos: resultado
+        });
+
+        res.json({ success: true, ...resultado });
+    } catch (e) {
+        if (e.statusCode) return responderErrorPerfil(res, e);
+        if (e.code === 'NO_DELETE_SISTEMAS' || e.message === 'NO_DELETE_SISTEMAS') {
+            return res.status(403).json({ success: false, codigo: 'NO_DELETE_SISTEMAS', message: 'No se permite eliminar el perfil base SISTEMAS.' });
+        }
+        if (e.code === 'ULTIMO_ADMIN_PERFIL') {
+            return res.status(403).json({ success: false, codigo: 'ULTIMO_ADMIN_PERFIL', message: e.message });
+        }
+        if (e.code === 'PERFIL_NO_EXISTE') {
+            return res.status(404).json({ success: false, codigo: 'PERFIL_NO_EXISTE', message: e.message });
+        }
+        if (e.code === 'PERFIL_CON_USUARIOS') {
+            return res.status(409).json({
+                success: false,
+                codigo: 'PERFIL_CON_USUARIOS',
+                message: e.message,
+                perfil: e.perfil || req.params.clave,
+                usuarios: e.usuarios || [],
+                totalUsuarios: e.usuarios?.length || 0
+            });
+        }
+        if (e.code === 'PERFIL_REEMPLAZO_REQUERIDO' || e.code === 'PERFIL_REEMPLAZO_INVALIDO') {
+            return res.status(400).json({ success: false, codigo: e.code, message: e.message });
+        }
+        if (e.message === 'IN_USE') {
+            return res.status(409).json({ success: false, message: 'No se puede eliminar el perfil porque tiene usuarios asignados.' });
+        }
+        console.error(e);
+        res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 };
 
