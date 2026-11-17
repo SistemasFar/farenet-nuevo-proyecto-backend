@@ -11,6 +11,16 @@ const respond = (res, error) => {
         CHIPS_REQUERIDOS: 'Debe enviar al menos un chip.',
         CHIP_NUMERO_INVALIDO: 'Uno o más códigos de chip no son válidos.',
         CHIP_DUPLICADO: 'El request contiene códigos de chip duplicados.',
+        CHIP_CODIGO_RESERVADO: 'Uno o más códigos están apartados temporalmente por otra propuesta. Revise los códigos indicados o vuelva a proponerlos.',
+        CODIGOS_DISPONIBLES_SOLICITUD_INVALIDA: 'Revise el prefijo, la cantidad, los dígitos y el número mínimo solicitado.',
+        CODIGOS_DISPONIBLES_NO_ENCONTRADOS: 'No se pudo completar la cantidad dentro del límite de búsqueda. No se registró ningún chip; aumente el número mínimo o intente luego.',
+        CODIGOS_DISPONIBLES_CONFIGURACION_REQUERIDA: 'La generación automática está deshabilitada para este producto. Solo habilítela si el proveedor permite asignar códigos internos.',
+        CODIGOS_DISPONIBLES_SOLO_CHIP_SERIALIZADO: 'La generación automática solo está disponible para productos clasificados como Chip serializado.',
+        CODIGOS_PROPUESTA_INVALIDA: 'La lista no coincide con la propuesta reservada. Vuelva a generar una propuesta antes de confirmar.',
+        CODIGOS_PROPUESTA_EXPIRADA: 'La propuesta venció o ya no está disponible. Genere una nueva lista antes de confirmar.',
+        PRODUCTO_NO_HABILITADO_SEDE_INGRESO: 'Este producto no está habilitado para ingresar inventario en la sede activa.',
+        CONFIGURACION_CODIGO_AUTOGENERABLE_INVALIDA: 'La opción de códigos autogenerables debe ser verdadera o falsa.',
+        MIGRACION_006_REQUERIDA: 'La generación de códigos disponibles requiere aplicar la migración FAREGAS 006. El ingreso exacto de códigos continúa disponible.',
         CHIP_NO_ENCONTRADO: 'Uno o más chips no existen.',
         CHIP_OTRA_SEDE: 'Uno o más chips pertenecen a otra sede.',
         CHIP_NO_DISPONIBLE: 'Uno o más chips ya no están disponibles.',
@@ -57,10 +67,17 @@ const respond = (res, error) => {
         AMBIENTE_PRODUCCION: 'La limpieza de tipos de chip sólo está disponible en ambiente DEMO o desarrollo.'
     };
     const status = error.status
-        || ['CHIP_DUPLICADO','CHIP_NO_DISPONIBLE','CHIP_OTRA_SEDE','CHIP_ASIGNADO_CERTIFICADO','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO','PAGO_INCOMPLETO','PAGO_EXCEDE_TOTAL','VENTA_CHIP_NO_HABILITADA','STOCK_CHIP_NO_PERMITIDO','CHIP_PRODUCTO_FISCAL_NO_CONFIGURADO','PRODUCTO_FISCAL_CHIP_INVALIDO','PRECIO_VENTA_FISCAL_CHIP_INVALIDO','CONDICION_PAGO_NO_DISPONIBLE','TIPO_CHIP_BLOQUEADO','AMBIENTE_PRODUCCION','SEDE_ALMACEN_CHIP_NO_HABILITADA','SEDE_TRANSFERENCIA_CHIP_NO_PERMITIDA','SEDE_CHIP_NO_HABILITADA','SEDES_IGUALES','STOCK_INSUFICIENTE','SEDE_PRODUCTO_CANTIDAD_NO_HABILITADA','VENTA_PRODUCTO_NO_HABILITADA','STOCK_PRODUCTO_NO_PERMITIDO'].includes(error.message) ? 409
+        || ['CHIP_DUPLICADO','CHIP_CODIGO_RESERVADO','CHIP_NO_DISPONIBLE','CHIP_OTRA_SEDE','CHIP_ASIGNADO_CERTIFICADO','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO','PAGO_INCOMPLETO','PAGO_EXCEDE_TOTAL','VENTA_CHIP_NO_HABILITADA','STOCK_CHIP_NO_PERMITIDO','CHIP_PRODUCTO_FISCAL_NO_CONFIGURADO','PRODUCTO_FISCAL_CHIP_INVALIDO','PRECIO_VENTA_FISCAL_CHIP_INVALIDO','CONDICION_PAGO_NO_DISPONIBLE','TIPO_CHIP_BLOQUEADO','AMBIENTE_PRODUCCION','SEDE_ALMACEN_CHIP_NO_HABILITADA','SEDE_TRANSFERENCIA_CHIP_NO_PERMITIDA','SEDE_CHIP_NO_HABILITADA','SEDES_IGUALES','STOCK_INSUFICIENTE','SEDE_PRODUCTO_CANTIDAD_NO_HABILITADA','VENTA_PRODUCTO_NO_HABILITADA','STOCK_PRODUCTO_NO_PERMITIDO','CODIGOS_DISPONIBLES_CONFIGURACION_REQUERIDA','CODIGOS_DISPONIBLES_NO_ENCONTRADOS','CODIGOS_PROPUESTA_EXPIRADA','PRODUCTO_NO_HABILITADO_SEDE_INGRESO'].includes(error.message) ? 409
         : ['OPERACION_NOT_FOUND','TIPO_CHIP_NO_ENCONTRADO'].includes(error.message) ? 404
         : ['PLANTA_NO_AUTORIZADA'].includes(error.message) ? 403 : 400;
-    res.status(status).json({ success:false, codigo:error.message, message:mensajes[error.message] || error.message, detalles:error.detalles });
+    let message = mensajes[error.message] || error.message;
+    if (error.message === 'CHIP_DUPLICADO' && Array.isArray(error.detalles) && error.detalles.length) {
+        message = `Estos códigos ya existen en el inventario y no se ingresaron: ${error.detalles.join(', ')}.`;
+    }
+    if (error.message === 'CHIP_CODIGO_RESERVADO' && Array.isArray(error.detalles) && error.detalles.length) {
+        message = `Estos códigos están reservados por otra propuesta activa: ${error.detalles.join(', ')}.`;
+    }
+    res.status(status).json({ success:false, codigo:error.message, message, detalles:error.detalles });
 };
 
 exports.listar = async(req,res)=>{try{res.json({success:true,...await service.listar({plantaKey:req.user.planta_key,...req.query},req.user)});}catch(e){respond(res,e);}};
@@ -85,6 +102,12 @@ exports.ingresar = async (req, res) => {
             datos: { cantidad: chips?.length || 1 }
         });
         res.status(201).json({ success: true, chips });
+    } catch (e) { respond(res, e); }
+};
+exports.proponerCodigosDisponibles = async (req, res) => {
+    try {
+        const propuesta = await service.proponerCodigosDisponibles({ plantaKey: req.user.planta_key, ...req.body }, req.user);
+        res.json({ success: true, propuesta });
     } catch (e) { respond(res, e); }
 };
 exports.ingresarCantidad = async (req, res) => {

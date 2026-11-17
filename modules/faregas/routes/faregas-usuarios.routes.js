@@ -16,14 +16,14 @@ const adminMiddleware = async (req, res, next) => {
     const token = authHeader.split(' ')[1];
     try {
         const decoded = jwt.verify(token, JWT_SECRET_FAREGAS);
-        
+
         if (decoded.faregas_flow !== 'authenticated') {
             return res.status(403).json({ message: 'Flujo invalido' });
         }
 
         // Validacion estricta contra base de datos
         const userDb = await db.query(
-            'SELECT estado, perfil_id FROM fg_usuario WHERE username = $1 LIMIT 1', 
+            'SELECT estado, perfil_id FROM fg_usuario WHERE username = $1 LIMIT 1',
             [decoded.username]
         );
 
@@ -34,11 +34,6 @@ const adminMiddleware = async (req, res, next) => {
         const user = userDb.rows[0];
         if (!user.estado) {
             return res.status(403).json({ message: 'Usuario inactivo' });
-        }
-
-        if (decoded.session_jti) {
-            const sesion = await db.query('SELECT isactive FROM fg_usuario_sesion WHERE session_jti=$1 AND usuario_username=$2 LIMIT 1', [decoded.session_jti, decoded.username]);
-            if (!sesion.rowCount || !sesion.rows[0].isactive) return res.status(401).json({ message: 'Sesión revocada o inactiva' });
         }
 
         // MENU_USUARIOS es la única autorización para administrar usuarios y
@@ -76,6 +71,10 @@ router.use(adminMiddleware);
 router.get('/paginado', controller.obtenerUsuariosPaginado);
 router.get('/', controller.obtenerUsuarios);
 router.post('/', controller.crearUsuario);
+// Usa el mismo permiso efectivo MENU_USUARIOS que protege el módulo. El
+// endpoint únicamente acepta usernames seleccionados y contraseñas temporales
+// efímeras; nunca recupera hashes ni devuelve contraseñas.
+router.post('/credenciales/restablecer', controller.restablecerCredencialesTemporales);
 router.put('/:username', controller.actualizarUsuario);
 router.patch('/:username/password', controller.cambiarPassword);
 router.post('/:username/desactivar', controller.desactivarUsuario);

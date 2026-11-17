@@ -247,7 +247,7 @@ const crearVentaDirecta = async (payload, userContext) => {
         }
 
         let evaluacionSpotProducto = null;
-        if (texto(payload.tipoComprobante).toUpperCase() === 'FACTURA' && importeTotal > 700) {
+        if (texto(payload.tipoComprobante).toUpperCase() === 'FACTURA') {
             evaluacionSpotProducto = evaluarDetraccion({
                 tipoComprobante: 'FACTURA',
                 importeTotal,

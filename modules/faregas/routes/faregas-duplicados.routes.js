@@ -1,9 +1,15 @@
 const express = require('express');
 const { authFaregasMiddleware } = require('../middlewares/faregas-auth.middleware');
 const controller = require('../controllers/faregas-duplicados.controller');
+const db = require('../../../config/database');
+const { crearMiddlewarePermisoFaregas } = require('../middlewares/faregas-permisos.middleware');
 
 const router = express.Router();
 router.use(authFaregasMiddleware);
+router.use(crearMiddlewarePermisoFaregas(db, {
+    anyOf: ['MENU_INICIO'],
+    message: 'No tiene permiso para consultar o gestionar duplicados de certificados.'
+}));
 
 router.get('/tipos', controller.listarTipos);
 router.get('/buscar', controller.buscar);

@@ -3,19 +3,14 @@ const router = express.Router();
 const controller = require('../controllers/faregas-descuentos.controller');
 const authMiddleware = require('../middlewares/faregas-auth.middleware');
 const db = require('../../../config/database');
+const { crearMiddlewarePermisoFaregas } = require('../middlewares/faregas-permisos.middleware');
 
 router.use(authMiddleware.authFaregasMiddleware); // Aplicar auth a todas las rutas de descuentos
 
-const requireAdministrar = async (req, res, next) => {
-    try {
-        const permiso = await db.query(`SELECT 1 FROM fg_perfil_permiso
-            WHERE perfil_clave=$1 AND permiso_clave='DESCUENTOS_ADMINISTRAR'`, [req.user.perfil_id]);
-        if (!permiso.rowCount) return res.status(403).json({ success: false, message: 'No tiene permisos para administrar descuentos.' });
-        next();
-    } catch (_error) {
-        res.status(500).json({ success: false, message: 'Error al verificar permisos de descuentos.' });
-    }
-};
+const requireAdministrar = crearMiddlewarePermisoFaregas(db, {
+    anyOf: ['DESCUENTOS_ADMINISTRAR'],
+    message: 'No tiene permisos para administrar descuentos.'
+});
 
 // Operativo - Nuevo Certificado
 router.post('/consultar', controller.consultarDescuento);

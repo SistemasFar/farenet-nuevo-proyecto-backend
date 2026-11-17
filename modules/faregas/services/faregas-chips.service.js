@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const db = require('../../../config/database');
 const authService = require('./faregas-auth.service');
 const {
@@ -14,6 +15,53 @@ const {
     obtenerPrecioVentaFiscal
 } = require('./faregas-chips-fiscal.rules');
 const inventarioCantidadService = require('./faregas-inventario-cantidad.service');
+const {
+    MAX_INTENTOS_BUSQUEDA,
+    normalizarSolicitudCodigosDisponibles,
+    formatearCodigoDisponible
+} = require('./faregas-chips-codigos-disponibles.rules');
+
+const ADVISORY_LOCK_CHIPS_INGRESO = [742019, 61001];
+const DURACION_RESERVA_CODIGOS_MINUTOS = 15;
+
+const adquirirLockCodigosChips = async (client) => {
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', ADVISORY_LOCK_CHIPS_INGRESO);
+};
+
+const limpiarReservasVencidas = async (client) => {
+    await client.query('DELETE FROM fg_chip_codigo_reserva WHERE vence_en <= NOW()');
+};
+
+const migracion006Disponible = async (client) => {
+    const result = await client.query(`
+        SELECT to_regclass('public.fg_chip_codigo_reserva') IS NOT NULL
+           AND EXISTS (
+               SELECT 1 FROM information_schema.columns
+               WHERE table_schema = 'public'
+                 AND table_name = 'fg_producto_inventariable'
+                 AND column_name = 'codigo_autogenerable'
+           ) AS disponible
+    `);
+    return result.rows[0]?.disponible === true;
+};
+
+const exigirCodigoAutogenerable = (producto) => {
+    if (producto.tipo !== 'CHIP_SERIALIZADO') throw new Error('CODIGOS_DISPONIBLES_SOLO_CHIP_SERIALIZADO');
+    if (producto.codigo_autogenerable !== true) throw new Error('CODIGOS_DISPONIBLES_CONFIGURACION_REQUERIDA');
+};
+
+const exigirProductoActivoEnSedeParaGenerar = async (client, productoId, plantaKey) => {
+    const result = await client.query(`
+        SELECT 1
+        FROM fg_producto_inventariable_sede
+        WHERE producto_inventariable_id = $1
+          AND planta_key = $2
+          AND activo = TRUE
+          AND stock_permitido = TRUE
+        FOR UPDATE
+    `, [productoId, plantaKey]);
+    if (!result.rowCount) throw new Error('PRODUCTO_NO_HABILITADO_SEDE_INGRESO');
+};
 
 // Únicas sedes que comercializan y, por tanto, pueden intercambiar stock de
 // chips. La restricción se valida aquí (además de la UI) para que no pueda
@@ -126,8 +174,9 @@ const productoChip = (queryable, plantaKey, bloquear = false) =>
 
 const productoInventariable = async (queryable, productoInventariableId = null, bloquear = false) => {
     const result = await queryable.query(`
-        SELECT id, codigo, nombre, tipo
-        FROM fg_producto_inventariable
+        SELECT id, codigo, nombre, tipo,
+               COALESCE((to_jsonb(pi)->>'codigo_autogenerable')::boolean, FALSE) AS codigo_autogenerable
+        FROM fg_producto_inventariable pi
         WHERE activo = TRUE
           AND (($1::bigint IS NULL AND codigo = 'CHIP') OR id = $1::bigint)
         ${bloquear ? 'FOR UPDATE' : ''}
@@ -628,6 +677,7 @@ exports.listarProductosInventariables = async (plantaKey, user) => {
     await validarAcceso(user, plantaKey);
     const result = await db.query(`
         SELECT pi.id, pi.codigo, pi.nombre, pi.tipo, pi.control_stock, pi.activo,
+               COALESCE((to_jsonb(pi)->>'codigo_autogenerable')::boolean, FALSE) AS codigo_autogenerable,
                pi.producto_facturacion_id,
                COALESCE((
                    SELECT json_agg(json_build_object(
@@ -692,6 +742,7 @@ exports.listarProductosInventariables = async (plantaKey, user) => {
         tipo: row.tipo,
         controlStock: row.control_stock === true,
         activo: row.activo === true,
+        codigoAutogenerable: row.codigo_autogenerable === true,
         productoFacturacionId: row.producto_facturacion_id ? Number(row.producto_facturacion_id) : null,
         sedes: row.sedes,
         stockTotal: Number(row.stock_total),
@@ -737,6 +788,13 @@ exports.crearProductoInventariable = async (data, user, ipDireccion = null) => {
     const codigo = normalizarCodigoProducto(data.codigo);
     const nombre = normalizarNombreProducto(data.nombre);
     const tipo = String(data.tipo || 'CHIP_SERIALIZADO').trim().toUpperCase();
+    if (data.codigoAutogenerable !== undefined && typeof data.codigoAutogenerable !== 'boolean') {
+        throw new Error('CONFIGURACION_CODIGO_AUTOGENERABLE_INVALIDA');
+    }
+    if (data.codigoAutogenerable === true && tipo !== 'CHIP_SERIALIZADO') {
+        throw new Error('CODIGOS_DISPONIBLES_SOLO_CHIP_SERIALIZADO');
+    }
+    const codigoAutogenerable = tipo === 'CHIP_SERIALIZADO' && data.codigoAutogenerable === true;
     const sedes = normalizarSedesProducto(data.sedes);
 
     if (codigo.length < 2 || codigo.length > 60) throw new Error('CODIGO_PRODUCTO_INVENTARIABLE_INVALIDO');
@@ -758,12 +816,25 @@ exports.crearProductoInventariable = async (data, user, ipDireccion = null) => {
 
         const productosFiscales = await cargarProductosFiscalesConfigurados(client, sedes);
 
-        const producto = await client.query(`
-            INSERT INTO fg_producto_inventariable
-                (codigo, nombre, tipo, producto_facturacion_id, control_stock, activo)
-            VALUES ($1, $2, $3, $4, TRUE, TRUE)
-            RETURNING id, codigo, nombre, tipo
-        `, [codigo, nombre, tipo, null]);
+        const flagDisponible = await client.query(`
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'fg_producto_inventariable'
+                  AND column_name = 'codigo_autogenerable') AS disponible
+        `);
+        if (!flagDisponible.rows[0]?.disponible && codigoAutogenerable) throw new Error('MIGRACION_006_REQUERIDA');
+        const producto = flagDisponible.rows[0]?.disponible
+            ? await client.query(`
+                INSERT INTO fg_producto_inventariable
+                    (codigo, nombre, tipo, producto_facturacion_id, control_stock, activo, codigo_autogenerable)
+                VALUES ($1, $2, $3, $4, TRUE, TRUE, $5)
+                RETURNING id, codigo, nombre, tipo, codigo_autogenerable
+            `, [codigo, nombre, tipo, null, codigoAutogenerable])
+            : await client.query(`
+                INSERT INTO fg_producto_inventariable
+                    (codigo, nombre, tipo, producto_facturacion_id, control_stock, activo)
+                VALUES ($1, $2, $3, $4, TRUE, TRUE)
+                RETURNING id, codigo, nombre, tipo
+            `, [codigo, nombre, tipo, null]);
         const productoId = Number(producto.rows[0].id);
 
         for (const sede of sedes) {
@@ -798,6 +869,7 @@ exports.crearProductoInventariable = async (data, user, ipDireccion = null) => {
     } catch (error) {
         await client.query('ROLLBACK');
         if (error.code === '23505') throw new Error('PRODUCTO_INVENTARIABLE_DUPLICADO');
+        if (error.code === '42703') throw new Error('MIGRACION_006_REQUERIDA');
         throw error;
     } finally {
         client.release();
@@ -808,6 +880,15 @@ exports.crearProductoInventariable = async (data, user, ipDireccion = null) => {
 exports.editarProductoInventariable = async (id, data, user, ipDireccion = null) => {
     const nombre = normalizarNombreProducto(data.nombre);
     const tipo = String(data.tipo || 'OTRO_PRODUCTO_FISICO').trim().toUpperCase();
+    if (data.codigoAutogenerable !== undefined && typeof data.codigoAutogenerable !== 'boolean') {
+        throw new Error('CONFIGURACION_CODIGO_AUTOGENERABLE_INVALIDA');
+    }
+    if (data.codigoAutogenerable === true && tipo !== 'CHIP_SERIALIZADO') {
+        throw new Error('CODIGOS_DISPONIBLES_SOLO_CHIP_SERIALIZADO');
+    }
+    const codigoAutogenerable = tipo === 'CHIP_SERIALIZADO'
+        ? (data.codigoAutogenerable === undefined ? null : data.codigoAutogenerable)
+        : false;
     const sedes = normalizarSedesProducto(data.sedes);
 
     if (nombre.length < 2 || nombre.length > 200) throw new Error('NOMBRE_PRODUCTO_INVENTARIABLE_INVALIDO');
@@ -834,11 +915,27 @@ exports.editarProductoInventariable = async (id, data, user, ipDireccion = null)
 
         const productosFiscales = await cargarProductosFiscalesConfigurados(client, sedes);
 
-        await client.query(`
-            UPDATE fg_producto_inventariable
-            SET nombre = $1, tipo = $2, fecha_modificacion = NOW()
-            WHERE id = $3
-        `, [nombre, tipo, id]);
+        const flagDisponible = await client.query(`
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'fg_producto_inventariable'
+                  AND column_name = 'codigo_autogenerable') AS disponible
+        `);
+        if (!flagDisponible.rows[0]?.disponible && data.codigoAutogenerable === true) throw new Error('MIGRACION_006_REQUERIDA');
+        if (flagDisponible.rows[0]?.disponible) {
+            await client.query(`
+                UPDATE fg_producto_inventariable
+                SET nombre = $1, tipo = $2,
+                    codigo_autogenerable = COALESCE($3, codigo_autogenerable),
+                    fecha_modificacion = NOW()
+                WHERE id = $4
+            `, [nombre, tipo, codigoAutogenerable, id]);
+        } else {
+            await client.query(`
+                UPDATE fg_producto_inventariable
+                SET nombre = $1, tipo = $2, fecha_modificacion = NOW()
+                WHERE id = $3
+            `, [nombre, tipo, id]);
+        }
 
         await client.query(`
             UPDATE fg_producto_inventariable_sede
@@ -882,9 +979,10 @@ exports.editarProductoInventariable = async (id, data, user, ipDireccion = null)
         ]);
 
         await client.query('COMMIT');
-        return { id, codigo, nombre, tipo };
+        return { id, codigo, nombre, tipo, codigoAutogenerable: codigoAutogenerable === true };
     } catch (error) {
         await client.query('ROLLBACK');
+        if (error.code === '42703') throw new Error('MIGRACION_006_REQUERIDA');
         throw error;
     } finally {
         client.release();
@@ -1007,7 +1105,86 @@ exports.consultarDisponibilidad = async ({ plantaKey, numeroChip, certificadoId 
     };
 };
 
-exports.ingresar = async ({ plantaKey, productoInventariableId, numeros, referencia }, user) => {
+exports.proponerCodigosDisponibles = async ({ plantaKey, productoInventariableId, prefijo, cantidad, digitos, minimo }, user) => {
+    validarSedeAlmacenChips(plantaKey);
+    await validarAcceso(user, plantaKey);
+    const idProducto = Number(productoInventariableId);
+    if (!Number.isSafeInteger(idProducto) || idProducto <= 0) throw new Error('PRODUCTO_INVENTARIABLE_NO_ENCONTRADO');
+    const solicitud = normalizarSolicitudCodigosDisponibles({ prefijo, cantidad, digitos, minimo });
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        if (!await migracion006Disponible(client)) throw new Error('MIGRACION_006_REQUERIDA');
+        await adquirirLockCodigosChips(client);
+        await limpiarReservasVencidas(client);
+        const producto = await productoInventariable(client, idProducto, true);
+        exigirCodigoAutogenerable(producto);
+        await exigirProductoActivoEnSedeParaGenerar(client, producto.id, plantaKey);
+
+        const codigos = [];
+        const omitidos = [];
+        let numero = solicitud.minimo;
+        let intentos = 0;
+        while (codigos.length < solicitud.cantidad && intentos < MAX_INTENTOS_BUSQUEDA) {
+            const tamanoLote = Math.min(500, MAX_INTENTOS_BUSQUEDA - intentos);
+            const candidatos = Array.from({ length: tamanoLote }, (_, indice) => formatearCodigoDisponible({
+                ...solicitud,
+                numero: numero + BigInt(indice)
+            }));
+            const [existentes, reservados] = await Promise.all([
+                client.query('SELECT numero_chip FROM fg_chip WHERE numero_chip = ANY($1::varchar[])', [candidatos]),
+                client.query(`SELECT numero_chip FROM fg_chip_codigo_reserva
+                    WHERE numero_chip = ANY($1::varchar[]) AND vence_en > NOW()`, [candidatos])
+            ]);
+            const ocupados = new Set([
+                ...existentes.rows.map((row) => String(row.numero_chip).toUpperCase()),
+                ...reservados.rows.map((row) => String(row.numero_chip).toUpperCase())
+            ]);
+
+            for (const codigo of candidatos) {
+                if (ocupados.has(codigo)) omitidos.push(codigo);
+                else codigos.push(codigo);
+                numero += 1n;
+                intentos += 1;
+                if (codigos.length === solicitud.cantidad || intentos >= MAX_INTENTOS_BUSQUEDA) break;
+            }
+        }
+
+        if (codigos.length !== solicitud.cantidad) {
+            const error = new Error('CODIGOS_DISPONIBLES_NO_ENCONTRADOS');
+            error.detalles = { solicitados: solicitud.cantidad, encontrados: codigos.length, omitidos, intentos };
+            throw error;
+        }
+
+        const token = crypto.randomUUID();
+        const reserva = await client.query(`
+            INSERT INTO fg_chip_codigo_reserva
+                (token, numero_chip, producto_inventariable_id, planta_key, creado_por, vence_en)
+            SELECT $1::uuid, codigo, $3::bigint, $4::varchar, $5::varchar,
+                   NOW() + ($6::int * INTERVAL '1 minute')
+            FROM unnest($2::varchar[]) AS codigo
+            RETURNING vence_en
+        `, [token, codigos, producto.id, plantaKey, user.username, DURACION_RESERVA_CODIGOS_MINUTOS]);
+        await client.query('COMMIT');
+        return {
+            token,
+            prefijo: solicitud.prefijo,
+            cantidad: codigos.length,
+            digitos: solicitud.digitos,
+            codigos,
+            omitidos,
+            venceEn: reserva.rows[0]?.vence_en || null
+        };
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.code === '42P01' || error.code === '42703') throw new Error('MIGRACION_006_REQUERIDA');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+exports.ingresar = async ({ plantaKey, productoInventariableId, numeros, referencia, modoCodigo, tokenPropuesta }, user) => {
     validarSedeAlmacenChips(plantaKey);
     await validarAcceso(user, plantaKey);
     const lote = normalizarLoteScanner(Array.isArray(numeros) ? numeros.join('\n') : numeros);
@@ -1017,10 +1194,53 @@ exports.ingresar = async ({ plantaKey, productoInventariableId, numeros, referen
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+        await adquirirLockCodigosChips(client);
+        const reservasHabilitadas = await migracion006Disponible(client);
+        if (reservasHabilitadas) await limpiarReservasVencidas(client);
         const producto = await productoInventariable(client, productoInventariableId || null, true);
+
+        let tokenReserva = null;
+        if (modoCodigo === 'GENERADOS') {
+            if (!reservasHabilitadas) throw new Error('MIGRACION_006_REQUERIDA');
+            exigirCodigoAutogenerable(producto);
+            await exigirProductoActivoEnSedeParaGenerar(client, producto.id, plantaKey);
+            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(tokenPropuesta || ''))) {
+                throw new Error('CODIGOS_PROPUESTA_INVALIDA');
+            }
+            const reserva = await client.query(`
+                SELECT numero_chip, vence_en
+                FROM fg_chip_codigo_reserva
+                WHERE token = $1::uuid
+                  AND producto_inventariable_id = $2
+                  AND planta_key = $3
+                ORDER BY id
+                FOR UPDATE
+            `, [tokenPropuesta, producto.id, plantaKey]);
+            if (!reserva.rowCount) throw new Error('CODIGOS_PROPUESTA_EXPIRADA');
+            const reservados = reserva.rows.map((row) => String(row.numero_chip).toUpperCase());
+            const recibidos = [...lote.validos].sort();
+            const reservadosOrdenados = [...reservados].sort();
+            if (recibidos.length !== reservadosOrdenados.length
+                || recibidos.some((codigo, indice) => codigo !== reservadosOrdenados[indice])) {
+                throw new Error('CODIGOS_PROPUESTA_INVALIDA');
+            }
+            tokenReserva = tokenPropuesta;
+        } else if (modoCodigo !== undefined || tokenPropuesta) {
+            throw new Error('CODIGOS_PROPUESTA_INVALIDA');
+        }
+
         const existentes = await client.query('SELECT numero_chip FROM fg_chip WHERE numero_chip = ANY($1::varchar[])', [lote.validos]);
         if (existentes.rowCount) {
             const error = new Error('CHIP_DUPLICADO'); error.detalles = existentes.rows.map(r => r.numero_chip); throw error;
+        }
+        if (!tokenReserva && reservasHabilitadas) {
+            const ocupados = await client.query(`SELECT numero_chip FROM fg_chip_codigo_reserva
+                WHERE numero_chip = ANY($1::varchar[]) AND vence_en > NOW()`, [lote.validos]);
+            if (ocupados.rowCount) {
+                const error = new Error('CHIP_CODIGO_RESERVADO');
+                error.detalles = ocupados.rows.map((row) => row.numero_chip);
+                throw error;
+            }
         }
         const creados = [];
         for (const numero of lote.validos) {
@@ -1032,8 +1252,18 @@ exports.ingresar = async ({ plantaKey, productoInventariableId, numeros, referen
                 (chip_id,tipo_movimiento,planta_destino_key,usuario,referencia)
                 VALUES ($1,'INGRESO',$2,$3,$4)`, [chip.rows[0].id, plantaKey, user.username, referencia || null]);
         }
+        if (tokenReserva) await client.query('DELETE FROM fg_chip_codigo_reserva WHERE token = $1::uuid', [tokenReserva]);
         await client.query('COMMIT'); return creados;
-    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+    } catch (e) {
+        await client.query('ROLLBACK');
+        if (e.code === '42P01' || e.code === '42703') throw new Error('MIGRACION_006_REQUERIDA');
+        if (e.code === '23505' && (!e.constraint || e.constraint === 'fg_chip_numero_chip_key' || e.constraint === 'uq_fg_chip_codigo_reserva_numero')) {
+            const error = new Error('CHIP_DUPLICADO');
+            error.detalles = lote.validos;
+            throw error;
+        }
+        throw e;
+    } finally { client.release(); }
 };
 
 exports.transferir = async ({ origenKey, destinoKey, productoInventariableId, numeros, referencia }, user) => {

@@ -30,6 +30,7 @@ const PERMISOS_SENSIBLES_SET = new Set(PERMISOS_SENSIBLES);
  * base de datos automáticamente.
  */
 const PERMISOS_OBSOLETOS = Object.freeze([
+    'MENU_FACTURACION_PREPARACION',
     'FAREGAS_PERMISOS_SENSIBLES_ADMINISTRAR'
 ]);
 

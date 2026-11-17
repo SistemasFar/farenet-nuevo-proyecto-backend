@@ -16,6 +16,7 @@ La carpeta `farenetBackend/modules/faregas/database/migrations/` contiene los sc
 | `003_migracion_fg_usuario_perfil_independiente.sql` | Perfil propio de usuario FAREGAS | Crea `fg_usuario_perfil` y realiza backfill inicial condicional. No es dependencia de SPOT; 004 no toca usuarios ni perfiles. |
 | `004_implementacion_detracciones_spot.sql` | Migración incremental SPOT para instalaciones existentes | Añade columnas nullable e índices en tablas `fg_*`; es transaccional e idempotente. No contiene `UPDATE`, `DELETE`, defaults de clasificación ni cambios a tablas FARENET. |
 | `005_optimizacion_eliminacion_usuarios_perfiles.sql` | Optimización de eliminación y reasignación de perfiles/usuarios | Configura `ON DELETE CASCADE` en `fg_perfil_permiso` y `fg_perfil_planta`; desvincula FK en `fg_auditoria_config` para snapshots históricos inmutables sin bloqueos. |
+| `006_codigos_chip_autogenerables.sql` | Códigos disponibles para tipos de chip compatibles | Agrega opt-in `codigo_autogenerable` (FALSE por defecto) y reservas temporales globalmente únicas. No habilita productos existentes ni modifica chips o tablas FARENET. |
 | `README.md` | Guía de arquitectura, dependencias y ejecución | Este documento técnico. |
 
 > [!WARNING]
@@ -40,13 +41,13 @@ La carpeta `farenetBackend/modules/faregas/database/migrations/` contiene los sc
 
 Para garantizar una migración sin fallas de integridad referencial ni acoplamientos ocultos, todas las tablas y objetos relacionados se clasifican en cuatro categorías normativas:
 
-### Categoría A — Tablas Propias de FAREGAS (69 tablas operativas + 1 de desacoplamiento)
+### Categoría A — Tablas Propias de FAREGAS (70 tablas `fg_*`)
 
 Tablas cuya estructura y datos son de dominio exclusivo de FAREGAS:
 - **Gestión de Certificados y Emisión:** `fg_certificado`, `fg_certificado_chip`, `fg_certificado_conformidad`, `fg_certificado_duplicado`, `fg_certificado_formato`, `fg_certificado_formato_version`, `fg_certificado_glp`, `fg_certificado_glp_componente`, `fg_certificado_glp_verificacion`, `fg_certificado_gnv`, `fg_certificado_gnv_componente`, `fg_certificado_gnv_verificacion`, `fg_certificado_titular`, `fg_certificado_vehiculo`, `fg_certificado_version`, `fg_correlativo_certificado`, `fg_correlativo_certificado_sede`, `fg_tipo_certificado`.
 - **Facturación Electrónica y Pagos:** `fg_facturacion`, `fg_facturacion_cuota`, `fg_facturacion_intento`, `fg_credito`, `fg_debito`, `fg_orden_pago`, `fg_pago`, `fg_serie_comprobante`, `fg_producto_facturacion`, `fg_documento_electronico_operacion`, `fg_documento_anulacion`, `fg_nota_credito_trabajo`.
 - **Operaciones Comerciales y Clientes:** `fg_operacion_comercial`, `fg_operacion_detalle`, `fg_operacion_detalle_chip`, `fg_venta`, `fg_venta_detalle`, `fg_cliente`, `fg_servicio`, `fg_tarifa`, `fg_descuento`, `fg_descuentocliente`, `fg_descuentocomprobante`, `fg_descuentodetalle`.
-- **Inventario y Hardware (Chips):** `fg_chip`, `fg_chip_movimiento`, `fg_producto_inventariable`, `fg_producto_inventariable_sede`, `fg_producto_sede`, `fg_inventario_cantidad_movimiento`.
+- **Inventario y Hardware (Chips):** `fg_chip`, `fg_chip_movimiento`, `fg_chip_codigo_reserva`, `fg_producto_inventariable`, `fg_producto_inventariable_sede`, `fg_producto_sede`, `fg_inventario_cantidad_movimiento`.
 - **Solicitudes Administrativas y Notificaciones:** `fg_solicitud_operacion`, `fg_solicitud_operacion_evento`, `fg_notificacion`, `fg_notificacion_destinatario`.
 - **Seguridad, Usuarios y RBAC:** `fg_usuario`, `fg_usuario_perfil` *(tabla propia para desacoplar datos personales de `persona` de FARENET)*, `fg_usuario_planta`, `fg_usuario_sesion`, `fg_perfil`, `fg_permiso`, `fg_perfil_permiso`, `fg_perfil_planta`, `fg_auditoria_acceso`, `fg_auditoria_config`.
 - **Estructura Organizacional y Técnicos:** `fg_empresa`, `fg_empresa_facturador`, `fg_planta`, `fg_taller_autorizado`, `fg_ejecutivo`, `fg_categoria_servicio`, `fg_vehiculo`.
@@ -173,6 +174,38 @@ WHERE sujeto_detraccion IS NULL;
 
 La instalación nueva (`000`) y la migración incremental (`004`) declaran los mismos campos e índices SPOT. La repetición de `ADD COLUMN/INDEX IF NOT EXISTS` dentro de 004 sirve para despliegues existentes y no duplica objetos. No se agregan restricciones SPOT: un servicio sin clasificación debe permanecer pendiente y el backend impide emitir una factura sujeta hasta completar su configuración.
 
+### Migración 006 — códigos de chips asignables
+
+`006_codigos_chip_autogenerables.sql` es una migración incremental FAREGAS y debe ejecutarse después de las migraciones ya aplicables a la instalación (incluida 005 cuando corresponda). Requiere `fg_producto_inventariable`, `fg_chip` y `fg_planta`. No ejecuta backfills: los productos existentes quedan con `codigo_autogenerable = FALSE`; solo personal autorizado puede habilitar la opción para un producto `CHIP_SERIALIZADO` luego de confirmar que el proveedor permite asignar códigos internos.
+
+La tabla `fg_chip_codigo_reserva` guarda propuestas por 15 minutos y reserva cada código de forma global. El índice único de `numero_chip` evita que dos propuestas activas lo compartan. Al confirmar, el backend serializa las reservas e ingresos mediante un advisory lock transaccional, revalida el producto, sede, vencimiento y conjunto exacto propuesto, y conserva la restricción única existente de `fg_chip.numero_chip` como última defensa. Escaneo, importación y rango exacto siguen tratando sus códigos como identificadores físicos: un duplicado se informa y bloquea, sin reemplazo.
+
+La migración no se ejecuta automáticamente. Para preparar su aplicación, inspeccione el objetivo y respaldo primero, luego ejecute únicamente:
+
+```bash
+psql -h <HOST> -p <PUERTO> -U <USUARIO> -d <BASE_FAREGAS> -v ON_ERROR_STOP=1 -f 006_codigos_chip_autogenerables.sql
+```
+
+Verificación posterior:
+
+```sql
+SELECT column_name, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'fg_producto_inventariable'
+  AND column_name = 'codigo_autogenerable';
+
+SELECT indexname
+FROM pg_indexes
+WHERE schemaname = 'public' AND tablename = 'fg_chip_codigo_reserva'
+ORDER BY indexname;
+
+SELECT count(*) AS productos_opt_in
+FROM public.fg_producto_inventariable
+WHERE codigo_autogenerable = TRUE;
+```
+
+Inmediatamente después de aplicar 006, `productos_opt_in` debe ser `0`; habilite cada producto manualmente solo tras confirmar compatibilidad con su proveedor. Esta migración no debe aplicarse a tablas de FARENET ni ejecutarse en `inspeccion` sin autorización expresa.
+
 ---
 
 ## 5. Procedimiento de Auditoría y Verificación Post-Instalación
@@ -209,14 +242,14 @@ ORDER BY event_object_table, trigger_name;
 ```
 
 ### Métricas de Referencia Esperadas:
-- **Total Tablas Base:** 76 (69 operativas `fg_*` + 7 stubs de catálogo compartido).
-- **Tablas Propias FAREGAS (`fg_*`):** 69 operativas (+ `fg_usuario_perfil` = 70).
-- **Columnas:** 997 columnas.
-- **Primary Keys:** 76 PKs.
-- **Foreign Keys:** 188 FKs (176 internas + 12 externas hacia catálogos).
-- **Restricciones UNIQUE:** 44.
-- **Total Índices:** 240 (118 secundarios + 122 índices implícitos de PK y UNIQUE).
-- **Secuencias:** 32 secuencias.
+- **Total Tablas Base:** 77 (70 tablas FAREGAS `fg_*` + 7 stubs de catálogo compartido).
+- **Tablas Propias FAREGAS (`fg_*`):** 70, incluida `fg_chip_codigo_reserva`.
+- **Columnas:** 1,006 columnas.
+- **Primary Keys:** 77 PKs.
+- **Foreign Keys:** 190 FKs (178 internas + 12 externas hacia catálogos).
+- **Restricciones UNIQUE:** 45.
+- **Total Índices:** 244 (120 secundarios + 124 índices implícitos de PK y UNIQUE).
+- **Secuencias:** 33 secuencias.
 - **Triggers:** 4 eventos cubiertos (2 triggers: `fg_inventario_cantidad_movimiento_inmutable` y `trg_fg_solicitud_evento_inmutable`).
 - **Funciones PL/pgSQL:** 2 funciones de inmutabilidad.
 - **Catálogo RBAC:** 11 perfiles, 51 permisos, 221 asignaciones, 7 tipos de certificado y 1 descuento (`CORTESIA_FAREGAS`).
@@ -233,4 +266,24 @@ Dado que la instalación se realiza en una base de datos nueva e independiente, 
    ```
 2. **Reversión de Conexión del Backend:**
    En el archivo de configuración `.env` del backend de FAREGAS, conservar la variable `DB_DATABASE=inspeccion` y host `192.168.14.19` hasta que la base independiente haya completado satisfactoriamente todas las pruebas funcionales y la migración de datos históricos.
+
+---
+
+## 7. Permisos de Dashboard para Perfiles Operativos
+
+La migración `007_permisos_dashboard_perfiles_operativos.sql` asigna al perfil `CONTADOR` los permisos `DASHBOARD_GLOBAL` y `DASHBOARD_EXPORTAR`, y al perfil `OPERADOR` los permisos `MENU_DASHBOARD`, `DASHBOARD_GLOBAL` y `DASHBOARD_EXPORTAR`. Es idempotente y falla si alguno de los perfiles no está visible o si falta un permiso activo del catálogo.
+
+No modifica usuarios, contraseñas ni asignaciones de plantas. El Dashboard global y los reportes siguen filtrando cada consulta por las plantas autorizadas al usuario; no se concede `FAREGAS_ACCESO_GLOBAL_SEDES`.
+
+Para verificar la asignación:
+
+```sql
+SELECT perfil_clave, permiso_clave
+FROM public.fg_perfil_permiso
+WHERE perfil_clave IN ('CONTADOR', 'OPERADOR', 'SISTEMAS')
+  AND permiso_clave IN ('MENU_DASHBOARD', 'DASHBOARD_SEDE', 'DASHBOARD_GLOBAL', 'DASHBOARD_EXPORTAR')
+ORDER BY perfil_clave, permiso_clave;
+```
+
+El perfil `SISTEMAS` conserva sus asignaciones actuales. El permiso `DASHBOARD_SEDE` no es necesario para el alcance local: `MENU_DASHBOARD` habilita el módulo, mientras que `DASHBOARD_GLOBAL` habilita la vista global y `DASHBOARD_EXPORTAR` protege los reportes y descargas.
 

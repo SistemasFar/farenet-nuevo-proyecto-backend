@@ -1,4 +1,5 @@
 const service = require('../services/faregas-usuarios.service');
+const credencialesTemporalesService = require('../services/faregas-credenciales-temporales.service');
 const auditoriaService = require('../services/faregas-auditoria.service');
 
 const contextoAuditoria = (req) => auditoriaService.contextoRequest(req);
@@ -10,9 +11,7 @@ const responderErrorPerfil = (res, e) => {
             success: false,
             codigo: e.code,
             message: e.message,
-            ...(e.detalles !== undefined ? { detalles: e.detalles } : {}),
-            ...(e.bloqueos ? { bloqueos: e.bloqueos } : {}),
-            ...(e.usuarios ? { usuarios: e.usuarios, totalUsuarios: e.usuarios.length } : {})
+            ...(e.detalles !== undefined ? { detalles: e.detalles } : {})
         });
     }
     console.error(e);
@@ -49,7 +48,7 @@ exports.crearUsuario = async (req, res) => {
     try {
         const { username, password } = req.body;
         if (!username || !password) return res.status(400).json({ message: 'Username y password requeridos' });
-        
+
         const result = await service.crearUsuario(req.body, req.user.username);
 
         // Registro de auditoría
@@ -92,7 +91,7 @@ exports.actualizarUsuario = async (req, res) => {
         if (req.user.username === usuarioObjetivo && req.body.estado === false) {
             return res.status(409).json({ message: 'No puedes desactivar tu propio usuario mientras tienes una sesi�n activa.' });
         }
-        
+
         const result = await service.actualizarUsuario(usuarioObjetivo, req.body, req.user.username);
 
         // Registro de auditoría
@@ -109,7 +108,6 @@ exports.actualizarUsuario = async (req, res) => {
 
         res.json(result);
     } catch (e) {
-        if (e.statusCode) return responderErrorPerfil(res, e);
         if (e.code === 'MIGRACION_PERFIL_FAREGAS_PENDIENTE') {
             return res.status(503).json({ message: e.message, codigo: e.code });
         }
@@ -160,6 +158,47 @@ exports.cambiarPassword = async (req, res) => {
     }
 };
 
+exports.restablecerCredencialesTemporales = async (req, res) => {
+    try {
+        const resultados = await credencialesTemporalesService.restablecerCredencialesTemporales(
+            req.body?.credenciales,
+        );
+
+        // El middleware de auditoría solo recibe identificadores y conteos; las
+        // contraseñas no se agregan a req, respuesta, mensajes ni metadatos.
+        req.usuariosCredencialesRestablecidas = resultados.map(({ username }) => username);
+        for (const resultado of resultados) {
+            await auditoriaService.registrarEvento({
+                ...contextoAuditoria(req),
+                categoria: 'SEGURIDAD',
+                modulo: 'USUARIOS',
+                evento: 'CREDENCIAL_TEMPORAL_RESTABLECIDA',
+                mensaje: `Se restableció la contraseña temporal de ${resultado.username}.`,
+                entidad: 'fg_usuario',
+                documento_referencia: resultado.username,
+                datos: { sesiones_revocadas: resultado.sesionesRevocadas },
+            });
+        }
+
+        return res.json({ success: true, resultados });
+    } catch (error) {
+        const status = Number(error?.statusCode) || 500;
+        if (status < 500) {
+            return res.status(status).json({
+                success: false,
+                codigo: error.code,
+                message: error.message,
+            });
+        }
+        // No registrar el request ni el body: puede contener contraseñas nuevas.
+        console.error('Error restableciendo credenciales temporales FAREGAS:', error.code || error.name);
+        return res.status(500).json({
+            success: false,
+            message: 'No se pudo confirmar el restablecimiento de credenciales.',
+        });
+    }
+};
+
 exports.eliminarUsuario = async (req, res) => {
     try {
         const usuarioObjetivo = req.params.username;
@@ -167,7 +206,7 @@ exports.eliminarUsuario = async (req, res) => {
             return res.status(409).json({ message: 'No puedes eliminar tu propio usuario mientras tienes una sesión activa.' });
         }
 
-        const resultado = await service.eliminarUsuario(usuarioObjetivo, req.user);
+        const resultado = await service.eliminarUsuario(usuarioObjetivo);
 
         // Registro de auditoría
         await auditoriaService.registrarEvento({
@@ -188,7 +227,6 @@ exports.eliminarUsuario = async (req, res) => {
             ...resultado
         });
     } catch (e) {
-        if (e.statusCode) return responderErrorPerfil(res, e);
         if (e.code === 'AUTO_ELIMINACION_PROHIBIDA') {
             return res.status(409).json({ message: e.message });
         }
@@ -222,7 +260,7 @@ exports.desactivarUsuario = async (req, res) => {
         if (req.user.username === usuarioObjetivo) {
             return res.status(409).json({ message: 'No puedes desactivar tu propio usuario mientras tienes una sesión activa.' });
         }
-        const resultado = await service.desactivarUsuario(usuarioObjetivo, req.user);
+        const resultado = await service.desactivarUsuario(usuarioObjetivo);
 
         await auditoriaService.registrarEvento({
             ...contextoAuditoria(req),
@@ -236,7 +274,6 @@ exports.desactivarUsuario = async (req, res) => {
 
         res.json({ success: true, ...resultado });
     } catch (e) {
-        if (e.statusCode) return responderErrorPerfil(res, e);
         if (e.code === 'USER_NOT_FOUND') return res.status(404).json({ message: 'El usuario no existe.' });
         if (e.code === 'ULTIMO_ADMIN') return res.status(403).json({ message: e.message });
         console.error(e);
@@ -335,7 +372,7 @@ exports.eliminarPerfil = async (req, res) => {
     try {
         const { nuevoPerfilClave } = req.body || {};
         const clave = req.params.clave;
-        const resultado = await service.eliminarPerfil(clave, { nuevoPerfilClave }, req.user, contextoAuditoria(req));
+        const resultado = await service.eliminarPerfil(clave, { nuevoPerfilClave });
 
         // Auditoría
         await auditoriaService.registrarEvento({
@@ -351,7 +388,6 @@ exports.eliminarPerfil = async (req, res) => {
 
         res.json({ success: true, ...resultado });
     } catch (e) {
-        if (e.statusCode) return responderErrorPerfil(res, e);
         if (e.code === 'NO_DELETE_SISTEMAS' || e.message === 'NO_DELETE_SISTEMAS') {
             return res.status(403).json({ success: false, codigo: 'NO_DELETE_SISTEMAS', message: 'No se permite eliminar el perfil base SISTEMAS.' });
         }

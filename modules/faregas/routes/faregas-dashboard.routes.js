@@ -2,23 +2,13 @@ const express = require('express');
 const router = express.Router();
 const { authFaregasMiddleware } = require('../middlewares/faregas-auth.middleware');
 const controller = require('../controllers/faregas-dashboard.controller');
-const db = require('../../../config/database');
 
 const verificarAccesoDashboard = async (req, res, next) => {
     try {
-        const perfilId = req.user?.perfil_id;
-        const r = await db.query(
-            `SELECT 1 FROM fg_perfil_permiso 
-             WHERE perfil_clave = $1 
-               AND permiso_clave IN ('MENU_DASHBOARD', 'DASHBOARD_GLOBAL', 'DASHBOARD_SEDE') 
-             LIMIT 1`,
-            [perfilId]
-        );
-
-        if (r.rowCount === 0) {
+        if (req.user?.faregas_flow !== 'authenticated' || !req.user?.planta_key) {
             return res.status(403).json({
                 success: false,
-                message: 'No tiene permiso para acceder al módulo Dashboard.'
+                message: 'Seleccione una sede antes de consultar el Dashboard.'
             });
         }
         next();

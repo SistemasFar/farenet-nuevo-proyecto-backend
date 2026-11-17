@@ -63,22 +63,35 @@ async function sincronizarDetraccionFacturacion(client, facturacionId, { tipoCom
             tieneColumna('fg_producto_facturacion', 'detraccion_codigo', client),
             tieneColumna('fg_producto_facturacion', 'detraccion_porcentaje', client)
         ])).every(Boolean);
+        const productoSpotSql = soportaClasificacionProducto
+            ? 'pf.sujeto_detraccion, pf.detraccion_codigo, pf.detraccion_porcentaje'
+            : 'NULL::boolean AS sujeto_detraccion, NULL::text AS detraccion_codigo, NULL::numeric AS detraccion_porcentaje';
+        const servicioSpotSql = soportaClasificacionServicio
+            ? 's.sujeto_detraccion AS servicio_sujeto_detraccion, s.detraccion_codigo AS servicio_detraccion_codigo, s.detraccion_porcentaje AS servicio_detraccion_porcentaje'
+            : 'NULL::boolean AS servicio_sujeto_detraccion, NULL::text AS servicio_detraccion_codigo, NULL::numeric AS servicio_detraccion_porcentaje';
         const productos = await client.query(`
-            SELECT od.tipo_item, pf.sujeto_detraccion, pf.detraccion_codigo, pf.detraccion_porcentaje
+            SELECT od.tipo_item, ${productoSpotSql}, ${servicioSpotSql}
             FROM fg_operacion_detalle od
             LEFT JOIN fg_producto_facturacion pf ON pf.id = od.producto_facturacion_id
+            LEFT JOIN fg_certificado c ON c.id = od.certificado_id
+            LEFT JOIN fg_tarifa t ON t.planta_key = c.planta_key AND t.codigo = c.tarifa_codigo
+            LEFT JOIN fg_servicio s ON s.id = t.servicio_id
             WHERE od.operacion_id = $1
             ORDER BY od.orden, od.id
         `, [operacionId]);
-        if (productos.rowCount > 0 && productos.rows.every(row => String(row.tipo_item).toUpperCase() === 'PRODUCTO')) {
+        if (productos.rowCount > 0) {
             itemsEvaluacion = productos.rows.map(row => ({
-                tipo_item: 'PRODUCTO',
-                productoSpot: soportaClasificacionProducto ? row : {
-                    sujeto_detraccion: null, detraccion_codigo: null, detraccion_porcentaje: null
-                }
+                tipo_item: String(row.tipo_item || '').toUpperCase(),
+                productoSpot: String(row.tipo_item || '').toUpperCase() === 'PRODUCTO' ? row : undefined
             }));
-        } else {
-            servicio = null;
+            if (productos.rows.every(row => String(row.tipo_item || '').toUpperCase() === 'SERVICIO')) {
+                const row = productos.rows[0];
+                servicio = {
+                    sujeto_detraccion: row.servicio_sujeto_detraccion,
+                    detraccion_codigo: row.servicio_detraccion_codigo,
+                    detraccion_porcentaje: row.servicio_detraccion_porcentaje
+                };
+            }
         }
     } else {
         const servicioResult = soportaClasificacionServicio ? await client.query(`
@@ -101,10 +114,14 @@ async function sincronizarDetraccionFacturacion(client, facturacionId, { tipoCom
         tipoComprobante, importeTotal, moneda: moneda || 'PEN', items: itemsEvaluacion, servicio,
         esGratuito: Number(importeTotal) <= 0
     });
-    if (evaluacion.requiereRevision) throw errorNegocio(evaluacion.motivoExclusion, 409,
-        operacionId
-            ? 'La clasificación SPOT del producto vendido no está verificada o no corresponde a una categoría de bienes compatible. Revise Configuración → Productos antes de emitir.'
-            : 'La clasificación SPOT del servicio no está verificada; complete la configuración tributaria antes de emitir.');
+    if (evaluacion.requiereRevision) {
+        const detalle = evaluacion.motivoExclusion === 'CONCEPTOS_MIXTOS_REQUIEREN_REVISION'
+            ? 'La factura combina productos y servicios con bases SPOT distintas o incompletas. Revise y separe los conceptos antes de emitir.'
+            : operacionId
+                ? 'La clasificación SPOT del producto vendido no está verificada o no corresponde a una categoría de bienes compatible. Revise Configuración → Productos antes de emitir.'
+                : 'La clasificación SPOT del servicio no está verificada; complete la configuración tributaria antes de emitir.';
+        throw errorNegocio(evaluacion.motivoExclusion, 409, detalle);
+    }
     if (!soportaDetraccion && evaluacion.sujeto) throw errorNegocio('MIGRACION_DETRACCIONES_REQUERIDA', 503,
         'La migración FAREGAS 004 no está aplicada: la factura sujeta a SPOT no se puede guardar ni emitir hasta habilitar su persistencia.');
     if (!soportaDetraccion) return evaluacion;

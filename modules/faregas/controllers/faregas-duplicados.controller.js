@@ -35,8 +35,13 @@ const responderError = (res, error) => {
     const codigo = error.code || error.message || 'ERROR_INTERNO';
     const status = Number(error.statusCode) || 500;
     if (status >= 500) console.error('[FAREGAS DUPLICADOS]', error);
-    const detalleFacturacion = codigo === 'DATOS_FACTURACION_INVALIDOS' && Array.isArray(error.detalles)
-        ? error.detalles.join(' ')
+    const erroresFacturacion = Array.isArray(error.detalles)
+        ? error.detalles
+        : Array.isArray(error.detalles?.errores)
+            ? error.detalles.errores
+            : null;
+    const detalleFacturacion = codigo === 'DATOS_FACTURACION_INVALIDOS' && erroresFacturacion
+        ? erroresFacturacion.join(' ')
         : null;
     const motivoNubefact = ['NUBEFACT_RECHAZADO', 'NUBEFACT_ERROR'].includes(codigo)
         && typeof error.detalles?.motivo === 'string'

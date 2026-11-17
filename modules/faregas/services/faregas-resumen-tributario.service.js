@@ -109,6 +109,7 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
 
         itemsList.push({
             orden: Number(detalle?.orden || 1),
+            tipoItem: String(detalle?.tipo_item || 'SERVICIO').toUpperCase(),
             productoFacturacionId: detalle?.producto_facturacion_id ? Number(detalle.producto_facturacion_id) : null,
             codigoInterno,
             codigoSunat: codigoSunat || null,
@@ -126,6 +127,7 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
 
         itemsList.push({
             orden: Number(detalle?.orden || 1) + 1,
+            tipoItem: 'PRODUCTO',
             productoFacturacionId: null,
             codigoInterno: 'CHIP',
             codigoSunat: null,
@@ -143,6 +145,7 @@ const construirResumenUnitario = ({ contexto, detalle, descuento, pagos, serie }
     } else {
         itemsList.push({
             orden: Number(detalle?.orden || 1),
+            tipoItem: String(detalle?.tipo_item || 'SERVICIO').toUpperCase(),
             productoFacturacionId: detalle?.producto_facturacion_id ? Number(detalle.producto_facturacion_id) : null,
             codigoInterno,
             codigoSunat: codigoSunat || null,
@@ -549,6 +552,7 @@ exports.obtenerResumenTributario = async (certificadoId, queryable = db) => {
 };
 
 exports.construirDetallesNubefact = (resumen) => (resumen?.items || []).map(item => ({
+    tipo_item: String(item.tipoItem || '').toUpperCase(),
     orden: item.orden,
     producto_facturacion_id: item.productoFacturacionId,
     unidad_snapshot: item.unidad,

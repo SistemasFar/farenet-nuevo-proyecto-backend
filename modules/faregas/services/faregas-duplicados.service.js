@@ -10,6 +10,7 @@ const PRECIO_DUPLICADO = 50;
 const BASE_DUPLICADO = 42.37;
 const IGV_DUPLICADO = 7.63;
 const HISTORIAL_POR_PAGINA = 10;
+const debeGuardarPagos = (estadoOperacion) => ['BORRADOR', 'PENDIENTE_PAGO'].includes(String(estadoOperacion || '').toUpperCase());
 const ESTADOS_ANULACION_QUE_BLOQUEAN = Object.freeze([
     'PENDIENTE_APROBACION',
     'APROBADA',
@@ -521,9 +522,20 @@ exports.procesar = async (duplicadoId, payload, userContext, dependencies = {}) 
     if (String(fiscal.condicionPago || 'CONTADO').toUpperCase() !== 'CONTADO') {
         throw errorNegocio('DUPLICADO_SOLO_CONTADO', 400);
     }
+    // Validar los datos fiscales antes de actualizar el cliente o persistir pagos.
+    // Así los errores de RUC/datos no dejan cambios parciales en la solicitud.
+    const servicioFacturacion = dependencies.facturacionService || facturacionService;
+    const evaluarFiscal = typeof servicioFacturacion.evaluarDatosFacturacion === 'function'
+        ? servicioFacturacion.evaluarDatosFacturacion.bind(servicioFacturacion)
+        : facturacionService.evaluarDatosFacturacion;
+    const evaluacionFiscal = evaluarFiscal(fiscal);
+    const erroresFiscal = evaluacionFiscal?.errores || [];
+    if (erroresFiscal.length > 0) {
+        throw errorNegocio('DATOS_FACTURACION_INVALIDOS', 400, erroresFiscal);
+    }
 
     const pagosPayload = Array.isArray(payload?.pagos) ? payload.pagos : [];
-    if (['BORRADOR', 'PENDIENTE_PAGO'].includes(String(duplicado.operacion_estado))) {
+    if (debeGuardarPagos(duplicado.operacion_estado)) {
         if (pagosPayload.length === 0) {
             throw errorNegocio('PAGOS_REQUERIDOS', 400, 'Debe registrar al menos un medio de pago.');
         }
@@ -569,7 +581,7 @@ exports.procesar = async (duplicadoId, payload, userContext, dependencies = {}) 
     }
 
     try {
-        if (['BORRADOR', 'PENDIENTE_PAGO'].includes(String(duplicado.operacion_estado))) {
+        if (debeGuardarPagos(duplicado.operacion_estado)) {
             await (dependencies.pagosService || pagosService).guardarPagosOperacion(
                 duplicado.operacion_id,
                 { importeTotal: PRECIO_DUPLICADO, pagos: pagosPayload, condicionPago: 'CONTADO' },
@@ -588,7 +600,6 @@ exports.procesar = async (duplicadoId, payload, userContext, dependencies = {}) 
             'SELECT estado FROM fg_facturacion WHERE operacion_id=$1 AND certificado_id IS NULL',
             [duplicado.operacion_id]
         );
-        const servicioFacturacion = dependencies.facturacionService || facturacionService;
         const facturacion = String(facturacionActual.rows[0]?.estado || '').toUpperCase() === 'RECHAZADO'
             ? await servicioFacturacion.reintentarFacturacionOperacion(duplicado.operacion_id, userContext, dependencies.nubefact || {})
             : await servicioFacturacion.emitirFacturacionOperacion(duplicado.operacion_id, userContext, dependencies.nubefact || {});
@@ -611,7 +622,10 @@ exports.procesar = async (duplicadoId, payload, userContext, dependencies = {}) 
             SET estado='PENDIENTE_COMPROBANTE', fecha_modificacion=CURRENT_TIMESTAMP
             WHERE id=$1 AND estado <> 'DISPONIBLE'
         `, [duplicadoId]).catch(() => undefined);
-        error.detalles = { ...(error.detalles || {}), duplicadoId: Number(duplicadoId), operacionId: Number(duplicado.operacion_id) };
+        const detalles = Array.isArray(error.detalles)
+            ? { errores: error.detalles }
+            : (error.detalles && typeof error.detalles === 'object' ? error.detalles : {});
+        error.detalles = { ...detalles, duplicadoId: Number(duplicadoId), operacionId: Number(duplicado.operacion_id) };
         throw error;
     }
 };
@@ -675,6 +689,7 @@ exports._private = {
     HISTORIAL_POR_PAGINA,
     ESTADOS_ANULACION_QUE_BLOQUEAN,
     filtrarCandidatosDisponibles,
+    debeGuardarPagos,
     obtenerCandidato,
     consultarUltimosEmitidos
 };

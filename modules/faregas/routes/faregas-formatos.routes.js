@@ -5,35 +5,21 @@ const { faregasFormatosService } = require('../services/faregas-formatos.service
 const formatosSistemaVisualService = require('../services/faregas-formatos-sistema-visual.service');
 const { VARIABLES_CATALOG } = require('../services/faregas-formatos.variables');
 const { authFaregasMiddleware: verificarToken } = require('../middlewares/faregas-auth.middleware');
+const { crearMiddlewarePermisoFaregas } = require('../middlewares/faregas-permisos.middleware');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-const requireAdministrarFormatos = async (req, res, next) => {
-  try {
-    const permiso = await db.query(
-      `SELECT 1
-       FROM fg_perfil_permiso
-       WHERE perfil_clave = $1
-         AND permiso_clave IN ('MENU_CONFIGURACION', 'CONFIGURACION_SERVICIOS')
-       GROUP BY perfil_clave
-       HAVING COUNT(DISTINCT permiso_clave) = 2`,
-      [req.user.perfil_id]
-    );
-    if (permiso.rowCount === 0) {
-      return res.status(403).json({ message: 'No tiene permisos para administrar formatos.' });
-    }
-    next();
-  } catch (_error) {
-    res.status(500).json({ message: 'Error al verificar permisos de formatos.' });
-  }
-};
+const requireAdministrarFormatos = crearMiddlewarePermisoFaregas(db, {
+  anyOf: ['CONFIGURACION_SERVICIOS'],
+  message: 'No tiene permisos para administrar formatos.'
+});
 
-router.get('/variables', verificarToken, (_req, res) => {
+router.get('/variables', verificarToken, requireAdministrarFormatos, (_req, res) => {
   res.json({ variables: VARIABLES_CATALOG });
 });
 
-router.get('/', verificarToken, async (_req, res) => {
+router.get('/', verificarToken, requireAdministrarFormatos, async (_req, res) => {
   try {
     res.json(await faregasFormatosService.listarFormatos());
   } catch (error) {
@@ -50,7 +36,7 @@ router.post('/', verificarToken, requireAdministrarFormatos, async (req, res) =>
     res.status(400).json({ message: error.message || 'Error al crear formato.' });
   }
 });
-router.get('/:id/operaciones', verificarToken, async (req, res) => {
+router.get('/:id/operaciones', verificarToken, requireAdministrarFormatos, async (req, res) => {
   try {
     res.json(await faregasFormatosService.obtenerOperacionesPorFormato(req.params.id));
   } catch (error) {
@@ -58,7 +44,7 @@ router.get('/:id/operaciones', verificarToken, async (req, res) => {
   }
 });
 
-router.get('/:id/versiones', verificarToken, async (req, res) => {
+router.get('/:id/versiones', verificarToken, requireAdministrarFormatos, async (req, res) => {
   try {
     res.json(await faregasFormatosService.obtenerVersionesFormato(req.params.id));
   } catch (error) {
@@ -129,7 +115,7 @@ router.post('/:id/versiones/html/importar-docx', verificarToken, requireAdminist
   }
 });
 
-router.get('/:id/versiones/:versionId/estructura', verificarToken, async (req, res) => {
+router.get('/:id/versiones/:versionId/estructura', verificarToken, requireAdministrarFormatos, async (req, res) => {
   try {
     const paragraphs = await faregasFormatosService.obtenerEstructura(req.params.id, req.params.versionId);
     res.json({ paragraphs });
@@ -158,7 +144,7 @@ router.put('/:id/versiones/:versionId', verificarToken, requireAdministrarFormat
   }
 });
 
-router.get('/:id/versiones/:versionId/preview', verificarToken, async (req, res) => {
+router.get('/:id/versiones/:versionId/preview', verificarToken, requireAdministrarFormatos, async (req, res) => {
   try {
     const preview = await faregasFormatosService.generarPreview(req.params.id, req.params.versionId);
     if (preview.tipo === 'HTML_DINAMICO') {

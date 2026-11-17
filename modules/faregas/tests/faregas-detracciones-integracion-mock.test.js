@@ -29,15 +29,66 @@ describe('Integración simulada SPOT FAREGAS (sin PostgreSQL ni NubeFact)', () =
         );
     });
 
-    it('aplica umbral estricto y excluye servicios no sujetos', () => {
-        for (const total of [699.99, 700]) {
-            assert.equal(evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: total, servicio: spot037 }).sujeto, false);
-        }
-        assert.equal(evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: 700.01, servicio: spot037 }).monto, 84);
+    it('separa el umbral comercial inclusivo de S/ 700 del umbral legal estricto de servicios', () => {
+        const bajo = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: 699, servicio: spot037 });
+        assert.equal(bajo.sujeto, false);
+        assert.equal(bajo.estadoEvaluacionSpot, 'BAJO_UMBRAL_COMERCIAL');
+        assert.equal(bajo.umbralComercialAlcanzado, false);
+
+        const limite = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: 700, servicio: spot037 });
+        assert.equal(limite.sujeto, false);
+        assert.equal(limite.estadoEvaluacionSpot, 'CLASIFICADA_SIN_UMBRAL_LEGAL');
+        assert.equal(limite.umbralComercialAlcanzado, true);
+
+        const pendienteEnLimite = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: 700 });
+        assert.equal(pendienteEnLimite.requiereRevision, true);
+        assert.equal(pendienteEnLimite.estadoEvaluacionSpot, 'CLASIFICACION_PENDIENTE');
+
+        const sobreLimite = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: 701, servicio: spot037 });
+        assert.equal(sobreLimite.monto, 84);
         assert.equal(evaluarDetraccion({
             tipoComprobante: 'FACTURA', importeTotal: 1260,
             servicio: { sujeto_detraccion: false, detraccion_codigo: null, detraccion_porcentaje: null }
         }).motivoExclusion, 'SERVICIO_EXCLUIDO_POR_CONFIGURACION');
+    });
+
+    it('permite configurar el umbral comercial sin suprimir la regla legal de servicios', () => {
+        const anterior = process.env.FAREGAS_SPOT_UMBRAL_COMERCIAL;
+        try {
+            process.env.FAREGAS_SPOT_UMBRAL_COMERCIAL = '1000';
+            const sobreUmbralLegal = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: 800, servicio: spot037 });
+            assert.equal(sobreUmbralLegal.sujeto, true);
+            assert.equal(sobreUmbralLegal.umbralComercialAlcanzado, false);
+            assert.equal(sobreUmbralLegal.monto, 96);
+
+            process.env.FAREGAS_SPOT_UMBRAL_COMERCIAL = '600';
+            const bajoUmbralLegal = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: 650, servicio: spot037 });
+            assert.equal(bajoUmbralLegal.sujeto, false);
+            assert.equal(bajoUmbralLegal.umbralComercialAlcanzado, true);
+            assert.equal(bajoUmbralLegal.estadoEvaluacionSpot, 'CLASIFICADA_SIN_UMBRAL_LEGAL');
+        } finally {
+            if (anterior === undefined) delete process.env.FAREGAS_SPOT_UMBRAL_COMERCIAL;
+            else process.env.FAREGAS_SPOT_UMBRAL_COMERCIAL = anterior;
+        }
+    });
+
+    it('no aplica detracción a chips no sujetos y bloquea bases mixtas no verificables', () => {
+        const productoNoSujeto = { tipo_item: 'PRODUCTO', productoSpot: { sujeto_detraccion: false } };
+        const chip = evaluarDetraccion({
+            tipoComprobante: 'FACTURA', importeTotal: 1080, items: Array.from({ length: 6 }, () => productoNoSujeto)
+        });
+        assert.equal(chip.sujeto, false);
+        assert.equal(chip.monto, 0);
+        assert.equal(chip.neto, 1080);
+        assert.equal(chip.motivoExclusion, 'BIEN_MUEBLE_NO_SUJETO_A_SPOT');
+
+        const mixta = evaluarDetraccion({
+            tipoComprobante: 'FACTURA', importeTotal: 1260, servicio: spot037,
+            items: [{ tipo_item: 'SERVICIO' }, { tipo_item: 'PRODUCTO', productoSpot: { sujeto_detraccion: false } }]
+        });
+        assert.equal(mixta.requiereRevision, true);
+        assert.equal(mixta.motivoExclusion, 'CONCEPTOS_MIXTOS_REQUIEREN_REVISION');
+        assert.equal(mixta.sujeto, false);
     });
 
     it('rechaza servicio sin clasificación comprobada, sin asumir 037/12%', () => {
@@ -246,6 +297,31 @@ describe('Integración simulada SPOT FAREGAS (sin PostgreSQL ni NubeFact)', () =
         assert.equal(result.motivoExclusion, 'BIEN_MUEBLE_NO_SUJETO_A_SPOT');
         assert.equal(updates.length, 1);
         assert.deepEqual(updates[0].slice(0, 8), [false, null, null, 0, 1080, 0, 1080, 'NO_APLICA']);
+    });
+
+    it('detiene una factura mixta antes de persistir SPOT si las bases no se pueden calcular por separado', async () => {
+        for (const columna of ['sujeto_detraccion', 'detraccion_codigo', 'detraccion_porcentaje']) {
+            columnaCompat._forzarColumnaCache('fg_facturacion', columna, true);
+            columnaCompat._forzarColumnaCache('fg_servicio', columna, true);
+            columnaCompat._forzarColumnaCache('fg_producto_facturacion', columna, true);
+        }
+        const fakeClient = { query: async (sql) => {
+            if (sql.includes('FROM fg_operacion_detalle od')) return {
+                rowCount: 2,
+                rows: [
+                    { tipo_item: 'SERVICIO', servicio_sujeto_detraccion: true, servicio_detraccion_codigo: '037', servicio_detraccion_porcentaje: 12 },
+                    { tipo_item: 'PRODUCTO', sujeto_detraccion: false, detraccion_codigo: null, detraccion_porcentaje: null }
+                ]
+            };
+            throw new Error(`Consulta inesperada: ${sql}`);
+        } };
+        await assert.rejects(
+            facturacionService._private.sincronizarDetraccionFacturacion(fakeClient, 89, {
+                tipoComprobante: 'FACTURA', importeTotal: 1260, operacionId: 7002
+            }),
+            (error) => error.code === 'CONCEPTOS_MIXTOS_REQUIEREN_REVISION'
+                && /combina productos y servicios/.test(error.detalles)
+        );
     });
 
     it('relee SPOT del producto serializado al construir la venta, incluidos NO SUJETO y pendiente', async () => {

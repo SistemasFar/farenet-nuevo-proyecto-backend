@@ -475,12 +475,27 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         const tarifaSpot = certificado.tarifa_codigo
             ? await tarifasService.obtenerTarifaOperativaPorCodigo(certificado.planta_key, certificado.tarifa_codigo, client)
             : null;
+        const lineasSpotResult = await client.query(`
+            SELECT od.tipo_item, pf.sujeto_detraccion, pf.detraccion_codigo, pf.detraccion_porcentaje
+            FROM fg_operacion_detalle od
+            LEFT JOIN fg_producto_facturacion pf ON pf.id = od.producto_facturacion_id
+            WHERE od.operacion_id = $1
+            ORDER BY od.orden, od.id
+        `, [operacionId]);
+        const lineasSpot = lineasSpotResult.rows.map(row => ({
+            tipo_item: String(row.tipo_item || '').toUpperCase(),
+            productoSpot: String(row.tipo_item || '').toUpperCase() === 'PRODUCTO' ? row : undefined
+        }));
+        const esVentaSoloProductos = lineasSpot.length > 0
+            && lineasSpot.every(item => item.tipo_item === 'PRODUCTO');
+        const hayConceptosMixtos = lineasSpot.some(item => item.tipo_item === 'PRODUCTO')
+            && lineasSpot.some(item => item.tipo_item === 'SERVICIO');
         const evaluacionSpot = evaluarDetraccion({
             tipoComprobante,
             importeTotal: Number(orden.importe_total),
             moneda: 'PEN',
-            items: [],
-            servicio: tarifaSpot ? {
+            items: esVentaSoloProductos || hayConceptosMixtos ? lineasSpot : [],
+            servicio: !esVentaSoloProductos && tarifaSpot ? {
                 sujeto_detraccion: tarifaSpot.spot_sujeto,
                 detraccion_codigo: tarifaSpot.spot_codigo,
                 detraccion_porcentaje: tarifaSpot.spot_porcentaje,
@@ -489,7 +504,14 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             } : null,
             esGratuito: esCortesia
         });
-        if (evaluacionSpot.requiereRevision) throw new Error('CLASIFICACION_SPOT_NO_VERIFICADA');
+        if (evaluacionSpot.requiereRevision) {
+            const errorSpot = new Error(evaluacionSpot.motivoExclusion === 'CONCEPTOS_MIXTOS_REQUIEREN_REVISION'
+                ? 'La operación combina productos y servicios; revise las bases SPOT antes de registrar pagos.'
+                : 'La clasificación SPOT no está verificada; revise el catálogo fiscal antes de registrar pagos.');
+            errorSpot.code = evaluacionSpot.motivoExclusion;
+            errorSpot.statusCode = 409;
+            throw errorSpot;
+        }
         const totalExigibleCaja = esCortesia ? 0 : (evaluacionSpot.sujeto ? evaluacionSpot.neto : Number(orden.importe_total));
 
         const totalPagado = redondear(pagos.reduce((total, pago) => total + pago.importe, 0));

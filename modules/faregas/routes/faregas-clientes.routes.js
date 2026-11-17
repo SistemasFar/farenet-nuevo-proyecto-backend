@@ -4,6 +4,7 @@ const clientesController = require('../controllers/faregas-clientes.controller')
 const jwt = require('jsonwebtoken');
 const db = require('../../../config/database');
 const vehicleLookupDebug = require('../utils/vehiculo-lookup-debug');
+const { crearMiddlewarePermisoFaregas } = require('../middlewares/faregas-permisos.middleware');
 
 const JWT_SECRET_FAREGAS = process.env.JWT_SECRET_FAREGAS;
 
@@ -44,43 +45,33 @@ const authMiddleware = async (req, res, next) => {
     }
 };
 
-const permisoConsultarClientes = async (req, res, next) => {
-    try {
-        const permiso = await db.query(`
-            SELECT 1
-            FROM fg_perfil_permiso
-            WHERE perfil_clave = $1
-              AND permiso_clave = 'MENU_FACTURACION_CLIENTES'
-            LIMIT 1
-        `, [req.user.perfil_id]);
-        if (permiso.rowCount === 0) {
-            return res.status(403).json({ ok: false, message: 'No tiene permiso para consultar clientes de facturación.' });
-        }
-        return next();
-    } catch (e) {
-        console.error('Error al validar permiso de clientes:', e);
-        return res.status(500).json({ ok: false, message: 'No se pudo validar el permiso de clientes.' });
-    }
-};
+const permisoConsultarClientes = crearMiddlewarePermisoFaregas(db, {
+    anyOf: ['MENU_FACTURACION_CLIENTES'],
+    message: 'No tiene permiso para consultar clientes de facturación.'
+});
+const permisoFlujoComercialClientes = crearMiddlewarePermisoFaregas(db, {
+    anyOf: ['MENU_INICIO', 'MENU_CHIPS_VENTAS', 'MENU_FACTURACION_CLIENTES'],
+    message: 'No tiene permiso para consultar o gestionar datos de clientes en este flujo.'
+});
 
 // GET /api/faregas/clientes
 router.get('/', authMiddleware, permisoConsultarClientes, clientesController.listarClientes);
 
 // GET /api/faregas/clientes/documento/:tipoDocumento/:nroDocumento
-router.get('/documento/:tipoDocumento/:nroDocumento', authMiddleware, clientesController.obtenerClientePorDocumento);
+router.get('/documento/:tipoDocumento/:nroDocumento', authMiddleware, permisoFlujoComercialClientes, clientesController.obtenerClientePorDocumento);
 
 // GET /api/faregas/clientes/autocompletar/:tipoDocumento/:nroDocumento
-router.get('/autocompletar/:tipoDocumento/:nroDocumento', authMiddleware, clientesController.autocompletarPersona);
-router.get('/consultar-documento', authMiddleware, clientesController.consultarDocumento);
-router.get('/consultar-documento/:documento', authMiddleware, clientesController.consultarDocumento);
+router.get('/autocompletar/:tipoDocumento/:nroDocumento', authMiddleware, permisoFlujoComercialClientes, clientesController.autocompletarPersona);
+router.get('/consultar-documento', authMiddleware, permisoFlujoComercialClientes, clientesController.consultarDocumento);
+router.get('/consultar-documento/:documento', authMiddleware, permisoFlujoComercialClientes, clientesController.consultarDocumento);
 
 // GET /api/faregas/clientes/vehiculo/:placa
-router.get('/vehiculo/:placa', vehicleLookupDebug.beginRequest, authMiddleware, clientesController.consultarVehiculoPorPlaca);
+router.get('/vehiculo/:placa', vehicleLookupDebug.beginRequest, authMiddleware, permisoFlujoComercialClientes, clientesController.consultarVehiculoPorPlaca);
 
 // POST /api/faregas/clientes
-router.post('/', authMiddleware, clientesController.crearCliente);
+router.post('/', authMiddleware, permisoFlujoComercialClientes, clientesController.crearCliente);
 
 // PATCH /api/faregas/clientes/:id
-router.patch('/:id', authMiddleware, clientesController.actualizarCliente);
+router.patch('/:id', authMiddleware, permisoFlujoComercialClientes, clientesController.actualizarCliente);
 
 module.exports = router;

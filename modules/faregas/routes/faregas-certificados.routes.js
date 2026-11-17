@@ -9,6 +9,7 @@ const facturacionAdminController = require('../controllers/faregas-facturacion-a
 const nubefactReadinessController = require('../controllers/faregas-nubefact-readiness.controller');
 const jwt = require('jsonwebtoken');
 const db = require('../../../config/database');
+const { crearMiddlewarePermisoFaregas } = require('../middlewares/faregas-permisos.middleware');
 
 const JWT_SECRET_FAREGAS = process.env.JWT_SECRET_FAREGAS;
 
@@ -36,7 +37,10 @@ const authMiddleware = async (req, res, next) => {
             return res.status(403).json({ message: 'Usuario inactivo' });
         }
         
-        req.user = decoded;
+        // El perfil puede haberse actualizado mientras la sesión seguía activa.
+        // Usar el valor verificado en PostgreSQL evita evaluar permisos de planta
+        // con un perfil obsoleto incluido en el JWT.
+        req.user = { ...decoded, perfil_id: userDb.rows[0].perfil_id };
         next();
     } catch (e) {
         return res.status(401).json({ message: 'Token inválido o expirado' });
@@ -45,70 +49,55 @@ const authMiddleware = async (req, res, next) => {
 
 router.use(authMiddleware);
 
-// Desde 20261001 el módulo Facturación se abre por submódulos. Este middleware
-// protege el área administrativa de comprobantes y preparación, que es donde un
-// perfil CONTADOR (Comprobantes) sí debe poder entrar, pero sin abrirle Series.
-//
-// Se conservan las vías operativas que ya existían (MENU_CONFIGURACION con
-// CONFIGURACION_SERIES, y CONFIGURACION_SERIES suelto) para no quitar acceso a
-// quien lo tenía por esa vía. Lo que cambia es que MENU_FACTURACION a secas ya
-// no basta: hace falta el submódulo correspondiente.
-const facturacionAdminMiddleware = async (req, res, next) => {
-    // El endpoint de readiness es la pestaña PREPARACIÓN; el resto es COMPROBANTES.
-    const esReadiness = req.path.endsWith('/readiness');
-    const submodulo = esReadiness ? 'MENU_FACTURACION_PREPARACION' : 'MENU_FACTURACION_COMPROBANTES';
-    try {
-        const permiso = await db.query(`
-            SELECT 1 FROM fg_perfil_permiso
-            WHERE perfil_clave = $1
-              AND (
-                  permiso_clave = $2
-                  OR permiso_clave IN ('MENU_CONFIGURACION', 'CONFIGURACION_SERIES')
-              )
-            LIMIT 1
-        `, [req.user?.perfil_id, submodulo]);
-        if (permiso.rowCount === 0) {
-            return res.status(403).json({
-                message: esReadiness
-                    ? 'No tiene permiso para consultar la preparación de facturación.'
-                    : 'No tiene permiso para consultar comprobantes.'
-            });
-        }
-        return next();
-    } catch (error) {
-        console.error('[FAREGAS FACTURACION ADMIN AUTH]', error);
-        return res.status(500).json({ message: 'No se pudo validar el permiso de facturación.' });
-    }
-};
+const permisoInicio = crearMiddlewarePermisoFaregas(db, {
+    anyOf: ['MENU_INICIO'],
+    message: 'No tiene permiso para consultar o gestionar certificados.'
+});
+const permisoCorrelativosConfiguracion = crearMiddlewarePermisoFaregas(db, {
+    // La vista actual de Correlativos también forma parte del acceso
+    // Facturación > Series; ambos son permisos de submódulo explícitos.
+    anyOf: ['CONFIGURACION_SERIES', 'MENU_FACTURACION_SERIES'],
+    message: 'No tiene permiso para gestionar correlativos de certificados.'
+});
+// Facturación electrónica y Configuración son ámbitos separados. Solo el
+// submódulo Comprobantes abre estas consultas administrativas.
+const facturacionAdminMiddleware = crearMiddlewarePermisoFaregas(db, {
+    anyOf: ['MENU_FACTURACION_COMPROBANTES'],
+    message: 'No tiene permiso para consultar comprobantes.'
+});
+
+// Borradores y su facturación pertenecen al flujo Inicio. Los controles
+// fiscales sensibles siguen validándose dentro de los servicios respectivos.
+router.use('/borradores', permisoInicio);
 
 // Catálogo
-router.get('/operaciones-disponibles', controller.obtenerOperacionesDisponibles);
-router.get('/catalogos/verificaciones', controller.obtenerCatalogoVerificaciones);
+router.get('/operaciones-disponibles', permisoInicio, controller.obtenerOperacionesDisponibles);
+router.get('/catalogos/verificaciones', permisoInicio, controller.obtenerCatalogoVerificaciones);
 
-router.get('/tipos', controller.obtenerTipos);
+router.get('/tipos', permisoInicio, controller.obtenerTipos);
 
 // --- Correlativos por SEDE (modelo vigente) -------------------------------
 // Un rango pertenece a la sede. No se pide tipo, modalidad ni producto, ni al
 // listar ni al crear. Las rutas del modelo anterior quedan debajo para no
 // romper clientes que aún las consulten; la emisión usa las de aquí.
-router.get('/correlativos-sede', correlativosController.listarRangosSede);
-router.get('/correlativos-sede/resumen', correlativosController.resumenRangosSede);
-router.get('/correlativos-sede/auditoria', correlativosController.auditarRangosSede);
-router.get('/correlativos-sede/sugerencia', correlativosController.sugerirRangoSede);
-router.post('/correlativos-sede', correlativosController.agregarRangoSede);
-router.patch('/correlativos-sede/:id', correlativosController.editarRangoSede);
-router.patch('/correlativos-sede/:id/cerrar', correlativosController.cerrarRangoSede);
+router.get('/correlativos-sede', permisoCorrelativosConfiguracion, correlativosController.listarRangosSede);
+router.get('/correlativos-sede/resumen', permisoCorrelativosConfiguracion, correlativosController.resumenRangosSede);
+router.get('/correlativos-sede/auditoria', permisoCorrelativosConfiguracion, correlativosController.auditarRangosSede);
+router.get('/correlativos-sede/sugerencia', permisoCorrelativosConfiguracion, correlativosController.sugerirRangoSede);
+router.post('/correlativos-sede', permisoCorrelativosConfiguracion, correlativosController.agregarRangoSede);
+router.patch('/correlativos-sede/:id', permisoCorrelativosConfiguracion, correlativosController.editarRangoSede);
+router.patch('/correlativos-sede/:id/cerrar', permisoCorrelativosConfiguracion, correlativosController.cerrarRangoSede);
 
 // --- Modelo anterior, conservado ------------------------------------------
-router.get('/correlativos', controller.obtenerCorrelativos);
-router.get('/correlativos/:plantaKey/:tipo', controller.obtenerRangoActivo);
-router.post('/correlativos', controller.crearRango);
-router.patch('/correlativos/:id', controller.actualizarRango);
-router.patch('/correlativos/:id/cerrar', controller.cerrarRango);
-router.get('/correlativos-plan/auditoria', controller.auditarCorrelativos);
-router.get('/correlativos-plan/plan', controller.obtenerPlanCorrelativos);
-router.post('/correlativos-plan/aplicar', controller.aplicarPlanCorrelativos);
-router.get('/correlativos-plan/siguiente', controller.sugerirSiguienteRango);
+router.get('/correlativos', permisoCorrelativosConfiguracion, controller.obtenerCorrelativos);
+router.get('/correlativos/:plantaKey/:tipo', permisoCorrelativosConfiguracion, controller.obtenerRangoActivo);
+router.post('/correlativos', permisoCorrelativosConfiguracion, controller.crearRango);
+router.patch('/correlativos/:id', permisoCorrelativosConfiguracion, controller.actualizarRango);
+router.patch('/correlativos/:id/cerrar', permisoCorrelativosConfiguracion, controller.cerrarRango);
+router.get('/correlativos-plan/auditoria', permisoCorrelativosConfiguracion, controller.auditarCorrelativos);
+router.get('/correlativos-plan/plan', permisoCorrelativosConfiguracion, controller.obtenerPlanCorrelativos);
+router.post('/correlativos-plan/aplicar', permisoCorrelativosConfiguracion, controller.aplicarPlanCorrelativos);
+router.get('/correlativos-plan/siguiente', permisoCorrelativosConfiguracion, controller.sugerirSiguienteRango);
 
 // FASE 3: BORRADORES DE CERTIFICADOS
 router.get('/borradores', controller.obtenerBorradores);
@@ -171,8 +160,8 @@ router.get('/borradores/:id/facturacion/pdf', facturacionController.descargarPdf
 router.get('/borradores/:id/facturacion/pdf-nubefact', facturacionController.descargarPdfNubefact);
 router.get('/borradores/:id/facturacion/html', facturacionController.obtenerHtmlFaregas);
 router.post('/borradores/:id/facturacion/regenerar-pdf', facturacionController.regenerarPdfFaregas);
-router.get('/facturacion/:facturacionId/pdf', facturacionController.descargarPdfFaregasPorFacturacionId);
-router.post('/facturacion/:facturacionId/regenerar-pdf', facturacionController.regenerarPdfFaregasPorFacturacionId);
+router.get('/facturacion/:facturacionId/pdf', facturacionAdminMiddleware, facturacionController.descargarPdfFaregasPorFacturacionId);
+router.post('/facturacion/:facturacionId/regenerar-pdf', facturacionAdminMiddleware, facturacionController.regenerarPdfFaregasPorFacturacionId);
 
 // PREVISUALIZACIÓN Y EMISIÓN
 //
@@ -189,18 +178,18 @@ router.post('/borradores/:id/emitir', controller.emitir);
 router.put('/borradores/:id/snapshot', controller.guardarTaller);
 
 // TALLERES
-router.get('/talleres', controller.obtenerTalleresActivos);
+router.get('/talleres', permisoInicio, controller.obtenerTalleresActivos);
 
 // RECTIFICACIÓN TÉCNICA DE CERTIFICADOS EMITIDOS
 // El endpoint directo actualiza y versiona el certificado sin solicitudes,
 // comprobantes nuevos ni consumo de correlativos. Las rutas administrativas se
 // conservan separadas para el historial y los procesos que todavía las usan.
 const rectificacionesController = require('../controllers/faregas-rectificaciones.controller');
-router.get('/:id/rectificacion/contexto', rectificacionesController.contexto);
-router.get('/:id/rectificacion/historial', rectificacionesController.historial);
-router.post('/:id/rectificacion/previsualizacion', rectificacionesController.previsualizar);
-router.post('/:id/rectificacion/directa', rectificacionesController.ejecutarDirecta);
-router.post('/:id/rectificacion', rectificacionesController.crear);
-router.get('/:id/rectificacion/versiones/:versionId/pdf', rectificacionesController.descargarPdfVersion);
+router.get('/:id/rectificacion/contexto', permisoInicio, rectificacionesController.contexto);
+router.get('/:id/rectificacion/historial', permisoInicio, rectificacionesController.historial);
+router.post('/:id/rectificacion/previsualizacion', permisoInicio, rectificacionesController.previsualizar);
+router.post('/:id/rectificacion/directa', permisoInicio, rectificacionesController.ejecutarDirecta);
+router.post('/:id/rectificacion', permisoInicio, rectificacionesController.crear);
+router.get('/:id/rectificacion/versiones/:versionId/pdf', permisoInicio, rectificacionesController.descargarPdfVersion);
 
 module.exports = router;

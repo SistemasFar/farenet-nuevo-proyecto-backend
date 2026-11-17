@@ -593,11 +593,12 @@ const crearServicio = (database = db, config = {}) => {
         }
     };
 
-    const contextoCertificado = async (certificadoId, userContext) => {
+    const contextoCertificado = async (certificadoId, userContext, opciones = {}) => {
         const id = enteroPositivo(certificadoId, 'CERTIFICADO_ID_INVALIDO');
         const usuario = await obtenerUsuarioActual(database, userContext);
         const permisos = await obtenerPermisos(database, usuario.perfil_id);
-        if (!permisos.has(PERMISOS_SOLICITUD.CREAR) && !permisos.has(PERMISOS_SOLICITUD.VER)
+        const soloNotaCredito = opciones.tipoOperacion === 'EMITIR_NOTA_CREDITO';
+        if (!soloNotaCredito && !permisos.has(PERMISOS_SOLICITUD.CREAR) && !permisos.has(PERMISOS_SOLICITUD.VER)
             && !permisos.has(PERMISOS_SOLICITUD.ADMINISTRAR)) {
             throw errorNegocio('SOLICITUD_PERMISO_DENEGADO', 403);
         }
@@ -611,7 +612,7 @@ const crearServicio = (database = db, config = {}) => {
         } catch (_) {}
         const disponibilidadComprobante = estadoSolicitudComprobante(row);
         const camposTecnicos = camposRectificablesCertificado(row.tipo_certificado_clave);
-        const tiposDisponibles = ['ANULAR_AMBOS', 'EMITIR_NOTA_CREDITO', 'RECTIFICAR_CERTIFICADO'];
+        const tiposDisponibles = soloNotaCredito ? ['EMITIR_NOTA_CREDITO'] : ['ANULAR_AMBOS', 'EMITIR_NOTA_CREDITO', 'RECTIFICAR_CERTIFICADO'];
         const importeFinal = evaluarImporteFinalCertificado(row);
         const bloqueoImporte = importeFinal.determinable !== true || importeFinal.esCero === true;
 
@@ -648,10 +649,11 @@ const crearServicio = (database = db, config = {}) => {
     const crear = async (entrada, userContext, opciones = {}) => conTransaccion(async (client) => {
         const usuario = await obtenerUsuarioActual(client, userContext);
         const permisos = await obtenerPermisos(client, usuario.perfil_id);
-        exigirPermiso(permisos, PERMISOS_SOLICITUD.CREAR);
+        const tipo = normalizarTipo(entrada?.tipoOperacion);
+        // Solicitar una nota no concede autorización para aprobarla ni emitirla.
+        if (tipo !== 'EMITIR_NOTA_CREDITO') exigirPermiso(permisos, PERMISOS_SOLICITUD.CREAR);
 
         const certificadoId = enteroPositivo(entrada?.certificadoId, 'CERTIFICADO_ID_INVALIDO');
-        const tipo = normalizarTipo(entrada?.tipoOperacion);
         const motivo = texto(entrada?.motivo, 500, true);
         const observaciones = texto(entrada?.observaciones, 2000);
         const idempotenciaClave = normalizarUuid(entrada?.idempotenciaClave);

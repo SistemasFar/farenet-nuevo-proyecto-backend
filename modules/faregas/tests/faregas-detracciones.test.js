@@ -24,7 +24,7 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
         assert.equal(resultado.sujeto, false);
         assert.equal(resultado.monto, 0);
         assert.equal(resultado.neto, 699.99);
-        assert.equal(resultado.motivoExclusion, 'IMPORTE_MENOR_O_IGUAL_A_700');
+        assert.equal(resultado.motivoExclusion, 'BAJO_UMBRAL_COMERCIAL');
         assert.equal(resultado.estadoDeposito, 'NO_APLICA');
     });
 
@@ -33,7 +33,8 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
         const resultado = evaluarDetraccion({
             tipoComprobante: 'FACTURA',
             importeTotal: 700.00,
-            items: [{ descripcion: 'CERTIFICACION GNV', tipo_item: 'SERVICIO' }]
+            items: [{ descripcion: 'CERTIFICACION GNV', tipo_item: 'SERVICIO' }],
+            servicio: SERVICIO_SPOT_037
         });
         assert.equal(resultado.sujeto, false);
         assert.equal(resultado.monto, 0);
@@ -164,8 +165,8 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
         assert.equal(resultado.base - resultado.monto, resultado.neto);
     });
 
-    // 11. Factura mixta (Servicio + Chip) > S/ 700
-    it('Escenario 11: Factura mixta con servicio de certificación y chip aplica SPOT', () => {
+    // 11. Factura mixta requiere separar/verificar bases antes de aplicar SPOT
+    it('Escenario 11: Factura mixta con servicio y chip se detiene para revisión fiscal', () => {
         const resultado = evaluarDetraccion({
             tipoComprobante: 'FACTURA',
             importeTotal: 800.00,
@@ -174,10 +175,9 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
                 { codigo_sku: 'CHIP-01', descripcion: 'CHIP GNV', tipo_item: 'PRODUCTO' }
             ], servicio: SERVICIO_SPOT_037
         });
-        assert.equal(resultado.sujeto, true);
-        assert.equal(resultado.codigo, '037');
-        assert.equal(resultado.monto, 96);
-        assert.equal(resultado.neto, 704);
+        assert.equal(resultado.sujeto, false);
+        assert.equal(resultado.requiereRevision, true);
+        assert.equal(resultado.motivoExclusion, 'CONCEPTOS_MIXTOS_REQUIEREN_REVISION');
     });
 
     // 12. Nota de crédito vinculada a factura sujeta -> Ajuste proporcional

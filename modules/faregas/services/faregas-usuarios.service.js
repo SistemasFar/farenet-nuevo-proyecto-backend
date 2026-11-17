@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const bcrypt = require('bcryptjs');
+const authService = require('./faregas-auth.service');
 const integridad = require('./faregas-cuentas-integridad.service');
 const paginacion = require('./faregas-paginacion.rules');
 const validacion = require('./faregas-usuarios-validacion.service');
@@ -362,16 +363,30 @@ exports.cambiarPassword = async (username, password) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+
+        const usuario = await client.query(`
+            SELECT username
+            FROM public.fg_usuario
+            WHERE username = $1 AND estado = TRUE
+            FOR UPDATE
+        `, [username]);
+        if (usuario.rowCount === 0) {
+            const error = new Error('USER_NOT_FOUND');
+            error.statusCode = 404;
+            throw error;
+        }
         
         const resFaregas = await client.query(`
             UPDATE fg_usuario
             SET contrasenha = $1
-            WHERE username = $2
+            WHERE username = $2 AND estado = TRUE
         `, [hash, username]);
 
         if (resFaregas.rowCount === 0) {
             throw new Error('USER_NOT_FOUND');
         }
+
+        await authService.revocarSesionesUsuario(username, client);
 
         await client.query('COMMIT');
     } catch (e) {
@@ -560,7 +575,8 @@ exports.actualizarPerfil = async (clave, data, actor = null, contexto = {}) => {
                          OR clave = ANY($2::varchar[])
                   )
                   AND NOT (permiso_clave = ANY($3::varchar[]))
-            `, [clave, PERMISOS_FAREGAS_GESTIONABLES, PERMISOS_SENSIBLES]);
+                  AND NOT (permiso_clave = ANY($4::varchar[]))
+            `, [clave, PERMISOS_FAREGAS_GESTIONABLES, PERMISOS_SENSIBLES, [...PERMISOS_OBSOLETOS_SET]]);
 
             const permisosNoSensibles = validados.permisosGestionables
                 .filter((permiso) => !PERMISOS_SENSIBLES_SET.has(permiso));
@@ -683,7 +699,7 @@ exports.obtenerPermisos = async () => {
           )
         ORDER BY modulo, nombre
     `, [PERMISOS_FAREGAS_GESTIONABLES]);
-    return result.rows;
+    return result.rows.filter((permiso) => !PERMISOS_OBSOLETOS_SET.has(permiso.clave));
 };
 
 /**

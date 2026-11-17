@@ -40,6 +40,8 @@ const responderError = (res, error) => {
 exports.obtenerMaestros = async (_req, res) => {
     try {
         const data = await cuentaBancariaService.obtenerMaestrosPago();
+        const { obtenerUmbralComercial } = require('../services/faregas-detracciones.service');
+        data.politicaSpot = { umbralComercial: obtenerUmbralComercial() };
         return res.status(200).json({ status: 'success', data });
     } catch (error) {
         return responderError(res, error);

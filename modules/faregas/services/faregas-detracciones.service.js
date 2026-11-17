@@ -42,6 +42,17 @@ const CAT_SPOT_BIENES = Object.freeze({
 });
 
 const redondear = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+const UMBRAL_LEGAL_SERVICIOS = 700;
+const UMBRAL_COMERCIAL_POR_DEFECTO = 700;
+
+function obtenerUmbralComercial() {
+    const valor = String(process.env.FAREGAS_SPOT_UMBRAL_COMERCIAL || '').trim();
+    if (!valor) return UMBRAL_COMERCIAL_POR_DEFECTO;
+    const configurado = Number(valor);
+    return Number.isFinite(configurado) && configurado >= 0
+        ? redondear(configurado)
+        : UMBRAL_COMERCIAL_POR_DEFECTO;
+}
 
 /**
  * Evalúa si un comprobante o cotización está sujeto al régimen de detracciones SPOT.
@@ -57,10 +68,19 @@ function evaluarDetraccion({
     const total = redondear(importeTotal);
     const tipo = String(tipoComprobante || '').toUpperCase().trim();
     const esFactura = tipo === 'FACTURA' || tipo === '1';
+    const umbralComercial = obtenerUmbralComercial();
+    const umbralComercialAlcanzado = esFactura && total >= umbralComercial;
+    const debeEvaluarClasificacion = umbralComercialAlcanzado || total > UMBRAL_LEGAL_SERVICIOS;
+    const resultado = (campos, estadoEvaluacionSpot) => ({
+        ...campos,
+        estadoEvaluacionSpot,
+        umbralComercial,
+        umbralComercialAlcanzado
+    });
 
     // 1. Validar gratuidad
     if (esGratuito || total <= 0) {
-        return {
+        return resultado({
             sujeto: false,
             codigo: null,
             descripcion: null,
@@ -71,12 +91,12 @@ function evaluarDetraccion({
             estadoDeposito: 'NO_APLICA',
             motivoExclusion: 'TRANSFERENCIA_GRATUITA',
             requiereRevision: false
-        };
+        }, 'EXCLUIDA_GRATUITA');
     }
 
     // 2. Validar tipo de comprobante (Boletas a consumidor final no están sujetas a SPOT)
     if (!esFactura) {
-        return {
+        return resultado({
             sujeto: false,
             codigo: null,
             descripcion: null,
@@ -87,7 +107,20 @@ function evaluarDetraccion({
             estadoDeposito: 'NO_APLICA',
             motivoExclusion: 'BOLETA_VENTA_CONSUMIDOR_FINAL_NO_SUJETA',
             requiereRevision: false
-        };
+        }, 'EXCLUIDA_COMPROBANTE');
+    }
+
+    const tiposItem = new Set(items.map(item =>
+        String(item.tipo_item || item.tipoItem || '').toUpperCase()
+    ).filter(Boolean));
+    const tieneProducto = tiposItem.has('PRODUCTO');
+    const tieneServicio = tiposItem.has('SERVICIO');
+    if (tieneProducto && tieneServicio) {
+        return resultado({
+            sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total,
+            monto: 0, neto: total, estadoDeposito: 'NO_VERIFICADO',
+            motivoExclusion: 'CONCEPTOS_MIXTOS_REQUIEREN_REVISION', requiereRevision: true
+        }, 'MIXTA_REQUIERE_REVISION');
     }
 
     // Los productos físicos se clasifican desde fg_producto_facturacion. Nunca
@@ -97,64 +130,75 @@ function evaluarDetraccion({
     );
     if (sonProductos) {
         const clasificaciones = items.map(item => item.productoSpot || item);
+        const codigoExcepcionSinUmbral = clasificaciones.some(producto =>
+            producto.sujeto_detraccion === true && ['006', '021'].includes(String(producto.detraccion_codigo || ''))
+        );
+        if (!debeEvaluarClasificacion && !codigoExcepcionSinUmbral) {
+            return resultado({
+                sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
+                neto: total, estadoDeposito: 'NO_APLICA', motivoExclusion: 'BAJO_UMBRAL_COMERCIAL', requiereRevision: false
+            }, 'BAJO_UMBRAL_COMERCIAL');
+        }
         if (clasificaciones.some(producto => producto.sujeto_detraccion == null)) {
-            return { sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
-                neto: total, estadoDeposito: 'NO_VERIFICADO', motivoExclusion: 'CLASIFICACION_SPOT_NO_VERIFICADA', requiereRevision: true };
+            return resultado({ sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
+                neto: total, estadoDeposito: 'NO_VERIFICADO', motivoExclusion: 'CLASIFICACION_SPOT_NO_VERIFICADA', requiereRevision: true }, 'CLASIFICACION_PENDIENTE');
         }
         if (clasificaciones.every(producto => producto.sujeto_detraccion === false)) {
-            return { sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
-                neto: total, estadoDeposito: 'NO_APLICA', motivoExclusion: 'BIEN_MUEBLE_NO_SUJETO_A_SPOT', requiereRevision: false };
+            return resultado({ sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
+                neto: total, estadoDeposito: 'NO_APLICA', motivoExclusion: 'BIEN_MUEBLE_NO_SUJETO_A_SPOT', requiereRevision: false }, 'NO_SUJETA_CONFIGURACION');
         }
         const first = clasificaciones[0];
         if (clasificaciones.some(producto => producto.sujeto_detraccion !== true
             || producto.detraccion_codigo !== first.detraccion_codigo
             || Number(producto.detraccion_porcentaje) !== Number(first.detraccion_porcentaje))) {
-            return { sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
-                neto: total, estadoDeposito: 'NO_VERIFICADO', motivoExclusion: 'CLASIFICACION_SPOT_INCONSISTENTE', requiereRevision: true };
+            return resultado({ sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
+                neto: total, estadoDeposito: 'NO_VERIFICADO', motivoExclusion: 'CLASIFICACION_SPOT_INCONSISTENTE', requiereRevision: true }, 'CLASIFICACION_INCONSISTENTE');
         }
         const definicion = CAT_SPOT_BIENES[first.detraccion_codigo];
         if (!definicion || Number(definicion.porcentaje) !== Number(first.detraccion_porcentaje)) {
-            return { sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
-                neto: total, estadoDeposito: 'NO_VERIFICADO', motivoExclusion: 'CLASIFICACION_SPOT_NO_RECONOCIDA', requiereRevision: true };
+            return resultado({ sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
+                neto: total, estadoDeposito: 'NO_VERIFICADO', motivoExclusion: 'CLASIFICACION_SPOT_NO_RECONOCIDA', requiereRevision: true }, 'CLASIFICACION_NO_RECONOCIDA');
         }
         // Para ciertos numerales de bienes del Anexo 2 la excepción de S/ 700
         // no aplica; los demás requieren superar ese monto.
         if (total <= 700 && !['006', '021'].includes(first.detraccion_codigo)) {
-            return { sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
-                neto: total, estadoDeposito: 'NO_APLICA', motivoExclusion: 'IMPORTE_MENOR_O_IGUAL_A_700', requiereRevision: false };
+            return resultado({ sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total, monto: 0,
+                neto: total, estadoDeposito: 'NO_APLICA', motivoExclusion: 'IMPORTE_MENOR_O_IGUAL_A_700', requiereRevision: false }, 'CLASIFICADA_SIN_UMBRAL_LEGAL');
         }
         const monto = Math.round(total * definicion.porcentaje / 100);
-        return { sujeto: true, codigo: first.detraccion_codigo, descripcion: definicion.descripcion,
+        return resultado({ sujeto: true, codigo: first.detraccion_codigo, descripcion: definicion.descripcion,
             porcentaje: definicion.porcentaje, base: total, monto, neto: redondear(total - monto),
             estadoDeposito: 'PENDIENTE', constanciaNro: null, constanciaFecha: null,
-            motivoExclusion: null, medioPagoDetraccion: '001', nubefactTipo: Number(first.detraccion_codigo), requiereRevision: false };
+            motivoExclusion: null, medioPagoDetraccion: '001', nubefactTipo: Number(first.detraccion_codigo), requiereRevision: false }, 'SUJETA');
     }
 
-    // 3. Servicios del Anexo 3: el umbral es superior a S/ 700.
-    if (total <= 700.00) {
-        return {
+    // La regla comercial activa la evaluación de S/ 700 inclusive. La regla
+    // legal de servicios del Anexo 3 sigue siendo estricta: el importe debe
+    // ser mayor a S/ 700 para aplicar la detracción.
+    if (!debeEvaluarClasificacion) {
+        return resultado({
             sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total,
             monto: 0, neto: total, estadoDeposito: 'NO_APLICA',
-            motivoExclusion: 'IMPORTE_MENOR_O_IGUAL_A_700', requiereRevision: false
-        };
+            motivoExclusion: 'BAJO_UMBRAL_COMERCIAL', requiereRevision: false
+        }, 'BAJO_UMBRAL_COMERCIAL');
     }
 
     // La clasificación del servicio debe estar confirmada en el catálogo.
     // No se infiere el código fiscal por el importe ni por ser una factura.
     if (!servicio || servicio.sujeto_detraccion === null || servicio.sujeto_detraccion === undefined) {
-        return {
+        return resultado({
             sujeto: false, codigo: null, descripcion: null, porcentaje: 0,
             base: total, monto: 0, neto: total, estadoDeposito: 'NO_VERIFICADO',
             motivoExclusion: 'CLASIFICACION_SPOT_NO_VERIFICADA', requiereRevision: true
-        };
+        }, 'CLASIFICACION_PENDIENTE');
     }
 
     if (servicio.sujeto_detraccion === false) {
-        return {
+        return resultado({
             sujeto: false, codigo: null, descripcion: null, porcentaje: 0,
             base: total, monto: 0, neto: total, estadoDeposito: 'NO_APLICA',
             motivoExclusion: 'SERVICIO_EXCLUIDO_POR_CONFIGURACION', requiereRevision: false
-        };
+        }, 'NO_SUJETA_CONFIGURACION');
     }
 
     // 5. Determinar clasificación SPOT aplicable
@@ -163,28 +207,36 @@ function evaluarDetraccion({
 
     if (servicio) {
         if (!spotCodigo || !Number.isFinite(spotPorcentaje) || spotPorcentaje <= 0) {
-            return {
+            return resultado({
                 sujeto: false, codigo: null, descripcion: null, porcentaje: 0,
                 base: total, monto: 0, neto: total, estadoDeposito: 'NO_VERIFICADO',
                 motivoExclusion: 'CLASIFICACION_SPOT_INCOMPLETA', requiereRevision: true
-            };
+            }, 'CLASIFICACION_INCOMPLETA');
         }
     }
 
     const definicion = CAT_SPOT[spotCodigo];
     if (!definicion) {
-        return {
+        return resultado({
             sujeto: false, codigo: null, descripcion: null, porcentaje: 0,
             base: total, monto: 0, neto: total, estadoDeposito: 'NO_VERIFICADO',
             motivoExclusion: 'CLASIFICACION_SPOT_NO_RECONOCIDA', requiereRevision: true
-        };
+        }, 'CLASIFICACION_NO_RECONOCIDA');
     }
     if (Number(definicion.porcentaje) !== spotPorcentaje) {
-        return {
+        return resultado({
             sujeto: false, codigo: null, descripcion: null, porcentaje: 0,
             base: total, monto: 0, neto: total, estadoDeposito: 'NO_VERIFICADO',
             motivoExclusion: 'CLASIFICACION_SPOT_INCONSISTENTE', requiereRevision: true
-        };
+        }, 'CLASIFICACION_INCONSISTENTE');
+    }
+
+    if (total <= UMBRAL_LEGAL_SERVICIOS) {
+        return resultado({
+            sujeto: false, codigo: null, descripcion: null, porcentaje: 0, base: total,
+            monto: 0, neto: total, estadoDeposito: 'NO_APLICA',
+            motivoExclusion: 'IMPORTE_MENOR_O_IGUAL_A_700', requiereRevision: false
+        }, 'CLASIFICADA_SIN_UMBRAL_LEGAL');
     }
 
     // 6. Cálculo legal oficial: Base total, porcentaje y redondeo al número entero SUNAT
@@ -194,7 +246,7 @@ function evaluarDetraccion({
     const monto = Math.round((base * porcentaje) / 100);
     const neto = redondear(base - monto);
 
-    return {
+    return resultado({
         sujeto: true,
         codigo: definicion.codigo,
         descripcion: definicion.descripcion,
@@ -209,7 +261,7 @@ function evaluarDetraccion({
         medioPagoDetraccion: '001', // Depósito en cuenta Banco de la Nación
         nubefactTipo: definicion.nubefactTipo,
         requiereRevision: false
-    };
+    }, 'SUJETA');
 }
 
 /**
@@ -279,6 +331,7 @@ function evaluarNotaCreditoDetraccion(facturaOriginal, importeNotaCredito) {
 module.exports = {
     CAT_SPOT,
     CAT_SPOT_BIENES,
+    obtenerUmbralComercial,
     evaluarDetraccion,
     aplicarDetraccionPayloadNubefact,
     evaluarNotaCreditoDetraccion

@@ -106,7 +106,9 @@ const auditar = async (req, evento, solicitud, mensaje) => {
 
 exports.contextoCertificado = async (req, res) => {
     try {
-        const data = await solicitudesService.contextoCertificado(req.params.certificadoId, req.user);
+        const data = await solicitudesService.contextoCertificado(req.params.certificadoId, req.user, {
+            tipoOperacion: req.query.tipoOperacion
+        });
         return res.json({ ok: true, data });
     } catch (error) { return responderError(res, error); }
 };
