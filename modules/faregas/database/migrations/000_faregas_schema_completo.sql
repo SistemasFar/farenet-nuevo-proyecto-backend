@@ -2215,6 +2215,8 @@ CREATE TABLE public.fg_producto_facturacion (
     sujeto_detraccion boolean,
     detraccion_codigo character varying(10),
     detraccion_porcentaje numeric(5,2),
+    naturaleza_spot character varying(20),
+    CONSTRAINT chk_fg_producto_facturacion_naturaleza_spot CHECK (((naturaleza_spot IS NULL) OR ((naturaleza_spot)::text = ANY ((ARRAY['BIEN'::character varying, 'SERVICIO'::character varying])::text[])))),
     CONSTRAINT chk_fg_producto_facturacion_afectacion CHECK (((tipo_afectacion_igv IS NULL) OR ((tipo_afectacion_igv)::text ~ '^[0-9]{2}$'::text))),
     CONSTRAINT chk_fg_producto_facturacion_descripcion CHECK ((btrim((descripcion)::text) <> ''::text)),
     CONSTRAINT chk_fg_producto_facturacion_porcentaje_isc CHECK (((porcentaje_isc IS NULL) OR (porcentaje_isc >= (0)::numeric))),

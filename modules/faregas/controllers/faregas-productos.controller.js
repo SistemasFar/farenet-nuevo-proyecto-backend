@@ -47,14 +47,16 @@ const idCategoria = (value) => {
 };
 
 const normalizarSpot = (body) => {
-    const keys = ['sujeto_detraccion', 'detraccion_codigo', 'detraccion_porcentaje'];
+    const keys = ['sujeto_detraccion', 'detraccion_codigo', 'detraccion_porcentaje', 'naturaleza_spot'];
+    const naturaleza = textoNullable(body.naturaleza_spot)?.toUpperCase() || null;
+    if (naturaleza && !['BIEN', 'SERVICIO'].includes(naturaleza)) throw Object.assign(new Error('Seleccione naturaleza fiscal Bien o Servicio.'), {status: 400});
     const configurado = keys.some((key) => Object.prototype.hasOwnProperty.call(body, key));
     const sujeto = body.sujeto_detraccion == null
         ? null
         : booleano(body.sujeto_detraccion, 'Sujeto a detracción', null);
     const codigo = textoNullable(body.detraccion_codigo);
     const porcentaje = numeroNullable(body.detraccion_porcentaje, 'Porcentaje de detracción');
-    const tasas = {
+    const tasas = naturaleza === 'SERVICIO' ? { '020': 12, '022': 12, '025': 10, '037': 12 } : {
         '002': 4, '004': 10, '005': 10, '006': 15, '007': 10, '009': 4,
         '011': 10, '012': 4, '015': 4, '017': 10,
         '021': 1.5, '023': 15
@@ -81,6 +83,8 @@ const normalizarSpot = (body) => {
         sujeto_detraccion: sujeto,
         detraccion_codigo: sujeto === true ? codigo : null,
         detraccion_porcentaje: sujeto === true ? porcentaje : null,
+        naturaleza_spot: naturaleza,
+        naturaleza_configurada: Object.prototype.hasOwnProperty.call(body, 'naturaleza_spot'),
         spot_configurado: configurado
     };
 };

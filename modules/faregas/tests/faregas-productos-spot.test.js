@@ -24,7 +24,7 @@ describe('CRUD de productos — clasificación SPOT', () => {
             porcentaje_isc: null, disponible_pos: false, es_para_venta: true, es_para_compra: false,
             tiene_icbper: false, imagen_url: null, activo: true, requiere_chip: false,
             producto_chip_id: null, precio_chip: null, sujeto_detraccion: true,
-            detraccion_codigo: '007', detraccion_porcentaje: 10, spot_configurado: true
+            detraccion_codigo: '007', detraccion_porcentaje: 10, naturaleza_spot: null, naturaleza_configurada: false, spot_configurado: true
         });
     });
 
@@ -53,4 +53,17 @@ describe('CRUD de productos — clasificación SPOT', () => {
         const producto = _private.normalizar(sinSpot);
         assert.equal(producto.spot_configurado, false);
     });
+});
+
+
+describe('naturaleza fiscal separada del tipo comercial', () => {
+ it('acepta Producto comercial como Servicio fiscal037 y rechaza el código bajo Bien', () => {
+  const body={...productoBase,tipo_producto:'Producto',naturaleza_spot:'SERVICIO',detraccion_codigo:'037',detraccion_porcentaje:12};
+  const value=_private.normalizar(body);assert.equal(value.tipo_producto,'Producto');assert.equal(value.naturaleza_spot,'SERVICIO');assert.equal(value.detraccion_codigo,'037');
+  assert.throws(()=>_private.normalizar({...body,naturaleza_spot:'BIEN'}));
+ });
+ it('no asigna037 al elegir Servicio ni modifica una exclusión explícita',()=>{
+  assert.throws(()=>_private.normalizar({...productoBase,naturaleza_spot:'SERVICIO',detraccion_codigo:null,detraccion_porcentaje:null}));
+  const value=_private.normalizar({...productoBase,naturaleza_spot:'SERVICIO',sujeto_detraccion:false,detraccion_codigo:null,detraccion_porcentaje:null});assert.equal(value.detraccion_codigo,null);assert.equal(value.sujeto_detraccion,false);
+ });
 });

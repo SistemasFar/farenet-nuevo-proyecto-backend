@@ -110,6 +110,22 @@ function evaluarDetraccion({
         }, 'EXCLUIDA_COMPROBANTE');
     }
 
+    // La clasificación explícita del producto fiscal prevalece sobre la etiqueta de la línea.
+    if (!items.length && servicio?.naturaleza_spot === 'BIEN') items = [{ tipo_item: 'PRODUCTO', productoSpot: servicio }];
+    items = items.map(require('./faregas-spot-clasificacion.service').clasificarLinea);
+    if (items.length && items.every(item => item.tipo_item === 'SERVICIO') && items.some(item => item.productoSpot)) {
+        const fuentes = items.map(item => item.productoSpot || servicio || {});
+        const primera = fuentes[0];
+        if (fuentes.some(item => item.sujeto_detraccion !== primera.sujeto_detraccion || item.detraccion_codigo !== primera.detraccion_codigo || Number(item.detraccion_porcentaje) !== Number(primera.detraccion_porcentaje))) {
+            return resultado({sujeto:false,codigo:null,porcentaje:0,base:total,monto:0,neto:total,estadoDeposito:'NO_VERIFICADO',motivoExclusion:'CLASIFICACION_SPOT_INCONSISTENTE',requiereRevision:true}, 'CLASIFICACION_INCONSISTENTE');
+        }
+        servicio = primera;
+    }
+    // Debajo del umbral legal no se bloquean certificados ordinarios con chip.
+    if (total <= UMBRAL_LEGAL_SERVICIOS && items.some(item => item.tipo_item === 'PRODUCTO') && items.some(item => item.tipo_item === 'SERVICIO') && !items.some(item => item.productoSpot?.sujeto_detraccion === true && ['006','021'].includes(item.productoSpot?.detraccion_codigo))) {
+        return resultado({sujeto:false,codigo:null,descripcion:null,porcentaje:0,base:total,monto:0,neto:total,estadoDeposito:'NO_APLICA',motivoExclusion:'IMPORTE_MENOR_O_IGUAL_A_700',requiereRevision:false}, 'CLASIFICADA_SIN_UMBRAL_LEGAL');
+    }
+
     const tiposItem = new Set(items.map(item =>
         String(item.tipo_item || item.tipoItem || '').toUpperCase()
     ).filter(Boolean));

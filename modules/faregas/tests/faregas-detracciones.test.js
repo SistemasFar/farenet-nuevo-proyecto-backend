@@ -345,7 +345,7 @@ describe('SUITE OFICIAL DE VALIDACIÓN: RÉGIMEN DE DETRACCIONES (SPOT SUNAT) �
 
         assert.ok(contenidoPagoStep.includes('Total comprobante:'), 'PagoStep debe mostrar Total comprobante');
         assert.ok(contenidoPagoStep.includes('Detracción SPOT'), 'PagoStep debe mostrar Detracción SPOT');
-        assert.ok(contenidoPagoStep.includes('Neto a pagar ordinario:'), 'PagoStep debe mostrar Neto a pagar ordinario');
+        assert.ok(contenidoPagoStep.includes('Importe neto a pagar al proveedor:'), 'PagoStep debe mostrar Importe neto a pagar al proveedor');
         assert.ok(contenidoPagoStep.includes('Falta Pagar:'), 'PagoStep debe mostrar Falta Pagar');
         assert.ok(contenidoPagoStep.includes('evaluarSpotWizard'), 'PagoStep debe consumir evaluarSpotWizard');
     });

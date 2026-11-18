@@ -17,6 +17,9 @@ La carpeta `farenetBackend/modules/faregas/database/migrations/` contiene los sc
 | `004_implementacion_detracciones_spot.sql` | Migración incremental SPOT para instalaciones existentes | Añade columnas nullable e índices en tablas `fg_*`; es transaccional e idempotente. No contiene `UPDATE`, `DELETE`, defaults de clasificación ni cambios a tablas FARENET. |
 | `005_optimizacion_eliminacion_usuarios_perfiles.sql` | Optimización de eliminación y reasignación de perfiles/usuarios | Configura `ON DELETE CASCADE` en `fg_perfil_permiso` y `fg_perfil_planta`; desvincula FK en `fg_auditoria_config` para snapshots históricos inmutables sin bloqueos. |
 | `006_codigos_chip_autogenerables.sql` | Códigos disponibles para tipos de chip compatibles | Agrega opt-in `codigo_autogenerable` (FALSE por defecto) y reservas temporales globalmente únicas. No habilita productos existentes ni modifica chips o tablas FARENET. |
+| `007_permisos_dashboard_perfiles_operativos.sql` | Permisos Dashboard para perfiles operativos | Asigna `DASHBOARD_GLOBAL`, `DASHBOARD_EXPORTAR` y `MENU_DASHBOARD` a CONTADOR y OPERADOR. |
+| `008_habilitar_naturaleza_fiscal_spot.sql` | Habilitación de naturaleza fiscal SPOT en productos | Agrega `naturaleza_spot varchar(20)` y check constraint (`BIEN`, `SERVICIO`) a `fg_producto_facturacion`. Permite guardar clasificación fiscal SPOT para productos comerciales (ej. certificados con código 037 al 12%). |
+| `009_actualizacion_masiva_spot_productos.sql` | Clasificación fiscal SPOT definitiva de productos | Configura por IDs explícitos 231 Servicios (Código 037, 12%) y 22 Bienes (No sujetos), manteniendo 22 en revisión. |
 | `README.md` | Guía de arquitectura, dependencias y ejecución | Este documento técnico. |
 
 > [!WARNING]

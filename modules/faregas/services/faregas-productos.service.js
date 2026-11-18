@@ -4,6 +4,17 @@ const configService = require('./faregas-config.service');
 const productosImpactoService = require('./faregas-productos-impacto.service');
 const paginacion = require('./faregas-paginacion.rules');
 
+// La naturaleza se guarda en la misma transacción que el producto y la auditoría.
+const guardarNaturalezaSpot = async (client, id, producto) => {
+    if (!producto.naturaleza_configurada) return;
+    const existe = await client.query("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='fg_producto_facturacion' AND column_name='naturaleza_spot') AS disponible");
+    if (!existe.rows[0]?.disponible) {
+        if (producto.naturaleza_spot == null) return;
+        throw Object.assign(new Error('Falta habilitar naturaleza fiscal SPOT en la base de datos; solicite aplicar el cambio de esquema aprobado antes de guardar esta clasificación.'), {status:503});
+    }
+    await client.query('UPDATE fg_producto_facturacion SET naturaleza_spot=$1 WHERE id=$2', [producto.naturaleza_spot, id]);
+};
+
 /** Centinela del filtro "Sin categoría" (productos con categoria_id NULL). */
 const SIN_CATEGORIA = 'SIN_CATEGORIA';
 
@@ -86,7 +97,7 @@ exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId, page, 
     // Catalogo maestro: NO se filtra por fecha. Se muestran todos los
     // productos funcionales, solo paginados.
     const result = await db.query(`
-        SELECT p.id, p.codigo_sku, p.descripcion, p.tipo_producto, p.categoria_dms,
+        SELECT to_jsonb(p)->>'naturaleza_spot' AS naturaleza_spot, p.id, p.codigo_sku, p.descripcion, p.tipo_producto, p.categoria_dms,
                p.categoria_id, c.codigo AS categoria_codigo, c.nombre AS categoria_nombre,
                COALESCE(ARRAY(
                    SELECT DISTINCT vinculacion.nombre
@@ -186,7 +197,7 @@ exports.listar = async ({ buscar, estado, paraVenta, unidad, categoriaId, page, 
  */
 exports.listarPorCategoria = async () => {
     const result = await db.query(`
-        SELECT p.id, p.codigo_sku, p.descripcion, p.tipo_producto, p.categoria_dms,
+        SELECT to_jsonb(p)->>'naturaleza_spot' AS naturaleza_spot, p.id, p.codigo_sku, p.descripcion, p.tipo_producto, p.categoria_dms,
                p.categoria_id, c.codigo AS categoria_codigo, c.nombre AS categoria_nombre,
                p.cuenta_por_cobrar, p.codigo_barras, p.unidad,
                p.precio_unitario, p.precio_referencia,
@@ -296,6 +307,7 @@ const insertarProducto = async (producto, username, ip_direccion, { validarCateg
             Boolean(producto.requiere_chip), productoChipIdValidado, precioChipValidado,
             producto.sujeto_detraccion, producto.detraccion_codigo, producto.detraccion_porcentaje
         ]);
+        await guardarNaturalezaSpot(client, result.rows[0].id, producto);
         await configService.registrarAuditoria(client, {
             username, entidad: 'PRODUCTO_FACTURACION', accion: 'CREAR_PRODUCTO',
             identificador: producto.codigo_sku,
@@ -388,6 +400,7 @@ exports.editar = async (id, producto, username, ip_direccion) => {
             producto.sujeto_detraccion, producto.detraccion_codigo,
             producto.detraccion_porcentaje, Boolean(producto.spot_configurado), id
         ]);
+        await guardarNaturalezaSpot(client, id, producto);
         await configService.registrarAuditoria(client, {
             username, entidad: 'PRODUCTO_FACTURACION', accion: 'EDITAR_PRODUCTO',
             identificador: actual.rows[0].codigo_sku,

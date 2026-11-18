@@ -1,3 +1,4 @@
+const { resolverClasificacion } = require('./faregas-spot-clasificacion.service');
 const db = require('../../../config/database');
 const nubefactService = require('../../../services/integrations/nubefact.service');
 const nubefactConfigService = require('./faregas-nubefact-config.service');
@@ -70,7 +71,7 @@ async function sincronizarDetraccionFacturacion(client, facturacionId, { tipoCom
             ? 's.sujeto_detraccion AS servicio_sujeto_detraccion, s.detraccion_codigo AS servicio_detraccion_codigo, s.detraccion_porcentaje AS servicio_detraccion_porcentaje'
             : 'NULL::boolean AS servicio_sujeto_detraccion, NULL::text AS servicio_detraccion_codigo, NULL::numeric AS servicio_detraccion_porcentaje';
         const productos = await client.query(`
-            SELECT od.tipo_item, ${productoSpotSql}, ${servicioSpotSql}
+            SELECT od.tipo_item, to_jsonb(pf)->>'naturaleza_spot' AS naturaleza_spot, ${productoSpotSql}, ${servicioSpotSql}
             FROM fg_operacion_detalle od
             LEFT JOIN fg_producto_facturacion pf ON pf.id = od.producto_facturacion_id
             LEFT JOIN fg_certificado c ON c.id = od.certificado_id
@@ -82,7 +83,7 @@ async function sincronizarDetraccionFacturacion(client, facturacionId, { tipoCom
         if (productos.rowCount > 0) {
             itemsEvaluacion = productos.rows.map(row => ({
                 tipo_item: String(row.tipo_item || '').toUpperCase(),
-                productoSpot: String(row.tipo_item || '').toUpperCase() === 'PRODUCTO' ? row : undefined
+                productoSpot: resolverClasificacion(row, { sujeto_detraccion: row.servicio_sujeto_detraccion, detraccion_codigo: row.servicio_detraccion_codigo, detraccion_porcentaje: row.servicio_detraccion_porcentaje })
             }));
             if (productos.rows.every(row => String(row.tipo_item || '').toUpperCase() === 'SERVICIO')) {
                 const row = productos.rows[0];
@@ -95,7 +96,10 @@ async function sincronizarDetraccionFacturacion(client, facturacionId, { tipoCom
         }
     } else {
         const servicioResult = soportaClasificacionServicio ? await client.query(`
-        SELECT s.sujeto_detraccion, s.detraccion_codigo, s.detraccion_porcentaje,
+        SELECT to_jsonb(pf)->>'naturaleza_spot' AS naturaleza_spot,
+               COALESCE((to_jsonb(pf)->>'sujeto_detraccion')::boolean, s.sujeto_detraccion) AS sujeto_detraccion,
+               CASE WHEN to_jsonb(pf)->>'sujeto_detraccion' IS NOT NULL THEN to_jsonb(pf)->>'detraccion_codigo' ELSE s.detraccion_codigo END AS detraccion_codigo,
+               CASE WHEN to_jsonb(pf)->>'sujeto_detraccion' IS NOT NULL THEN (to_jsonb(pf)->>'detraccion_porcentaje')::numeric ELSE s.detraccion_porcentaje END AS detraccion_porcentaje,
                s.tipo_flujo, cs.codigo AS familia
         FROM fg_facturacion f
         LEFT JOIN fg_certificado c ON c.id = f.certificado_id
@@ -104,6 +108,7 @@ async function sincronizarDetraccionFacturacion(client, facturacionId, { tipoCom
         JOIN fg_tarifa t ON t.planta_key = COALESCE(c.planta_key, c_op.planta_key)
                          AND t.codigo = COALESCE(c.tarifa_codigo, c_op.tarifa_codigo)
         JOIN fg_servicio s ON s.id = t.servicio_id
+        LEFT JOIN fg_producto_facturacion pf ON pf.id = t.producto_facturacion_id
         LEFT JOIN fg_categoria_servicio cs ON cs.id = s.categoria_id
         WHERE f.id = $1 LIMIT 1
         `, [facturacionId]) : { rows: [] };

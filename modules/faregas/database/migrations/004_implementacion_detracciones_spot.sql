@@ -46,7 +46,20 @@ ALTER TABLE public.fg_servicio
 ALTER TABLE public.fg_producto_facturacion
     ADD COLUMN IF NOT EXISTS sujeto_detraccion boolean,
     ADD COLUMN IF NOT EXISTS detraccion_codigo varchar(10),
-    ADD COLUMN IF NOT EXISTS detraccion_porcentaje numeric(5,2);
+    ADD COLUMN IF NOT EXISTS detraccion_porcentaje numeric(5,2),
+    ADD COLUMN IF NOT EXISTS naturaleza_spot varchar(20);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'chk_fg_producto_facturacion_naturaleza_spot'
+    ) THEN
+        ALTER TABLE public.fg_producto_facturacion
+            ADD CONSTRAINT chk_fg_producto_facturacion_naturaleza_spot
+            CHECK (naturaleza_spot IS NULL OR naturaleza_spot IN ('BIEN', 'SERVICIO'));
+    END IF;
+END $$;
 
 -- 5. Índices para optimizar reportes y búsquedas de comprobantes con detracción
 CREATE INDEX IF NOT EXISTS idx_fg_facturacion_detraccion 

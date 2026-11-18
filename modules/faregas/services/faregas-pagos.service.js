@@ -1,3 +1,4 @@
+const { resolverClasificacion } = require('./faregas-spot-clasificacion.service');
 const db = require('../../../config/database');
 const faregasAuthService = require('./faregas-auth.service');
 const tarifasService = require('./faregas-tarifas.service');
@@ -476,7 +477,7 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             ? await tarifasService.obtenerTarifaOperativaPorCodigo(certificado.planta_key, certificado.tarifa_codigo, client)
             : null;
         const lineasSpotResult = await client.query(`
-            SELECT od.tipo_item, pf.sujeto_detraccion, pf.detraccion_codigo, pf.detraccion_porcentaje
+            SELECT od.tipo_item, to_jsonb(pf)->>'naturaleza_spot' AS naturaleza_spot, pf.sujeto_detraccion, pf.detraccion_codigo, pf.detraccion_porcentaje
             FROM fg_operacion_detalle od
             LEFT JOIN fg_producto_facturacion pf ON pf.id = od.producto_facturacion_id
             WHERE od.operacion_id = $1
@@ -484,7 +485,7 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         `, [operacionId]);
         const lineasSpot = lineasSpotResult.rows.map(row => ({
             tipo_item: String(row.tipo_item || '').toUpperCase(),
-            productoSpot: String(row.tipo_item || '').toUpperCase() === 'PRODUCTO' ? row : undefined
+            productoSpot: resolverClasificacion(row, String(row.tipo_item || '').toUpperCase() === 'SERVICIO' && tarifaSpot ? { sujeto_detraccion: tarifaSpot.spot_sujeto, detraccion_codigo: tarifaSpot.spot_codigo, detraccion_porcentaje: tarifaSpot.spot_porcentaje } : {})
         }));
         const esVentaSoloProductos = lineasSpot.length > 0
             && lineasSpot.every(item => item.tipo_item === 'PRODUCTO');
@@ -494,7 +495,7 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             tipoComprobante,
             importeTotal: Number(orden.importe_total),
             moneda: 'PEN',
-            items: esVentaSoloProductos || hayConceptosMixtos ? lineasSpot : [],
+            items: lineasSpot,
             servicio: !esVentaSoloProductos && tarifaSpot ? {
                 sujeto_detraccion: tarifaSpot.spot_sujeto,
                 detraccion_codigo: tarifaSpot.spot_codigo,
