@@ -159,7 +159,7 @@ const crearVentaDirecta = async (payload, userContext) => {
         if (lote.duplicados.length > 0) throw new Error('CHIP_DUPLICADO');
         if (lote.validos.length === 0) throw new Error('CHIPS_REQUERIDOS');
     } else {
-        inventarioCantidadService.validarSedeHojas(plantaKey);
+        inventarioCantidadService.validarSedeProductoCantidad(plantaKey);
         inventarioCantidadService.normalizarCantidad(payload.cantidad);
     }
 

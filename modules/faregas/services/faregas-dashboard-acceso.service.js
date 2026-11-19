@@ -23,8 +23,7 @@ async function resolverPlantasAutorizadas(req, executor = db) {
         JOIN fg_permiso p ON p.clave=pp.permiso_clave AND p.activo=TRUE WHERE pp.perfil_clave=$1`, [usuario.perfil_id])).rows;
     const permisosClaves = permisos.map(p => p.permiso_clave);
     req.user = { ...req.user, faregas_permisos_efectivos: new Set(permisosClaves) };
-    const tieneAccesoDashboard = ['MENU_DASHBOARD', 'DASHBOARD_SEDE', 'DASHBOARD_GLOBAL']
-        .some((clave) => tienePermisoFaregas(permisosClaves, clave));
+    const tieneAccesoDashboard = tienePermisoFaregas(permisosClaves, 'MENU_DASHBOARD');
     if (!tieneAccesoDashboard) throw fallo(403, 'No tiene permiso para consultar el Dashboard.');
     const global = tienePermisoFaregas(permisosClaves, 'DASHBOARD_GLOBAL');
     const plantas = await accesoSedes.obtenerPlantasAutorizadas(executor, { username, perfilId: usuario.perfil_id });

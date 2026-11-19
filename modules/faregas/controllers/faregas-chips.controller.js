@@ -58,7 +58,6 @@ const respond = (res, error) => {
         CANTIDAD_INVALIDA: 'Ingrese una cantidad entera mayor a cero.',
         REFERENCIA_INVALIDA: 'La referencia admite como máximo 250 caracteres.',
         PRODUCTO_CANTIDAD_NO_CONFIGURADO_SEDE: 'El producto por cantidad no está configurado para esta sede.',
-        SEDE_PRODUCTO_CANTIDAD_NO_HABILITADA: 'Los productos de hojas sólo están habilitados en SURCO.',
         STOCK_PRODUCTO_NO_PERMITIDO: 'El producto no tiene control de stock habilitado en esta sede.',
         VENTA_PRODUCTO_NO_HABILITADA: 'El producto no está habilitado para venta en esta sede.',
         STOCK_INSUFICIENTE: 'Stock insuficiente.',
@@ -67,7 +66,7 @@ const respond = (res, error) => {
         AMBIENTE_PRODUCCION: 'La limpieza de tipos de chip sólo está disponible en ambiente DEMO o desarrollo.'
     };
     const status = error.status
-        || ['CHIP_DUPLICADO','CHIP_CODIGO_RESERVADO','CHIP_NO_DISPONIBLE','CHIP_OTRA_SEDE','CHIP_ASIGNADO_CERTIFICADO','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO','PAGO_INCOMPLETO','PAGO_EXCEDE_TOTAL','VENTA_CHIP_NO_HABILITADA','STOCK_CHIP_NO_PERMITIDO','CHIP_PRODUCTO_FISCAL_NO_CONFIGURADO','PRODUCTO_FISCAL_CHIP_INVALIDO','PRECIO_VENTA_FISCAL_CHIP_INVALIDO','CONDICION_PAGO_NO_DISPONIBLE','TIPO_CHIP_BLOQUEADO','AMBIENTE_PRODUCCION','SEDE_ALMACEN_CHIP_NO_HABILITADA','SEDE_TRANSFERENCIA_CHIP_NO_PERMITIDA','SEDE_CHIP_NO_HABILITADA','SEDES_IGUALES','STOCK_INSUFICIENTE','SEDE_PRODUCTO_CANTIDAD_NO_HABILITADA','VENTA_PRODUCTO_NO_HABILITADA','STOCK_PRODUCTO_NO_PERMITIDO','CODIGOS_DISPONIBLES_CONFIGURACION_REQUERIDA','CODIGOS_DISPONIBLES_NO_ENCONTRADOS','CODIGOS_PROPUESTA_EXPIRADA','PRODUCTO_NO_HABILITADO_SEDE_INGRESO'].includes(error.message) ? 409
+        || ['CHIP_DUPLICADO','CHIP_CODIGO_RESERVADO','CHIP_NO_DISPONIBLE','CHIP_OTRA_SEDE','CHIP_ASIGNADO_CERTIFICADO','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO','PAGO_INCOMPLETO','PAGO_EXCEDE_TOTAL','VENTA_CHIP_NO_HABILITADA','STOCK_CHIP_NO_PERMITIDO','CHIP_PRODUCTO_FISCAL_NO_CONFIGURADO','PRODUCTO_FISCAL_CHIP_INVALIDO','PRECIO_VENTA_FISCAL_CHIP_INVALIDO','CONDICION_PAGO_NO_DISPONIBLE','TIPO_CHIP_BLOQUEADO','AMBIENTE_PRODUCCION','SEDE_ALMACEN_CHIP_NO_HABILITADA','SEDE_TRANSFERENCIA_CHIP_NO_PERMITIDA','SEDE_CHIP_NO_HABILITADA','SEDES_IGUALES','STOCK_INSUFICIENTE','VENTA_PRODUCTO_NO_HABILITADA','STOCK_PRODUCTO_NO_PERMITIDO','CODIGOS_DISPONIBLES_CONFIGURACION_REQUERIDA','CODIGOS_DISPONIBLES_NO_ENCONTRADOS','CODIGOS_PROPUESTA_EXPIRADA','PRODUCTO_NO_HABILITADO_SEDE_INGRESO'].includes(error.message) ? 409
         : ['OPERACION_NOT_FOUND','TIPO_CHIP_NO_ENCONTRADO'].includes(error.message) ? 404
         : ['PLANTA_NO_AUTORIZADA'].includes(error.message) ? 403 : 400;
     let message = mensajes[error.message] || error.message;
@@ -83,6 +82,7 @@ const respond = (res, error) => {
 exports.listar = async(req,res)=>{try{res.json({success:true,...await service.listar({plantaKey:req.user.planta_key,...req.query},req.user)});}catch(e){respond(res,e);}};
 exports.resumen = async(req,res)=>{try{res.json({success:true,resumen:await service.resumen(req.user.planta_key,req.user,req.query.productoInventariableId)});}catch(e){respond(res,e);}};
 exports.listarProductosInventariables = async(req,res)=>{try{res.json({success:true,productos:await service.listarProductosInventariables(req.user.planta_key,req.user)});}catch(e){respond(res,e);}};
+exports.listarProductosVendibles = async(req,res)=>{try{res.json({success:true,productos:await service.listarProductosVendibles(req.user.planta_key,req.user)});}catch(e){respond(res,e);}};
 exports.catalogosProductosInventariables = async(req,res)=>{try{res.json({success:true,...await service.catalogosProductosInventariables(req.user.planta_key,req.user)});}catch(e){respond(res,e);}};
 exports.crearProductoInventariable = async(req,res)=>{try{res.status(201).json({success:true,producto:await service.crearProductoInventariable(req.body,req.user,req.ip)});}catch(e){respond(res,e);}};
 exports.editarProductoInventariable = async(req,res)=>{try{res.json({success:true,producto:await service.editarProductoInventariable(Number(req.params.id),req.body,req.user,req.ip)});}catch(e){respond(res,e);}};

@@ -673,8 +673,21 @@ exports.resumen = async (plantaKey, user, productoInventariableId = null) => {
     };
 };
 
-exports.listarProductosInventariables = async (plantaKey, user) => {
+const listarProductosInventariables = async (plantaKey, user, { soloVendibles = false } = {}) => {
     await validarAcceso(user, plantaKey);
+    const sedesIncluidas = soloVendibles ? [String(plantaKey)] : SEDES_OPERATIVAS_CHIPS;
+    const filtroVendibles = soloVendibles ? `
+                AND visible.stock_permitido = TRUE
+                AND visible.venta_habilitada = TRUE
+                AND pi.control_stock = TRUE
+                AND visible.producto_facturacion_id IS NOT NULL
+                AND EXISTS (
+                    SELECT 1 FROM fg_planta planta_venta
+                    WHERE planta_venta.key = visible.planta_key
+                      AND planta_venta.activo = TRUE
+                      AND planta_venta.empresa_key = 'FAREGAS'
+                )
+    ` : '';
     const result = await db.query(`
         SELECT pi.id, pi.codigo, pi.nombre, pi.tipo, pi.control_stock, pi.activo,
                COALESCE((to_jsonb(pi)->>'codigo_autogenerable')::boolean, FALSE) AS codigo_autogenerable,
@@ -732,9 +745,10 @@ exports.listarProductosInventariables = async (plantaKey, user) => {
               WHERE visible.producto_inventariable_id = pi.id
                 AND visible.planta_key = $1
                 AND visible.activo = TRUE
+                ${filtroVendibles}
           )
         ORDER BY pi.nombre, pi.codigo
-    `, [plantaKey, SEDES_OPERATIVAS_CHIPS]);
+    `, [plantaKey, sedesIncluidas]);
     return result.rows.map((row) => ({
         id: Number(row.id),
         codigo: row.codigo,
@@ -745,7 +759,8 @@ exports.listarProductosInventariables = async (plantaKey, user) => {
         codigoAutogenerable: row.codigo_autogenerable === true,
         productoFacturacionId: row.producto_facturacion_id ? Number(row.producto_facturacion_id) : null,
         sedes: row.sedes,
-        stockTotal: Number(row.stock_total),
+        // La consulta exclusiva de ventas no revela inventario de otras sedes.
+        stockTotal: Number(soloVendibles ? row.stock_sede : row.stock_total),
         stockSede: Number(row.stock_sede),
         disponiblesSede: Number(row.disponibles_sede),
         reservadosSede: Number(row.reservados_sede),
@@ -753,6 +768,12 @@ exports.listarProductosInventariables = async (plantaKey, user) => {
         bajasSede: Number(row.bajas_sede)
     }));
 };
+
+exports.listarProductosInventariables = async (plantaKey, user) =>
+    listarProductosInventariables(plantaKey, user);
+
+exports.listarProductosVendibles = async (plantaKey, user) =>
+    listarProductosInventariables(plantaKey, user, { soloVendibles: true });
 
 exports.catalogosProductosInventariables = async (plantaKey, user) => {
     await validarAcceso(user, plantaKey);

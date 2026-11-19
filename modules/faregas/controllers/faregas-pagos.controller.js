@@ -20,6 +20,11 @@ const responderError = (res, error) => {
         MODALIDAD_TARJETA_REQUERIDA: [400, 'Seleccione si la operación fue con tarjeta de débito o crédito.'],
         TARJETA_NOT_FOUND: [404, 'La tarjeta seleccionada no existe.'],
         CONDICION_PAGO_INVALIDA: [400, 'La condición de pago debe ser CONTADO o CRÉDITO.'],
+        CREDITO_NO_ADMITE_PAGOS: [409, 'El crédito puro no admite cobros de caja. Cambie a CONTADO o regularice la operación antes de continuar.'],
+        CREDITO_CON_PAGOS_EXISTENTES: [409, 'No se cambió a CRÉDITO porque la orden ya tiene pagos registrados. Se conservaron y no se eliminaron.'],
+        CREDITO_NO_ADMITE_DESCUENTOS: [409, 'CRÉDITO no admite descuentos ni cortesías. Retire el descuento y restaure el importe original antes de continuar.'],
+        PAGOS_EXISTENTES_NO_MODIFICABLES: [409, 'Los pagos ya registrados se conservaron. No se pueden editar ni retirar desde este borrador; agregue solo un pago nuevo o regularice los pagos por el proceso autorizado.'],
+        DESCUENTO_TOTAL_MENOR_A_PAGOS: [409, 'El nuevo total sería menor que el importe ya pagado. Los pagos se conservaron y no se aplicó el cambio.'],
         FECHA_INICIO_CREDITO_INVALIDA: [400, 'Seleccione una fecha de inicio válida para el crédito.'],
         FECHA_VENCIMIENTO_CREDITO_INVALIDA: [400, 'Seleccione una fecha de vencimiento válida para el crédito.'],
         PERIODO_CREDITO_INVALIDO: [400, 'La fecha de vencimiento no puede ser anterior a la fecha de inicio del crédito.'],
@@ -32,9 +37,14 @@ const responderError = (res, error) => {
         FECHA_DEPOSITO_FUTURA: [400, 'La fecha de depósito no puede ser posterior a hoy.'],
         PRODUCTO_FISCAL_CHIP_INVALIDO: [409, 'El producto fiscal configurado para el chip está incompleto. Seleccione un producto activo con unidad NIU o ZZ y afectación IGV 10.'],
     };
-    const [status, message] = errores[error.message] || [500, ('Error interno al procesar los pagos: ' + (error.message || error.toString()))];
+    const errorMapeado = errores[error.message];
+    const status = errorMapeado?.[0] || (Number(error.statusCode) >= 400 && Number(error.statusCode) < 500 ? Number(error.statusCode) : 500);
+    const message = errorMapeado?.[1] || (status === 500
+        ? 'No se pudo guardar el pago por un error interno. Los datos de esta pantalla se mantienen; reintente o vuelva sin guardar.'
+        : 'No se pudo guardar el pago. Revise los datos y vuelva a intentarlo.');
     if (status === 500) console.error('Error FAREGAS pagos:', error);
-    return res.status(status).json({ ok: false, message, code: error.message, codigo: error.message, detalles: error.detalles || null });
+    const codigo = status === 500 ? 'PAGO_ERROR_INTERNO' : (errores[error.message] ? error.message : 'PAGO_VALIDACION');
+    return res.status(status).json({ ok: false, message, code: codigo, codigo, detalles: status === 500 ? null : error.detalles || null });
 };
 
 exports.obtenerMaestros = async (_req, res) => {

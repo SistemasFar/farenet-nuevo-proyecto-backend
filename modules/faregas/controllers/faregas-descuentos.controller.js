@@ -9,11 +9,22 @@ const MENSAJES = {
     DESCUENTO_NO_APLICA_PLACA: 'El descuento no corresponde a la placa del vehículo.',
     DESCUENTO_YA_RESERVADO: 'El certificado ya tiene otro descuento reservado.',
     ORDEN_PAGO_EXISTENTE: 'No se puede cambiar el descuento porque ya existe una orden de pago.',
+    DESCUENTO_OPERACION_NO_EDITABLE: 'No se puede cambiar el descuento porque la operación ya tiene una emisión iniciada o un estado irreversible.',
+    DESCUENTO_TOTAL_MENOR_A_PAGOS: 'El nuevo total sería menor que el importe ya pagado. Los pagos se conservaron y no se aplicó el cambio.',
+    DESCUENTO_APLICADO_NO_MODIFICABLE: 'El descuento ya fue consumido por un pago confirmado y no se puede retirar desde el borrador.',
+    DESCUENTO_DETALLE_AMBIGUO: 'No se pudo actualizar el borrador porque tiene más de una línea de servicio asociada.',
+    DESCUENTO_RESERVAS_INCONSISTENTES: 'El borrador tiene más de una reserva activa de descuento. Regularice la operación antes de continuar.',
+    PAGOS_INCONSISTENTES: 'El resumen de pagos no coincide con sus registros. Se conservó la información y el descuento no se modificó.',
+    CREDITO_NO_ADMITE_DESCUENTOS: 'CRÉDITO no admite descuentos ni cortesías. Vuelva a CONTADO para retirarlo o cambiarlo.',
     DESCUENTO_DUPLICADO: 'No se pudo generar el identificador interno de la campaña.', CODIGO_CLIENTE_DUPLICADO: 'Ese código ya se encuentra registrado.',
     PLACA_DESCUENTO_REQUERIDA: 'Los descuentos de tipo PLACA requieren una placa autorizada.',
     TIPO_CALCULO_INVALIDO: 'El cálculo debe ser FLAT, MONTO o PORCENTAJE.',
     VALOR_DESCUENTO_INVALIDO: 'Indique un valor válido para la regla de descuento.',
+    IMPORTE_DECIMALES_INVALIDOS: 'Los importes y porcentajes admiten como máximo dos decimales. Corrija el valor sin redondearlo automáticamente.',
     IMPORTE_DESCUENTO_INVALIDO: 'El valor configurado no produce un descuento válido para la tarifa de esa sede.',
+    DESCUENTO_ORIGEN_NO_AUTORIZADO: 'Este descuento heredado de FARENET no se puede ofrecer ni aplicar como descuento comercial de FAREGAS. Retire la reserva heredada por el flujo autorizado o use una campaña registrada en FAREGAS.',
+    DESCUENTO_REGLA_CANONICA_AMBIGUA: 'Hay más de una regla activa para este concepto en la sede. Revise la configuración del descuento.',
+    REGLA_DESCUENTO_CANONICA_DUPLICADA: 'El mismo concepto de certificado no puede repetirse dentro de una sede.',
     SERVICIOS_DESCUENTO_REQUERIDOS: 'Seleccione al menos un servicio para este descuento.',
     REGLAS_DESCUENTO_REQUERIDAS: 'Configure primero las sedes, servicios y valores del descuento antes de crear códigos.',
     REGLA_DESCUENTO_NO_CONFIGURADA: 'El descuento no tiene una regla válida para esta sede, servicio y forma de pago.',
@@ -36,12 +47,21 @@ const MENSAJES = {
     AMBIENTE_PRODUCCION: 'La limpieza de campañas sólo está disponible en ambiente DEMO o desarrollo.'
 };
 
-const responderError = (res, error) => res.status(error.statusCode || 500).json({
-    success: false,
-    codigo: error.code || error.message || 'ERROR_INTERNO',
-    message: MENSAJES[error.code || error.message] || error.message || 'Error interno del servidor',
-    detalles: error.detalles
-});
+const responderError = (res, error) => {
+    const codigoError = error.code || error.message;
+    const status = Number(error.statusCode) >= 400 && Number(error.statusCode) < 500
+        ? Number(error.statusCode)
+        : (MENSAJES[codigoError] ? 409 : 500);
+    if (status === 500) console.error('Error FAREGAS descuentos:', error);
+    return res.status(status).json({
+        success: false,
+        codigo: status === 500 ? 'DESCUENTO_ERROR_INTERNO' : (MENSAJES[codigoError] ? codigoError : 'DESCUENTO_VALIDACION'),
+        message: status === 500
+            ? 'No se pudo actualizar el descuento por un error interno. El borrador conserva el estado anterior.'
+            : error.publicMessage || MENSAJES[codigoError] || 'No se pudo actualizar el descuento.',
+        detalles: status === 500 ? null : error.detalles
+    });
+};
 
 const registrarAdministracion = (req, evento, mensaje, entidad, entidadId, datos = {}) =>
     auditoriaService.registrarEvento(auditoriaService.contextoRequest(req, {

@@ -29,6 +29,12 @@ const normalizarPagos = (pagos = []) => {
     return normalizados;
 };
 
+const validarCreditoSinPagos = (periodoCredito, pagosSolicitados, pagosPersistidos = 0) => {
+    if (periodoCredito?.condicionPago !== 'CREDITO') return;
+    if (pagosSolicitados.length > 0) throw new Error('CREDITO_NO_ADMITE_PAGOS');
+    if (pagosPersistidos > 0) throw new Error('CREDITO_CON_PAGOS_EXISTENTES');
+};
+
 const esCodigoClasificacionSunatValidoOpcional = (value) => {
     const codigo = String(value ?? '').trim();
     return codigo === '' || /^\d{8}$/.test(codigo);
@@ -64,6 +70,7 @@ module.exports = {
     redondear,
     obtenerTarifaConfigurada,
     normalizarPagos,
+    validarCreditoSinPagos,
     construirSnapshotProducto,
     esCodigoClasificacionSunatValidoOpcional,
     esProductoFiscalChipValido

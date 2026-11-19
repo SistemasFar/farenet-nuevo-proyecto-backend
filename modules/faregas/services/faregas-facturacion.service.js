@@ -40,9 +40,34 @@ const errorNegocio = (codigo, statusCode = 400, detalles) => {
     return error;
 };
 
+const validarCuentaDetraccionEmisor = (evaluacionSpot, configuracionEmisor) => {
+    if (!evaluacionSpot?.sujeto) return;
+    const cuenta = String(configuracionEmisor?.cuentaBancoNacion || '').trim();
+    if (!cuenta) {
+        throw errorNegocio('CUENTA_BANCO_NACION_DETRACCION_FALTANTE', 409,
+            'La empresa emisora fiscal no tiene configurada su cuenta de detracciones del Banco de la Nación.');
+    }
+    const { esCuentaBancoNacionValida } = require('./faregas-calculo-tributario.service');
+    if (!esCuentaBancoNacionValida(cuenta)) {
+        throw errorNegocio('CUENTA_BANCO_NACION_DETRACCION_INVALIDA', 409,
+            'La cuenta de detracciones del Banco de la Nación de la empresa emisora debe contener 11 dígitos.');
+    }
+};
+
 const evaluarDatosFacturacion = (data) => {
     const datos = normalizarFacturacion(data);
     return { datos, errores: validarFacturacion(datos) };
+};
+
+const validarCreditoSinDescuentoActivo = async (client, certificadoId) => {
+    if (!certificadoId) return;
+    const reserva = await client.query(
+        `SELECT 1 FROM fg_descuentocomprobante
+         WHERE certificado_id = $1 AND estado IN ('RESERVADO', 'APLICADO')
+         LIMIT 1`,
+        [certificadoId]
+    );
+    if (reserva.rowCount > 0) throw errorNegocio('CREDITO_NO_ADMITE_DESCUENTOS', 409);
 };
 
 exports.evaluarDatosFacturacion = evaluarDatosFacturacion;
@@ -308,6 +333,9 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
         const certificado = await obtenerCertificado(client, certificadoId, userContext, true);
         if (certificado.estado !== 'BORRADOR') throw errorNegocio('CERTIFICADO_NO_EDITABLE', 409);
         const orden = await obtenerOrdenFacturable(client, certificadoId, normalizada.condicionPago);
+        if (normalizada.condicionPago === 'CREDITO') {
+            await validarCreditoSinDescuentoActivo(client, certificadoId);
+        }
         const pagosPersistidos = await client.query(
             `SELECT p.tipocontado_key, p.tarjeta_key, p.modalidad_tarjeta, p.importe,
                     t.nombre AS tarjeta_nombre, ef.nombre AS entidad_nombre
@@ -318,6 +346,9 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
              ORDER BY p.id ASC`,
             [orden.id]
         );
+        if (normalizada.condicionPago === 'CREDITO' && pagosPersistidos.rowCount > 0) {
+            throw errorNegocio('CREDITO_CON_PAGOS_EXISTENTES', 409);
+        }
         const medioPagoPersistido = derivarMedioPago(pagosPersistidos.rows);
         const totalCuotasEsperado = Number(orden.saldo_pendiente);
         if (normalizada.condicionPago === 'CREDITO'
@@ -487,6 +518,9 @@ const reservarEmision = async (certificadoId, userContext, dependencies = {}) =>
         if (factResult.rowCount === 0) throw errorNegocio('FACTURACION_FALTANTE', 409);
         let facturacion = factResult.rows[0];
         const orden = await obtenerOrdenFacturable(client, certificadoId, facturacion.condicion_pago || 'CONTADO');
+        if (facturacion.condicion_pago === 'CREDITO') {
+            await validarCreditoSinDescuentoActivo(client, certificadoId);
+        }
         await chipCertificadoService.validarParaFacturacion(client, certificadoId);
         const cuotasResult = await client.query(
             'SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota',
@@ -691,6 +725,7 @@ const reservarEmision = async (certificadoId, userContext, dependencies = {}) =>
             detraccion_estado_deposito: evalSpotCert.estadoDeposito,
             detraccion_motivo_exclusion: evalSpotCert.motivoExclusion
         });
+        validarCuentaDetraccionEmisor(evalSpotCert, configuracionEmisor);
 
         const payload = construirPayloadNubefact({
             facturacion,
@@ -958,6 +993,10 @@ exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => 
         if(!ordenRes.rowCount) throw errorNegocio('ORDEN_PAGO_FALTANTE', 409);
         const orden = ordenRes.rows[0];
 
+        if (normalizada.condicionPago === 'CREDITO') {
+            await validarCreditoSinDescuentoActivo(client, orden.certificado_id);
+        }
+
         if (normalizada.condicionPago === 'CONTADO' && (orden.estado !== 'PAGADO' || Number(orden.saldo_pendiente) > 0.009)) {
             throw errorNegocio('PAGO_INCOMPLETO', 409);
         }
@@ -984,6 +1023,9 @@ exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => 
              ORDER BY p.id ASC`,
             [orden.id]
         );
+        if (normalizada.condicionPago === 'CREDITO' && pagosPersistidos.rowCount > 0) {
+            throw errorNegocio('CREDITO_CON_PAGOS_EXISTENTES', 409);
+        }
         const medioPagoPersistido = derivarMedioPago(pagosPersistidos.rows);
 
         const actual = await client.query(
@@ -1235,6 +1277,7 @@ const reservarEmisionOperacion = async (operacionId, userContext, opciones = {},
             detraccion_estado_deposito: evalSpotOp.estadoDeposito,
             detraccion_motivo_exclusion: evalSpotOp.motivoExclusion
         });
+        validarCuentaDetraccionEmisor(evalSpotOp, configuracionEmisor);
 
         const cuotasResult = await client.query(
             'SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota',
@@ -1244,6 +1287,7 @@ const reservarEmisionOperacion = async (operacionId, userContext, opciones = {},
             const ordenRes = await client.query('SELECT * FROM fg_orden_pago WHERE operacion_id = $1', [operacionId]);
             if (!ordenRes.rowCount) throw errorNegocio('ORDEN_PAGO_FALTANTE', 409);
             const orden = ordenRes.rows[0];
+            await validarCreditoSinDescuentoActivo(client, orden.certificado_id);
             if (!validarCuotasContraTotal(cuotasResult.rows, orden.saldo_pendiente)) {
                 throw errorNegocio('CUOTAS_NO_COINCIDEN_CON_SALDO', 409);
             }
@@ -1307,7 +1351,9 @@ exports._private = {
     esPosibleDuplicadoNubefact,
     consultarEmisionIncierta,
     validarCodigosSunatOperacion,
-    sincronizarDetraccionFacturacion
+    sincronizarDetraccionFacturacion,
+    validarCuentaDetraccionEmisor,
+    validarCreditoSinDescuentoActivo
 };
 
 

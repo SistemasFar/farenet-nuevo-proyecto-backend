@@ -39,6 +39,19 @@ test('MENU_CHIPS_VENTAS permite listar y registrar ventas sin llaves CHIPS_* dup
     assert.equal((await invoke(vender, 'mquijano')).next, true);
 });
 
+test('EMISOR autorizado a ventas puede consultar el selector sin permiso de configuración de inventario', async () => {
+    const db = makeDb({
+        profiles: { emisor: { profile: 'EMISOR' } },
+        grants: { EMISOR: ['MENU_CHIPS_VENTAS'] },
+    });
+    const abrirSelector = crearMiddlewarePermisoFaregas(db, { anyOf: ['MENU_CHIPS_VENTAS'] });
+    const lecturaOrdinaria = crearMiddlewarePermisoFaregas(db, { anyOf: ['CHIPS_VER'] });
+
+    assert.equal((await invoke(abrirSelector, 'emisor')).next, true);
+    assert.equal((await invoke(lecturaOrdinaria, 'emisor')).next, true);
+    assert.equal((await invoke(crearMiddlewarePermisoFaregas(db, { anyOf: ['MENU_CHIPS_TIPOS', 'MENU_CHIPS_INVENTARIO'] }), 'emisor')).statusCode, 403);
+});
+
 test('cada submódulo de chips hereda solo las operaciones ordinarias de su sección', async () => {
     const db = makeDb({
         profiles: { inv: { profile: 'OPERADOR' } },

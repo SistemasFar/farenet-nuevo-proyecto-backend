@@ -196,9 +196,11 @@ exports.obtenerTarifaOperativaPorCodigo = async (plantaKey, tarifaCodigo, querya
             s.id AS servicio_id,
             s.codigo AS servicio_codigo,
             s.nombre AS servicio_nombre,
+            s.familia,
             s.tipo_flujo,
             s.tipo_certificado_clave,
             s.modalidad,
+            formato_raiz.codigo AS formato_codigo_canonico,
             CASE WHEN to_jsonb(pf)->>'sujeto_detraccion' IS NOT NULL THEN (to_jsonb(pf)->>'sujeto_detraccion')::boolean ELSE ${spotConfigDisponible ? 's.sujeto_detraccion' : 'NULL::boolean'} END AS spot_sujeto,
             CASE WHEN to_jsonb(pf)->>'sujeto_detraccion' IS NOT NULL THEN (to_jsonb(pf)->>'detraccion_codigo')::varchar ELSE ${spotConfigDisponible ? 's.detraccion_codigo' : 'NULL::varchar'} END AS spot_codigo,
             CASE WHEN to_jsonb(pf)->>'sujeto_detraccion' IS NOT NULL THEN (to_jsonb(pf)->>'detraccion_porcentaje')::numeric ELSE ${spotConfigDisponible ? 's.detraccion_porcentaje' : 'NULL::numeric'} END AS spot_porcentaje,
@@ -227,6 +229,9 @@ exports.obtenerTarifaOperativaPorCodigo = async (plantaKey, tarifaCodigo, querya
         JOIN fg_servicio s ON s.id = t.servicio_id
         JOIN fg_planta p ON p.key = t.planta_key
         JOIN fg_categoria_servicio c ON c.id = s.categoria_id
+        LEFT JOIN fg_certificado_formato formato ON formato.id = s.formato_id
+        LEFT JOIN fg_certificado_formato formato_raiz
+          ON formato_raiz.id = COALESCE(formato.formato_padre_id, formato.id)
         LEFT JOIN fg_producto_facturacion pf ON pf.id = t.producto_facturacion_id
         LEFT JOIN fg_producto_inventariable pi
           ON pi.id = pf.producto_chip_id

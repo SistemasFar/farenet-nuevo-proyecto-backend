@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
+const db = require('../../../config/database');
 const { authFaregasMiddleware } = require('../middlewares/faregas-auth.middleware');
+const { cargarContextoPermisosFaregas, tienePermisoFaregas } = require('../services/faregas-autorizacion-permisos.service');
 const controller = require('../controllers/faregas-dashboard.controller');
 
 const verificarAccesoDashboard = async (req, res, next) => {
@@ -9,6 +11,16 @@ const verificarAccesoDashboard = async (req, res, next) => {
             return res.status(403).json({
                 success: false,
                 message: 'Seleccione una sede antes de consultar el Dashboard.'
+            });
+        }
+        const contexto = await cargarContextoPermisosFaregas(db, req.user?.username);
+        if (!contexto?.usuario?.estado) {
+            return res.status(403).json({ success: false, message: 'Usuario inactivo.' });
+        }
+        if (!tienePermisoFaregas(contexto.permisos, 'MENU_DASHBOARD')) {
+            return res.status(403).json({
+                success: false,
+                message: 'No tiene permiso para acceder al Dashboard.'
             });
         }
         next();

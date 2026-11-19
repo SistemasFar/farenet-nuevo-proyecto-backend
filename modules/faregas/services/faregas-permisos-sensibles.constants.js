@@ -36,6 +36,12 @@ const PERMISOS_OBSOLETOS = Object.freeze([
 
 const PERMISOS_OBSOLETOS_SET = new Set(PERMISOS_OBSOLETOS);
 
+const PERMISOS_SUBMODULOS_DASHBOARD = Object.freeze([
+    'DASHBOARD_GLOBAL',
+    'DASHBOARD_EXPORTAR',
+    'DASHBOARD_SEDE'
+]);
+
 /**
  * Permisos FAREGAS que el editor de perfiles puede administrar. Se mantiene
  * junto al catálogo sensible para que el backend valide exactamente las mismas
@@ -44,6 +50,7 @@ const PERMISOS_OBSOLETOS_SET = new Set(PERMISOS_OBSOLETOS);
 const PERMISOS_FAREGAS_GESTIONABLES = Object.freeze([
     'FAREGAS_SOLICITUD_CREAR',
     'FAREGAS_SOLICITUD_VER',
+    ...PERMISOS_SUBMODULOS_DASHBOARD,
     ...PERMISOS_SENSIBLES
 ]);
 
@@ -53,5 +60,6 @@ module.exports = {
     PERMISOS_SENSIBLES_SET,
     PERMISOS_OBSOLETOS,
     PERMISOS_OBSOLETOS_SET,
+    PERMISOS_SUBMODULOS_DASHBOARD,
     PERMISOS_FAREGAS_GESTIONABLES
 };

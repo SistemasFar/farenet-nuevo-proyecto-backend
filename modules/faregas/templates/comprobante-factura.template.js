@@ -27,6 +27,7 @@ function renderFacturaHtml(data) {
         items = [],
         totales = {},
         descuento = null,
+        resumenComercial = null,
         qrSource = '',
         logoDataUri = '',
         cuotas = [],
@@ -71,6 +72,13 @@ function renderFacturaHtml(data) {
 
     const montoTotal = Number(totales.total || 0);
     const textoImporte = numeroALetras(montoTotal, moneda);
+    const tieneResumenComercial = !esOperacionGratuita
+        && resumenComercial
+        && Number.isFinite(Number(resumenComercial.precioOriginal))
+        && Number.isFinite(Number(resumenComercial.total));
+    const descuentoComercialConIgv = tieneResumenComercial
+        ? Number(resumenComercial.descuentoComercialConIgv || 0)
+        : 0;
 
     const qrDataUri = generarQrDataUri(qrSource || `${rucEmisor}|01|${serie}|${numero}|${formatMoney(totales.igv)}|${formatMoney(totales.total)}|${fechaDocumento}|6|${clienteDocNro}|`);
 
@@ -366,8 +374,29 @@ function renderFacturaHtml(data) {
         }
         .t-total {
             font-weight: bold;
-            font-size: 7.5pt;
-            border-top: 1px solid #666666 !important;
+            font-size: 8.2pt;
+            border-top: 1.5px solid #083b66 !important;
+            background-color: #eef5fb;
+        }
+        .t-section td {
+            background-color: #083b66;
+            color: #ffffff;
+            font-size: 6.6pt;
+            font-weight: bold;
+            letter-spacing: 0.25px;
+            text-align: center;
+        }
+        .t-discount td {
+            color: #b42318;
+            font-weight: bold;
+        }
+        .t-equation td {
+            background-color: #f8fafc;
+            color: #083b66;
+            font-size: 7pt;
+            font-weight: bold;
+            text-align: center;
+            border-top: 1px dashed #8aa6bd;
         }
         .footer-section {
             margin-top: 15px;
@@ -487,6 +516,31 @@ function renderFacturaHtml(data) {
         </div>
         <div class="bottom-right">
             <table class="totales-table">
+                ${tieneResumenComercial ? `
+                <tr class="t-section">
+                    <td colspan="2">RESUMEN COMERCIAL (IMPORTES CON IGV)</td>
+                </tr>
+                <tr>
+                    <td class="t-label">Precio original</td>
+                    <td class="t-num">S/ ${formatMoney(resumenComercial.precioOriginal)}</td>
+                </tr>
+                ${descuentoComercialConIgv > 0 ? `
+                <tr class="t-discount">
+                    <td class="t-label">Descuento comercial</td>
+                    <td class="t-num">−S/ ${formatMoney(descuentoComercialConIgv)}</td>
+                </tr>` : ''}
+                <tr class="t-total">
+                    <td class="t-label"><strong>TOTAL</strong></td>
+                    <td class="t-num"><strong>S/ ${formatMoney(resumenComercial.total)}</strong></td>
+                </tr>
+                ${descuentoComercialConIgv > 0 ? `
+                <tr class="t-equation">
+                    <td colspan="2">S/ ${formatMoney(resumenComercial.precioOriginal)} − S/ ${formatMoney(descuentoComercialConIgv)} = S/ ${formatMoney(resumenComercial.total)}</td>
+                </tr>` : ''}
+                <tr class="t-section">
+                    <td colspan="2">DETALLE TRIBUTARIO</td>
+                </tr>
+                ` : ''}
                 <tr>
                     <td class="t-label">Op. Gravada</td>
                     <td class="t-num">S/ ${formatMoney(totales.gravada || totales.baseImponible || 0)}</td>
@@ -504,17 +558,17 @@ function renderFacturaHtml(data) {
                     <td class="t-num">S/ ${formatMoney(totales.gratuita || 0)}</td>
                 </tr>
                 <tr>
-                    <td class="t-label">Descuentos</td>
+                    <td class="t-label">Descuento fiscal (sin IGV)</td>
                     <td class="t-num">S/ ${formatMoney(totales.descuento || 0)}</td>
                 </tr>
                 <tr>
                     <td class="t-label">IGV</td>
                     <td class="t-num">S/ ${formatMoney(totales.igv || 0)}</td>
                 </tr>
-                <tr class="t-total">
+                ${!tieneResumenComercial ? `<tr class="t-total">
                     <td class="t-label"><strong>Importe Total</strong></td>
                     <td class="t-num"><strong>S/ ${formatMoney(totales.total || 0)}</strong></td>
-                </tr>
+                </tr>` : ''}
             </table>
         </div>
     </div>
@@ -524,8 +578,8 @@ function renderFacturaHtml(data) {
             <img src="${qrDataUri}" width="85" height="85" alt="Código QR SUNAT" />
         </div>
         <div class="footer-legal">
-            <div>Representación impresa de la factura electrónica.</div>
-            <div>Documento electrónico emitido mediante NubeFact; su validez se sustenta en el XML y CDR correspondientes.</div>
+            <div><strong>Representación comercial complementaria FAREGAS</strong> de la factura electrónica ${nroComprobante}.</div>
+            <div>No constituye un segundo comprobante. El PDF oficial de NubeFact, el XML y el CDR permanecen disponibles como documentos fiscales del mismo comprobante.</div>
         </div>
     </div>
 </body>

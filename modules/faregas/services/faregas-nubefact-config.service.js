@@ -82,6 +82,7 @@ const obtenerFilaConfiguracion = async (plantaKey, executor = db) => {
                e.ruc AS ruc_emisor,
                e.nombre AS razon_social_emisor,
                e.direccion AS direccion_emisor,
+               e.cuenta_banco_nacion,
                f.entorno,
                f.credencial_clave
         FROM fg_planta p
@@ -106,6 +107,7 @@ const obtenerFilaAliasDemo = async (credencialClave, executor = db) => {
                e.ruc AS ruc_emisor,
                e.nombre AS razon_social_emisor,
                e.direccion AS direccion_emisor,
+               e.cuenta_banco_nacion,
                f.entorno,
                f.credencial_clave
         FROM fg_empresa e
@@ -184,6 +186,7 @@ exports.resolverParaPlanta = async (plantaKey, executor = db) => {
         empresaPropietariaKey,
         razonSocialEmisor: filaEmisora.razon_social_emisor,
         direccionEmisor: filaEmisora.direccion_emisor,
+        cuentaBancoNacion: filaEmisora.cuenta_banco_nacion,
         credencialClave: filaEmisora.credencial_clave,
         credentials
     };

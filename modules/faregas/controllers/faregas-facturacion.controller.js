@@ -21,6 +21,8 @@ const responderError = (res, error) => {
         CERTIFICADO_NO_VALIDO_PARA_EMISION: 'El certificado tiene datos técnicos pendientes antes de emitir el comprobante.',
         ORDEN_PAGO_FALTANTE: 'No existe una orden de pago para el certificado.',
         PAGO_INCOMPLETO: 'El pago debe estar completo antes de facturar.',
+        CREDITO_CON_PAGOS_EXISTENTES: 'No se puede guardar como crédito porque la orden ya tiene cobros registrados. Se conservaron y no se eliminaron.',
+        CREDITO_NO_ADMITE_DESCUENTOS: 'CRÉDITO no admite descuentos ni cortesías. Retire el beneficio desde CONTADO y restaure el importe original.',
         CHIP_REQUERIDO_NO_SELECCIONADO: 'Seleccione y valide el chip requerido antes de facturar.',
         CHIP_TIPO_INVALIDO: 'El chip seleccionado no corresponde al producto configurado.',
         CHIP_OTRA_SEDE: 'El chip seleccionado ya no pertenece a esta sede.',
@@ -46,6 +48,8 @@ const responderError = (res, error) => {
         NUBEFACT_ENVIO_SUNAT_DESHABILITADO: 'El envío productivo a SUNAT continúa deshabilitado.',
         NUBEFACT_DETRACCION_PENDIENTE_CONFIRMACION: 'La decisión tributaria sobre detracción continúa pendiente.',
         NUBEFACT_DETRACCION_CONFIGURACION_PENDIENTE: 'La detracción aplica, pero sus datos SPOT aún no están implementados.',
+        CUENTA_BANCO_NACION_DETRACCION_FALTANTE: 'La empresa emisora no tiene configurada su cuenta de detracciones del Banco de la Nación.',
+        CUENTA_BANCO_NACION_DETRACCION_INVALIDA: 'La cuenta de detracciones del Banco de la Nación de la empresa emisora debe contener 11 dígitos.',
         MIGRACION_NUBEFACT_PENDIENTE: 'Falta aplicar la migración tributaria de Nubefact.',
         SERIE_NUBEFACT_NO_EXCLUSIVA: 'La serie no es exclusiva de Nubefact o pertenece a otro ambiente.',
         SERIE_NO_AUTOGENERADA: 'La serie Nubefact no está configurada como autogenerada.',
@@ -66,15 +70,19 @@ const responderError = (res, error) => {
         PDF_NUBEFACT_INVALIDO: 'NubeFact no devolvió un archivo PDF válido.'
     };
     if (status >= 500) console.error('[FAREGAS FACTURACION]', error);
-    const codigo = error.code || error.message || 'ERROR_INTERNO';
-    const message = codigo === 'CERTIFICADO_NO_VALIDO_PARA_EMISION' && error.detalles?.mensaje
+    const codigoOriginal = error.code || error.message || 'ERROR_INTERNO';
+    const codigo = status >= 500
+        ? 'FACTURACION_ERROR_INTERNO'
+        : (messages[codigoOriginal] ? codigoOriginal : 'FACTURACION_VALIDACION');
+    const message = codigoOriginal === 'CERTIFICADO_NO_VALIDO_PARA_EMISION' && error.detalles?.mensaje
         ? error.detalles.mensaje
-        : messages[codigo] || 'Error interno del servidor.';
+        : status >= 500 ? 'No se pudo guardar la facturación por un error interno. El borrador permanece disponible para reintentar.'
+            : messages[codigoOriginal] || 'No se pudo guardar la facturación. Revise los datos e inténtelo nuevamente.';
     return res.status(status).json({
         ok: false,
         codigo,
         message,
-        detalles: error.detalles || undefined
+        detalles: status >= 500 ? undefined : error.detalles || undefined
     });
 };
 
@@ -183,9 +191,9 @@ const idPositivo = (value) => {
 
 const autorizarFacturacion = async (facturacionId, user) => {
     const result = await db.query(
-        `SELECT f.id, c.planta_key
+        `SELECT f.id, COALESCE(c.planta_key, f.planta_key) AS planta_key
          FROM fg_facturacion f
-         JOIN fg_certificado c ON c.id = f.certificado_id
+         LEFT JOIN fg_certificado c ON c.id = f.certificado_id
          WHERE f.id = $1`,
         [idPositivo(facturacionId)]
     );
@@ -207,7 +215,7 @@ const obtenerFacturacionAutorizadaPorCertificado = async (certificadoId, user) =
     const result = await db.query(
         `SELECT f.id, f.enlace_pdf, f.tipo_comprobante, f.serie, f.numero
          FROM fg_facturacion f
-         JOIN fg_certificado c ON c.id = f.certificado_id
+         LEFT JOIN fg_certificado c ON c.id = f.certificado_id
          WHERE f.certificado_id = $1`,
         [idPositivo(certificadoId)]
     );

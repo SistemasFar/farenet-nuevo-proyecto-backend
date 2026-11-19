@@ -20,6 +20,8 @@ const esFechaIsoValida = (value) => {
     return fecha.getUTCFullYear() === anio && fecha.getUTCMonth() === mes - 1 && fecha.getUTCDate() === dia;
 };
 
+const tieneMaximoDosDecimales = (value) => /^(?:\d+(?:\.\d{1,2})?|\.\d{1,2})$/.test(String(value ?? '').trim());
+
 const normalizarFacturacion = (data = {}) => {
     const tipoComprobante = limpiarTexto(data.tipoComprobante).toUpperCase();
     const nroDocumento = limpiarTexto(data.nroDocumento).toUpperCase();
@@ -58,7 +60,8 @@ const normalizarFacturacion = (data = {}) => {
         cuotas: Array.isArray(data.cuotas) ? data.cuotas.map((cuota, index) => ({
             numeroCuota: Number(cuota.numeroCuota || index + 1),
             fechaPago: limpiarTexto(cuota.fechaPago),
-            importe: redondear(cuota.importe)
+            importe: redondear(cuota.importe),
+            importePrecisionValida: tieneMaximoDosDecimales(cuota.importe)
         })) : []
     };
 };
@@ -123,6 +126,7 @@ const validarFacturacion = (facturacion) => {
             errores.push('La fecha de vencimiento no puede ser anterior a la fecha de inicio del credito.');
         }
         if (facturacion.cuotas.length === 0) errores.push('Una venta al credito requiere al menos una cuota.');
+        if (facturacion.cuotas.length > 3) errores.push('Una venta al credito admite como maximo 3 cuotas.');
         const numeros = new Set();
         for (const cuota of facturacion.cuotas) {
             if (!Number.isInteger(cuota.numeroCuota) || cuota.numeroCuota <= 0 || numeros.has(cuota.numeroCuota)) {
@@ -148,6 +152,10 @@ const validarFacturacion = (facturacion) => {
             }
             if (!Number.isFinite(cuota.importe) || cuota.importe <= 0) {
                 errores.push('Cada cuota requiere un importe mayor a cero.');
+                break;
+            }
+            if (!cuota.importePrecisionValida) {
+                errores.push('El importe de cada cuota debe tener como maximo dos decimales.');
                 break;
             }
         }

@@ -25,6 +25,9 @@ const requiereAnulacionFiscalChips = crearMiddlewarePermisoFaregas(db, {
 router.use(authFaregasMiddleware);
 router.get('/productos/catalogos', permiso('MENU_CHIPS_TIPOS', 'MENU_CHIPS_INVENTARIO'), permiso('CHIPS_VER', 'CHIPS_CONFIGURAR'), controller.catalogosProductosInventariables);
 router.get('/productos', permiso('MENU_CHIPS_TIPOS', 'MENU_CHIPS_INVENTARIO'), permiso('CHIPS_VER', 'CHIPS_CONFIGURAR'), controller.listarProductosInventariables);
+// El wizard de venta necesita leer los productos habilitados para la sede,
+// pero ese acceso no concede administración de inventario ni de catálogo.
+router.get('/productos/venta', ...ventas('CHIPS_VER'), controller.listarProductosVendibles);
 router.post('/productos',...tipos('CHIPS_CONFIGURAR'),controller.crearProductoInventariable);
 router.put('/productos/:id',...tipos('CHIPS_CONFIGURAR'),controller.editarProductoInventariable);
 router.get('/productos/:id/impacto',...tipos('CHIPS_CONFIGURAR'),controller.impactoProductoInventariable);

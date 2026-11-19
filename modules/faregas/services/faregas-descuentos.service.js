@@ -6,8 +6,18 @@ const configService = require('./faregas-config.service');
 const auditoriaService = require('./faregas-auditoria.service');
 const descuentosImpactoService = require('./faregas-descuentos-impacto.service');
 const {
+    claveServicioCanonica,
+    esDescuentoEspecialCortesia,
+    esDescuentoLegadoFarenet,
+    resolverReglaPorConcepto,
+    evaluarReglaPrecio,
+    tieneMaximoDosDecimales,
+    normalizarValorRegla
+} = require('./faregas-descuentos-reglas');
+const {
     CODIGO_AUTORIZACION_CORTESIA,
     CODIGO_AUTORIZACION_GRATUIDAD_TALLER,
+    DESCUENTO_ID_CORTESIA_HISTORICO,
     esCodigoCortesia,
     esCodigoGratuidadTaller,
     esFlujoTaller,
@@ -26,6 +36,7 @@ const errorNegocio = (codigo, statusCode = 400, detalles) => {
     error.code = codigo;
     error.statusCode = statusCode;
     if (detalles) error.detalles = detalles;
+    if (detalles?.message) error.publicMessage = detalles.message;
     return error;
 };
 
@@ -37,8 +48,83 @@ const resolverPrecioServicio = (row) => tarifasService.resolverPrecioComercial({
 
 const mapearServicioAdministracion = (row) => ({
     ...row,
-    precio: resolverPrecioServicio(row)
+    precio: row.producto_activo === false || row.producto_para_venta === false
+        ? null
+        : resolverPrecioServicio(row),
+    tarifaDisponible: row.tarifa_activa !== false,
+    productoDisponible: row.producto_activo === true && row.producto_para_venta === true
 });
+
+const lanzarErrorPrecioRegla = ({ regla, precioVenta, contexto = {}, evaluacion, statusCode = 400 }) => {
+    const valorSolicitado = regla.tipoCalculo === 'FLAT'
+        ? regla.valorContado ?? regla.valorCredito
+        : regla.valor;
+    const detalle = {
+        plantaKey: contexto.plantaKey || contexto.planta_key || null,
+        sede: contexto.sede || contexto.plantaKey || contexto.planta_key || 'Sede seleccionada',
+        servicioId: contexto.servicioId || contexto.servicio_id || null,
+        tarifaCodigo: contexto.tarifaCodigo || contexto.tarifa_codigo || null,
+        precioVenta: precioVenta === null || precioVenta === undefined || precioVenta === ''
+            ? null
+            : (Number.isFinite(Number(precioVenta)) ? Number(precioVenta) : null),
+        tipoCalculo: regla.tipoCalculo,
+        valorSolicitado: Number.isFinite(Number(valorSolicitado)) ? Number(valorSolicitado) : null,
+        motivo: evaluacion.motivo
+    };
+    const valorTexto = detalle.valorSolicitado == null ? 'sin valor' : (
+        regla.tipoCalculo === 'PORCENTAJE' ? `${detalle.valorSolicitado}%` : `S/ ${detalle.valorSolicitado.toFixed(2)}`
+    );
+    const precioTexto = detalle.precioVenta == null ? 'no configurado' : `S/ ${detalle.precioVenta.toFixed(2)}`;
+    detalle.message = `${detalle.sede}: precio de venta ${precioTexto}; descuento solicitado ${valorTexto}. ${evaluacion.motivo}`;
+    throw errorNegocio('IMPORTE_DESCUENTO_INVALIDO', statusCode, detalle);
+};
+
+const validarPrecioRegla = (regla, precioVenta, contexto = {}, statusCode = 409) => {
+    const valor = regla.tipoCalculo === 'FLAT' ? regla.valorContado ?? regla.valorCredito : regla.valor;
+    const precio = precioVenta === null || precioVenta === undefined || precioVenta === ''
+        ? Number.NaN
+        : Number(precioVenta);
+    const evaluacion = evaluarReglaPrecio(regla.tipoCalculo, valor, precio);
+    if (!evaluacion.valido) lanzarErrorPrecioRegla({ regla, precioVenta, contexto, evaluacion, statusCode });
+    return evaluacion;
+};
+
+const buscarReglaAplicable = async (client, descuentoId, plantaKey, servicio) => {
+    const result = await client.query(`
+        SELECT dd.id, dd.servicio_id, dd.planta_key, dd.tipo_calculo, dd.valor,
+               dd.valor_contado, dd.valor_credito, dd.activo,
+               p.nombre AS sede, t.codigo AS tarifa_codigo,
+               s.tipo_certificado_clave, s.modalidad, s.tipo_flujo, s.familia,
+               formato_raiz.codigo AS formato_codigo_canonico
+        FROM fg_descuentodetalle dd
+        JOIN fg_servicio s ON s.id = dd.servicio_id
+        JOIN fg_planta p ON p.key = dd.planta_key
+        JOIN fg_categoria_servicio c ON c.id = s.categoria_id
+        JOIN fg_tarifa t ON t.planta_key = dd.planta_key AND t.servicio_id = dd.servicio_id AND t.activo = TRUE
+        JOIN fg_producto_facturacion pf ON pf.id = t.producto_facturacion_id
+             AND pf.activo = TRUE AND pf.es_para_venta = TRUE
+        LEFT JOIN fg_certificado_formato formato ON formato.id = s.formato_id
+        LEFT JOIN fg_certificado_formato formato_raiz
+          ON formato_raiz.id = COALESCE(formato.formato_padre_id, formato.id)
+        WHERE dd.descuento_id = $1
+          AND dd.descuento_cliente_id IS NULL
+          AND dd.planta_key = $2
+          AND dd.activo = TRUE
+          AND p.activo = TRUE AND s.activo = TRUE AND c.activo = TRUE
+    `, [descuentoId, plantaKey]);
+
+    const serviceId = Number(servicio.servicio_id ?? servicio.id);
+    const { regla, ambiguo, candidatas = [] } = resolverReglaPorConcepto(result.rows, servicio);
+    if (ambiguo) {
+        throw errorNegocio('DESCUENTO_REGLA_CANONICA_AMBIGUA', 409, {
+            plantaKey,
+            sede: candidatas[0].sede || plantaKey,
+            servicioId,
+            message: `La sede ${candidatas[0].sede || plantaKey} tiene más de una regla activa para el mismo concepto de certificado. Revise la configuración del descuento.`
+        });
+    }
+    return regla || null;
+};
 
 const calcularImporteFinal = (precio, tipoCalculo, valor) => {
     if (tipoCalculo === 'FLAT') return Number(valor);
@@ -52,9 +138,11 @@ const calcularImporteFinal = (precio, tipoCalculo, valor) => {
 
 const obtenerCertificado = async (client, certificadoId, userContext) => {
     const result = await client.query(
-        `SELECT c.id, c.estado, c.planta_key, c.tipo_certificado_clave, c.tarifa_codigo,
+        `SELECT c.id, c.estado, c.planta_key, p.nombre AS planta_nombre,
+                c.tipo_certificado_clave, c.tarifa_codigo, c.precio_certificado,
                 s.tipo_flujo AS servicio_tipo_flujo
          FROM fg_certificado c
+         LEFT JOIN fg_planta p ON p.key = c.planta_key
          LEFT JOIN fg_tarifa t ON t.planta_key = c.planta_key AND t.codigo = c.tarifa_codigo
          LEFT JOIN fg_servicio s ON s.id = t.servicio_id
          WHERE c.id = $1`,
@@ -83,7 +171,215 @@ const obtenerCertificado = async (client, certificadoId, userContext) => {
     return certificado;
 };
 
-const consultarDescuentoCore = async (client, codigo, certificadoId, userContext, isReserva = false) => {
+const redondearMoneda = (importe) => Math.round((Number(importe || 0) + Number.EPSILON) * 100) / 100;
+
+const obtenerContextoEdicionDescuento = async (client, certificadoId, userContext) => {
+    const certificado = await obtenerCertificado(client, certificadoId, userContext);
+    // Serializa cambio de descuento frente al guardado de pagos, que también
+    // bloquea la fila de certificado antes de modificar la orden.
+    await client.query('SELECT id FROM fg_certificado WHERE id = $1 FOR UPDATE', [certificadoId]);
+    const ordenResult = await client.query(
+        'SELECT * FROM fg_orden_pago WHERE certificado_id = $1 FOR UPDATE',
+        [certificadoId]
+    );
+    const orden = ordenResult.rows[0] || null;
+    if (!orden) return { certificado, orden: null, pagosEfectivos: 0 };
+    validarOrdenPagoEditable(orden);
+    if (orden.venta_id) throw errorNegocio('DESCUENTO_OPERACION_NO_EDITABLE', 409);
+    if (String(orden.formapago_key || '').toLowerCase() === 'credito') {
+        throw errorNegocio('CREDITO_NO_ADMITE_DESCUENTOS', 409);
+    }
+
+    const operacion = orden.operacion_id
+        ? await client.query('SELECT estado FROM fg_operacion_comercial WHERE id = $1 FOR UPDATE', [orden.operacion_id])
+        : { rowCount: 0, rows: [] };
+    if (operacion.rowCount > 0 && !['BORRADOR', 'PENDIENTE_PAGO', 'PAGADO'].includes(operacion.rows[0].estado)) {
+        throw errorNegocio('DESCUENTO_OPERACION_NO_EDITABLE', 409);
+    }
+
+    const facturacion = await client.query(
+        `SELECT id, estado, nro_comprobante, codigo_hash, enlace_pdf, enlace_xml
+         FROM fg_facturacion WHERE certificado_id = $1 FOR UPDATE`,
+        [certificadoId]
+    );
+    for (const documento of facturacion.rows) {
+        if (documento.estado !== 'BORRADOR' || documento.nro_comprobante || documento.codigo_hash
+            || documento.enlace_pdf || documento.enlace_xml) {
+            throw errorNegocio('DESCUENTO_OPERACION_NO_EDITABLE', 409);
+        }
+        const intento = await client.query(
+            'SELECT 1 FROM fg_facturacion_intento WHERE facturacion_id = $1 LIMIT 1',
+            [documento.id]
+        );
+        if (intento.rowCount > 0) throw errorNegocio('DESCUENTO_OPERACION_NO_EDITABLE', 409);
+    }
+
+    const pagos = await client.query(
+        `SELECT id, importe, estado FROM fg_pago
+         WHERE orden_pago_id = $1 ORDER BY id FOR UPDATE`,
+        [orden.id]
+    );
+    const pagosEfectivos = redondearMoneda(pagos.rows
+        .filter((pago) => pago.estado === 'CAN')
+        .reduce((total, pago) => total + Number(pago.importe || 0), 0));
+    if (Math.abs(pagosEfectivos - Number(orden.importe_pagado || 0)) > 0.01) {
+        throw errorNegocio('PAGOS_INCONSISTENTES', 409);
+    }
+    return { certificado, orden, pagosEfectivos };
+};
+
+const validarOrdenPagoEditable = (orden) => {
+    const estado = String(orden?.estado || '').trim().toUpperCase();
+    if (!['PENDIENTE', 'PAGADO'].includes(estado)) {
+        throw errorNegocio('DESCUENTO_OPERACION_NO_EDITABLE', 409);
+    }
+};
+
+const obtenerPrecioOriginalServicio = async (client, certificado, importeOriginalReserva = null) => {
+    if (importeOriginalReserva !== null && importeOriginalReserva !== undefined) {
+        return redondearMoneda(importeOriginalReserva);
+    }
+    if (certificado.precio_certificado !== null && certificado.precio_certificado !== undefined) {
+        return redondearMoneda(certificado.precio_certificado);
+    }
+    if (!certificado.tarifa_codigo) throw errorNegocio('CERTIFICADO_SIN_TARIFA', 409);
+    const tarifa = await tarifasService.obtenerTarifaOperativaPorCodigo(
+        certificado.planta_key,
+        certificado.tarifa_codigo,
+        client
+    );
+    return redondearMoneda(tarifasService.validarTarifaCertificacion(tarifa).precio);
+};
+
+const actualizarOrdenBorradorPorDescuento = async (
+    client,
+    contexto,
+    nuevoImporteServicio,
+    importeServicioActual,
+    userContext
+) => {
+    const { orden, pagosEfectivos } = contexto;
+    if (!orden) return null;
+
+    let totalOrden = redondearMoneda(Number(orden.importe_total) - importeServicioActual + nuevoImporteServicio);
+    let baseOrden = redondearMoneda(totalOrden / 1.18);
+    let igvOrden = redondearMoneda(totalOrden - baseOrden);
+    let operacionActualizada = null;
+
+    if (orden.operacion_id) {
+        const lineasServicio = await client.query(
+            `SELECT id FROM fg_operacion_detalle
+             WHERE operacion_id = $1 AND certificado_id = $2 AND tipo_item = 'SERVICIO'
+             ORDER BY id FOR UPDATE`,
+            [orden.operacion_id, contexto.certificado.id]
+        );
+        if (lineasServicio.rowCount > 1) throw errorNegocio('DESCUENTO_DETALLE_AMBIGUO', 409);
+        if (lineasServicio.rowCount === 1) {
+            const baseServicio = redondearMoneda(nuevoImporteServicio / 1.18);
+            const igvServicio = redondearMoneda(nuevoImporteServicio - baseServicio);
+            await client.query(
+                `UPDATE fg_operacion_detalle
+                 SET valor_unitario = $2, precio_unitario = $3,
+                     base_imponible = $2, igv = $4, importe_total = $3
+                 WHERE id = $1`,
+                [lineasServicio.rows[0].id, baseServicio, nuevoImporteServicio, igvServicio]
+            );
+            const totales = await client.query(
+                `SELECT COALESCE(SUM(base_imponible), 0) AS base,
+                        COALESCE(SUM(igv), 0) AS igv,
+                        COALESCE(SUM(importe_total), 0) AS total
+                 FROM fg_operacion_detalle WHERE operacion_id = $1`,
+                [orden.operacion_id]
+            );
+            baseOrden = redondearMoneda(totales.rows[0].base);
+            igvOrden = redondearMoneda(totales.rows[0].igv);
+            totalOrden = redondearMoneda(totales.rows[0].total);
+        }
+        operacionActualizada = await client.query(
+            `UPDATE fg_operacion_comercial
+             SET base_imponible = $2, igv = $3, importe_total = $4,
+                 estado = $5, usuario_modificacion = $6, fecha_modificacion = CURRENT_TIMESTAMP
+             WHERE id = $1
+             RETURNING id`,
+            [orden.operacion_id, baseOrden, igvOrden, totalOrden,
+                totalOrden > 0 && pagosEfectivos >= totalOrden - 0.009 ? 'PAGADO' : 'PENDIENTE_PAGO',
+                userContext.username]
+        );
+    }
+
+    if (pagosEfectivos - totalOrden > 0.009) {
+        throw errorNegocio('DESCUENTO_TOTAL_MENOR_A_PAGOS', 409, {
+            importePagado: pagosEfectivos,
+            importeNuevo: totalOrden
+        });
+    }
+    const saldo = redondearMoneda(Math.max(0, totalOrden - pagosEfectivos));
+    const estado = totalOrden > 0 && saldo <= 0.009 ? 'PAGADO' : 'PENDIENTE';
+    const actualizada = await client.query(
+        `UPDATE fg_orden_pago
+         SET importe_total = $2, baseimponible = $3, igv = $4,
+             importe_pagado = $5, saldo_pendiente = $6, estado = $7,
+             usuariomodi_username = $8, fechmodi = CURRENT_TIMESTAMP
+         WHERE id = $1 RETURNING *`,
+        [orden.id, totalOrden, baseOrden, igvOrden, pagosEfectivos, saldo, estado, userContext.username]
+    );
+    // No se crean ni reemplazan pagos: las filas efectivas permanecen intactas.
+    void operacionActualizada;
+    return actualizada.rows[0];
+};
+
+const obtenerReservaActivaBloqueada = async (client, certificadoId) => {
+    const result = await client.query(
+        `SELECT * FROM fg_descuentocomprobante
+         WHERE certificado_id = $1 AND estado IN ('RESERVADO', 'APLICADO')
+         ORDER BY id DESC FOR UPDATE`,
+        [certificadoId]
+    );
+    if (result.rowCount > 1) throw errorNegocio('DESCUENTO_RESERVAS_INCONSISTENTES', 409);
+    return result.rows[0] || null;
+};
+
+const guardarReservaDescuento = async (client, calculo, reservaActual, orden, userContext) => {
+    const mismaReserva = reservaActual
+        && reservaActual.estado === 'RESERVADO'
+        && Number(reservaActual.descuento_id) === Number(calculo.descuentoId)
+        && Number(reservaActual.descuento_cliente_id || 0) === Number(calculo.descuentoClienteId || 0);
+
+    if (mismaReserva) {
+        await client.query(
+            `UPDATE fg_descuentocomprobante
+             SET importe_original = $2, importe_descuento = $3, importe_final = $4,
+                 orden_pago_id = COALESCE($5, orden_pago_id),
+                 reservado_hasta = GREATEST(reservado_hasta, CURRENT_TIMESTAMP + INTERVAL '24 hours'),
+                 usuario_modificacion = $6, fecha_modificacion = CURRENT_TIMESTAMP
+             WHERE id = $1`,
+            [reservaActual.id, calculo.tarifaOriginal, calculo.importeDescuento,
+                calculo.importeFinal, orden?.id || null, userContext.username]
+        );
+        return;
+    }
+
+    if (reservaActual) {
+        await client.query(
+            `UPDATE fg_descuentocomprobante
+             SET estado = 'LIBERADO', usuario_modificacion = $2, fecha_modificacion = CURRENT_TIMESTAMP
+             WHERE id = $1 AND estado = 'RESERVADO'`,
+            [reservaActual.id, userContext.username]
+        );
+    }
+    await client.query(
+        `INSERT INTO fg_descuentocomprobante (
+            descuento_id, descuento_cliente_id, certificado_id, orden_pago_id,
+            importe_original, importe_descuento, importe_final, estado,
+            reservado_hasta, usuario_creacion
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'RESERVADO', CURRENT_TIMESTAMP + INTERVAL '24 hours', $8)`,
+        [calculo.descuentoId, calculo.descuentoClienteId || null, calculo.certificado.id,
+            orden?.id || null, calculo.tarifaOriginal, calculo.importeDescuento,
+            calculo.importeFinal, userContext.username]
+    );
+};
+
+const consultarDescuentoCore = async (client, codigo, certificadoId, userContext, isReserva = false, permitirReemplazo = false) => {
     const certificado = await obtenerCertificado(client, certificadoId, userContext);
     
     // 1. Obtener tarifa original
@@ -117,6 +413,15 @@ const consultarDescuentoCore = async (client, codigo, certificadoId, userContext
     
     if (resCli.rowCount === 0) throw errorNegocio('CODIGO_NOT_FOUND', 404);
     const ds = resCli.rows[0];
+
+    const cortesiaProtegida = esDescuentoEspecialCortesia({
+        descuento_id: ds.descuento_id,
+        codigo: ds.codigo,
+        nombre: ds.nombre
+    });
+    if (esDescuentoLegadoFarenet(ds) && !cortesiaProtegida) {
+        throw errorNegocio('DESCUENTO_ORIGEN_NO_AUTORIZADO', 422);
+    }
 
     // 3. Validaciones
     if (!ds.dc_activo) throw errorNegocio('CODIGO_INACTIVO', 409);
@@ -155,21 +460,14 @@ const consultarDescuentoCore = async (client, codigo, certificadoId, userContext
     }
 
     // 4. Validar servicio permitido
-    const sqlDet = `
-        SELECT tipo_calculo, valor, valor_contado, valor_credito, activo
-        FROM fg_descuentodetalle
-        WHERE descuento_id = $1 AND descuento_cliente_id IS NULL
-          AND planta_key = $2 AND servicio_id = $3
-    `;
-    const resDet = await client.query(sqlDet, [ds.descuento_id, certificado.planta_key, servicioId]);
-    if (resDet.rowCount === 0 || !resDet.rows[0].activo) {
+    const det = await buscarReglaAplicable(client, ds.descuento_id, certificado.planta_key, tarifaValida);
+    if (!det) {
         const sedeConfigurada = await client.query(`SELECT 1 FROM fg_descuentodetalle
             WHERE descuento_id=$1 AND descuento_cliente_id IS NULL
               AND planta_key=$2 AND activo=TRUE LIMIT 1`,
         [ds.descuento_id, certificado.planta_key]);
         throw errorNegocio(sedeConfigurada.rowCount ? 'DESCUENTO_NO_APLICA_SERVICIO' : 'DESCUENTO_NO_APLICA_SEDE', 422);
     }
-    const det = resDet.rows[0];
     
     // 5. Calcular importe
     const tipoCalculoFinal = det.tipo_calculo;
@@ -184,24 +482,32 @@ const consultarDescuentoCore = async (client, codigo, certificadoId, userContext
         throw errorNegocio('REGLA_DESCUENTO_NO_CONFIGURADA', 409);
     }
     
-    let importeDescuento = 0;
-    if (tipoCalculoFinal === 'FLAT') {
-        importeDescuento = tarifaOriginal - valorFinal;
-    } else if (tipoCalculoFinal === 'MONTO') {
-        importeDescuento = valorFinal;
+    const esAutorizacionGratuita = cortesiaProtegida || esCodigoCortesia(ds.codigo);
+    let importeDescuento;
+    let importeFinal;
+    if (esAutorizacionGratuita) {
+        importeDescuento = tipoCalculoFinal === 'FLAT'
+            ? tarifaOriginal - valorFinal
+            : tipoCalculoFinal === 'MONTO'
+                ? valorFinal
+                : Math.round((tarifaOriginal * valorFinal / 100) * 100) / 100;
+        importeFinal = Math.round((tarifaOriginal - importeDescuento) * 100) / 100;
     } else {
-        importeDescuento = (tarifaOriginal * valorFinal) / 100;
+        const validacionPrecio = validarPrecioRegla({
+            tipoCalculo: tipoCalculoFinal,
+            valor: valorFinal,
+            valorContado: tipoCalculoFinal === 'FLAT' ? valorFinal : null,
+            valorCredito: null
+        }, tarifaOriginal, {
+            plantaKey: certificado.planta_key,
+            sede: certificado.planta_nombre,
+            servicioId,
+            tarifaCodigo: certificado.tarifa_codigo
+        });
+        importeDescuento = validacionPrecio.importeDescuento;
+        importeFinal = validacionPrecio.importeFinal;
     }
 
-    // Redondear a 2 decimales
-    importeDescuento = Math.round(importeDescuento * 100) / 100;
-    
-    if (importeDescuento <= 0 || importeDescuento > tarifaOriginal) {
-        throw errorNegocio('IMPORTE_DESCUENTO_INVALIDO', 409);
-    }
-
-    const importeFinal = tarifaOriginal - importeDescuento;
-    const esAutorizacionGratuita = esCodigoCortesia(ds.codigo);
     if (esAutorizacionGratuita && Math.abs(importeFinal) > 0.01) {
         throw errorNegocio('GRATUIDAD_TALLER_CONFIGURACION_INVALIDA', 409);
     }
@@ -216,7 +522,9 @@ const consultarDescuentoCore = async (client, codigo, certificadoId, userContext
         WHERE cmp.certificado_id = $1 AND cmp.estado IN ('RESERVADO', 'APLICADO')
         AND dc.codigo != $2
     `;
-    const resReservaActiva = await client.query(sqlRes, [certificadoId, ds.codigo]);
+    const resReservaActiva = permitirReemplazo
+        ? { rowCount: 0, rows: [] }
+        : await client.query(sqlRes, [certificadoId, ds.codigo]);
     if (resReservaActiva.rowCount > 0) {
         throw errorNegocio('DESCUENTO_YA_RESERVADO', 409);
     }
@@ -225,9 +533,9 @@ const consultarDescuentoCore = async (client, codigo, certificadoId, userContext
         descuentoId: ds.descuento_id,
         descuentoClienteId: ds.descuentocliente_id,
         codigo: ds.codigo,
-        nombre: ds.nombre,
+        nombre: esAutorizacionGratuita ? 'CORTESÍA FAREGAS' : ds.nombre,
         tipo: ds.tipo,
-        empresaAliada: ds.empresa_aliada_nombre,
+        empresaAliada: esAutorizacionGratuita ? null : ds.empresa_aliada_nombre,
         tipoCalculo: tipoCalculoFinal,
         valor: valorFinal,
         formaPago,
@@ -236,6 +544,9 @@ const consultarDescuentoCore = async (client, codigo, certificadoId, userContext
         importeFinal,
         fechaFin: ds.dc_fin || ds.d_fin,
         usosDisponibles: Math.max(0, usosDisponibles),
+        beneficio: esAutorizacionGratuita
+            ? `Cortesía FAREGAS — operación gratuita (total a cobrar S/ ${importeFinal.toFixed(2)})`
+            : undefined,
         autorizaGratuidad: esAutorizacionGratuita,
         certificado
     };
@@ -269,10 +580,6 @@ const consultarDescuentoDirectoCore = async (client, descuentoId, certificadoId,
     if (resDesc.rowCount === 0) throw errorNegocio('DESCUENTO_NO_ENCONTRADO', 404);
     const ds = resDesc.rows[0];
 
-    // Removed: explicit block for discount ID 17.
-    // Fiscal authorization is validated later at lines 327-339 via consultarConvenioProtegido.
-    // This allows the protected DESCUENTO_TALLER convention to be applied directly.
-
     if (!ds.d_activo) throw errorNegocio('DESCUENTO_INACTIVO', 409);
     
     const ahora = new Date();
@@ -282,6 +589,9 @@ const consultarDescuentoDirectoCore = async (client, descuentoId, certificadoId,
 
     const convenioProtegido = await consultarConvenioProtegido(client, ds.descuento_id, false);
     const esAutorizacionGratuita = Boolean(convenioProtegido) || esCodigoCortesia(ds.codigo);
+    if (esDescuentoLegadoFarenet(ds) && !esAutorizacionGratuita) {
+        throw errorNegocio('DESCUENTO_ORIGEN_NO_AUTORIZADO', 422);
+    }
 
     // La cortesía es una modalidad comercial transversal: conserva la tarifa
     // como valor referencial y no depende de reglas por servicio/sede.
@@ -293,9 +603,9 @@ const consultarDescuentoDirectoCore = async (client, descuentoId, certificadoId,
             // depende de inferir la cortesía únicamente por el importe cero.
             descuentoClienteId: convenioProtegido?.codigo_id || null,
             codigo: esCodigoCortesia(ds.codigo) ? ds.codigo : CODIGO_AUTORIZACION_CORTESIA,
-            nombre: ds.nombre,
+            nombre: 'CORTESÍA FAREGAS',
             tipo: ds.tipo,
-            empresaAliada: ds.empresa_aliada_nombre,
+            empresaAliada: null,
             tipoCalculo: 'PORCENTAJE',
             valor: 100,
             formaPago: 'CONTADO',
@@ -310,14 +620,8 @@ const consultarDescuentoDirectoCore = async (client, descuentoId, certificadoId,
     }
 
     // Regla de sede y servicio en fg_descuentodetalle
-    const sqlDet = `
-        SELECT tipo_calculo, valor, valor_contado, valor_credito, activo
-        FROM fg_descuentodetalle
-        WHERE descuento_id = $1 AND descuento_cliente_id IS NULL
-          AND planta_key = $2 AND servicio_id = $3
-    `;
-    const resDet = await client.query(sqlDet, [ds.descuento_id, certificado.planta_key, servicioId]);
-    if (resDet.rowCount === 0 || !resDet.rows[0].activo) {
+    const det = await buscarReglaAplicable(client, ds.descuento_id, certificado.planta_key, tarifaValida);
+    if (!det) {
         const sedeConfigurada = await client.query(`
             SELECT 1 FROM fg_descuentodetalle
             WHERE descuento_id = $1 AND descuento_cliente_id IS NULL
@@ -325,7 +629,6 @@ const consultarDescuentoDirectoCore = async (client, descuentoId, certificadoId,
         `, [ds.descuento_id, certificado.planta_key]);
         throw errorNegocio(sedeConfigurada.rowCount ? 'DESCUENTO_NO_APLICA_SERVICIO' : 'DESCUENTO_NO_APLICA_SEDE', 422);
     }
-    const det = resDet.rows[0];
 
     // Calcular importe
     const tipoCalculoFinal = det.tipo_calculo;
@@ -338,21 +641,19 @@ const consultarDescuentoDirectoCore = async (client, descuentoId, certificadoId,
         throw errorNegocio('REGLA_DESCUENTO_NO_CONFIGURADA', 409);
     }
     
-    let importeDescuento = 0;
-    if (tipoCalculoFinal === 'FLAT') {
-        importeDescuento = tarifaOriginal - valorFinal;
-    } else if (tipoCalculoFinal === 'MONTO') {
-        importeDescuento = valorFinal;
-    } else {
-        importeDescuento = (tarifaOriginal * valorFinal) / 100;
-    }
-    importeDescuento = Math.round(importeDescuento * 100) / 100;
-
-    if (importeDescuento <= 0 || importeDescuento > tarifaOriginal) {
-        throw errorNegocio('IMPORTE_DESCUENTO_INVALIDO', 409);
-    }
-
-    const importeFinal = Math.round((tarifaOriginal - importeDescuento) * 100) / 100;
+    const validacionPrecio = validarPrecioRegla({
+        tipoCalculo: tipoCalculoFinal,
+        valor: valorFinal,
+        valorContado: tipoCalculoFinal === 'FLAT' ? valorFinal : null,
+        valorCredito: null
+    }, tarifaOriginal, {
+        plantaKey: certificado.planta_key,
+        sede: certificado.planta_nombre,
+        servicioId,
+        tarifaCodigo: certificado.tarifa_codigo
+    });
+    const importeDescuento = validacionPrecio.importeDescuento;
+    const importeFinal = validacionPrecio.importeFinal;
 
     if (Math.abs(importeFinal) <= 0.01) {
         throw errorNegocio('OPERACION_CERO_REQUIERE_AUTORIZACION_GRATUITA', 409);
@@ -383,9 +684,9 @@ const consultarDescuentoDirectoCore = async (client, descuentoId, certificadoId,
         descuentoId: ds.descuento_id,
         descuentoClienteId: null,
         codigo: ds.codigo || ds.nombre,
-        nombre: ds.nombre,
+            nombre: esAutorizacionGratuita ? 'CORTESÍA FAREGAS' : ds.nombre,
         tipo: ds.tipo,
-        empresaAliada: ds.empresa_aliada_nombre,
+            empresaAliada: esAutorizacionGratuita ? null : ds.empresa_aliada_nombre,
         tipoCalculo: tipoCalculoFinal,
         valor: valorFinal,
         formaPago,
@@ -419,75 +720,95 @@ exports.listarDescuentosDisponibles = async (certificadoId, userContext) => {
         const tarifaValida = tarifasService.validarTarifaCertificacion(tarifaOp);
         const tarifaOriginal = Number(tarifaValida.precio);
         const servicioId = tarifaValida.servicio_id;
+        const claveActual = claveServicioCanonica(tarifaValida);
 
         const sql = `
             SELECT d.id, d.codigo, d.nombre, d.tipo, d.empresa_aliada_nombre,
                    d.fecha_inicio, d.fecha_fin,
-                   dd.tipo_calculo, dd.valor, dd.valor_contado, dd.valor_credito
+                   dd.tipo_calculo, dd.valor, dd.valor_contado, dd.valor_credito,
+                   dd.servicio_id, dd.planta_key,
+                   s.tipo_certificado_clave, s.modalidad, s.tipo_flujo, s.familia,
+                   formato_raiz.codigo AS formato_codigo_canonico
             FROM fg_descuento d
             JOIN fg_descuentodetalle dd ON dd.descuento_id = d.id AND dd.descuento_cliente_id IS NULL
+            JOIN fg_servicio s ON s.id = dd.servicio_id
+            JOIN fg_categoria_servicio c ON c.id = s.categoria_id
+            JOIN fg_tarifa t ON t.planta_key = dd.planta_key AND t.servicio_id = dd.servicio_id AND t.activo = TRUE
+            JOIN fg_producto_facturacion pf ON pf.id = t.producto_facturacion_id
+                 AND pf.activo = TRUE AND pf.es_para_venta = TRUE
+            JOIN fg_planta p ON p.key = dd.planta_key AND p.activo = TRUE
+            LEFT JOIN fg_certificado_formato formato ON formato.id = s.formato_id
+            LEFT JOIN fg_certificado_formato formato_raiz
+              ON formato_raiz.id = COALESCE(formato.formato_padre_id, formato.id)
             WHERE d.activo = TRUE
-
               AND CURRENT_TIMESTAMP >= d.fecha_inicio AND CURRENT_TIMESTAMP <= d.fecha_fin
               AND dd.activo = TRUE
               AND dd.planta_key = $1
-              AND dd.servicio_id = $2
-            UNION ALL
-            SELECT d.id, d.codigo, d.nombre, d.tipo, d.empresa_aliada_nombre,
-                   d.fecha_inicio, d.fecha_fin,
-                   'PORCENTAJE'::varchar AS tipo_calculo, 100::numeric AS valor,
-                   NULL::numeric AS valor_contado, NULL::numeric AS valor_credito
-            FROM fg_descuento d
-            WHERE d.activo = TRUE
-              AND CURRENT_TIMESTAMP >= d.fecha_inicio AND CURRENT_TIMESTAMP <= d.fecha_fin
-              AND (
-                  d.id = 17
-                  OR UPPER(BTRIM(d.codigo)) = ANY($3::varchar[])
-                  OR UPPER(BTRIM(d.nombre)) IN ('DESCUENTO CERTIFICADO TALLER', 'CORTESIA FAREGAS', 'CORTESÍA FAREGAS')
-                  OR EXISTS (
-                      SELECT 1 FROM fg_descuentocliente dc
-                      WHERE dc.descuento_id = d.id
-                        AND UPPER(BTRIM(dc.codigo)) = ANY($3::varchar[])
-                  )
+              AND d.id <> ${DESCUENTO_ID_CORTESIA_HISTORICO}
+              AND s.activo = TRUE AND c.activo = TRUE
+              AND UPPER(BTRIM(COALESCE(d.codigo, ''))) NOT IN ($2, $3, $4)
+              AND UPPER(BTRIM(COALESCE(d.nombre, ''))) NOT IN ('DESCUENTO CERTIFICADO TALLER', 'CORTESIA FAREGAS', 'CORTESÍA FAREGAS')
+              AND UPPER(COALESCE(d.nombre, '')) NOT LIKE '%CORTESIA%'
+              AND UPPER(COALESCE(d.nombre, '')) NOT LIKE '%CORTESÍA%'
+              AND REGEXP_REPLACE(UPPER(BTRIM(COALESCE(d.empresa_aliada_nombre, ''))), '[^A-Z0-9]', '', 'g') NOT IN ('FARENET', 'FARENETSAC')
+              AND NOT EXISTS (
+                  SELECT 1 FROM fg_descuentocliente dc
+                  WHERE dc.descuento_id = d.id
+                    AND UPPER(BTRIM(dc.codigo)) IN ($2, $3, $4)
               )
-            ORDER BY nombre
+            ORDER BY d.nombre, dd.servicio_id
         `;
         const res = await client.query(sql, [
             certificado.planta_key,
-            servicioId,
-            [CODIGO_AUTORIZACION_CORTESIA, CODIGO_AUTORIZACION_GRATUIDAD_TALLER, 'D_CONVENIO_A88137BB742F4157']
+            CODIGO_AUTORIZACION_CORTESIA,
+            CODIGO_AUTORIZACION_GRATUIDAD_TALLER,
+            'D_CONVENIO_A88137BB742F4157'
         ]);
 
         const disponibles = [];
-        for (const row of res.rows) {
-            if (disponibles.some((item) => item.id === Number(row.id))) continue;
+        const filasAplicables = res.rows.filter((row) => (
+            !esDescuentoEspecialCortesia(row)
+            && !esDescuentoLegadoFarenet(row)
+            && (Number(row.servicio_id) === Number(servicioId)
+            || (claveActual && !claveActual.startsWith('SERVICIO_ID::')
+                && claveServicioCanonica(row) === claveActual))
+        ));
+        const porDescuento = new Map();
+        for (const row of filasAplicables) {
+            const id = Number(row.id);
+            const actual = porDescuento.get(id) || [];
+            actual.push(row);
+            porDescuento.set(id, actual);
+        }
+        for (const [id, candidatas] of porDescuento) {
+            const exacta = candidatas.filter((row) => Number(row.servicio_id) === Number(servicioId));
+            const opciones = exacta.length ? exacta : candidatas;
+            // Una equivalencia canónica duplicada dentro de la sede es ambigua:
+            // no se presenta al usuario hasta que la regla se consolide.
+            if (opciones.length !== 1) continue;
+            const row = opciones[0];
             const tipoCalculo = row.tipo_calculo;
             const valorFinal = Number(tipoCalculo === 'FLAT' ? row.valor_contado : row.valor);
             if (!['FLAT', 'MONTO', 'PORCENTAJE'].includes(tipoCalculo) || !Number.isFinite(valorFinal) || valorFinal <= 0) {
                 continue;
             }
-
-            let importeDescuento = 0;
-            if (tipoCalculo === 'FLAT') {
-                importeDescuento = tarifaOriginal - valorFinal;
-            } else if (tipoCalculo === 'MONTO') {
-                importeDescuento = valorFinal;
-            } else {
-                importeDescuento = (tarifaOriginal * valorFinal) / 100;
-            }
-            importeDescuento = Math.round(importeDescuento * 100) / 100;
-
-            if (importeDescuento <= 0 || importeDescuento > tarifaOriginal) continue;
-            const importeFinal = Math.round((tarifaOriginal - importeDescuento) * 100) / 100;
-
-            const convenioProtegido = await consultarConvenioProtegido(client, row.id, false);
-            const esAutorizacionGratuita = Boolean(convenioProtegido) || esCodigoCortesia(row.codigo);
-            if (esAutorizacionGratuita && Math.abs(importeFinal) > 0.01) {
+            let calculo;
+            try {
+                calculo = validarPrecioRegla({
+                    tipoCalculo,
+                    valor: tipoCalculo === 'FLAT' ? null : valorFinal,
+                    valorContado: tipoCalculo === 'FLAT' ? valorFinal : null,
+                    valorCredito: null
+                }, tarifaOriginal, {
+                    plantaKey: certificado.planta_key,
+                    sede: certificado.planta_nombre,
+                    servicioId,
+                    tarifaCodigo: certificado.tarifa_codigo
+                });
+            } catch (_) {
                 continue;
             }
-            if (!esAutorizacionGratuita && Math.abs(importeFinal) <= 0.01) {
-                continue;
-            }
+            const { importeDescuento, importeFinal } = calculo;
 
             let beneficio = '';
             if (tipoCalculo === 'PORCENTAJE') {
@@ -499,8 +820,8 @@ exports.listarDescuentosDisponibles = async (certificadoId, userContext) => {
             }
 
             disponibles.push({
-                id: Number(row.id),
-                codigo: esAutorizacionGratuita ? CODIGO_AUTORIZACION_CORTESIA : row.codigo,
+                id,
+                codigo: row.codigo,
                 nombre: row.nombre,
                 tipo: row.tipo,
                 empresaAliada: row.empresa_aliada_nombre,
@@ -510,7 +831,7 @@ exports.listarDescuentosDisponibles = async (certificadoId, userContext) => {
                 importeDescuento,
                 importeFinal,
                 beneficio,
-                autorizaGratuidad: esAutorizacionGratuita
+                autorizaGratuidad: false
             });
         }
 
@@ -535,56 +856,17 @@ exports.aplicarDescuentoDirectoBorrador = async (certificadoId, descuentoId, use
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        
-        await client.query(`
-            UPDATE fg_descuentocomprobante 
-            SET estado = 'LIBERADO', fecha_modificacion = CURRENT_TIMESTAMP
-            WHERE estado = 'RESERVADO'
-              AND orden_pago_id IS NULL
-              AND reservado_hasta < CURRENT_TIMESTAMP
-        `);
-
+        const contexto = await obtenerContextoEdicionDescuento(client, certificadoId, userContext);
+        const reservaActual = await obtenerReservaActivaBloqueada(client, certificadoId);
+        if (reservaActual?.estado === 'APLICADO') throw errorNegocio('DESCUENTO_APLICADO_NO_MODIFICABLE', 409);
         const calculo = await consultarDescuentoDirectoCore(client, descuentoId, certificadoId, userContext, true);
-        
-        const sqlOrd = `SELECT 1 FROM fg_orden_pago WHERE certificado_id = $1`;
-        const resOrd = await client.query(sqlOrd, [certificadoId]);
-        if (resOrd.rowCount > 0) {
-            throw errorNegocio('ORDEN_PAGO_EXISTENTE', 409);
-        }
-
-        const sqlExiste = `
-            SELECT id FROM fg_descuentocomprobante 
-            WHERE certificado_id = $1 AND descuento_id = $2 AND estado IN ('RESERVADO', 'APLICADO')
-        `;
-        const resExiste = await client.query(sqlExiste, [certificadoId, calculo.descuentoId]);
-        
-        if (resExiste.rowCount === 0) {
-            await client.query(`
-                UPDATE fg_descuentocomprobante 
-                SET estado = 'LIBERADO', usuario_modificacion = $2, fecha_modificacion = CURRENT_TIMESTAMP
-                WHERE certificado_id = $1 AND estado = 'RESERVADO'
-            `, [certificadoId, userContext.username]);
-
-            await client.query(`
-                INSERT INTO fg_descuentocomprobante (
-                    descuento_id, descuento_cliente_id, certificado_id, importe_original, importe_descuento, importe_final,
-                    estado, reservado_hasta, usuario_creacion
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6, 'RESERVADO', CURRENT_TIMESTAMP + INTERVAL '24 hours', $7
-                )
-            `, [
-                calculo.descuentoId, calculo.descuentoClienteId, certificadoId, calculo.tarifaOriginal,
-                calculo.importeDescuento, calculo.importeFinal, userContext.username
-            ]);
-        } else if (calculo.descuentoClienteId) {
-            await client.query(`
-                UPDATE fg_descuentocomprobante
-                SET descuento_cliente_id = COALESCE(descuento_cliente_id, $1),
-                    usuario_modificacion = $2,
-                    fecha_modificacion = CURRENT_TIMESTAMP
-                WHERE id = $3
-            `, [calculo.descuentoClienteId, userContext.username, resExiste.rows[0].id]);
-        }
+        const importeServicioActual = reservaActual
+            ? redondearMoneda(reservaActual.importe_final)
+            : calculo.tarifaOriginal;
+        const orden = await actualizarOrdenBorradorPorDescuento(
+            client, contexto, calculo.importeFinal, importeServicioActual, userContext
+        );
+        await guardarReservaDescuento(client, calculo, reservaActual, orden, userContext);
 
         await client.query('COMMIT');
         calculo.plantaKey = calculo.certificado?.planta_key || null;
@@ -602,54 +884,17 @@ exports.aplicarDescuentoBorrador = async (certificadoId, codigo, userContext) =>
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        
-        // Liberar reservas vencidas de todos para sanidad (opcional, pero útil)
-        await client.query(`
-            UPDATE fg_descuentocomprobante 
-            SET estado = 'LIBERADO', fecha_modificacion = CURRENT_TIMESTAMP
-            WHERE estado = 'RESERVADO'
-              AND orden_pago_id IS NULL
-              AND reservado_hasta < CURRENT_TIMESTAMP
-        `);
-
-        // Consultar y bloquear
-        const calculo = await consultarDescuentoCore(client, codigo, certificadoId, userContext, true);
-        
-        // Verificar que no haya orden de pago
-        const sqlOrd = `SELECT 1 FROM fg_orden_pago WHERE certificado_id = $1`;
-        const resOrd = await client.query(sqlOrd, [certificadoId]);
-        if (resOrd.rowCount > 0) {
-            throw errorNegocio('ORDEN_PAGO_EXISTENTE', 409);
-        }
-
-        // Si ya tenía la misma reserva, no hacer nada y devolver
-        const sqlExiste = `
-            SELECT id FROM fg_descuentocomprobante 
-            WHERE certificado_id = $1 AND descuento_cliente_id = $2 AND estado IN ('RESERVADO', 'APLICADO')
-        `;
-        const resExiste = await client.query(sqlExiste, [certificadoId, calculo.descuentoClienteId]);
-        
-        if (resExiste.rowCount === 0) {
-            // Liberar reservas anteriores si hubiera del mismo certificado (aunque el core ya validó incompatibles)
-            await client.query(`
-                UPDATE fg_descuentocomprobante 
-                SET estado = 'LIBERADO', usuario_modificacion = $2, fecha_modificacion = CURRENT_TIMESTAMP
-                WHERE certificado_id = $1 AND estado = 'RESERVADO'
-            `, [certificadoId, userContext.username]);
-
-            // Insertar nueva reserva (expira en 24 horas)
-            await client.query(`
-                INSERT INTO fg_descuentocomprobante (
-                    descuento_id, descuento_cliente_id, certificado_id, importe_original, importe_descuento, importe_final,
-                    estado, reservado_hasta, usuario_creacion
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6, 'RESERVADO', CURRENT_TIMESTAMP + INTERVAL '24 hours', $7
-                )
-            `, [
-                calculo.descuentoId, calculo.descuentoClienteId, certificadoId, calculo.tarifaOriginal, 
-                calculo.importeDescuento, calculo.importeFinal, userContext.username
-            ]);
-        }
+        const contexto = await obtenerContextoEdicionDescuento(client, certificadoId, userContext);
+        const reservaActual = await obtenerReservaActivaBloqueada(client, certificadoId);
+        if (reservaActual?.estado === 'APLICADO') throw errorNegocio('DESCUENTO_APLICADO_NO_MODIFICABLE', 409);
+        const calculo = await consultarDescuentoCore(client, codigo, certificadoId, userContext, true, true);
+        const importeServicioActual = reservaActual
+            ? redondearMoneda(reservaActual.importe_final)
+            : calculo.tarifaOriginal;
+        const orden = await actualizarOrdenBorradorPorDescuento(
+            client, contexto, calculo.importeFinal, importeServicioActual, userContext
+        );
+        await guardarReservaDescuento(client, calculo, reservaActual, orden, userContext);
 
         await client.query('COMMIT');
         calculo.plantaKey = calculo.certificado?.planta_key || null;
@@ -667,18 +912,21 @@ exports.quitarDescuentoBorrador = async (certificadoId, userContext) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        
-        const sqlOrd = `SELECT 1 FROM fg_orden_pago WHERE certificado_id = $1`;
-        const resOrd = await client.query(sqlOrd, [certificadoId]);
-        if (resOrd.rowCount > 0) {
-            throw errorNegocio('ORDEN_PAGO_EXISTENTE', 409);
-        }
+        const contexto = await obtenerContextoEdicionDescuento(client, certificadoId, userContext);
+        const reservaActual = await obtenerReservaActivaBloqueada(client, certificadoId);
+        if (reservaActual?.estado === 'APLICADO') throw errorNegocio('DESCUENTO_APLICADO_NO_MODIFICABLE', 409);
 
-        await client.query(`
-            UPDATE fg_descuentocomprobante 
-            SET estado = 'LIBERADO', usuario_modificacion = $2, fecha_modificacion = CURRENT_TIMESTAMP
-            WHERE certificado_id = $1 AND estado = 'RESERVADO'
-        `, [certificadoId, userContext.username]);
+        if (reservaActual) {
+            const tarifaOriginal = await obtenerPrecioOriginalServicio(client, contexto.certificado, reservaActual.importe_original);
+            await actualizarOrdenBorradorPorDescuento(
+                client, contexto, tarifaOriginal, redondearMoneda(reservaActual.importe_final), userContext
+            );
+            await client.query(`
+                UPDATE fg_descuentocomprobante
+                SET estado = 'LIBERADO', usuario_modificacion = $2, fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE id = $1 AND estado = 'RESERVADO'
+            `, [reservaActual.id, userContext.username]);
+        }
 
         await client.query('COMMIT');
         return { success: true };
@@ -747,7 +995,8 @@ exports.obtenerResumenDescuentoCertificado = async (queryable, certificado) => {
         SELECT cmp.*,
                COALESCE(dc.codigo, CASE WHEN d.id = 17 OR UPPER(BTRIM(d.codigo)) = 'D_CONVENIO_A88137BB742F4157' OR EXISTS (SELECT 1 FROM fg_descuentocliente dcp WHERE dcp.descuento_id = d.id AND UPPER(BTRIM(dcp.codigo)) IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER')) THEN 'CORTESIA_FAREGAS' ELSE d.codigo END) AS codigo,
                COALESCE(dc.codigo, CASE WHEN d.id = 17 OR UPPER(BTRIM(d.codigo)) = 'D_CONVENIO_A88137BB742F4157' OR EXISTS (SELECT 1 FROM fg_descuentocliente dcp WHERE dcp.descuento_id = d.id AND UPPER(BTRIM(dcp.codigo)) IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER')) THEN 'CORTESIA_FAREGAS' ELSE d.codigo END) AS codigo_autorizacion,
-               d.nombre AS descuento_nombre
+               d.nombre AS descuento_nombre,
+               d.empresa_aliada_nombre
         FROM fg_descuentocomprobante cmp
         LEFT JOIN fg_descuentocliente dc ON dc.id = cmp.descuento_cliente_id
         LEFT JOIN fg_descuento d ON d.id = COALESCE(cmp.descuento_id, dc.descuento_id)
@@ -766,6 +1015,13 @@ exports.obtenerResumenDescuentoCertificado = async (queryable, certificado) => {
     }
 
     const reserva = res.rows[0];
+    if (esDescuentoLegadoFarenet(reserva) && !esDescuentoEspecialCortesia({
+        descuento_id: reserva.descuento_id,
+        codigo: reserva.codigo_autorizacion || reserva.codigo,
+        nombre: reserva.descuento_nombre
+    })) {
+        throw errorNegocio('DESCUENTO_ORIGEN_NO_AUTORIZADO', 422);
+    }
     if (Math.abs(Number(reserva.importe_original) - tarifaOriginal) > 0.009) {
         throw errorNegocio('DESCUENTO_REQUIERE_REVALIDACION', 409);
     }
@@ -879,7 +1135,18 @@ const obtenerOCrearEjecutivo = async (client, nombre, username) => {
 
 exports.listarDescuentos = async (filtros = {}) => {
     const params = [];
-    let where = 'WHERE 1=1 AND d.id <> 17';
+    let where = `WHERE 1=1
+        AND d.id <> ${DESCUENTO_ID_CORTESIA_HISTORICO}
+        AND UPPER(BTRIM(COALESCE(d.codigo, ''))) NOT IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER', 'D_CONVENIO_A88137BB742F4157')
+        AND UPPER(BTRIM(COALESCE(d.nombre, ''))) NOT IN ('DESCUENTO CERTIFICADO TALLER', 'CORTESIA FAREGAS', 'CORTESÍA FAREGAS')
+        AND UPPER(COALESCE(d.nombre, '')) NOT LIKE '%CORTESIA%'
+        AND UPPER(COALESCE(d.nombre, '')) NOT LIKE '%CORTESÍA%'
+        AND REGEXP_REPLACE(UPPER(BTRIM(COALESCE(d.empresa_aliada_nombre, ''))), '[^A-Z0-9]', '', 'g') NOT IN ('FARENET', 'FARENETSAC')
+        AND NOT EXISTS (
+            SELECT 1 FROM fg_descuentocliente dc_protected
+            WHERE dc_protected.descuento_id=d.id
+              AND UPPER(BTRIM(dc_protected.codigo)) IN ('CORTESIA_FAREGAS', 'DESCUENTO_TALLER', 'D_CONVENIO_A88137BB742F4157')
+        )`;
     if (filtros.estado === 'ACTIVOS') where += ' AND d.activo = TRUE AND d.fecha_fin >= CURRENT_TIMESTAMP';
     if (filtros.estado === 'INACTIVOS') where += ' AND d.activo = FALSE';
     if (filtros.estado === 'VENCIDOS') where += ' AND d.fecha_fin < CURRENT_TIMESTAMP';
@@ -911,12 +1178,21 @@ exports.listarDescuentos = async (filtros = {}) => {
 exports.obtenerMaestrosAdministracion = async () => {
     const [plantas, servicios, serviciosPorPlanta, ejecutivos] = await Promise.all([
         db.query('SELECT key, nombre FROM fg_planta WHERE activo = TRUE ORDER BY nombre'),
-        db.query(`SELECT s.id, s.codigo, s.nombre, c.nombre AS categoria
+        db.query(`SELECT s.id, s.codigo, s.nombre, s.familia, s.tipo_certificado_clave,
+                         s.modalidad, s.tipo_flujo, c.codigo AS categoria_codigo, c.nombre AS categoria,
+                         formato_raiz.codigo AS formato_codigo_canonico
                   FROM fg_servicio s JOIN fg_categoria_servicio c ON c.id = s.categoria_id
+                  LEFT JOIN fg_certificado_formato formato ON formato.id=s.formato_id
+                  LEFT JOIN fg_certificado_formato formato_raiz
+                    ON formato_raiz.id=COALESCE(formato.formato_padre_id, formato.id)
                   WHERE s.activo = TRUE ORDER BY c.orden, s.orden, s.nombre`),
-        db.query(`SELECT t.planta_key, s.id, s.codigo, s.nombre, c.nombre AS categoria,
+        db.query(`SELECT t.planta_key, p.nombre AS sede_nombre, s.id, s.codigo, s.nombre,
+                         s.familia, c.codigo AS categoria_codigo, c.nombre AS categoria,
                          s.tipo_certificado_clave, s.modalidad, s.tipo_flujo,
-                         t.codigo AS tarifa_codigo, t.producto_facturacion_id,
+                         formato_raiz.codigo AS formato_codigo_canonico,
+                         t.codigo AS tarifa_codigo, t.producto_facturacion_id, t.activo AS tarifa_activa,
+                         pf.codigo_sku AS producto_sku, pf.descripcion AS producto_descripcion,
+                         pf.activo AS producto_activo, pf.es_para_venta AS producto_para_venta,
                          pf.precio_referencia AS producto_precio_referencia,
                          pf.precio_unitario AS producto_precio_unitario
                   FROM fg_tarifa t
@@ -924,6 +1200,9 @@ exports.obtenerMaestrosAdministracion = async () => {
                   JOIN fg_servicio s ON s.id=t.servicio_id
                   JOIN fg_categoria_servicio c ON c.id=s.categoria_id
                   LEFT JOIN fg_producto_facturacion pf ON pf.id=t.producto_facturacion_id
+                  LEFT JOIN fg_certificado_formato formato ON formato.id=s.formato_id
+                  LEFT JOIN fg_certificado_formato formato_raiz
+                    ON formato_raiz.id=COALESCE(formato.formato_padre_id, formato.id)
                   WHERE p.activo=TRUE AND t.activo=TRUE AND s.activo=TRUE AND c.activo=TRUE
                     AND s.tipo_flujo = ANY($1::varchar[])
                   ORDER BY p.nombre, c.orden, s.orden, s.nombre`, [FLUJOS_DESCONTABLES]),
@@ -1111,14 +1390,23 @@ const normalizarCodigoCliente = (data) => ({
 
 const normalizarReglasCampana = (data) => (
     Array.isArray(data.reglas) ? data.reglas : []
-).map(item => ({
-    plantaKey: String(item.plantaKey || '').trim(),
-    servicioId: Number(item.servicioId),
-    tipoCalculo: String(item.tipoCalculo || '').trim().toUpperCase(),
-    valor: item.valor === '' || item.valor == null ? null : Number(item.valor),
-    valorContado: item.valorContado === '' || item.valorContado == null ? null : Number(item.valorContado),
-    valorCredito: item.valorCredito === '' || item.valorCredito == null ? null : Number(item.valorCredito)
-}));
+).map(item => {
+    const normalizarValor = (valor) => {
+        if (valor === '' || valor == null) return null;
+        if (!tieneMaximoDosDecimales(valor)) throw errorNegocio('IMPORTE_DECIMALES_INVALIDOS', 400);
+        return normalizarValorRegla(valor);
+    };
+    return {
+        plantaKey: String(item.plantaKey || '').trim(),
+        servicioId: Number(item.servicioId),
+        tipoCalculo: String(item.tipoCalculo || '').trim().toUpperCase(),
+        // Conservar los importes decimales como texto hasta PostgreSQL NUMERIC,
+        // evitando conversiones de ida y vuelta por coma flotante.
+        valor: normalizarValor(item.valor),
+        valorContado: normalizarValor(item.valorContado),
+        valorCredito: normalizarValor(item.valorCredito)
+    };
+});
 
 const validarReglasCampana = (reglas) => {
     if (reglas.length === 0) throw errorNegocio('SERVICIOS_DESCUENTO_REQUERIDOS', 400);
@@ -1135,14 +1423,13 @@ const validarReglasCampana = (reglas) => {
                 throw errorNegocio('VALOR_DESCUENTO_INVALIDO', 400);
             }
             const valores = [detalle.valorContado, detalle.valorCredito].filter(valor => valor != null);
-            if (valores.some(valor => !Number.isFinite(valor) || valor <= 0)) {
+            if (valores.some(valor => !Number.isFinite(Number(valor)) || Number(valor) <= 0)) {
                 throw errorNegocio('VALOR_DESCUENTO_INVALIDO', 400);
             }
-        } else if (!Number.isFinite(detalle.valor)
-            || detalle.valor <= 0
+        } else if (!Number.isFinite(Number(detalle.valor))
+            || Number(detalle.valor) <= 0
             || detalle.valorContado != null
-            || detalle.valorCredito != null
-            || (detalle.tipoCalculo === 'PORCENTAJE' && detalle.valor > 100)) {
+            || detalle.valorCredito != null) {
             throw errorNegocio('VALOR_DESCUENTO_INVALIDO', 400);
         }
 
@@ -1354,15 +1641,23 @@ const guardarReglasCampana = async (client, descuentoId, reglas, username) => {
         SET activo=FALSE, usuario_modificacion=$2, fecha_modificacion=CURRENT_TIMESTAMP
         WHERE descuento_id=$1 AND descuento_cliente_id IS NULL`, [descuentoId, username]);
 
+    const conceptosPorSede = new Set();
     for (const regla of reglas) {
         const referencia = await client.query(`SELECT t.producto_facturacion_id,
+                    p.nombre AS sede, t.codigo AS tarifa_codigo, t.activo AS tarifa_activa,
+                    pf.activo AS producto_activo, pf.es_para_venta AS producto_para_venta,
                     pf.precio_referencia AS producto_precio_referencia,
-                    pf.precio_unitario AS producto_precio_unitario
+                    pf.precio_unitario AS producto_precio_unitario,
+                    s.id AS servicio_id, s.familia, s.tipo_certificado_clave, s.modalidad, s.tipo_flujo,
+                    formato_raiz.codigo AS formato_codigo_canonico
             FROM fg_tarifa t
             JOIN fg_planta p ON p.key=t.planta_key
             JOIN fg_servicio s ON s.id=t.servicio_id
             JOIN fg_categoria_servicio c ON c.id=s.categoria_id
             LEFT JOIN fg_producto_facturacion pf ON pf.id=t.producto_facturacion_id
+            LEFT JOIN fg_certificado_formato formato ON formato.id=s.formato_id
+            LEFT JOIN fg_certificado_formato formato_raiz
+              ON formato_raiz.id=COALESCE(formato.formato_padre_id, formato.id)
             WHERE t.planta_key=$1 AND t.servicio_id=$2 AND t.activo=TRUE
               AND p.activo=TRUE AND s.activo=TRUE AND c.activo=TRUE
               AND s.tipo_flujo = ANY($3::varchar[])`, [
@@ -1372,14 +1667,53 @@ const guardarReglasCampana = async (client, descuentoId, reglas, username) => {
         ]);
         if (!referencia.rowCount) throw errorNegocio('REFERENCIA_DESCUENTO_INVALIDA', 400);
 
-        const tarifa = resolverPrecioServicio(referencia.rows[0]);
-        if (!Number.isFinite(tarifa) || tarifa <= 0) {
-            throw errorNegocio('REFERENCIA_DESCUENTO_INVALIDA', 400);
+        const fila = referencia.rows[0];
+        const claveConcepto = claveServicioCanonica(fila);
+        const claveSedeConcepto = `${regla.plantaKey}::${claveConcepto}`;
+        if (conceptosPorSede.has(claveSedeConcepto)) {
+            throw errorNegocio('REGLA_DESCUENTO_CANONICA_DUPLICADA', 400, {
+                plantaKey: regla.plantaKey,
+                sede: fila.sede,
+                servicioId: regla.servicioId,
+                message: `${fila.sede}: el mismo concepto de certificado está repetido en más de una regla activa.`
+            });
         }
-        const valoresFlat = [regla.valorContado, regla.valorCredito].filter(valor => valor != null);
-        if ((regla.tipoCalculo === 'FLAT' && valoresFlat.some(valor => valor >= tarifa))
-            || (regla.tipoCalculo === 'MONTO' && regla.valor > tarifa)) {
-            throw errorNegocio('IMPORTE_DESCUENTO_INVALIDO', 400);
+        conceptosPorSede.add(claveSedeConcepto);
+
+        const productoDisponible = fila.producto_facturacion_id != null
+            && fila.producto_activo === true
+            && fila.producto_para_venta === true;
+        const tarifa = productoDisponible ? resolverPrecioServicio(fila) : null;
+        if (!Number.isFinite(Number(tarifa)) || Number(tarifa) <= 0) {
+            const motivo = !fila.producto_facturacion_id
+                ? 'No tiene producto fiscal asociado a la tarifa.'
+                : !productoDisponible
+                    ? 'El producto fiscal asociado no está activo para venta.'
+                    : 'La tarifa no tiene un precio de venta vigente positivo.';
+            lanzarErrorPrecioRegla({
+                regla,
+                precioVenta: null,
+                contexto: { plantaKey: regla.plantaKey, sede: fila.sede, servicioId: regla.servicioId, tarifaCodigo: fila.tarifa_codigo },
+                evaluacion: { motivo },
+                statusCode: 400
+            });
+        }
+
+        const valores = regla.tipoCalculo === 'FLAT'
+            ? [regla.valorContado, regla.valorCredito].filter(valor => valor != null)
+            : [regla.valor];
+        for (const valor of valores) {
+            validarPrecioRegla({
+                tipoCalculo: regla.tipoCalculo,
+                valor: regla.tipoCalculo === 'FLAT' ? null : valor,
+                valorContado: regla.tipoCalculo === 'FLAT' ? valor : null,
+                valorCredito: regla.tipoCalculo === 'FLAT' ? valor : null
+            }, tarifa, {
+                plantaKey: regla.plantaKey,
+                sede: fila.sede,
+                servicioId: regla.servicioId,
+                tarifaCodigo: fila.tarifa_codigo
+            }, 400);
         }
 
         await client.query(`INSERT INTO fg_descuentodetalle
@@ -1522,6 +1856,10 @@ exports._private = {
     resolverPrecioServicio,
     mapearServicioAdministracion,
     calcularImporteFinal,
+    redondearMoneda,
+    actualizarOrdenBorradorPorDescuento,
+    validarOrdenPagoEditable,
+    guardarReservaDescuento,
     generarItemsLote,
     prepararItemsCodigos,
     validarVigenciaCodigos,

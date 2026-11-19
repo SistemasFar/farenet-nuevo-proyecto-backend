@@ -214,6 +214,42 @@ function mapearFormaPago(condicionPago, medioPago, pagosOpciones = null) {
 
 const moneda = valor => Number(valor || 0).toFixed(2);
 
+/**
+ * Construye el resumen comercial con importes que incluyen IGV.
+ *
+ * El descuento se toma exclusivamente de fg_descuentocomprobante.importe_descuento;
+ * no se deriva del descuento fiscal ni se recalcula aplicando el IGV. Así, el
+ * PDF comercial puede mostrar S/ 20.00 aunque el XML conserve S/ 16.95 como
+ * descuento global antes de impuestos.
+ */
+function construirResumenComercial({ facturacionTotal, descuentoPersistido, esOperacionGratuita = false }) {
+    if (esOperacionGratuita) return null;
+
+    const total = Number(facturacionTotal || 0);
+    const descuento = Number(descuentoPersistido?.importe_descuento || 0);
+    const precioOriginalPersistido = Number(descuentoPersistido?.importe_original);
+    const importeFinalPersistido = Number(descuentoPersistido?.importe_final);
+    const tieneDescuento = Number.isFinite(descuento) && descuento > 0;
+    const precioOriginal = tieneDescuento && Number.isFinite(precioOriginalPersistido)
+        ? precioOriginalPersistido
+        : total;
+
+    if (tieneDescuento) {
+        if (!Number.isFinite(importeFinalPersistido)
+            || moneda(importeFinalPersistido) !== moneda(total)
+            || moneda(precioOriginal - descuento) !== moneda(total)) {
+            throw new Error('INCONSISTENCIA_COMERCIAL: El descuento persistido no coincide con el total del comprobante.');
+        }
+    }
+
+    return {
+        precioOriginal,
+        descuentoComercialConIgv: tieneDescuento ? descuento : 0,
+        total,
+        tieneDescuento
+    };
+}
+
 function validarConsistenciaFiscal(facturacion, viewModel) {
     if (String(viewModel.comprobante.serie) !== String(facturacion.serie)) {
         throw new Error('INCONSISTENCIA_FISCAL: La serie impresa no coincide con la facturación persistida.');
@@ -292,6 +328,9 @@ function validarSnapshotObligatorio(facturacion, payloadFiscal) {
         || !String(facturacion.numero_certificado || '').trim())) {
         throw new Error('CERTIFICADO_NO_EMITIDO: La representación impresa se genera después de asignar el DG definitivo.');
     }
+    if (!facturacion.sede_nombre_snapshot) {
+        facturacion.sede_nombre_snapshot = facturacion.planta_key || 'PRINCIPAL';
+    }
     const faltantes = [
         ['fecha_documento', facturacion.fecha_documento],
         ['ruc_emisor', facturacion.ruc_emisor],
@@ -369,16 +408,16 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
     if (itemsCrudos.length === 0) throw new Error('DETALLE_FACTURACION_NO_DISPONIBLE');
 
     const qDescuento = await db.query(
-        `SELECT dc.importe_descuento,
+        `SELECT dc.importe_original, dc.importe_descuento, dc.importe_final,
                 COALESCE(dcl.codigo, d.codigo) AS codigo_real,
                 d.nombre AS nombre_real
          FROM fg_descuentocomprobante dc
          LEFT JOIN fg_descuentocliente dcl ON dcl.id = dc.descuento_cliente_id
          LEFT JOIN fg_descuento d ON d.id = COALESCE(dc.descuento_id, dcl.descuento_id)
-         WHERE dc.facturacion_id = $1 AND dc.estado = 'APLICADO'
-         ORDER BY dc.id DESC
+         WHERE (dc.facturacion_id = $1 OR ($2::bigint IS NOT NULL AND dc.certificado_id = $2)) AND dc.estado = 'APLICADO'
+         ORDER BY CASE WHEN dc.facturacion_id = $1 THEN 0 ELSE 1 END, dc.id DESC
          LIMIT 1`,
-        [facturacionId]
+        [facturacionId, f.certificado_id || null]
     );
     const descuentoFiscal = Number(payloadFiscal.total_descuento || 0);
     f.descuento_fiscal_snapshot = descuentoFiscal;
@@ -392,6 +431,7 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
     const items = itemsCrudos.map(item => itemsDesdePayload
         ? mapearItemPayload(item, esOperacionGratuita)
         : mapearItemOperacion(item, esOperacionGratuita));
+    const descuentoPersistido = qDescuento.rows[0] || null;
     const descuentoData = codigoDescuento ? {
         codigo: codigoDescuento,
         descripcion: esOperacionGratuita
@@ -399,6 +439,11 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
             : nombreDescuento,
         monto: esOperacionGratuita ? 0 : Number(qDescuento.rows[0]?.importe_descuento || descuentoFiscal)
     } : null;
+    const resumenComercial = construirResumenComercial({
+        facturacionTotal: f.importe_total,
+        descuentoPersistido,
+        esOperacionGratuita
+    });
 
     const qPagos = await db.query(
         `SELECT p.tipocontado_key, p.tarjeta_key, p.modalidad_tarjeta AS tipo_tarjeta,
@@ -479,6 +524,7 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
             total: f.importe_total
         },
         descuento: descuentoData,
+        resumenComercial,
         cuotas: construirCuotasImpresas(f, qCuotas.rows),
         numeroCertificado: f.numero_certificado,
         ordenTrabajo: esTaller ? '' : (f.veh_placa || f.operacion_placa || ''),
@@ -533,6 +579,7 @@ module.exports = {
     construirCuotasImpresas,
     mapearFormaPago,
     validarConsistenciaFiscal,
+    construirResumenComercial,
     obtenerDatosComprobanteImpreso,
     generarHtml,
     generarPdf,

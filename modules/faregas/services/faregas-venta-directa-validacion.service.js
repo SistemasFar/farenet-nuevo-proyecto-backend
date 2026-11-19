@@ -9,32 +9,52 @@ const { validarSedeOperativaChips } = require('./faregas-chips-fiscal.rules');
 const inventarioCantidadService = require('./faregas-inventario-cantidad.service');
 
 const ESTADOS_NO_DISPONIBLES = {
-    RESERVADO: { codigo: 'CHIP_RESERVADO', motivo: 'Reservado' },
-    VENDIDO: { codigo: 'CHIP_VENDIDO', motivo: 'Vendido' },
-    BAJA: { codigo: 'CHIP_BAJA', motivo: 'Dado de baja' }
+    RESERVADO: { codigo: 'CHIP_RESERVADO', motivo: 'Actualmente reservado. No está disponible para venta.' },
+    VENDIDO: { codigo: 'CHIP_VENDIDO', motivo: 'Este chip ya fue vendido.' },
+    BAJA: { codigo: 'CHIP_BAJA', motivo: 'Chip dado de baja. No disponible para venta.' },
+    TRANSFERIDO: { codigo: 'CHIP_TRANSFERIDO', motivo: 'Chip transferido. No disponible para venta.' }
+};
+
+const formatearFecha = (fecha) => {
+    if (!fecha) return null;
+    const d = new Date(fecha);
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Lima' });
 };
 
 const numeroOpcional = (value) => value == null ? null : Number(value);
 
-const construirItem = (numeroChip) => ({
-    numeroChip,
-    existe: false,
-    estado: null,
-    plantaKey: null,
-    plantaNombre: null,
-    productoInventariableId: null,
-    productoFacturacionId: null,
-    productoCodigo: null,
-    productoNombre: null,
-    precio: null,
-    precioConfigurado: false,
-    stockPermitido: false,
-    ventaHabilitada: false,
-    productoFiscalValido: false,
-    validoParaVenta: false,
-    codigo: 'CHIP_NO_ENCONTRADO',
-    motivo: 'No encontrado'
-});
+const construirItem = (numeroChip, plantaNombre = null, stockSede = null) => {
+    let mensajeStockSede = null;
+    if (stockSede && plantaNombre) {
+        if (stockSede.disponible > 0) {
+            mensajeStockSede = `${numeroChip} no está disponible en ${plantaNombre}. Esta sede tiene ${stockSede.disponible} chips disponibles, pero ninguno corresponde al código ingresado.`;
+        } else {
+            mensajeStockSede = `${numeroChip} no está disponible en ${plantaNombre}. Esta sede no tiene chips disponibles para venta (Total: ${stockSede.total}, Vendidos: ${stockSede.vendido}, Reservados: ${stockSede.reservado}).`;
+        }
+    }
+    return {
+        numeroChip,
+        existe: false,
+        estado: null,
+        plantaKey: null,
+        plantaNombre: null,
+        productoInventariableId: null,
+        productoFacturacionId: null,
+        productoCodigo: null,
+        productoNombre: null,
+        precio: null,
+        precioConfigurado: false,
+        stockPermitido: false,
+        ventaHabilitada: false,
+        productoFiscalValido: false,
+        validoParaVenta: false,
+        codigo: 'CHIP_INEXISTENTE',
+        motivo: `${numeroChip} — No existe en el inventario registrado.`,
+        mensajeStockSede,
+        stockSede
+    };
+};
 
 const construirItemEncontrado = (row) => {
     const precio = Number(row.precio_venta_fiscal);
@@ -80,70 +100,170 @@ const invalidar = (item, codigo, motivo) => ({
     motivo
 });
 
-const evaluarChip = ({ row, plantaKey, plantaNombre }) => {
+const evaluarChip = ({ row, plantaKey, plantaNombre, stockSede = null }) => {
     const item = construirItemEncontrado(row);
+    const numeroChip = item.numeroChip;
 
+    const asignarStockContexto = (it) => {
+        if (!it.validoParaVenta && stockSede && plantaNombre) {
+            if (stockSede.disponible > 0) {
+                it.mensajeStockSede = `${numeroChip} no está disponible en ${plantaNombre}. Esta sede tiene ${stockSede.disponible} chips disponibles, pero ninguno corresponde al código ingresado.`;
+            } else {
+                it.mensajeStockSede = `${numeroChip} no está disponible en ${plantaNombre}. Esta sede no tiene chips disponibles para venta (Total: ${stockSede.total}, Vendidos: ${stockSede.vendido}, Reservados: ${stockSede.reservado}).`;
+            }
+            it.stockSede = stockSede;
+        }
+        return it;
+    };
+
+    // Caso B: Pertenece a otra sede
     if (item.plantaKey !== plantaKey) {
-        return invalidar(item, 'CHIP_OTRA_SEDE', 'El chip pertenece a otra sede');
+        if (item.estado === 'DISPONIBLE') {
+            return asignarStockContexto(invalidar(
+                item,
+                'CHIP_OTRA_SEDE',
+                `${numeroChip} — Disponible en la sede ${row.planta_nombre || 'otra sede'}. No puede venderse desde ${plantaNombre}.`
+            ));
+        }
+        if (item.estado === 'VENDIDO') {
+            const fechaStr = formatearFecha(row.fecha_venta);
+            const detalleVenta = row.sede_venta_nombre
+                ? ` en la sede ${row.sede_venta_nombre}${fechaStr ? ` el ${fechaStr}` : ''}`
+                : (fechaStr ? ` el ${fechaStr}` : '');
+            return asignarStockContexto(invalidar(
+                item,
+                'CHIP_VENDIDO',
+                `${numeroChip} — Este chip ya fue vendido${detalleVenta}.`
+            ));
+        }
+        if (item.estado === 'RESERVADO') {
+            return asignarStockContexto(invalidar(
+                item,
+                'CHIP_RESERVADO',
+                `${numeroChip} — Actualmente reservado. No está disponible para venta.`
+            ));
+        }
+        if (item.estado === 'BAJA') {
+            return asignarStockContexto(invalidar(
+                item,
+                'CHIP_BAJA',
+                `${numeroChip} — Chip dado de baja. No disponible para venta.`
+            ));
+        }
+        if (item.estado === 'TRANSFERIDO') {
+            return asignarStockContexto(invalidar(
+                item,
+                'CHIP_TRANSFERIDO',
+                `${numeroChip} — Chip transferido. No disponible para venta.`
+            ));
+        }
+        return asignarStockContexto(invalidar(
+            item,
+            'CHIP_NO_DISPONIBLE',
+            `${numeroChip} — No disponible para venta (${item.estado}).`
+        ));
+    }
+
+    // Misma sede (plantaKey === item.plantaKey)
+    if (item.estado === 'VENDIDO') {
+        const fechaStr = formatearFecha(row.fecha_venta);
+        const detalleVenta = row.sede_venta_nombre
+            ? ` en la sede ${row.sede_venta_nombre}${fechaStr ? ` el ${fechaStr}` : ''}`
+            : (fechaStr ? ` el ${fechaStr}` : '');
+        return asignarStockContexto(invalidar(
+            item,
+            'CHIP_VENDIDO',
+            `${numeroChip} — Este chip ya fue vendido${detalleVenta}.`
+        ));
+    }
+
+    if (item.estado === 'RESERVADO') {
+        return asignarStockContexto(invalidar(
+            item,
+            'CHIP_RESERVADO',
+            `${numeroChip} — Actualmente reservado. No está disponible para venta.`
+        ));
+    }
+
+    if (item.estado === 'BAJA') {
+        return asignarStockContexto(invalidar(
+            item,
+            'CHIP_BAJA',
+            `${numeroChip} — Chip dado de baja. No disponible para venta.`
+        ));
+    }
+
+    if (item.estado === 'TRANSFERIDO') {
+        return asignarStockContexto(invalidar(
+            item,
+            'CHIP_TRANSFERIDO',
+            `${numeroChip} — Chip transferido. No disponible para venta.`
+        ));
     }
 
     if (item.estado !== 'DISPONIBLE') {
-        const estado = ESTADOS_NO_DISPONIBLES[item.estado] || {
-            codigo: 'CHIP_NO_DISPONIBLE',
-            motivo: 'No disponible'
-        };
-        return invalidar(item, estado.codigo, estado.motivo);
+        return asignarStockContexto(invalidar(
+            item,
+            'CHIP_NO_DISPONIBLE',
+            `${numeroChip} — No disponible para venta (${item.estado}).`
+        ));
     }
 
+    // Caso E: DISPONIBLE en la sede activa
     if (row.producto_activo !== true || row.sede_activa !== true) {
-        return invalidar(
+        return asignarStockContexto(invalidar(
             item,
             'PRODUCTO_INVENTARIABLE_NO_CONFIGURADO_SEDE',
-            'Producto no configurado para esta sede'
-        );
+            `${numeroChip} — Producto no configurado para esta sede.`
+        ));
     }
 
     if (!item.stockPermitido) {
-        return invalidar(
+        return asignarStockContexto(invalidar(
             item,
             'STOCK_CHIP_NO_PERMITIDO',
-            `Stock no permitido para ${plantaNombre}`
-        );
+            `${numeroChip} — Stock no permitido para ${plantaNombre}.`
+        ));
     }
 
     if (!item.ventaHabilitada) {
-        return invalidar(
+        return asignarStockContexto(invalidar(
             item,
             'VENTA_CHIP_NO_HABILITADA',
-            `Venta no habilitada para ${plantaNombre}`
-        );
+            `${numeroChip} — Venta no habilitada para ${plantaNombre}.`
+        ));
     }
 
     if (!row.producto_facturacion_id) {
-        return invalidar(
+        return asignarStockContexto(invalidar(
             item,
             'CHIP_PRODUCTO_FISCAL_NO_CONFIGURADO',
-            'Falta vincular el producto fiscal para esta sede'
-        );
+            `${numeroChip} — Falta vincular el producto fiscal para esta sede.`
+        ));
     }
 
     if (!item.productoFiscalValido) {
-        return invalidar(
+        return asignarStockContexto(invalidar(
             item,
             'PRODUCTO_FISCAL_CHIP_INVALIDO',
-            'Producto fiscal no configurado correctamente para esta sede'
-        );
+            `${numeroChip} — Producto fiscal no configurado correctamente para esta sede.`
+        ));
     }
 
     if (!item.precioConfigurado) {
-        return invalidar(
+        return asignarStockContexto(invalidar(
             item,
             'PRECIO_VENTA_FISCAL_CHIP_INVALIDO',
-            'El producto fiscal no tiene un P. venta válido'
-        );
+            `${numeroChip} — El producto fiscal no tiene un P. venta válido.`
+        ));
     }
 
-    return { ...item, validoParaVenta: true };
+    return {
+        ...item,
+        validoParaVenta: true,
+        codigo: null,
+        motivo: `${numeroChip} — Disponible para venta.`
+    };
 };
 
 const validarVentaDirecta = async (payload, userContext, queryable = db) => {
@@ -155,7 +275,7 @@ const validarVentaDirecta = async (payload, userContext, queryable = db) => {
     if (tieneChips && tieneCantidad) throw new Error('MODO_VENTA_INVALIDO');
 
     if (tieneCantidad) {
-        inventarioCantidadService.validarSedeHojas(plantaKey);
+        inventarioCantidadService.validarSedeProductoCantidad(plantaKey);
         const cantidad = inventarioCantidadService.normalizarCantidad(payload.cantidad);
         const planta = await authService.validarAccesoPlanta(
             userContext.username,
@@ -227,8 +347,44 @@ const validarVentaDirecta = async (payload, userContext, queryable = db) => {
     if (!planta) throw new Error('PLANTA_NO_AUTORIZADA');
 
     const plantaNombre = String(planta.nombre || plantaKey).trim();
+    let stockSede = {
+        plantaKey,
+        plantaNombre,
+        total: 0,
+        disponible: 0,
+        reservado: 0,
+        vendido: 0,
+        baja: 0
+    };
+    try {
+        const stockRes = await queryable.query(`
+            SELECT 
+                COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE estado = 'DISPONIBLE')::int AS disponible,
+                COUNT(*) FILTER (WHERE estado = 'RESERVADO')::int AS reservado,
+                COUNT(*) FILTER (WHERE estado = 'VENDIDO')::int AS vendido,
+                COUNT(*) FILTER (WHERE estado = 'BAJA')::int AS baja
+            FROM fg_chip
+            WHERE planta_actual_key = $1
+        `, [plantaKey]);
+        if (stockRes?.rows?.[0]) {
+            const row = stockRes.rows[0];
+            stockSede = {
+                plantaKey,
+                plantaNombre,
+                total: Number(row.total || 0),
+                disponible: Number(row.disponible || 0),
+                reservado: Number(row.reservado || 0),
+                vendido: Number(row.vendido || 0),
+                baja: Number(row.baja || 0)
+            };
+        }
+    } catch {
+        // En tests con mocks básicos donde queryable no soporte agregados, continúa con el fallback
+    }
+
     const result = await queryable.query(`
-        SELECT c.id, c.numero_chip, c.estado, c.planta_actual_key,
+        SELECT c.id, c.numero_chip, c.estado, c.planta_actual_key, c.actualizado_en,
                p.nombre AS planta_nombre,
                pi.id AS producto_inventariable_id,
                pi.codigo AS producto_codigo,
@@ -241,17 +397,28 @@ const validarVentaDirecta = async (payload, userContext, queryable = db) => {
                pf.codigo_sku, pf.descripcion, pf.unidad,
                pf.tipo_afectacion_igv, pf.codigo_clasificacion_sunat,
                pf.sujeto_detraccion, pf.detraccion_codigo, pf.detraccion_porcentaje,
-               pf.activo AS fiscal_activo, pf.es_para_venta
+               pf.activo AS fiscal_activo, pf.es_para_venta,
+               cm_venta.fecha AS fecha_venta,
+               p_venta.nombre AS sede_venta_nombre
         FROM fg_chip c
-        JOIN fg_planta p
+        LEFT JOIN fg_planta p
           ON p.key = c.planta_actual_key
-        JOIN fg_producto_inventariable pi
+        LEFT JOIN fg_producto_inventariable pi
           ON pi.id = c.producto_inventariable_id
         LEFT JOIN fg_producto_inventariable_sede pis
           ON pis.producto_inventariable_id = pi.id
          AND pis.planta_key = $2
         LEFT JOIN fg_producto_facturacion pf
           ON pf.id = pis.producto_facturacion_id
+        LEFT JOIN LATERAL (
+            SELECT cm.fecha, cm.planta_origen_key
+            FROM fg_chip_movimiento cm
+            WHERE cm.chip_id = c.id AND cm.tipo_movimiento = 'VENTA'
+            ORDER BY cm.fecha DESC
+            LIMIT 1
+        ) cm_venta ON true
+        LEFT JOIN fg_planta p_venta
+          ON p_venta.key = cm_venta.planta_origen_key
         WHERE c.numero_chip = ANY($1::varchar[])
         ORDER BY c.numero_chip
     `, [lote.validos, plantaKey]);
@@ -263,8 +430,8 @@ const validarVentaDirecta = async (payload, userContext, queryable = db) => {
 
     const items = lote.validos.map((numeroChip) => {
         const row = filasPorNumero.get(numeroChip);
-        if (!row) return construirItem(numeroChip);
-        return evaluarChip({ row, plantaKey, plantaNombre });
+        if (!row) return construirItem(numeroChip, plantaNombre, stockSede);
+        return evaluarChip({ row, plantaKey, plantaNombre, stockSede });
     });
 
     const totalEstimado = redondear(items.reduce(
@@ -277,7 +444,8 @@ const validarVentaDirecta = async (payload, userContext, queryable = db) => {
         items,
         totalEstimado,
         cantidadSolicitados: items.length,
-        cantidadValidos
+        cantidadValidos,
+        stockSedeActual: stockSede
     };
 };
 

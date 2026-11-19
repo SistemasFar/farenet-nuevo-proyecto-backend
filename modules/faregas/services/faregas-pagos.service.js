@@ -9,6 +9,7 @@ const {
     redondear,
     obtenerTarifaConfigurada,
     normalizarPagos,
+    validarCreditoSinPagos,
     construirSnapshotProducto,
     esProductoFiscalChipValido
 } = require('./faregas-pagos.rules');
@@ -237,6 +238,118 @@ const tomarDigitosHistoricos = (porFirma, pago) => {
     return valores?.shift() || null;
 };
 
+const normalizarFechaPersistidaPago = (value) => value ? String(value).slice(0, 10) : '';
+
+const firmaPagoCompleto = (pago) => {
+    const tipo = String(pago.tipo || pago.tipoContadoKey || pago.tipocontado_key || '').trim().toLowerCase();
+    const nroOperacion = String(
+        pago.nroOperacion || pago.nrooperacionbanco || pago.nrooperaciontarjeta || ''
+    ).trim();
+    return [
+        tipo,
+        redondear(pago.importe).toFixed(2),
+        String(pago.tarjetaKey || pago.tarjeta_key || ''),
+        String(pago.modalidadTarjeta || pago.modalidad_tarjeta || '').toUpperCase(),
+        nroOperacion,
+        String(pago.cuentaCorrienteKey || pago.cuentacorriente_key || ''),
+        String(pago.entidadFinancieraKey || pago.entidadfinanciera_key || ''),
+        normalizarFechaPersistidaPago(pago.fechaDeposito || pago.fechdeposito),
+    ].join('|');
+};
+
+const ACTUALIZAR_FACTURACION_PAGO_SQL = `
+    UPDATE fg_facturacion
+    SET condicion_pago = $2,
+        medio_pago = CASE WHEN $3::boolean THEN NULL ELSE medio_pago END,
+        fecha_vencimiento = $4,
+        usuario_modificacion = $5,
+        fecha_modificacion = CURRENT_TIMESTAMP
+    WHERE id = $1
+`;
+
+const construirParametrosCondicionFacturacion = (facturacionId, periodoCredito, username) => [
+    facturacionId,
+    periodoCredito.condicionPago,
+    periodoCredito.condicionPago === 'CREDITO',
+    periodoCredito.fechaVencimientoCredito,
+    username
+];
+
+const insertarPagosNuevosSinAlterarExistentes = async (client, ordenId, pagos, digitosHistoricos) => {
+    const existentesResult = await client.query(
+        `SELECT id, importe, estado, tipocontado_key, tarjeta_key, modalidad_tarjeta,
+                nrooperacionbanco, nrooperaciontarjeta, cuentacorriente_key,
+                entidadfinanciera_key, fechdeposito
+         FROM fg_pago WHERE orden_pago_id = $1 ORDER BY id FOR UPDATE`,
+        [ordenId]
+    );
+    const activos = existentesResult.rows.filter((pago) => pago.estado === 'CAN');
+    const efectivosPersistidos = activos
+        .filter((pago) => String(pago.tipocontado_key || '').toLowerCase() === 'efectivo')
+        .reduce((total, pago) => total + Number(pago.importe || 0), 0);
+    const efectivoSolicitado = pagos
+        .filter((pago) => String(pago.tipo || '').toLowerCase() === 'efectivo')
+        .reduce((total, pago) => total + Number(pago.importe || 0), 0);
+    if (efectivosPersistidos > 0 && Math.abs(redondear(efectivosPersistidos) - redondear(efectivoSolicitado)) > 0.009) {
+        throw new Error('PAGOS_EXISTENTES_NO_MODIFICABLES');
+    }
+    const solicitadosPorFirma = new Map();
+    pagos.filter((pago) => String(pago.tipo || '').toLowerCase() !== 'efectivo').forEach((pago) => {
+        const firma = firmaPagoCompleto(pago);
+        const cantidad = solicitadosPorFirma.get(firma) || 0;
+        solicitadosPorFirma.set(firma, cantidad + 1);
+    });
+
+    for (const pago of activos.filter((item) => String(item.tipocontado_key || '').toLowerCase() !== 'efectivo')) {
+        const firma = firmaPagoCompleto(pago);
+        const cantidad = solicitadosPorFirma.get(firma) || 0;
+        if (cantidad === 0) throw new Error('PAGOS_EXISTENTES_NO_MODIFICABLES');
+        solicitadosPorFirma.set(firma, cantidad - 1);
+    }
+
+    const porFirmaSolicitada = new Map();
+    pagos.filter((pago) => String(pago.tipo || '').toLowerCase() !== 'efectivo').forEach((pago) => {
+        const firma = firmaPagoCompleto(pago);
+        const restantes = solicitadosPorFirma.get(firma) || 0;
+        if (restantes <= 0) return;
+        solicitadosPorFirma.set(firma, restantes - 1);
+        const grupo = porFirmaSolicitada.get(firma) || [];
+        grupo.push(pago);
+        porFirmaSolicitada.set(firma, grupo);
+    });
+
+    const nuevos = [...porFirmaSolicitada.values()].flat();
+    for (const pago of nuevos) {
+        const base = redondear(pago.importe / 1.18);
+        const igv = redondear(pago.importe - base);
+        await client.query(`
+            INSERT INTO fg_pago (
+                baseimponible, digitotarjeta, estado, fechacreacion, fechdeposito,
+                igv, importe, nrooperacionbanco, nrooperaciontarjeta, sendedtooffisis,
+                orden_pago_id, cuentacorriente_key, entidadfinanciera_key, moneda_key,
+                tarjeta_key, tipocontado_key, modalidad_tarjeta
+            ) VALUES (
+                $1, $2, 'CAN', CURRENT_TIMESTAMP, $3, $4, $5, $6, $7, false,
+                $8, $9, $10, 'sol', $11, $12, $13
+            )
+        `, [
+            base,
+            pago.tipo === 'tarjeta' ? tomarDigitosHistoricos(digitosHistoricos, pago) : null,
+            pago.tipo === 'banco' ? pago.fechaDeposito : null,
+            igv,
+            pago.importe,
+            pago.tipo === 'banco' ? String(pago.nroOperacion).trim() : null,
+            pago.tipo === 'tarjeta' ? String(pago.nroOperacion).trim() : null,
+            ordenId,
+            pago.tipo === 'banco' ? pago.cuentaCorrienteKey : null,
+            pago.tipo === 'banco' ? pago.entidadFinancieraKey : null,
+            pago.tipo === 'tarjeta' ? pago.tarjetaKey : null,
+            pago.tipo,
+            pago.tipo === 'tarjeta' ? pago.modalidadTarjeta : null
+        ]);
+    }
+};
+
 exports.guardarPagosOperacion = async (operacionId, data, userContext) => {
     const client = await db.connect();
     try {
@@ -255,6 +368,7 @@ exports.guardarPagosOperacion = async (operacionId, data, userContext) => {
 
         const pagos = normalizarPagos(data.pagos);
         const periodoCredito = normalizarPeriodoCredito(data);
+        validarCreditoSinPagos(periodoCredito, pagos);
         for (const pago of pagos) await validarReferenciaPago(client, pago);
 
         let ordenResult = await client.query(
@@ -277,40 +391,26 @@ exports.guardarPagosOperacion = async (operacionId, data, userContext) => {
             orden = ordenResult.rows[0];
         }
 
+        if (periodoCredito.condicionPago === 'CREDITO') {
+            const pagosPersistidos = await client.query(
+                "SELECT id FROM fg_pago WHERE orden_pago_id = $1 AND estado = 'CAN' FOR UPDATE",
+                [orden.id]
+            );
+            validarCreditoSinPagos(periodoCredito, pagos, pagosPersistidos.rowCount);
+            const descuentoPersistido = await client.query(
+                `SELECT 1 FROM fg_descuentocomprobante
+                 WHERE certificado_id = (SELECT certificado_id FROM fg_orden_pago WHERE id = $1)
+                   AND estado IN ('RESERVADO', 'APLICADO') LIMIT 1`,
+                [orden.id]
+            );
+            if (descuentoPersistido.rowCount > 0) throw new Error('CREDITO_NO_ADMITE_DESCUENTOS');
+        }
+
         const totalPagado = redondear(pagos.reduce((total, pago) => total + pago.importe, 0));
         if (totalPagado - Number(orden.importe_total) > 0.009) throw new Error('PAGO_EXCEDE_TOTAL');
 
         const digitosHistoricos = await obtenerDigitosHistoricos(client, orden.id);
-        await client.query('DELETE FROM fg_pago WHERE orden_pago_id = $1', [orden.id]);
-        for (const pago of pagos) {
-            const base = redondear(pago.importe / 1.18);
-            const igv = redondear(pago.importe - base);
-            await client.query(`
-                INSERT INTO fg_pago (
-                    baseimponible, digitotarjeta, estado, fechacreacion, fechdeposito,
-                    igv, importe, nrooperacionbanco, nrooperaciontarjeta, sendedtooffisis,
-                    orden_pago_id, cuentacorriente_key, entidadfinanciera_key, moneda_key,
-                    tarjeta_key, tipocontado_key, modalidad_tarjeta
-                ) VALUES (
-                    $1, $2, 'CAN', CURRENT_TIMESTAMP, $3, $4, $5, $6, $7, false,
-                    $8, $9, $10, 'sol', $11, $12, $13
-                )
-            `, [
-                base,
-                pago.tipo === 'tarjeta' ? tomarDigitosHistoricos(digitosHistoricos, pago) : null,
-                pago.tipo === 'banco' ? pago.fechaDeposito : null,
-                igv,
-                pago.importe,
-                pago.tipo === 'banco' ? String(pago.nroOperacion).trim() : null,
-                pago.tipo === 'tarjeta' ? String(pago.nroOperacion).trim() : null,
-                orden.id,
-                pago.tipo === 'banco' ? pago.cuentaCorrienteKey : null,
-                pago.tipo === 'banco' ? pago.entidadFinancieraKey : null,
-                pago.tipo === 'tarjeta' ? pago.tarjetaKey : null,
-                pago.tipo,
-                pago.tipo === 'tarjeta' ? pago.modalidadTarjeta : null
-            ]);
-        }
+        await insertarPagosNuevosSinAlterarExistentes(client, orden.id, pagos, digitosHistoricos);
 
         const saldo = redondear(Number(orden.importe_total) - totalPagado);
         const estado = saldo === 0 ? 'PAGADO' : 'PENDIENTE';
@@ -376,6 +476,7 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         if (!Number.isFinite(importeSolicitado) || importeSolicitado < 0) throw new Error('IMPORTE_TOTAL_INVALIDO');
         const pagos = normalizarPagos(data.pagos);
         const periodoCredito = normalizarPeriodoCredito(data);
+        validarCreditoSinPagos(periodoCredito, pagos);
 
         // La cortesía debe existir como reserva persistida antes de validar el pago cero.
         const reservaDescuento = await client.query(`
@@ -398,6 +499,9 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             ORDER BY cmp.id DESC LIMIT 1
         `, [certificadoId]);
         const reserva = reservaDescuento.rows[0] || null;
+        if (periodoCredito.condicionPago === 'CREDITO' && reserva) {
+            throw new Error('CREDITO_NO_ADMITE_DESCUENTOS');
+        }
         if (reserva && Number(reserva.descuento_id) === 17 && !reserva.descuento_cliente_id) {
             try {
                 await client.query(`
@@ -453,6 +557,14 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             if (Math.abs(Number(orden.importe_total) - importeSolicitado) > 0.009) {
                 throw new Error('IMPORTE_ORDEN_NO_MODIFICABLE');
             }
+        }
+
+        if (periodoCredito.condicionPago === 'CREDITO') {
+            const pagosPersistidos = await client.query(
+                "SELECT id FROM fg_pago WHERE orden_pago_id = $1 AND estado = 'CAN' FOR UPDATE",
+                [orden.id]
+            );
+            validarCreditoSinPagos(periodoCredito, pagos, pagosPersistidos.rowCount);
         }
 
         const operacionId = await asegurarOperacionComercial(client, certificado, orden, userContext.username);
@@ -519,36 +631,7 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         if (totalPagado - totalExigibleCaja > 0.009) throw new Error('PAGO_EXCEDE_TOTAL');
 
         const digitosHistoricos = await obtenerDigitosHistoricos(client, orden.id);
-        await client.query('DELETE FROM fg_pago WHERE orden_pago_id = $1', [orden.id]);
-        for (const pago of pagos) {
-            const base = redondear(pago.importe / 1.18);
-            const igv = redondear(pago.importe - base);
-            await client.query(`
-                INSERT INTO fg_pago (
-                    baseimponible, digitotarjeta, estado, fechacreacion, fechdeposito,
-                    igv, importe, nrooperacionbanco, nrooperaciontarjeta, sendedtooffisis,
-                    orden_pago_id, cuentacorriente_key, entidadfinanciera_key, moneda_key,
-                    tarjeta_key, tipocontado_key, modalidad_tarjeta
-                ) VALUES (
-                    $1, $2, 'CAN', CURRENT_TIMESTAMP, $3, $4, $5, $6, $7, false,
-                    $8, $9, $10, 'sol', $11, $12, $13
-                )
-            `, [
-                base,
-                pago.tipo === 'tarjeta' ? tomarDigitosHistoricos(digitosHistoricos, pago) : null,
-                pago.tipo === 'banco' ? pago.fechaDeposito : null,
-                igv,
-                pago.importe,
-                pago.tipo === 'banco' ? String(pago.nroOperacion).trim() : null,
-                pago.tipo === 'tarjeta' ? String(pago.nroOperacion).trim() : null,
-                orden.id,
-                pago.tipo === 'banco' ? pago.cuentaCorrienteKey : null,
-                pago.tipo === 'banco' ? pago.entidadFinancieraKey : null,
-                pago.tipo === 'tarjeta' ? pago.tarjetaKey : null,
-                pago.tipo,
-                pago.tipo === 'tarjeta' ? pago.modalidadTarjeta : null
-            ]);
-        }
+        await insertarPagosNuevosSinAlterarExistentes(client, orden.id, pagos, digitosHistoricos);
 
         const saldo = esCortesia ? 0 : redondear(Math.max(0, totalExigibleCaja - totalPagado));
         const estado = esCortesia || saldo === 0 ? 'PAGADO' : 'PENDIENTE';
@@ -566,6 +649,22 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             periodoCredito.fechaInicioCredito, periodoCredito.fechaVencimientoCredito,
             userContext.username
         ]);
+        const facturacionBorrador = await client.query(
+            "SELECT id FROM fg_facturacion WHERE certificado_id = $1 AND estado = 'BORRADOR' FOR UPDATE",
+            [certificadoId]
+        );
+        if (facturacionBorrador.rowCount > 0) {
+            const facturacionId = facturacionBorrador.rows[0].id;
+            if (periodoCredito.condicionPago === 'CONTADO') {
+                // El frontend sólo envía CONTADO tras confirmar el descarte del
+                // plan. No se crean cobros: únicamente se elimina el plan draft.
+                await client.query('DELETE FROM fg_facturacion_cuota WHERE facturacion_id = $1', [facturacionId]);
+            }
+            await client.query(
+                ACTUALIZAR_FACTURACION_PAGO_SQL,
+                construirParametrosCondicionFacturacion(facturacionId, periodoCredito, userContext.username)
+            );
+        }
         await client.query(`
             UPDATE fg_operacion_comercial
             SET estado = $2, usuario_modificacion = $3, fecha_modificacion = CURRENT_TIMESTAMP
@@ -654,5 +753,10 @@ exports._private = {
     asegurarOperacionComercial,
     validarReferenciaPago,
     normalizarPeriodoCredito,
-    firmaPagoTarjeta
+    validarCreditoSinPagos,
+    firmaPagoTarjeta,
+    firmaPagoCompleto,
+    insertarPagosNuevosSinAlterarExistentes,
+    ACTUALIZAR_FACTURACION_PAGO_SQL,
+    construirParametrosCondicionFacturacion
 };

@@ -70,6 +70,30 @@ const construirItem = (item) => {
     return resultado;
 };
 
+// Los descuentos configurados por FAREGAS se aplican al total comercial del
+// certificado, no a una línea fiscal concreta. NubeFact distingue ambos casos:
+// un descuento por ítem se envía en `items[].descuento`, mientras que el global
+// se declara en `descuento_global`. Para este último, la línea debe conservar
+// sus importes originales y los totales del documento ya deben reflejar el
+// descuento aplicado.
+const construirItemAntesDescuentoGlobal = (item) => {
+    const resultado = construirItem(item);
+    const descuentoLineaSinIgv = dosDecimales(item.descuento || 0);
+    if (descuentoLineaSinIgv <= 0) return resultado;
+
+    const cantidad = Number(resultado.cantidad || 1);
+    const subtotalOriginal = dosDecimales(resultado.subtotal + descuentoLineaSinIgv);
+    const totalOriginal = dosDecimales(resultado.precio_unitario * cantidad);
+
+    return {
+        ...resultado,
+        descuento: 0,
+        subtotal: subtotalOriginal,
+        igv: dosDecimales(totalOriginal - subtotalOriginal),
+        total: totalOriginal
+    };
+};
+
 const construirItemGratuito = (item) => {
     const cantidad = Number(item.cantidad || 1);
     const valorReferencialUnitario = dosDecimales(item.precio_unitario);
@@ -207,10 +231,24 @@ const construirPayloadNubefact = ({
             )
     );
     const descuentoOneroso = dosDecimales(Math.max(0, descuentoTotal - totalGratuita));
+    // Sólo promovemos a descuento global cuando existen las líneas fiscales
+    // persistidas que permiten reconstruir de forma verificable sus importes
+    // anteriores al descuento. El fallback histórico sin detalles conserva su
+    // comportamiento para no inferir una distribución fiscal inexistente.
+    const usaDescuentoGlobal = detalles.length > 0 && !gratuidadAutorizada && descuentoOneroso > 0;
+    const descuentoGlobalSinIgv = usaDescuentoGlobal
+        ? dosDecimales(
+            detalles.length > 0
+                ? detalles.reduce((total, item) => total + Number(item.descuento || 0), 0)
+                : baseDescuento
+        )
+        : 0;
     const items = detalles.length > 0
         ? detalles.map(item => gratuidadAutorizada
             ? construirItemGratuito(item)
-            : construirItem(item))
+            : usaDescuentoGlobal
+                ? construirItemAntesDescuentoGlobal(item)
+                : construirItem(item))
         : [
             fallbackGratuito
                 ? construirItemGratuito({
@@ -226,7 +264,7 @@ const construirPayloadNubefact = ({
                     igv: 0,
                     importe_total: 0
                 })
-                : construirItem({
+                : (usaDescuentoGlobal ? construirItemAntesDescuentoGlobal : construirItem)({
                     unidad_snapshot: 'ZZ',
                     codigo_sku_snapshot: `FAREGAS-${certificadoData.tipo_certificado_clave || 'OPERACION'}`,
                     descripcion_snapshot: descripcion,
@@ -254,6 +292,16 @@ const construirPayloadNubefact = ({
         tallerNombre,
         gratuidadAutorizada
     });
+    // El descuento fiscal se declara sin IGV en `descuento_global`. Para que
+    // el cliente identifique el beneficio comercial pactado, conservamos en
+    // observaciones el importe con IGV que ya fue persistido por FAREGAS. No se
+    // reconstruye desde la base ni desde el impuesto, evitando milésimas.
+    const leyendaDescuentoComercial = descuentoOneroso > 0
+        ? `DESCUENTO COMERCIAL APLICADO: S/ ${descuentoOneroso.toFixed(2)} (INCLUYE IGV)`
+        : '';
+    const observaciones = [informacionAdicional.texto, leyendaDescuentoComercial]
+        .filter(Boolean)
+        .join('\n');
 
     const evaluacionDetraccion = typeof facturacion.sujeto_detraccion === 'boolean'
         ? (() => {
@@ -321,7 +369,8 @@ const construirPayloadNubefact = ({
         moneda: 1,
         tipo_de_cambio: '',
         porcentaje_de_igv: 18,
-        total_descuento: descuentoOneroso,
+        descuento_global: descuentoGlobalSinIgv,
+        total_descuento: usaDescuentoGlobal ? descuentoGlobalSinIgv : descuentoOneroso,
         total_anticipo: 0,
         total_gravada: dosDecimales(resumenTributario?.totales?.baseImponible ?? facturacion.base_imponible),
         total_inafecta: 0,
@@ -341,7 +390,7 @@ const construirPayloadNubefact = ({
             detraccion_total: evaluacionDetraccion.monto,
             medio_de_pago_detraccion: '001'
         } : {}),
-        observaciones: informacionAdicional.texto || (certificadoData.id
+        observaciones: observaciones || (certificadoData.id
             ? `EXPEDIENTE FAREGAS ${certificadoData.id}`
             : `OPERACION FAREGAS ${facturacion.operacion_id || facturacion.id}`),
         documento_que_se_modifica_tipo: '',

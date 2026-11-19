@@ -3,7 +3,6 @@ const authService = require('./faregas-auth.service');
 const { redondear } = require('./faregas-pagos.rules');
 const { validarProductoFiscalChip } = require('./faregas-chips-fiscal.rules');
 
-const PLANTA_SURCO = '98';
 const TIPO_CONTROL_CANTIDAD = 'CANTIDAD';
 
 const normalizarCantidad = (value) => {
@@ -12,11 +11,13 @@ const normalizarCantidad = (value) => {
     return cantidad;
 };
 
-const validarSedeHojas = (plantaKey) => {
-    if (String(plantaKey || '').trim() !== PLANTA_SURCO) {
-        throw new Error('SEDE_PRODUCTO_CANTIDAD_NO_HABILITADA');
-    }
-    return PLANTA_SURCO;
+const validarSedeProductoCantidad = (plantaKey) => {
+    const key = String(plantaKey || '').trim();
+    if (!key) throw new Error('PLANTA_REQUERIDA');
+    // La habilitación se resuelve con la asociación producto/sede vigente,
+    // las banderas de stock/venta y la autorización de la sesión. No se fija
+    // la venta de hojas a una sede codificada en el backend.
+    return key;
 };
 
 const calcularStock = (rows) => rows.reduce((total, row) => {
@@ -52,7 +53,7 @@ const consultarStock = async (queryable, productoInventariableId, plantaKey) => 
 };
 
 const obtenerConfiguracion = async (queryable, productoInventariableId, plantaKey, { bloquear = false } = {}) => {
-    validarSedeHojas(plantaKey);
+    validarSedeProductoCantidad(plantaKey);
     const result = await queryable.query(`
         SELECT pi.id, pi.codigo, pi.nombre, pi.tipo, pi.control_stock, pi.activo,
                pis.activo AS sede_activa, pis.stock_permitido, pis.venta_habilitada,
@@ -67,7 +68,7 @@ const obtenerConfiguracion = async (queryable, productoInventariableId, plantaKe
           JOIN fg_producto_inventariable_sede pis
             ON pis.producto_inventariable_id = pi.id
            AND pis.planta_key = $2
-          JOIN fg_planta p ON p.key = pis.planta_key AND p.activo = TRUE
+          JOIN fg_planta p ON p.key = pis.planta_key AND p.activo = TRUE AND p.empresa_key = 'FAREGAS'
           LEFT JOIN fg_producto_facturacion pf ON pf.id = pis.producto_facturacion_id
          WHERE pi.id = $1
            AND pi.activo = TRUE
@@ -144,7 +145,7 @@ const registrarSalidaVenta = async (client, { detalle, detalleId, plantaKey, ope
 };
 
 const validarAcceso = async (user, plantaKey) => {
-    validarSedeHojas(plantaKey);
+    validarSedeProductoCantidad(plantaKey);
     const planta = await authService.validarAccesoPlanta(user.username, user.perfil_id, plantaKey);
     if (!planta) throw new Error('PLANTA_NO_AUTORIZADA');
     return planta;
@@ -205,7 +206,6 @@ const listarMovimientos = async ({ productoInventariableId, plantaKey, limite = 
 };
 
 module.exports = {
-    PLANTA_SURCO,
     TIPO_CONTROL_CANTIDAD,
     registrarIngreso,
     listarMovimientos,
@@ -214,7 +214,7 @@ module.exports = {
     construirDetalleCantidad,
     prepararVentaEnTransaccion,
     registrarSalidaVenta,
-    validarSedeHojas,
+    validarSedeProductoCantidad,
     normalizarCantidad,
     validarStockDisponible,
     _private: Object.freeze({ calcularStock })

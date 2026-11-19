@@ -29,6 +29,22 @@ describe('Integración simulada SPOT FAREGAS (sin PostgreSQL ni NubeFact)', () =
         );
     });
 
+    it('exige una cuenta de detracciones válida del emisor sólo cuando la factura está sujeta a SPOT', () => {
+        const validarCuenta = facturacionService._private.validarCuentaDetraccionEmisor;
+        const evaluacionSujeta = { sujeto: true };
+
+        assert.doesNotThrow(() => validarCuenta(evaluacionSujeta, { cuentaBancoNacion: '01234567890' }));
+        assert.throws(
+            () => validarCuenta(evaluacionSujeta, { cuentaBancoNacion: '' }),
+            (error) => error.code === 'CUENTA_BANCO_NACION_DETRACCION_FALTANTE' && error.statusCode === 409
+        );
+        assert.throws(
+            () => validarCuenta(evaluacionSujeta, { cuentaBancoNacion: '0012345678901' }),
+            (error) => error.code === 'CUENTA_BANCO_NACION_DETRACCION_INVALIDA' && error.statusCode === 409
+        );
+        assert.doesNotThrow(() => validarCuenta({ sujeto: false }, { cuentaBancoNacion: '' }));
+    });
+
     it('separa el umbral comercial inclusivo de S/ 700 del umbral legal estricto de servicios', () => {
         const bajo = evaluarDetraccion({ tipoComprobante: 'FACTURA', importeTotal: 699, servicio: spot037 });
         assert.equal(bajo.sujeto, false);
