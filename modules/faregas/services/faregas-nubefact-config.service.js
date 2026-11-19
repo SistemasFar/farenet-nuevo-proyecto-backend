@@ -48,10 +48,7 @@ const validarSeguridadProduccion = ({
     if (decision === 'PENDIENTE') {
         throw errorConfiguracion('NUBEFACT_DETRACCION_PENDIENTE_CONFIRMACION');
     }
-    if (decision === 'APLICA') {
-        throw errorConfiguracion('NUBEFACT_DETRACCION_CONFIGURACION_PENDIENTE');
-    }
-    if (decision !== 'NO_APLICA') {
+    if (!['APLICA', 'NO_APLICA'].includes(decision)) {
         throw errorConfiguracion('NUBEFACT_DETRACCION_DECISION_INVALIDA');
     }
 };

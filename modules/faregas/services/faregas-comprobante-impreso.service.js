@@ -6,7 +6,7 @@ const { renderFacturaHtml } = require('../templates/comprobante-factura.template
 const { generarPdfDesdeHtml } = require('./faregas-pdf-generator.service');
 const { esDocumentoBaseOperable } = require('./faregas-documento-tributario-policy');
 const { obtenerIdentidadCorporativaFaregas } = require('./faregas-representacion-corporativa.service');
-const { esCodigoGratuidadTaller, esFlujoTaller } = require('./faregas-gratuidad-taller.policy');
+const { esCortesiaAutorizada, esFlujoTaller } = require('./faregas-gratuidad-taller.policy');
 const {
     resolverNombreMedioPago,
     agruparDesglosePagos,
@@ -408,7 +408,7 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
     if (itemsCrudos.length === 0) throw new Error('DETALLE_FACTURACION_NO_DISPONIBLE');
 
     const qDescuento = await db.query(
-        `SELECT dc.importe_original, dc.importe_descuento, dc.importe_final,
+        `SELECT dc.descuento_id, dc.importe_original, dc.importe_descuento, dc.importe_final,
                 COALESCE(dcl.codigo, d.codigo) AS codigo_real,
                 d.nombre AS nombre_real
          FROM fg_descuentocomprobante dc
@@ -424,8 +424,9 @@ async function obtenerDatosComprobanteImpreso(facturacionId) {
     const codigoDescuento = String(qDescuento.rows[0]?.codigo_real || f.codigo_descuento_snapshot || '').trim();
     const nombreDescuento = String(qDescuento.rows[0]?.nombre_real || '').trim();
     const esTaller = esFlujoTaller(f.servicio_tipo_flujo);
-    const esOperacionGratuita = esTaller
-        && esCodigoGratuidadTaller(codigoDescuento)
+    const esOperacionGratuita = esCortesiaAutorizada({ reserva: {
+        ...qDescuento.rows[0], codigo_autorizacion: codigoDescuento, descuento_nombre: nombreDescuento
+    } })
         && Number(payloadFiscal.total_gratuita || 0) > 0
         && Number(payloadFiscal.total || 0) === 0;
     const items = itemsCrudos.map(item => itemsDesdePayload

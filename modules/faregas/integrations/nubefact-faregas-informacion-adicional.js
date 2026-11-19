@@ -57,6 +57,11 @@ const construirInformacionAdicional = ({
 
     const codigoDescuento = texto(facturacion?.codigo_descuento_snapshot);
     const esGratuito = Boolean(gratuidadAutorizada) || (esTaller && esCodigoGratuidadTaller(codigoDescuento));
+    if (esGratuito) {
+        lineas.push('CORTESÍA — OPERACIÓN GRATUITA');
+        lineas.push('1002 - TRANSFERENCIA GRATUITA DE UN BIEN Y/O SERVICIO PRESTADO GRATUITAMENTE');
+        lineas.push('TOTAL EXIGIBLE: S/ 0.00 · SIN PAGO REQUERIDO');
+    }
     if (codigoDescuento && !esGratuito) {
         lineas.push(`CÓDIGO DE DESCUENTO: ${codigoDescuento}`);
     }

@@ -92,6 +92,9 @@ const crearPool = (state) => ({
                     });
                     return { rowCount: changed.length, rows: changed.map((id) => ({ id })) };
                 }
+                if (query.startsWith('INSERT INTO PUBLIC.FG_USUARIO_CREDENCIAL') || query.startsWith('INSERT INTO FG_USUARIO_CREDENCIAL')) {
+                    return { rowCount: 1, rows: [] };
+                }
                 throw new Error(`Unexpected SQL in test: ${query}`);
             },
             release() {},

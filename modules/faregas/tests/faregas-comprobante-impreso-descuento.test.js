@@ -77,6 +77,44 @@ describe('Representación comercial FAREGAS — descuento con IGV', () => {
         assert.equal(resumen.total, 69.5);
     });
 
+    it('imprime los céntimos exactos del descuento comercial persistido', () => {
+        const resumen = construirResumenComercial({
+            facturacionTotal: 69.5,
+            descuentoPersistido: {
+                importe_original: 90,
+                importe_descuento: 20.5,
+                importe_final: 69.5
+            }
+        });
+        const html = renderFacturaHtml(dataBase({
+            resumenComercial: resumen,
+            totales: { gravada: 58.9, descuento: 17.37, igv: 10.6, total: 69.5 }
+        }));
+
+        assert.match(html, /−S\/ 20\.50/);
+        assert.match(html, /S\/ 90\.00 − S\/ 20\.50 = S\/ 69\.50/);
+        assert.match(html, /S\/ 17\.37/);
+    });
+
+    it('imprime el importe persistido de un descuento porcentual sin reconstruirlo desde el monto fiscal', () => {
+        const resumen = construirResumenComercial({
+            facturacionTotal: 76.5,
+            descuentoPersistido: {
+                importe_original: 90,
+                importe_descuento: 13.5,
+                importe_final: 76.5
+            }
+        });
+        const html = renderFacturaHtml(dataBase({
+            resumenComercial: resumen,
+            totales: { gravada: 64.83, descuento: 11.44, igv: 11.67, total: 76.5 }
+        }));
+
+        assert.match(html, /−S\/ 13\.50/);
+        assert.match(html, /S\/ 90\.00 − S\/ 13\.50 = S\/ 76\.50/);
+        assert.match(html, /Descuento fiscal \(sin IGV\)[\s\S]*S\/ 11\.44/);
+    });
+
     it('muestra un comprobante sin descuento sin inventar una resta', () => {
         const resumen = construirResumenComercial({ facturacionTotal: 90, descuentoPersistido: null });
         const html = renderFacturaHtml(dataBase({
@@ -89,7 +127,7 @@ describe('Representación comercial FAREGAS — descuento con IGV', () => {
         assert.doesNotMatch(html, /class="t-discount"/);
     });
 
-    it('renderiza S/ 90.00 - S/ 20.00 = S/ 70.00 y mantiene el descuento fiscal separado', () => {
+    it('renderiza S/ 90.00 − S/ 20.00 = S/ 70.00 y mantiene el descuento fiscal separado', () => {
         const resumen = construirResumenComercial({
             facturacionTotal: 70,
             descuentoPersistido: {
@@ -102,10 +140,11 @@ describe('Representación comercial FAREGAS — descuento con IGV', () => {
 
         assert.match(html, /Precio original/);
         assert.match(html, /Descuento comercial/);
-        assert.match(html, /- S\/ 20\.00/);
-        assert.match(html, /S\/ 90\.00 - S\/ 20\.00 = S\/ 70\.00/);
+        assert.match(html, /−S\/ 20\.00/);
+        assert.match(html, /S\/ 90\.00 − S\/ 20\.00 = S\/ 70\.00/);
         assert.match(html, /Descuento fiscal \(sin IGV\)/);
         assert.match(html, /S\/ 16\.95/);
+        assert.match(html, /No constituye un segundo comprobante/);
         assert.match(html, /Representación comercial complementaria FAREGAS/);
         assert.match(html, /PDF oficial de NubeFact, el XML y el CDR permanecen disponibles/);
     });
@@ -122,8 +161,9 @@ describe('Representación comercial FAREGAS — descuento con IGV', () => {
         const html = renderBoletaHtml(dataBase({ resumenComercial: resumen }));
 
         assert.match(html, /RESUMEN COMERCIAL \(IMPORTES CON IGV\)/);
-        assert.match(html, /- S\/ 20\.00/);
-        assert.match(html, /S\/ 90\.00 - S\/ 20\.00 = S\/ 70\.00/);
+        assert.match(html, /−S\/ 20\.00/);
+        assert.match(html, /S\/ 90\.00 − S\/ 20\.00 = S\/ 70\.00/);
+        assert.match(html, /IMPRESIÓN COMPLEMENTARIA FAREGAS - NO ES UN NUEVO COMPROBANTE FISCAL/);
     });
 
     it('soporta varios ítems sin redistribuir ni duplicar el descuento', () => {
@@ -145,7 +185,7 @@ describe('Representación comercial FAREGAS — descuento con IGV', () => {
         }));
 
         assert.equal((html.match(/Descuento comercial/g) || []).length, 1);
-        assert.match(html, /S\/ 150\.00 - S\/ 20\.00 = S\/ 130\.00/);
+        assert.match(html, /S\/ 150\.00 − S\/ 20\.00 = S\/ 130\.00/);
     });
 
     it('no presenta una cortesía como descuento comercial ordinario', () => {

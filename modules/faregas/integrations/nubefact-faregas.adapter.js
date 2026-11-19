@@ -112,12 +112,7 @@ const construirItemGratuito = (item) => {
 
 const obtenerIndicadorDetraccion = () => {
     const decision = String(config.nubefact.detractionDecision || 'PENDIENTE').trim().toUpperCase();
-    if (decision === 'APLICA') {
-        const error = new Error('NUBEFACT_DETRACCION_CONFIGURACION_PENDIENTE');
-        error.code = 'NUBEFACT_DETRACCION_CONFIGURACION_PENDIENTE';
-        throw error;
-    }
-    return false;
+    return decision === 'APLICA';
 };
 
 const fechaPeru = (date = new Date()) => {
@@ -183,7 +178,8 @@ const construirPayloadNubefact = ({
     reservaDescuento = null,
     detalles = [],
     cuotas = [],
-    resumenTributario = null
+    resumenTributario = null,
+    opciones = {}
 }) => {
     const certificadoData = certificado || {};
     const vehiculoData = vehiculo || {};
@@ -231,11 +227,16 @@ const construirPayloadNubefact = ({
             )
     );
     const descuentoOneroso = dosDecimales(Math.max(0, descuentoTotal - totalGratuita));
-    // Sólo promovemos a descuento global cuando existen las líneas fiscales
-    // persistidas que permiten reconstruir de forma verificable sus importes
-    // anteriores al descuento. El fallback histórico sin detalles conserva su
-    // comportamiento para no inferir una distribución fiscal inexistente.
-    const usaDescuentoGlobal = detalles.length > 0 && !gratuidadAutorizada && descuentoOneroso > 0;
+    // Los descuentos comerciales ordinarios se declaran a nivel de ítem (items[].descuento)
+    // para recuperar la representación histórica (FFF1-56), donde NubeFact refleja el
+    // beneficio comercial directamente bajo el precio del producto en el detalle.
+    // Solo se recurre a descuento_global si se solicita explícitamente vía opciones o facturación.
+    const forzarDescuentoGlobal = Boolean(
+        opciones?.usarDescuentoGlobal ||
+        facturacion?.usar_descuento_global ||
+        resumenTributario?.descuento?.usarDescuentoGlobal
+    );
+    const usaDescuentoGlobal = forzarDescuentoGlobal && detalles.length > 0 && !gratuidadAutorizada && descuentoOneroso > 0;
     const descuentoGlobalSinIgv = usaDescuentoGlobal
         ? dosDecimales(
             detalles.length > 0
@@ -296,7 +297,7 @@ const construirPayloadNubefact = ({
     // el cliente identifique el beneficio comercial pactado, conservamos en
     // observaciones el importe con IGV que ya fue persistido por FAREGAS. No se
     // reconstruye desde la base ni desde el impuesto, evitando milésimas.
-    const leyendaDescuentoComercial = descuentoOneroso > 0
+    const leyendaDescuentoComercial = usaDescuentoGlobal && descuentoOneroso > 0
         ? `DESCUENTO COMERCIAL APLICADO: S/ ${descuentoOneroso.toFixed(2)} (INCLUYE IGV)`
         : '';
     const observaciones = [informacionAdicional.texto, leyendaDescuentoComercial]
@@ -369,7 +370,7 @@ const construirPayloadNubefact = ({
         moneda: 1,
         tipo_de_cambio: '',
         porcentaje_de_igv: 18,
-        descuento_global: descuentoGlobalSinIgv,
+        ...(usaDescuentoGlobal && descuentoGlobalSinIgv > 0 ? { descuento_global: descuentoGlobalSinIgv } : {}),
         total_descuento: usaDescuentoGlobal ? descuentoGlobalSinIgv : descuentoOneroso,
         total_anticipo: 0,
         total_gravada: dosDecimales(resumenTributario?.totales?.baseImponible ?? facturacion.base_imponible),
@@ -413,14 +414,8 @@ const construirPayloadNubefact = ({
         orden_compra_servicio: '',
         formato_de_pdf: '',
         items,
-        leyendas: (gratuidadAutorizada || totalGratuita > 0)
-            ? [
-                {
-                    codigo: '1002',
-                    valor: 'TRANSFERENCIA GRATUITA DE UN BIEN Y/O SERVICIO PRESTADO GRATUITAMENTE'
-                }
-            ]
-            : [],
+        // JSON V1 genera la leyenda fiscal desde total_gratuita/tipo_de_igv.
+        // La identificación comercial va en observaciones; no admite leyendas[].
         venta_al_credito: credito
             ? cuotas.map(cuota => ({
                 cuota: Number(cuota.numero_cuota),

@@ -138,6 +138,16 @@ function renderBoletaHtml(data) {
             letter-spacing: 0.5px;
             margin-bottom: 8px;
         }
+        .representation-banner {
+            border: 1px solid #d6a12a;
+            background-color: #fff8e6;
+            color: #674b12;
+            text-align: center;
+            font-weight: bold;
+            font-size: 7pt;
+            padding: 4px 6px;
+            margin-bottom: 8px;
+        }
         .top-row {
             display: flex;
             justify-content: space-between;
@@ -393,6 +403,7 @@ function renderBoletaHtml(data) {
 </head>
 <body>
     <div class="header-bar">BOLETA DE VENTA ELECTRÓNICA</div>
+    <div class="representation-banner">IMPRESIÓN COMPLEMENTARIA FAREGAS - NO ES UN NUEVO COMPROBANTE FISCAL</div>
 
     <div class="top-row">
         <div class="emisor-col">
@@ -475,7 +486,8 @@ function renderBoletaHtml(data) {
         <div class="bottom-left">
             ${esOperacionGratuita ? `
                 <div class="bloque-tributario-leyenda">
-                    <div class="bloque-tributario-titulo">INFORMACIÓN TRIBUTARIA (CATÁLOGO N.º 15 SUNAT)</div>
+                    <div class="bloque-tributario-titulo">CORTESÍA — OPERACIÓN GRATUITA</div>
+                    <div><strong>ESTADO:</strong> Sin pago requerido</div>
                     <div class="bloque-tributario-codigo">CÓDIGO SUNAT: <strong>1002</strong></div>
                     <div class="bloque-tributario-texto">1002 - TRANSFERENCIA GRATUITA DE UN BIEN Y/O SERVICIO PRESTADO GRATUITAMENTE</div>
                     <div class="bloque-tributario-datos">

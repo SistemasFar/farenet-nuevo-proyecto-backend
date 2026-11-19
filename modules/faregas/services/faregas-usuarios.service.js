@@ -4,6 +4,7 @@ const paginacion = require('./faregas-paginacion.rules');
 const validacion = require('./faregas-usuarios-validacion.service');
 const perfilRepository = require('./faregas-usuario-perfil.repository');
 const permisosSensiblesService = require('./faregas-permisos-sensibles.service');
+const authService = require('./faregas-auth.service');
 const {
     PERMISOS_SENSIBLES,
     PERMISOS_SENSIBLES_SET,
@@ -25,6 +26,15 @@ const PERMISOS_ORDINARIOS_CONFIGURACION = Object.freeze([
 const normalizarValorPerfil = (valor) => {
     const normalizado = String(valor ?? '').trim();
     return normalizado || null;
+};
+
+const exigirPasswordSegura = (password, username, authApi = authService, opciones = {}) => {
+    const politica = authApi.validarPoliticaPassword(password, username, opciones);
+    if (politica?.valido) return politica;
+    const error = new Error(politica?.mensaje || 'La contraseña no cumple la política de seguridad.');
+    error.code = 'POLITICA_PASSWORD_INVALIDA';
+    error.statusCode = 400;
+    throw error;
 };
 
 const errorPerfilHeredadoSoloLectura = (code, message, campos = []) => {
@@ -118,6 +128,126 @@ const guardarPerfilPropio = async (client, username, datos) => {
 // quien devuelve los valores ya normalizados y validados. Aquí no se normaliza
 // nada por separado: lo que se guarda es exactamente lo que se comprobó.
 
+const credencialesInventarioService = require('./faregas-credenciales-inventario.service');
+const custodiaService = require('./faregas-credencial-custodia.service');
+
+const crypto = require('crypto');
+const generarPasswordTemporalSegura = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*';
+    const bytes = crypto.randomBytes(16);
+    let pass = 'Fg7!';
+    for (let i = 0; i < 16; i++) {
+        pass += chars[bytes[i] % chars.length];
+    }
+    return pass;
+};
+
+exports.generarCredencialTemporal = async (username, responsableUsername) => {
+    const cleanUsername = String(username || '').trim();
+    if (cleanUsername.toLowerCase() === 'gibarra') {
+        const err = new Error('El usuario gibarra es una cuenta administrativa protegida y no puede ser modificado.');
+        err.code = 'USUARIO_PROTEGIDO';
+        err.statusCode = 403;
+        throw err;
+    }
+
+    const passwordTemporal = generarPasswordTemporalSegura();
+    const hash = bcrypt.hashSync(passwordTemporal, 10);
+
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+
+        const uRes = await client.query(
+            'SELECT username, estado, perfil_id FROM fg_usuario WHERE LOWER(username) = LOWER($1) LIMIT 1',
+            [cleanUsername]
+        );
+        if (uRes.rowCount === 0) {
+            throw new Error('USER_NOT_FOUND');
+        }
+
+        const user = uRes.rows[0];
+
+        await client.query(
+            'UPDATE fg_usuario SET contrasenha = $1 WHERE username = $2',
+            [hash, user.username]
+        );
+
+        await authService.revocarSesionesUsuario(user.username, client);
+
+        await credencialesInventarioService.registrarActualizacionCredencial(client, {
+            username: user.username,
+            estadoCredencial: 'Contraseña actualizada / Vigente',
+            tipoOperacion: 'RESTABLECIMIENTO_INDIVIDUAL',
+            responsable: responsableUsername || 'ADMINISTRADOR',
+            cambiadaPosteriormente: true,
+            necesitaRestablecimiento: user.estado === false,
+            observaciones: `Contraseña temporal generada por ${responsableUsername || 'ADMINISTRADOR'}; credencial anterior invalidada.`
+        });
+
+        await custodiaService.guardarEnCustodia(client, {
+            username: user.username,
+            password: passwordTemporal,
+            responsable: responsableUsername || 'ADMINISTRADOR',
+            origen: 'RESTABLECIMIENTO_TEMPORAL'
+        });
+
+        let nombreCompleto = user.username;
+        let sedes = '-';
+        try {
+            const detRes = await client.query(`
+                SELECT 
+                    CASE 
+                        WHEN up.tipo_documento_key = 'ruc' THEN up.nombre_razon_social
+                        ELSE NULLIF(TRIM(CONCAT(up.nombres, ' ', up.apellidos)), '')
+                    END AS nombre_completo,
+                    STRING_AGG(p.nombre, ', ' ORDER BY p.nombre) AS sedes
+                FROM fg_usuario u
+                LEFT JOIN fg_usuario_perfil up ON LOWER(up.usuario_username) = LOWER(u.username)
+                LEFT JOIN fg_usuario_planta upk ON LOWER(upk.usuario_username) = LOWER(u.username)
+                LEFT JOIN fg_planta p ON p.key = upk.plantas_key
+                WHERE LOWER(u.username) = LOWER($1)
+                GROUP BY up.tipo_documento_key, up.nombre_razon_social, up.nombres, up.apellidos
+            `, [user.username]);
+            if (detRes.rowCount > 0) {
+                if (detRes.rows[0].nombre_completo) nombreCompleto = detRes.rows[0].nombre_completo;
+                if (detRes.rows[0].sedes) sedes = detRes.rows[0].sedes;
+            }
+        } catch {
+            // no bloquea
+        }
+
+        await client.query('COMMIT');
+
+        return {
+            username: user.username,
+            password: passwordTemporal,
+            nombreCompleto,
+            perfil: user.perfil_id,
+            sede: sedes,
+            fechaModificacion: new Date().toISOString(),
+            responsable: responsableUsername || 'ADMINISTRADOR'
+        };
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
+};
+
+exports.consultarCredencialAsignada = (username) => {
+    return credencialesInventarioService.consultarCredencialAsignada(username, db);
+};
+
+exports.getRutaArchivoInventario = () => {
+    return credencialesInventarioService.getRutaArchivoInventario();
+};
+
+exports.generarBufferExcelInventario = (metadata) => {
+    return credencialesInventarioService.generarBufferExcelInventario(db, metadata);
+};
+
 exports.obtenerUsuarios = async () => {
     const perfilPropioDisponible = await perfilRepository.estaDisponible(db);
     const perfil = (columnaPropia, columnaLegacy) => perfilPropioDisponible
@@ -157,7 +287,8 @@ exports.obtenerUsuarios = async () => {
         ORDER BY u.username
     `;
     const result = await db.query(query);
-    return result.rows;
+    const credencialesInventario = require('./faregas-credenciales-inventario.service');
+    return credencialesInventario.enriquecerUsuariosConCredenciales(result.rows, db);
 };
 
 /**
@@ -211,8 +342,11 @@ exports.obtenerUsuariosPaginado = async (filtros = {}) => {
         LIMIT $${valores.length + 1} OFFSET $${valores.length + 2}
     `, [...valores, limit, offset]);
 
+    const credencialesInventario = require('./faregas-credenciales-inventario.service');
+    const enriched = await credencialesInventario.enriquecerUsuariosConCredenciales(result.rows, db);
+
     return paginacion.respuestaPaginada(
-        result.rows,
+        enriched,
         Number(conteo.rows[0]?.total || 0),
         page,
         limit
@@ -228,8 +362,12 @@ exports.crearUsuario = async (data, _creadorUsername) => {
     const datosValidados = validacion.exigirDatosValidos(data, { modo: 'crear' });
     const cleanUsername = datosValidados.username;
 
-    const hash = bcrypt.hashSync(password, 10);
     const cleanPerfil = perfil_id === '' ? null : perfil_id;
+    const passwordPlano = typeof password === 'string' ? password : '';
+    exigirPasswordSegura(passwordPlano, cleanUsername, authService, {
+        esAdmin: cleanPerfil === 'ADMINISTRADOR'
+    });
+    const hash = bcrypt.hashSync(passwordPlano, 10);
     const estadoBool = estado === true || estado === 'true';
     const tipoUsr = user_type || 'USER';
 
@@ -239,6 +377,38 @@ exports.crearUsuario = async (data, _creadorUsername) => {
 
         if (!await perfilRepository.estaDisponible(client)) {
             throw perfilRepository.errorMigracionPendiente();
+        }
+
+        // 1. Verificación explícita de duplicidad de username con mensaje orientador
+        const uExistente = await client.query(
+            'SELECT username, estado FROM fg_usuario WHERE LOWER(TRIM(username)) = LOWER(TRIM($1))',
+            [cleanUsername]
+        );
+        if (uExistente.rows.length > 0) {
+            const esActivo = Boolean(uExistente.rows[0].estado);
+            const err = new Error(
+                esActivo
+                    ? `El usuario ${cleanUsername} ya existe y se encuentra activo. Utilice otro nombre de usuario o edite la cuenta existente.`
+                    : `El usuario ${cleanUsername} ya existe y está inactivo. Búscalo en el filtro Inactivos para editarlo o reactivarlo.`
+            );
+            err.code = esActivo ? 'USUARIO_DUPLICADO_ACTIVO' : 'USUARIO_DUPLICADO_INACTIVO';
+            err.username = cleanUsername;
+            throw err;
+        }
+
+        // 2. Verificación explícita de duplicidad de documento con mensaje orientador
+        if (datosValidados.tipoDocumentoKey && datosValidados.nroDocumento) {
+            const docExistente = await client.query(
+                `SELECT usuario_username FROM fg_usuario_perfil
+                 WHERE tipo_documento_key = $1 AND nro_documento = $2`,
+                [datosValidados.tipoDocumentoKey, datosValidados.nroDocumento]
+            );
+            if (docExistente.rows.length > 0 && docExistente.rows[0].usuario_username.toLowerCase() !== cleanUsername.toLowerCase()) {
+                const err = new Error(`El número de documento ${datosValidados.nroDocumento} ya está registrado para otro usuario. Verifique los datos ingresados.`);
+                err.code = 'DOCUMENTO_DUPLICADO';
+                err.nroDocumento = datosValidados.nroDocumento;
+                throw err;
+            }
         }
 
         // Nuevos usuarios FAREGAS no necesitan ni crean una persona heredada.
@@ -269,8 +439,27 @@ exports.crearUsuario = async (data, _creadorUsername) => {
             `, [nomToSave, estadoBool, cleanUsername]);
         }
 
+        await credencialesInventarioService.registrarActualizacionCredencial(client, {
+            username: cleanUsername,
+            estadoCredencial: 'Contraseña actualizada / Vigente',
+            tipoOperacion: 'CREACION',
+            responsable: _creadorUsername || 'ADMINISTRADOR',
+            cambiadaPosteriormente: false,
+            necesitaRestablecimiento: false,
+            observaciones: `Cuenta creada por ${_creadorUsername || 'ADMINISTRADOR'}.`
+        });
+
+        if (cleanUsername !== 'gibarra') {
+            await custodiaService.guardarEnCustodia(client, {
+                username: cleanUsername,
+                password: passwordPlano,
+                responsable: _creadorUsername || 'ADMINISTRADOR',
+                origen: 'CREACION_USUARIO'
+            });
+        }
+
         await client.query('COMMIT');
-        return { username: cleanUsername };
+        return { username: cleanUsername, password: passwordPlano };
     } catch (e) {
         await client.query('ROLLBACK');
         throw e;
@@ -280,6 +469,13 @@ exports.crearUsuario = async (data, _creadorUsername) => {
 };
 
 exports.actualizarUsuario = async (oldUsername, data, _modificadorUsername) => {
+    if (String(oldUsername || '').trim().toLowerCase() === 'gibarra') {
+        const err = new Error('El usuario gibarra es una cuenta administrativa protegida y no puede ser modificado por este medio.');
+        err.code = 'USUARIO_PROTEGIDO';
+        err.statusCode = 403;
+        throw err;
+    }
+
     const { perfil_id, estado, sedes, user_type, nombres, apellidos, nombreRazonSocial } = data;
 
     // Mismas reglas que en la creación. `modo: 'editar'` deja pasar la contraseña
@@ -295,12 +491,35 @@ exports.actualizarUsuario = async (oldUsername, data, _modificadorUsername) => {
     try {
         await client.query('BEGIN');
 
-        if (newUsername !== oldUsername) {
-            const r = await client.query('SELECT 1 FROM fg_usuario WHERE username = $1', [newUsername]);
-            if (r.rowCount > 0) throw new Error('USERNAME_EXISTS');
+        if (newUsername.toLowerCase() !== oldUsername.toLowerCase()) {
+            const r = await client.query('SELECT username, estado FROM fg_usuario WHERE LOWER(TRIM(username)) = LOWER(TRIM($1))', [newUsername]);
+            if (r.rowCount > 0) {
+                const esActivo = Boolean(r.rows[0].estado);
+                const err = new Error(
+                    esActivo
+                        ? `El usuario ${newUsername} ya existe y se encuentra activo. Utilice otro nombre de usuario o edite la cuenta existente.`
+                        : `El usuario ${newUsername} ya existe y está inactivo. Búscalo en el filtro Inactivos para editarlo o reactivarlo.`
+                );
+                err.code = esActivo ? 'USUARIO_DUPLICADO_ACTIVO' : 'USUARIO_DUPLICADO_INACTIVO';
+                err.username = newUsername;
+                throw err;
+            }
         }
 
         const perfilPropioDisponible = await perfilRepository.estaDisponible(client);
+        if (perfilPropioDisponible && datosValidados.tipoDocumentoKey && datosValidados.nroDocumento) {
+            const docExistente = await client.query(
+                `SELECT usuario_username FROM fg_usuario_perfil
+                 WHERE tipo_documento_key = $1 AND nro_documento = $2 AND LOWER(TRIM(usuario_username)) != LOWER(TRIM($3))`,
+                [datosValidados.tipoDocumentoKey, datosValidados.nroDocumento, oldUsername]
+            );
+            if (docExistente.rows.length > 0) {
+                const err = new Error(`El número de documento ${datosValidados.nroDocumento} ya está registrado para otro usuario. Verifique los datos ingresados.`);
+                err.code = 'DOCUMENTO_DUPLICADO';
+                err.nroDocumento = datosValidados.nroDocumento;
+                throw err;
+            }
+        }
         if (!perfilPropioDisponible) {
             // Compatibilidad temporal: se mantienen los cambios administrativos
             // si el perfil remitido sigue coincidiendo con persona. El formulario
@@ -324,10 +543,45 @@ exports.actualizarUsuario = async (oldUsername, data, _modificadorUsername) => {
             for (const planta_key of sedes) {
                 const check = await client.query('SELECT 1 FROM fg_perfil_planta WHERE perfil_clave = $1 AND planta_key = $2', [cleanPerfil, planta_key]);
                 if (check.rowCount === 0) {
-                    throw new Error(`Planta ${planta_key} no permitida para el perfil ${cleanPerfil}`);
+                    const err = new Error(`La planta ${planta_key} no está permitida para el perfil ${cleanPerfil || 'sin perfil'}.`);
+                    err.code = 'SEDE_NO_PERMITIDA_PARA_PERFIL';
+                    err.statusCode = 400;
+                    throw err;
                 }
                 await client.query('INSERT INTO fg_usuario_planta (usuario_username, plantas_key) VALUES ($1, $2)', [newUsername, planta_key]);
             }
+        }
+
+        // Actualizar contraseña dentro de la misma transacción si fue remitida
+        if (data.password) {
+            exigirPasswordSegura(data.password, newUsername, authService);
+            const hash = bcrypt.hashSync(data.password, 10);
+            await client.query('UPDATE fg_usuario SET contrasenha = $1 WHERE username = $2', [hash, newUsername]);
+            await authService.revocarSesionesUsuario(newUsername, client);
+
+            await credencialesInventarioService.registrarActualizacionCredencial(client, {
+                username: newUsername,
+                estadoCredencial: 'Contraseña actualizada / Vigente',
+                tipoOperacion: 'ACTUALIZACION_PASSWORD',
+                responsable: _modificadorUsername || 'ADMINISTRADOR',
+                cambiadaPosteriormente: true,
+                necesitaRestablecimiento: !estadoBool,
+                observaciones: `Contraseña actualizada en edición de usuario por ${_modificadorUsername || 'ADMINISTRADOR'}; credencial anterior invalidada.`
+            });
+
+            if (newUsername.toLowerCase() !== 'gibarra') {
+                await custodiaService.guardarEnCustodia(client, {
+                    username: newUsername,
+                    password: data.password,
+                    responsable: _modificadorUsername || 'ADMINISTRADOR',
+                    origen: 'EDICION_USUARIO'
+                });
+            }
+        }
+
+        // Si se desactiva el usuario, revocar sus sesiones inmediatamente
+        if (!estadoBool) {
+            await authService.revocarSesionesUsuario(newUsername, client);
         }
 
         // 4. Ejecutivo
@@ -359,9 +613,17 @@ exports.actualizarUsuario = async (oldUsername, data, _modificadorUsername) => {
     }
 };
 
-exports.cambiarPassword = async (username, password) => {
-    const hash = bcrypt.hashSync(password, 10);
-    const client = await db.connect();
+exports.cambiarPassword = async (username, password, {
+    pool = db,
+    bcryptApi = bcrypt,
+    authApi = authService,
+    opciones = {}
+} = {}) => {
+    const cleanUsername = String(username || '').trim();
+    const passwordPlano = typeof password === 'string' ? password : '';
+    exigirPasswordSegura(passwordPlano, cleanUsername, authApi, opciones);
+    const hash = bcryptApi.hashSync(passwordPlano, 10);
+    const client = await pool.connect();
     try {
         await client.query('BEGIN');
 
@@ -369,13 +631,39 @@ exports.cambiarPassword = async (username, password) => {
             UPDATE fg_usuario
             SET contrasenha = $1
             WHERE username = $2
-        `, [hash, username]);
+        `, [hash, cleanUsername]);
 
         if (resFaregas.rowCount === 0) {
             throw new Error('USER_NOT_FOUND');
         }
 
+        const sesionesRevocadas = await authApi.revocarSesionesUsuario(cleanUsername, client);
+        await credencialesInventarioService.registrarActualizacionCredencial(client, {
+            username: cleanUsername,
+            estadoCredencial: 'Contraseña actualizada / Vigente',
+            tipoOperacion: 'CAMBIO_PASSWORD',
+            responsable: opciones.responsable || 'ADMINISTRADOR',
+            cambiadaPosteriormente: true,
+            necesitaRestablecimiento: false,
+            observaciones: `Contraseña modificada por ${opciones.responsable || 'ADMINISTRADOR'}; credencial anterior invalidada.`
+        });
+
+        const esCambioPersonal = cleanUsername === String(opciones.responsable || '').trim().toLowerCase();
+        if (esCambioPersonal) {
+            // Usuario cambió su propia contraseña: la custodia administrada se invalida y elimina
+            await custodiaService.eliminarDeCustodia(client, cleanUsername);
+        } else if (cleanUsername !== 'gibarra') {
+            // Cambio administrativo: actualizar custodia cifrada
+            await custodiaService.guardarEnCustodia(client, {
+                username: cleanUsername,
+                password: passwordPlano,
+                responsable: opciones.responsable || 'ADMINISTRADOR',
+                origen: 'CAMBIO_PASSWORD_ADMINISTRATIVO'
+            });
+        }
+
         await client.query('COMMIT');
+        return { username: cleanUsername, sesionesRevocadas };
     } catch (e) {
         await client.query('ROLLBACK');
         throw e;

@@ -69,12 +69,13 @@ router.use(adminMiddleware);
 // Listado paginado (máx. 10 por página). Es un catálogo maestro: sin filtro de
 // fecha. La ruta anterior se conserva para los consumidores que la usan.
 router.get('/paginado', controller.obtenerUsuariosPaginado);
+router.get('/politica-password', controller.obtenerPoliticaPassword);
+router.get('/inventario-credenciales/descargar', controller.descargarInventarioRenovado);
+router.get('/:username/credencial-asignada', controller.consultarCredencialAsignada);
+router.post('/:username/revelar-credencial', controller.revelarCredencialCustodiada);
+router.post('/:username/generar-credencial-temporal', controller.generarCredencialTemporal);
 router.get('/', controller.obtenerUsuarios);
 router.post('/', controller.crearUsuario);
-// Usa el mismo permiso efectivo MENU_USUARIOS que protege el módulo. El
-// endpoint únicamente acepta usernames seleccionados y contraseñas temporales
-// efímeras; nunca recupera hashes ni devuelve contraseñas.
-router.post('/credenciales/restablecer', controller.restablecerCredencialesTemporales);
 router.put('/:username', controller.actualizarUsuario);
 router.patch('/:username/password', controller.cambiarPassword);
 router.post('/:username/desactivar', controller.desactivarUsuario);

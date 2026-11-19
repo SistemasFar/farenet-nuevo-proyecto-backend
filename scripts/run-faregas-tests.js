@@ -33,7 +33,9 @@ const nubefactFiles = new Set([
     'faregas-resumen-tributario.service.test.js',
     'faregas-series.controller.test.js',
     'faregas-series-dms.service.test.js',
-    'faregas-tarifas-admin.controller.test.js'
+    'faregas-tarifas-admin.controller.test.js',
+    'faregas-spot-11-casos.test.js',
+    'faregas-spot-800-procedimiento-empresa.test.js'
 ]);
 
 const files = readdirSync(testsDir)

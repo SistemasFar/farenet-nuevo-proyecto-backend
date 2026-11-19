@@ -412,9 +412,9 @@ test('FAREGAS — Suite completa de pruebas: Pagos normales y Modalidad Cortesí
         assert.equal(item.precio_unitario, 350.00);
         assert.equal(item.igv, 0.00);
 
-        assert.equal(payload.leyendas.length, 1);
-        assert.equal(payload.leyendas[0].codigo, '1002');
-        assert.match(payload.leyendas[0].valor, /TRANSFERENCIA GRATUITA/);
+        assert.equal(payload.leyendas, undefined);
+        assert.match(payload.observaciones, /1002 - TRANSFERENCIA GRATUITA/);
+        assert.match(payload.observaciones, /CORTESÍA — OPERACIÓN GRATUITA/);
     });
 
     await t.test('15. Borradores 784/785 con descuento_id = 17 y descuento_cliente_id = null son reconocidos como cortesía autorizada', () => {

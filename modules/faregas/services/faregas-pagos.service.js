@@ -502,16 +502,8 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         if (periodoCredito.condicionPago === 'CREDITO' && reserva) {
             throw new Error('CREDITO_NO_ADMITE_DESCUENTOS');
         }
-        if (reserva && Number(reserva.descuento_id) === 17 && !reserva.descuento_cliente_id) {
-            try {
-                await client.query(`
-                    UPDATE fg_descuentocomprobante
-                    SET descuento_cliente_id = 30
-                    WHERE id = $1 AND descuento_cliente_id IS NULL
-                `, [reserva.id]);
-                reserva.descuento_cliente_id = 30;
-            } catch (_) {}
-        }
+        // La reserva puede autorizar la cortesía directamente por descuento_id.
+        // No se inventa un código de cliente ni se ocultan errores SQL dentro de BEGIN.
         const esCortesia = esGratuidadTallerAutorizada({ reserva });
 
         if (esCortesia) {
@@ -625,7 +617,10 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
             errorSpot.statusCode = 409;
             throw errorSpot;
         }
-        const totalExigibleCaja = esCortesia ? 0 : (evaluacionSpot.sujeto ? evaluacionSpot.neto : Number(orden.importe_total));
+        const esCredito = periodoCredito.condicionPago === 'CREDITO';
+        const totalExigibleCaja = esCortesia
+            ? 0
+            : (esCredito && evaluacionSpot.sujeto ? evaluacionSpot.neto : Number(orden.importe_total));
 
         const totalPagado = redondear(pagos.reduce((total, pago) => total + pago.importe, 0));
         if (totalPagado - totalExigibleCaja > 0.009) throw new Error('PAGO_EXCEDE_TOTAL');
@@ -677,11 +672,12 @@ exports.guardarPagos = async (certificadoId, data, userContext) => {
         }
 
         const pagosGuardados = await exports.listarPagosPorOrden(orden.id, client);
+        const resumenComercial = await obtenerResumenComercial(client, certificado);
         await client.query('COMMIT');
         return {
             orden: ordenActualizada.rows[0],
             pagos: pagosGuardados,
-            resumenComercial: await obtenerResumenComercial(client, certificado)
+            resumenComercial
         };
     } catch (error) {
         await client.query('ROLLBACK');

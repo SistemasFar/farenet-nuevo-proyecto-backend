@@ -71,15 +71,15 @@ const iniciarServidorDePrueba = async (perfil, permisos) => {
     };
 };
 
-test('MENU_USUARIOS permite la acción a cualquier perfil autorizado, sin depender de SISTEMAS', async () => {
+test('MENU_USUARIOS permite cambiar una contraseña individual sin depender del perfil SISTEMAS', async () => {
     const app = await iniciarServidorDePrueba('CONTADOR', ['MENU_USUARIOS']);
     try {
         const address = app.server.address();
         const token = jwt.sign({ username: 'contador_admin', faregas_flow: 'authenticated' }, app.secret);
-        const response = await fetch(`http://127.0.0.1:${address.port}/usuarios/credenciales/restablecer`, {
-            method: 'POST',
+        const response = await fetch(`http://127.0.0.1:${address.port}/usuarios/usuario_prueba/password`, {
+            method: 'PATCH',
             headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-            body: JSON.stringify({ credenciales: [] }),
+            body: JSON.stringify({ password: 'ClaveSegura#2026', confirmPassword: 'ClaveSegura#2026' }),
         });
         const body = await response.json();
         assert.equal(response.status, 202);
@@ -90,15 +90,15 @@ test('MENU_USUARIOS permite la acción a cualquier perfil autorizado, sin depend
     }
 });
 
-test('rechaza el restablecimiento cuando el perfil vigente no tiene MENU_USUARIOS', async () => {
+test('rechaza el cambio individual cuando el perfil vigente no tiene MENU_USUARIOS', async () => {
     const app = await iniciarServidorDePrueba('OPERADOR', ['MENU_DASHBOARD']);
     try {
         const address = app.server.address();
         const token = jwt.sign({ username: 'operador', faregas_flow: 'authenticated' }, app.secret);
-        const response = await fetch(`http://127.0.0.1:${address.port}/usuarios/credenciales/restablecer`, {
-            method: 'POST',
+        const response = await fetch(`http://127.0.0.1:${address.port}/usuarios/usuario_prueba/password`, {
+            method: 'PATCH',
             headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-            body: JSON.stringify({ credenciales: [] }),
+            body: JSON.stringify({ password: 'ClaveSegura#2026', confirmPassword: 'ClaveSegura#2026' }),
         });
         assert.equal(response.status, 403);
     } finally {

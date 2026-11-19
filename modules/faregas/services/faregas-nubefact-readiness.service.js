@@ -74,7 +74,7 @@ const construirFase2 = ({ configuracion, esquema, catalogo, series, credenciales
     const seriesCompletas = esquema.seriesV2Aplicada
         && series.seriesBasicasRequeridas > 0
         && series.seriesBasicasFaltantes.length === 0;
-    const decisionTributaria = configuracion.detractionDecision === 'NO_APLICA';
+    const decisionTributaria = ['APLICA', 'NO_APLICA'].includes(configuracion.detractionDecision);
     const demoCompletada = pruebaDemo.aceptadasConArchivos > 0;
     const pasos = [
         pasoFase2(

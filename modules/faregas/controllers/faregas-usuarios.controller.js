@@ -1,4 +1,9 @@
+const fs = require('fs');
+const path = require('path');
+const db = require('../../../config/database');
 const service = require('../services/faregas-usuarios.service');
+const authService = require('../services/faregas-auth.service');
+const custodiaService = require('../services/faregas-credencial-custodia.service');
 const credencialesTemporalesService = require('../services/faregas-credenciales-temporales.service');
 const auditoriaService = require('../services/faregas-auditoria.service');
 
@@ -63,8 +68,31 @@ exports.crearUsuario = async (req, res) => {
             datos: { perfil_id: result.perfil_id || req.body.perfil_id, estado: result.estado ?? true }
         });
 
+        if (req.body.password) {
+            await auditoriaService.registrarEvento({
+                ...contextoAuditoria(req),
+                categoria: 'USUARIOS',
+                modulo: 'USUARIOS',
+                evento: 'PASSWORD_ACTUALIZADO',
+                mensaje: `Contraseña inicial asignada para usuario ${result.username} por ${req.user?.username || 'ADMIN'}`,
+                entidad: 'fg_usuario',
+                documento_referencia: result.username,
+                datos: {
+                    usuario: result.username,
+                    responsable: req.user?.username || 'ADMIN',
+                    tipo: 'CREACION_USUARIO'
+                }
+            });
+        }
+
         res.status(201).json(result);
     } catch (e) {
+        if (e.code === 'USUARIO_PROTEGIDO') {
+            return res.status(403).json({ message: e.message, codigo: e.code });
+        }
+        if (e.code === 'SEDE_NO_PERMITIDA_PARA_PERFIL' || e.code === 'POLITICA_PASSWORD_INVALIDA') {
+            return res.status(400).json({ message: e.message, codigo: e.code });
+        }
         if (e.code === 'MIGRACION_PERFIL_FAREGAS_PENDIENTE') {
             return res.status(503).json({ message: e.message, codigo: e.code });
         }
@@ -77,8 +105,25 @@ exports.crearUsuario = async (req, res) => {
                 ...(e.detalles?.length ? { campos: e.detalles } : {})
             });
         }
-        if (e.code === '23505') { // unique_violation
-            return res.status(409).json({ message: 'El usuario o n�mero de documento ya existe' });
+        if (e.code === 'USUARIO_DUPLICADO_INACTIVO' || e.code === 'USUARIO_DUPLICADO_ACTIVO' || e.code === 'DOCUMENTO_DUPLICADO') {
+            return res.status(409).json({
+                message: e.message,
+                codigo: e.code,
+                username: e.username,
+                nroDocumento: e.nroDocumento
+            });
+        }
+        if (e.code === '23505') { // unique_violation fallback
+            if (e.constraint === 'uq_fg_usuario_perfil_documento') {
+                return res.status(409).json({
+                    message: 'El número de documento ya está registrado para otro usuario. Verifique los datos ingresados.',
+                    codigo: 'DOCUMENTO_DUPLICADO'
+                });
+            }
+            return res.status(409).json({
+                message: 'El usuario ya existe en el sistema.',
+                codigo: 'USUARIO_DUPLICADO'
+            });
         }
         console.error(e);
         res.status(500).json({ message: 'Error interno del servidor' });
@@ -106,8 +151,31 @@ exports.actualizarUsuario = async (req, res) => {
             datos: { perfil_id: req.body.perfil_id, estado: req.body.estado }
         });
 
+        if (req.body.password) {
+            await auditoriaService.registrarEvento({
+                ...contextoAuditoria(req),
+                categoria: 'USUARIOS',
+                modulo: 'USUARIOS',
+                evento: 'PASSWORD_ACTUALIZADO',
+                mensaje: `Contraseña administrativa restablecida para usuario ${usuarioObjetivo} por ${req.user?.username || 'ADMIN'}`,
+                entidad: 'fg_usuario',
+                documento_referencia: usuarioObjetivo,
+                datos: {
+                    usuario: usuarioObjetivo,
+                    responsable: req.user?.username || 'ADMIN',
+                    tipo: 'RESTABLECIMIENTO_INDIVIDUAL'
+                }
+            });
+        }
+
         res.json(result);
     } catch (e) {
+        if (e.code === 'USUARIO_PROTEGIDO') {
+            return res.status(403).json({ message: e.message, codigo: e.code });
+        }
+        if (e.code === 'SEDE_NO_PERMITIDA_PARA_PERFIL' || e.code === 'POLITICA_PASSWORD_INVALIDA') {
+            return res.status(400).json({ message: e.message, codigo: e.code });
+        }
         if (e.code === 'MIGRACION_PERFIL_FAREGAS_PENDIENTE') {
             return res.status(503).json({ message: e.message, codigo: e.code });
         }
@@ -120,11 +188,22 @@ exports.actualizarUsuario = async (req, res) => {
                 ...(e.detalles?.length ? { campos: e.detalles } : {})
             });
         }
+        if (e.code === 'USUARIO_DUPLICADO_INACTIVO' || e.code === 'USUARIO_DUPLICADO_ACTIVO' || e.code === 'DOCUMENTO_DUPLICADO') {
+            return res.status(409).json({
+                message: e.message,
+                codigo: e.code,
+                username: e.username,
+                nroDocumento: e.nroDocumento
+            });
+        }
         if (e.message === 'USERNAME_EXISTS') {
-            return res.status(409).json({ message: 'El nuevo username ya est� en uso' });
+            return res.status(409).json({ message: 'El nuevo username ya está en uso', codigo: 'USUARIO_DUPLICADO_ACTIVO' });
         }
         if (e.code === '23505') { // unique_violation for DNI etc
-            return res.status(409).json({ message: 'El n�mero de documento ya existe en otro registro' });
+            return res.status(409).json({
+                message: 'El número de documento ya está registrado para otro usuario. Verifique los datos ingresados.',
+                codigo: 'DOCUMENTO_DUPLICADO'
+            });
         }
         console.error(e);
         res.status(500).json({ message: 'Error interno del servidor' });
@@ -133,9 +212,14 @@ exports.actualizarUsuario = async (req, res) => {
 
 exports.cambiarPassword = async (req, res) => {
     try {
-        const { password } = req.body;
-        if (!password) return res.status(400).json({ message: 'Nueva contrase�a requerida' });
-        await service.cambiarPassword(req.params.username, password);
+        const { password, confirmPassword } = req.body;
+        if (!password) return res.status(400).json({ message: 'Nueva contraseña requerida' });
+        if (confirmPassword !== undefined && confirmPassword !== password) {
+            return res.status(400).json({ codigo: 'CONFIRMACION_NO_COINCIDE', message: 'Las contraseñas no coinciden' });
+        }
+        await service.cambiarPassword(req.params.username, password, {
+            opciones: { responsable: req.user?.username || 'ADMIN' }
+        });
 
         // Registro de auditoría (SIN registrar la contraseña)
         await auditoriaService.registrarEvento({
@@ -153,8 +237,22 @@ exports.cambiarPassword = async (req, res) => {
         if (e.message === 'USER_NOT_FOUND') {
             return res.status(404).json({ message: 'El usuario no existe' });
         }
+        if (e.code === 'POLITICA_PASSWORD_INVALIDA' || e.statusCode === 400) {
+            return res.status(400).json({ codigo: e.code || 'POLITICA_PASSWORD_INVALIDA', message: e.message });
+        }
         console.error(e);
         res.status(500).json({ message: 'Error interno del servidor' });
+    }
+};
+
+exports.obtenerPoliticaPassword = async (_req, res) => {
+    try {
+        const authService = require('../services/faregas-auth.service');
+        const politica = authService.obtenerConfiguracionPolitica();
+        res.json(politica);
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ message: 'Error al obtener política de contraseña' });
     }
 };
 
@@ -196,6 +294,177 @@ exports.restablecerCredencialesTemporales = async (req, res) => {
             success: false,
             message: 'No se pudo confirmar el restablecimiento de credenciales.',
         });
+    }
+};
+
+exports.generarCredencialTemporal = async (req, res) => {
+    try {
+        const username = req.params.username;
+        if (String(username).trim().toLowerCase() === 'gibarra') {
+            return res.status(403).json({
+                message: 'El usuario gibarra es una cuenta administrativa protegida y su credencial no puede ser modificada.',
+                codigo: 'USUARIO_PROTEGIDO'
+            });
+        }
+
+        const resultado = await service.generarCredencialTemporal(username, req.user?.username || 'ADMIN');
+
+        await auditoriaService.registrarEvento({
+            ...contextoAuditoria(req),
+            categoria: 'USUARIOS',
+            modulo: 'USUARIOS',
+            evento: 'PASSWORD_ACTUALIZADO',
+            mensaje: `Generación de contraseña temporal administrativa para ${username} por ${req.user?.username || 'ADMIN'}`,
+            entidad: 'fg_usuario',
+            documento_referencia: username,
+            datos: {
+                usuario: username,
+                responsable: req.user?.username || 'ADMIN',
+                tipo: 'CREDENCIAL_TEMPORAL_INDIVIDUAL'
+            }
+        });
+
+        res.json({ success: true, ...resultado });
+    } catch (e) {
+        if (e.code === 'USUARIO_PROTEGIDO') {
+            return res.status(403).json({ message: e.message, codigo: e.code });
+        }
+        if (e.message === 'USER_NOT_FOUND') {
+            return res.status(404).json({ message: 'El usuario no existe' });
+        }
+        console.error('Error al generar credencial temporal:', e);
+        res.status(500).json({ message: 'Error interno al generar credencial temporal.' });
+    }
+};
+
+exports.consultarCredencialAsignada = async (req, res) => {
+    try {
+        const username = req.params.username;
+        const resultado = await service.consultarCredencialAsignada(username);
+
+        await auditoriaService.registrarEvento({
+            ...contextoAuditoria(req),
+            categoria: 'USUARIOS',
+            modulo: 'USUARIOS',
+            evento: 'CREDENCIAL_CONSULTADA',
+            mensaje: `Consulta administrativa de credencial para ${username}: ${resultado.vigente ? 'VIGENTE' : (resultado.motivo || 'NO DISPONIBLE')}`,
+            entidad: 'fg_usuario',
+            documento_referencia: username
+        });
+
+        res.json({ success: true, ...resultado });
+    } catch (e) {
+        console.error('Error al consultar credencial asignada:', e);
+        res.status(500).json({ message: 'Error interno al consultar la credencial asignada.' });
+    }
+};
+
+exports.revelarCredencialCustodiada = async (req, res) => {
+    try {
+        const username = String(req.params.username || '').trim();
+        const cleanUsername = username.toLowerCase();
+        const adminUsername = req.user?.username;
+        const passwordAdmin = req.body?.passwordAdmin;
+
+        if (cleanUsername === 'gibarra') {
+            return res.status(403).json({
+                message: 'El usuario gibarra es una cuenta administrativa protegida y no puede ser revelado.',
+                codigo: 'USUARIO_PROTEGIDO'
+            });
+        }
+
+        // 1. Rate limiting estricto anti-scraping
+        custodiaService.verificarLimiteRevelaciones(adminUsername || req.ip);
+
+        // 2. Reautenticación obligatoria del administrador en sesión
+        if (!passwordAdmin || typeof passwordAdmin !== 'string') {
+            return res.status(400).json({
+                message: 'Debe ingresar su contraseña de administrador para confirmar la revelación de la credencial.',
+                codigo: 'PASSWORD_ADMIN_REQUERIDA'
+            });
+        }
+
+        const authValido = await authService.validarFaregas(adminUsername, passwordAdmin);
+        if (!authValido?.valido) {
+            await auditoriaService.registrarEvento({
+                ...contextoAuditoria(req),
+                categoria: 'USUARIOS',
+                modulo: 'USUARIOS',
+                evento: 'CREDENCIAL_REVELACION_FALLIDA',
+                mensaje: `Reautenticación fallida al intentar revelar credencial de ${username}. Contraseña de administrador incorrecta.`,
+                entidad: 'fg_usuario',
+                documento_referencia: username
+            });
+            return res.status(401).json({
+                message: 'Contraseña de administrador incorrecta. No se puede revelar la credencial.',
+                codigo: 'REAUTENTICACION_FALLIDA'
+            });
+        }
+
+        // 3. Descifrar credencial bajo custodia
+        const credencial = await custodiaService.obtenerCredencialDescifrada(db, cleanUsername);
+
+        // 4. Auditoría inmutable de revelación (SIN registrar la contraseña)
+        await auditoriaService.registrarEvento({
+            ...contextoAuditoria(req),
+            categoria: 'USUARIOS',
+            modulo: 'USUARIOS',
+            evento: 'CREDENCIAL_REVELADA',
+            mensaje: `El administrador ${adminUsername} reveló la credencial administrada custodiada del usuario ${username}.`,
+            entidad: 'fg_usuario',
+            documento_referencia: username
+        });
+
+        // 5. Encabezados de no caché
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
+
+        return res.json({
+            success: true,
+            username: credencial.username,
+            password: credencial.password,
+            creadoPor: credencial.creadoPor,
+            fechaActualizacion: credencial.fechaActualizacion
+        });
+    } catch (e) {
+        if (e.code === 'LIMITE_CONSULTAS_EXCEDIDO') {
+            return res.status(429).json({ message: e.message, codigo: e.code });
+        }
+        if (e.code === 'CREDENCIAL_NO_CUSTODIADA') {
+            return res.status(404).json({ message: e.message, codigo: e.code });
+        }
+        if (e.code === 'USUARIO_PROTEGIDO') {
+            return res.status(403).json({ message: e.message, codigo: e.code });
+        }
+        console.error('Error al revelar credencial custodiada:', e);
+        return res.status(500).json({ message: 'Error interno al revelar la credencial custodiada.' });
+    }
+};
+
+exports.descargarInventarioRenovado = async (req, res) => {
+    try {
+        const buffer = await service.generarBufferExcelInventario({
+            solicitante: req.user?.username || 'ADMINISTRADOR',
+            fechaGeneracion: new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' })
+        });
+
+        await auditoriaService.registrarEvento({
+            ...contextoAuditoria(req),
+            categoria: 'USUARIOS',
+            modulo: 'USUARIOS',
+            evento: 'INVENTARIO_CREDENCIALES_DESCARGADO',
+            mensaje: `Descarga administrativa del inventario dinámico de credenciales por ${req.user.username}`,
+            entidad: 'fg_usuario',
+            documento_referencia: 'faregas_credenciales_renovadas.xlsx'
+        });
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename="faregas_credenciales_renovadas.xlsx"');
+        res.send(buffer);
+    } catch (e) {
+        console.error('Error al generar inventario de credenciales:', e);
+        res.status(500).json({ message: 'Error interno al generar el inventario de credenciales.' });
     }
 };
 

@@ -4,9 +4,6 @@ const segmentoFinal = (ruta) => ruta.split('/').filter(Boolean).at(-1) || null;
 
 const describirUsuarios = (metodo, ruta) => {
     const referencia = segmentoFinal(ruta);
-    // El controlador registra un evento por cada cuenta restablecida. Evita
-    // clasificar el lote como una creación genérica de usuario.
-    if (ruta === '/usuarios/credenciales/restablecer') return null;
     if (ruta.includes('/perfiles')) {
         if (metodo === 'POST') return ['PERFIL_CREADO', 'Creó un nuevo perfil de usuario.', 'fg_perfil', null];
         if (metodo === 'PUT') return ['PERFIL_ACTUALIZADO', `Actualizó el perfil ${referencia}.`, 'fg_perfil', null];

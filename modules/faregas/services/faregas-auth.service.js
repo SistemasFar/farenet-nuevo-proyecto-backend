@@ -114,7 +114,7 @@ exports.crearSesion = async (username, plantaKey, ip, userAgent) => {
     return r.rows[0];
 };
 
-const MIN_PASSWORD_LENGTH = 12;
+const passwordPolicyService = require('./faregas-password-policy.service');
 
 const errorNegocio = (codigo, statusCode, mensaje) => {
     const error = new Error(mensaje);
@@ -123,45 +123,8 @@ const errorNegocio = (codigo, statusCode, mensaje) => {
     return error;
 };
 
-const validarPoliticaPassword = (password, username = '') => {
-    const pwd = String(password || '');
-    if (pwd.length < MIN_PASSWORD_LENGTH) {
-        return {
-            valido: false,
-            mensaje: `La nueva contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`
-        };
-    }
-
-    const tieneMayuscula = /[A-Z]/.test(pwd);
-    const tieneMinuscula = /[a-z]/.test(pwd);
-    const tieneNumeroOSimbolo = /[\d!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(pwd);
-
-    if (!tieneMayuscula || !tieneMinuscula || !tieneNumeroOSimbolo) {
-        return {
-            valido: false,
-            mensaje: 'La nueva contraseña debe contener al menos una mayúscula, una minúscula y un número o símbolo.'
-        };
-    }
-
-    const triviales = [
-        '123456789012', '1234567890123', 'password1234', 'contrasena123',
-        'faregas2026*', 'faregas2026**', 'qwertyuiop12', 'admin1234567'
-    ];
-    if (triviales.includes(pwd.toLowerCase())) {
-        return {
-            valido: false,
-            mensaje: 'La nueva contraseña es demasiado predecible o trivial. Elija una más segura.'
-        };
-    }
-
-    if (username && pwd.toLowerCase().includes(username.toLowerCase())) {
-        return {
-            valido: false,
-            mensaje: 'La nueva contraseña no puede contener el nombre de usuario.'
-        };
-    }
-
-    return { valido: true };
+const validarPoliticaPassword = (password, username = '', opciones = {}) => {
+    return passwordPolicyService.validarPoliticaPassword(password, username, opciones);
 };
 
 const intentosFallidos = new Map();
@@ -203,6 +166,7 @@ const limpiarIntentosFallidos = (username) => {
 };
 
 exports.validarPoliticaPassword = validarPoliticaPassword;
+exports.obtenerConfiguracionPolitica = passwordPolicyService.obtenerConfiguracionPolitica;
 exports.limpiarIntentosFallidos = limpiarIntentosFallidos;
 
 exports.revocarSesionesUsuario = async (username, client = db) => {

@@ -498,7 +498,8 @@ function renderFacturaHtml(data) {
         <div class="bottom-left">
             ${esOperacionGratuita ? `
                 <div class="bloque-tributario-leyenda">
-                    <div class="bloque-tributario-titulo">INFORMACIÓN TRIBUTARIA (CATÁLOGO N.º 15 SUNAT)</div>
+                    <div class="bloque-tributario-titulo">CORTESÍA — OPERACIÓN GRATUITA</div>
+                    <div><strong>ESTADO:</strong> Sin pago requerido</div>
                     <div class="bloque-tributario-codigo">CÓDIGO SUNAT: <strong>1002</strong></div>
                     <div class="bloque-tributario-texto">1002 - TRANSFERENCIA GRATUITA DE UN BIEN Y/O SERVICIO PRESTADO GRATUITAMENTE</div>
                     <div class="bloque-tributario-datos">

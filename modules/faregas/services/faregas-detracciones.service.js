@@ -270,6 +270,7 @@ function evaluarDetraccion({
         base: base,
         monto: monto,
         neto: neto,
+        responsableDeposito: 'EMPRESA',
         estadoDeposito: 'PENDIENTE',
         constanciaNro: null,
         constanciaFecha: null,

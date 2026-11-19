@@ -1,6 +1,7 @@
 const db = require('../../../config/database');
 const bcrypt = require('bcryptjs');
 const authService = require('./faregas-auth.service');
+const credencialesInventarioService = require('./faregas-credenciales-inventario.service');
 
 const MAX_USUARIOS_POR_LOTE = 100;
 const MIN_LONGITUD_TEMPORAL = 24;
@@ -96,6 +97,15 @@ const restablecerCredencialesTemporales = async (
             }
 
             const sesionesRevocadas = await authApi.revocarSesionesUsuario(credencial.username, client);
+            await credencialesInventarioService.registrarActualizacionCredencial(client, {
+                username: credencial.username,
+                estadoCredencial: 'Vigente (Administrada)',
+                tipoOperacion: 'RENOVACION_MASIVA',
+                responsable: 'ADMINISTRADOR (Lote)',
+                cambiadaPosteriormente: false,
+                necesitaRestablecimiento: false,
+                observaciones: 'Credencial administrada vigente asignada en renovación masiva.'
+            });
             resultados.push({ username: credencial.username, sesionesRevocadas });
         }
 
