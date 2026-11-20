@@ -1,4 +1,7 @@
+const { randomUUID } = require('node:crypto');
 const facturacionService = require('../services/faregas-facturacion.service');
+const config = require('../../../config/integrations.config');
+const { diagnosticarErrorLocal } = require('../services/faregas-contingencia-errores');
 const auditoriaService = require('../services/faregas-auditoria.service');
 
 const responderError = (res, error) => {
@@ -69,12 +72,16 @@ const responderError = (res, error) => {
         DESCARGA_NUBEFACT_FALLIDA: 'No se pudo descargar el PDF desde NubeFact.',
         PDF_NUBEFACT_INVALIDO: 'NubeFact no devolvió un archivo PDF válido.'
     };
-    if (status >= 500) console.error('[FAREGAS FACTURACION]', error);
+    if (status >= 500) console.error('[FAREGAS FACTURACION]', error.diagnosticoContingencia
+        ? { categoria: error.diagnosticoContingencia.categoria, seguimiento: error.diagnosticoContingencia.seguimiento }
+        : error);
     const codigoOriginal = error.code || error.message || 'ERROR_INTERNO';
     const codigo = status >= 500
         ? 'FACTURACION_ERROR_INTERNO'
         : (messages[codigoOriginal] ? codigoOriginal : 'FACTURACION_VALIDACION');
-    const message = codigoOriginal === 'CERTIFICADO_NO_VALIDO_PARA_EMISION' && error.detalles?.mensaje
+    const message = error.diagnosticoContingencia?.categoria === 'LIMITE_DEMO_AGOTADO'
+        ? error.diagnosticoContingencia.descripcion
+        : codigoOriginal === 'CERTIFICADO_NO_VALIDO_PARA_EMISION' && error.detalles?.mensaje
         ? error.detalles.mensaje
         : status >= 500 ? 'No se pudo guardar la facturación por un error interno. El borrador permanece disponible para reintentar.'
             : messages[codigoOriginal] || 'No se pudo guardar la facturación. Revise los datos e inténtelo nuevamente.';
@@ -82,7 +89,8 @@ const responderError = (res, error) => {
         ok: false,
         codigo,
         message,
-        detalles: status >= 500 ? undefined : error.detalles || undefined
+        detalles: error.diagnosticoContingencia ? { contingencia: error.diagnosticoContingencia }
+            : status >= 500 ? undefined : error.detalles || undefined
     });
 };
 
@@ -142,6 +150,12 @@ exports.emitir = async (req, res) => {
         }));
         return res.json({ ok: true, data });
     } catch (error) {
+        if (!error.diagnosticoContingencia && (config.contingencia?.habilitada || error.code === 'NUBEFACT_RECHAZADO')) {
+            const diagnostico = diagnosticarErrorLocal(error);
+            if (config.contingencia?.habilitada || diagnostico.categoria === 'LIMITE_DEMO_AGOTADO') {
+                error.diagnosticoContingencia = { ...diagnostico, seguimiento: 'FG-ERROR-' + randomUUID() };
+            }
+        }
         return responderError(res, error);
     }
 };

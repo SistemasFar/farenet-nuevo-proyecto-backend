@@ -185,6 +185,28 @@ test('la venta canónica por cantidad persiste operación, detalle y pago en una
         assert.equal(salidasInventario.length, 1);
         assert.equal(salidasInventario[0].detalle.cantidad, 100);
         assert.ok(consultas.some(({ sql }) => sql === 'COMMIT'));
+
+        consultas.length = 0;
+        const credito = await ventaCanonicaService.crearVentaDirecta({
+            productoInventariableId: 35,
+            cantidad: 1,
+            tipoComprobante: 'FACTURA',
+            condicionPago: 'CREDITO',
+            tipoDocumentoCliente: 'RUC',
+            nroDocumento: '20000000001',
+            nombreRazonSocial: 'Cliente de prueba aislada',
+            telefono: '912345678',
+            fechaInicioCredito: '2026-11-21',
+            fechaVencimiento: '2027-03-19',
+            cuotas: [{ numeroCuota: 1, fechaPago: '2027-03-19', importe: 12.60 }],
+            pagosAgregados: []
+        }, { username: 'emisor', perfil_id: 'EMISOR', planta_key: '160' });
+        assert.equal(credito.estado, 'PENDIENTE_PAGO');
+        const operacionCredito = consultas.find(({ sql }) => sql.includes('INSERT INTO fg_operacion_comercial'));
+        const ordenCredito = consultas.find(({ sql }) => sql.includes('INSERT INTO fg_orden_pago'));
+        assert.equal(operacionCredito.values[9], 'PENDIENTE_PAGO');
+        assert.deepEqual(ordenCredito.values.slice(4, 10), [0, 12.6, 'credito', 'PENDIENTE', '2026-11-21', '2027-03-19']);
+        assert.ok(!consultas.some(({ sql }) => sql.includes('INSERT INTO fg_pago')));
     } finally {
         db.connect = connectAnterior;
         authService.validarAccesoPlanta = accesoAnterior;
@@ -243,4 +265,63 @@ test('el histórico y el Dashboard siguen usando la operación y el detalle come
     assert.match(canonical, /INSERT INTO fg_operacion_detalle/);
     assert.match(canonical, /registrarSalidaVenta/);
     assert.match(dashboard, /JOIN fg_operacion_detalle od ON od\.operacion_id = oc\.id AND od\.tipo_item = 'PRODUCTO'/);
+});
+
+test('venta de inventario a crédito valida y conserva la fecha de inicio hasta emitir', async () => {
+    const { crearVentaDirectaYEmitir } = require('../services/faregas-venta-directa-fase2.service');
+    const { evaluarDatosFacturacion } = require('../services/faregas-facturacion.service');
+    const payload = {
+        tipoComprobante: 'FACTURA', tipoDocumentoCliente: 'RUC',
+        nroDocumento: '20000000001', nombreRazonSocial: 'Cliente sintético',
+        direccion: 'Dirección sintética', condicionPago: 'CREDITO',
+        fechaInicioCredito: '2026-11-21', fechaVencimiento: '2027-03-19',
+        cuotas: [
+            { numeroCuota: 1, fechaPago: '2026-12-30', importe: 60 },
+            { numeroCuota: 2, fechaPago: '2027-02-07', importe: 60 },
+            { numeroCuota: 3, fechaPago: '2027-03-19', importe: 60 }
+        ],
+        pagosAgregados: []
+    };
+    const llamadas = [];
+    const deps = {
+        ventaDirectaService: {
+            async crearVentaDirecta(datos) {
+                llamadas.push('venta');
+                assert.equal(datos.fechaInicioCredito, payload.fechaInicioCredito);
+                return { operacionId: 88 };
+            }
+        },
+        db: { async query() {
+            return { rowCount: 1, rows: [{
+                estado: 'PENDIENTE_PAGO',
+                tipo_documento_cliente_snapshot: payload.tipoDocumentoCliente,
+                documento_cliente_snapshot: payload.nroDocumento,
+                nombre_cliente_snapshot: payload.nombreRazonSocial,
+                direccion_cliente_snapshot: payload.direccion
+            }] };
+        } },
+        facturacionService: {
+            evaluarDatosFacturacion,
+            async guardarFacturacionOperacion(operacionId, datos) {
+                llamadas.push('guardar');
+                assert.equal(operacionId, 88);
+                assert.equal(datos.fechaInicioCredito, payload.fechaInicioCredito);
+                assert.deepEqual(evaluarDatosFacturacion(datos).errores, []);
+                assert.deepEqual(datos.cuotas, payload.cuotas);
+            },
+            async emitirFacturacionOperacion() {
+                llamadas.push('emitir');
+                return { estado: 'ACEPTADO', nroComprobante: 'FL99-0001' };
+            }
+        }
+    };
+    await assert.rejects(crearVentaDirectaYEmitir({ ...payload, fechaInicioCredito: '' }, {}, deps), {
+        code: 'DATOS_FACTURACION_INVALIDOS'
+    });
+    assert.deepEqual(llamadas, []);
+
+    const resultado = await crearVentaDirectaYEmitir(payload, {}, deps);
+    assert.equal(resultado.success, true);
+    assert.equal(resultado.operacionEstado, 'FACTURADO');
+    assert.deepEqual(llamadas, ['venta', 'guardar', 'emitir']);
 });

@@ -4,12 +4,14 @@ const certificadosService = require('./faregas-certificados.service');
 const clientesService = require('./faregas-clientes.service');
 const pagosService = require('./faregas-pagos.service');
 const facturacionService = require('./faregas-facturacion.service');
+const { normalizarFacturacion, validarCuotasContraTotal } = require('./faregas-facturacion.rules');
 const { prepararHtmlDuplicado } = require('./faregas-duplicado-pdf.service');
 
 const PRECIO_DUPLICADO = 50;
 const BASE_DUPLICADO = 42.37;
 const IGV_DUPLICADO = 7.63;
 const HISTORIAL_POR_PAGINA = 10;
+const facturacionPreparada = (row) => Boolean(row.facturacion_estado && (row.facturacion_id || row.facturacion_estado !== 'BORRADOR'));
 const debeGuardarPagos = (estadoOperacion) => ['BORRADOR', 'PENDIENTE_PAGO'].includes(String(estadoOperacion || '').toUpperCase());
 const ESTADOS_ANULACION_QUE_BLOQUEAN = Object.freeze([
     'PENDIENTE_APROBACION',
@@ -247,7 +249,16 @@ const obtenerDuplicadoAutorizado = async (duplicadoId, userContext, queryable = 
                o.estado AS operacion_estado, o.importe_total,
                f.id AS facturacion_id_real, f.estado AS facturacion_estado,
                f.aceptada_sunat, f.entorno_facturador, f.nro_comprobante,
-               f.tipo_comprobante, f.serie, f.numero,
+               f.tipo_comprobante, f.serie, f.numero, f.condicion_pago,
+               CASE WHEN f.id IS NOT NULL THEN json_build_object('tipoDocumento', f.tipo_documento_cliente,
+                   'nroDocumento', f.nro_documento, 'nombreRazonSocial', f.nombre_razon_social,
+                   'direccion', COALESCE(f.direccion, ''), 'email', COALESCE(f.email, ''),
+                   'telefono', COALESCE(f.telefono, '')) END AS cliente_facturacion,
+               orden.fecha_inicio_credito::text AS fecha_inicio_credito,
+               COALESCE(f.fecha_vencimiento, orden.fecha_vencimiento_credito)::text AS fecha_vencimiento_credito,
+               (SELECT json_agg(json_build_object('numeroCuota', q.numero_cuota,
+                       'fechaPago', q.fecha_pago::text, 'importe', q.importe) ORDER BY q.numero_cuota)
+                FROM fg_facturacion_cuota q WHERE q.facturacion_id = f.id) AS cuotas_credito,
                f.enlace_pdf, f.enlace_xml, f.enlace_pdf_faregas,
                CASE
                    WHEN d.estado = 'DISPONIBLE' THEN (
@@ -270,6 +281,7 @@ const obtenerDuplicadoAutorizado = async (duplicadoId, userContext, queryable = 
         JOIN fg_certificado c ON c.id = d.certificado_original_id
         JOIN fg_operacion_comercial o ON o.id = d.operacion_id
         LEFT JOIN fg_facturacion f ON f.operacion_id = o.id AND f.certificado_id IS NULL
+        LEFT JOIN fg_orden_pago orden ON orden.operacion_id = o.id
         WHERE d.id = $1
         ${forUpdate ? 'FOR UPDATE OF d, o' : ''}
     `, [Number(duplicadoId)]);
@@ -310,8 +322,14 @@ const respuestaDuplicado = (row) => ({
     estado: row.estado,
     operacionEstado: row.operacion_estado,
     facturacionEstado: row.facturacion_estado || null,
+    planConfirmado: facturacionPreparada(row),
+    clienteFacturacion: row.cliente_facturacion || null,
     nroComprobante: row.nro_comprobante || null,
     tipoComprobante: row.tipo_comprobante || null,
+    condicionPago: row.condicion_pago || (row.fecha_inicio_credito ? 'CREDITO' : 'CONTADO'),
+    fechaInicioCredito: row.fecha_inicio_credito || null,
+    fechaVencimiento: row.fecha_vencimiento_credito || null,
+    cuotas: row.cuotas_credito || [],
     fechaSolicitud: row.fecha_solicitud || null,
     fechaDisponible: row.fecha_disponible || null,
     solicitadoPor: row.solicitado_por || null,
@@ -519,9 +537,14 @@ exports.procesar = async (duplicadoId, payload, userContext, dependencies = {}) 
     if (Number(duplicado.precio) !== PRECIO_DUPLICADO) throw errorNegocio('PRECIO_DUPLICADO_INVALIDO', 409);
 
     const fiscal = payload?.facturacion || {};
-    if (String(fiscal.condicionPago || 'CONTADO').toUpperCase() !== 'CONTADO') {
-        throw errorNegocio('DUPLICADO_SOLO_CONTADO', 400);
-    }
+    const plan = normalizarFacturacion(fiscal);
+    const esCredito = plan.condicionPago === 'CREDITO';
+    const validarCondicionGuardada = (row) => {
+        if (facturacionPreparada(row) && (row.condicion_pago || 'CONTADO') !== plan.condicionPago) {
+            throw errorNegocio('DUPLICADO_CONDICION_NO_EDITABLE', 409);
+        }
+    };
+    validarCondicionGuardada(duplicado);
     // Validar los datos fiscales antes de actualizar el cliente o persistir pagos.
     // Así los errores de RUC/datos no dejan cambios parciales en la solicitud.
     const servicioFacturacion = dependencies.facturacionService || facturacionService;
@@ -530,12 +553,19 @@ exports.procesar = async (duplicadoId, payload, userContext, dependencies = {}) 
         : facturacionService.evaluarDatosFacturacion;
     const evaluacionFiscal = evaluarFiscal(fiscal);
     const erroresFiscal = evaluacionFiscal?.errores || [];
-    if (erroresFiscal.length > 0) {
+    if (!facturacionPreparada(duplicado) && erroresFiscal.length > 0) {
         throw errorNegocio('DATOS_FACTURACION_INVALIDOS', 400, erroresFiscal);
     }
 
     const pagosPayload = Array.isArray(payload?.pagos) ? payload.pagos : [];
-    if (debeGuardarPagos(duplicado.operacion_estado)) {
+    if (esCredito && !facturacionPreparada(duplicado)) {
+        if (pagosPayload.length || (duplicado.pagos || []).length || !debeGuardarPagos(duplicado.operacion_estado)) {
+            throw errorNegocio('DUPLICADO_CREDITO_CON_COBROS', 409);
+        }
+        if (!validarCuotasContraTotal(plan.cuotas, PRECIO_DUPLICADO)) {
+            throw errorNegocio('DUPLICADO_CUOTAS_TOTAL_INVALIDO', 400);
+        }
+    } else if (!facturacionPreparada(duplicado) && debeGuardarPagos(duplicado.operacion_estado)) {
         if (pagosPayload.length === 0) {
             throw errorNegocio('PAGOS_REQUERIDOS', 400, 'Debe registrar al menos un medio de pago.');
         }
@@ -551,27 +581,51 @@ exports.procesar = async (duplicadoId, payload, userContext, dependencies = {}) 
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+        await client.query('SELECT id FROM fg_certificado_duplicado WHERE id=$1 FOR UPDATE', [duplicadoId]);
         duplicado = await obtenerDuplicadoAutorizado(duplicadoId, userContext, client, true);
-        const cliente = await clientesService.asegurarCliente({
-            tipoDocumento: fiscal.tipoDocumentoCliente,
-            nroDocumento: fiscal.nroDocumento,
-            nombreRazonSocial: fiscal.nombreRazonSocial,
-            direccion: fiscal.direccion,
-            correo: fiscal.email,
-            telefono: fiscal.telefono
-        }, client);
-        await client.query(`
-            UPDATE fg_operacion_comercial
-            SET cliente_id=$2, tipo_documento_cliente_snapshot=$3,
-                documento_cliente_snapshot=$4, nombre_cliente_snapshot=$5,
-                direccion_cliente_snapshot=$6, usuario_modificacion=$7,
-                fecha_modificacion=CURRENT_TIMESTAMP
-            WHERE id=$1
-        `, [
-            duplicado.operacion_id, cliente.id, fiscal.tipoDocumentoCliente,
-            fiscal.nroDocumento, fiscal.nombreRazonSocial, fiscal.direccion,
-            userContext.username
-        ]);
+        if (duplicado.estado === 'ANULADO') throw errorNegocio('DUPLICADO_ANULADO', 409);
+        validarCondicionGuardada(duplicado);
+        if (!facturacionPreparada(duplicado)) {
+            const cliente = await clientesService.asegurarCliente({
+                tipoDocumento: fiscal.tipoDocumentoCliente,
+                nroDocumento: fiscal.nroDocumento,
+                nombreRazonSocial: fiscal.nombreRazonSocial,
+                direccion: fiscal.direccion,
+                correo: fiscal.email,
+                telefono: fiscal.telefono
+            }, client);
+            await client.query(`
+                UPDATE fg_operacion_comercial
+                SET cliente_id=$2, tipo_documento_cliente_snapshot=$3,
+                    documento_cliente_snapshot=$4, nombre_cliente_snapshot=$5,
+                    direccion_cliente_snapshot=$6, usuario_modificacion=$7,
+                    fecha_modificacion=CURRENT_TIMESTAMP
+                WHERE id=$1
+            `, [
+                duplicado.operacion_id, cliente.id, fiscal.tipoDocumentoCliente,
+                fiscal.nroDocumento, fiscal.nombreRazonSocial, fiscal.direccion,
+                userContext.username
+            ]);
+            if (debeGuardarPagos(duplicado.operacion_estado)) {
+                await (dependencies.pagosService || pagosService).guardarPagosOperacion(
+                    duplicado.operacion_id,
+                    {
+                        importeTotal: PRECIO_DUPLICADO, pagos: pagosPayload, condicionPago: plan.condicionPago,
+                        fechaInicioCredito: plan.fechaInicioCredito, fechaVencimientoCredito: plan.fechaVencimiento
+                    },
+                    userContext, client
+                );
+            }
+            await servicioFacturacion.guardarFacturacionOperacion(duplicado.operacion_id, fiscal, userContext, client);
+            const facturacionId = await asegurarSnapshotOperacion(duplicado.operacion_id, client);
+            await client.query(
+                "UPDATE fg_certificado_duplicado SET facturacion_id=$2, estado='PENDIENTE_COMPROBANTE', " +
+                "fecha_modificacion=CURRENT_TIMESTAMP WHERE id=$1",
+                [duplicadoId, facturacionId]
+            );
+        } else if (!facturacionOperable(duplicado)) {
+            await asegurarSnapshotOperacion(duplicado.operacion_id, client);
+        }
         await client.query('COMMIT');
     } catch (error) {
         await client.query('ROLLBACK');
@@ -581,21 +635,7 @@ exports.procesar = async (duplicadoId, payload, userContext, dependencies = {}) 
     }
 
     try {
-        if (debeGuardarPagos(duplicado.operacion_estado)) {
-            await (dependencies.pagosService || pagosService).guardarPagosOperacion(
-                duplicado.operacion_id,
-                { importeTotal: PRECIO_DUPLICADO, pagos: pagosPayload, condicionPago: 'CONTADO' },
-                userContext
-            );
-        }
-        await (dependencies.facturacionService || facturacionService).guardarFacturacionOperacion(
-            duplicado.operacion_id,
-            { ...fiscal, condicionPago: 'CONTADO', cuotas: [] },
-            userContext
-        );
-        // Las ventas por operación no pasan por el snapshot de un certificado.
-        // El comprobante del duplicado necesita su propia foto inmutable de fecha y sede.
-        await asegurarSnapshotOperacion(duplicado.operacion_id);
+        if (duplicado.estado === 'DISPONIBLE' && facturacionOperable(duplicado)) return respuestaDuplicado(duplicado);
         const facturacionActual = await db.query(
             'SELECT estado FROM fg_facturacion WHERE operacion_id=$1 AND certificado_id IS NULL',
             [duplicado.operacion_id]
@@ -611,17 +651,12 @@ exports.procesar = async (duplicadoId, payload, userContext, dependencies = {}) 
         await db.query(`
             UPDATE fg_certificado_duplicado
             SET facturacion_id=$2, estado=$3::varchar,
-                fecha_disponible=CASE WHEN $3::varchar='DISPONIBLE' THEN CURRENT_TIMESTAMP ELSE fecha_disponible END,
+                fecha_disponible=CASE WHEN $3::varchar='DISPONIBLE' THEN COALESCE(fecha_disponible, CURRENT_TIMESTAMP) ELSE fecha_disponible END,
                 fecha_modificacion=CURRENT_TIMESTAMP
-            WHERE id=$1
+            WHERE id=$1 AND (estado <> 'DISPONIBLE' OR $3::varchar = 'DISPONIBLE')
         `, [duplicadoId, factRow.rows[0]?.id || null, disponible ? 'DISPONIBLE' : 'PENDIENTE_COMPROBANTE']);
         return respuestaDuplicado(await obtenerDuplicadoAutorizado(duplicadoId, userContext));
     } catch (error) {
-        await db.query(`
-            UPDATE fg_certificado_duplicado
-            SET estado='PENDIENTE_COMPROBANTE', fecha_modificacion=CURRENT_TIMESTAMP
-            WHERE id=$1 AND estado <> 'DISPONIBLE'
-        `, [duplicadoId]).catch(() => undefined);
         const detalles = Array.isArray(error.detalles)
             ? { errores: error.detalles }
             : (error.detalles && typeof error.detalles === 'object' ? error.detalles : {});

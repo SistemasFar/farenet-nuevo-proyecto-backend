@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+router.use(require('../middlewares/faregas-referencia-error.middleware'));
 const faregasAuthController = require('../controllers/faregas-auth.controller');
 const { authFaregasMiddleware } = require('../middlewares/faregas-auth.middleware');
 

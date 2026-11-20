@@ -16,31 +16,19 @@ const obtenerSnapshotOperacion = async (database, operacionId) => {
     return result.rows[0];
 };
 
-const construirDatosFacturacionInicial = (payload) => ({
-    tipoComprobante: texto(payload?.tipoComprobante).toUpperCase(),
-    nroDocumento: payload?.nroDocumento,
-    nombreRazonSocial: payload?.nombreRazonSocial,
-    direccion: payload?.direccion,
-    email: payload?.email || null,
-    telefono: payload?.telefono || null,
-    condicionPago: texto(payload?.condicionPago || 'CONTADO').toUpperCase(),
-    fechaVencimiento: payload?.fechaVencimiento || null,
-    medioPago: payload?.medioPago || null,
-    cuotas: Array.isArray(payload?.cuotas) ? payload.cuotas : []
-});
-
 // La facturación de una operación es un snapshot fiscal: guarda documento,
 // nombre, dirección, correo y teléfono tal como quedaron para esta venta. Se
 // preserva la prioridad "dato de la venta > maestro": si el operador escribió
 // un contacto, ese manda; si vino vacío se usa el del maestro ya resuelto,
 // que la fase 1 devolvió, sin volver a consultar fg_cliente.
-const construirDatosFacturacion = (snapshot, tipoComprobante, contacto = {}, opciones = {}) => ({
-    tipoComprobante: texto(tipoComprobante).toUpperCase(),
-    nroDocumento: snapshot.documento_cliente_snapshot,
-    nombreRazonSocial: snapshot.nombre_cliente_snapshot,
-    direccion: snapshot.direccion_cliente_snapshot,
-    email: texto(contacto.email) || null,
-    telefono: texto(contacto.telefono) || null,
+const construirDatosFacturacion = (cliente, opciones) => ({
+    tipoComprobante: texto(opciones.tipoComprobante).toUpperCase(),
+    tipoDocumentoCliente: cliente.tipoDocumentoCliente,
+    nroDocumento: cliente.nroDocumento,
+    nombreRazonSocial: cliente.nombreRazonSocial,
+    direccion: cliente.direccion,
+    email: texto(cliente.email) || null,
+    telefono: texto(cliente.telefono) || null,
     condicionPago: texto(opciones.condicionPago || 'CONTADO').toUpperCase(),
     fechaInicioCredito: opciones.fechaInicioCredito || null,
     fechaVencimiento: opciones.fechaVencimiento || null,
@@ -93,7 +81,7 @@ const crearVentaDirectaYEmitir = async (payload, userContext, dependencies = {})
     const database = dependencies.db || db;
 
     const evaluacionInicial = billingService.evaluarDatosFacturacion(
-        construirDatosFacturacionInicial(payload)
+        construirDatosFacturacion(payload, payload)
     );
     if (evaluacionInicial.errores.length > 0) {
         const error = new Error('DATOS_FACTURACION_INVALIDOS');
@@ -105,21 +93,14 @@ const crearVentaDirectaYEmitir = async (payload, userContext, dependencies = {})
 
     const venta = await ventaService.crearVentaDirecta(payload, userContext);
     const snapshot = await obtenerSnapshotOperacion(database, venta.operacionId);
-    const datosFacturacion = construirDatosFacturacion(
-        snapshot,
-        payload.tipoComprobante,
-        {
-            email: payload.email || venta.cliente?.correo,
-            telefono: payload.telefono || venta.cliente?.telefono
-        },
-        {
-            condicionPago: payload.condicionPago,
-            fechaInicioCredito: payload.fechaInicioCredito,
-            fechaVencimiento: payload.fechaVencimiento,
-            medioPago: payload.medioPago,
-            cuotas: payload.cuotas
-        }
-    );
+    const datosFacturacion = construirDatosFacturacion({
+        tipoDocumentoCliente: snapshot.tipo_documento_cliente_snapshot,
+        nroDocumento: snapshot.documento_cliente_snapshot,
+        nombreRazonSocial: snapshot.nombre_cliente_snapshot,
+        direccion: snapshot.direccion_cliente_snapshot,
+        email: payload.email || venta.cliente?.correo,
+        telefono: payload.telefono || venta.cliente?.telefono
+    }, payload);
 
     let facturacionGuardada = null;
     try {
@@ -136,7 +117,7 @@ const crearVentaDirectaYEmitir = async (payload, userContext, dependencies = {})
         return {
             ...venta,
             success: true,
-            operacionEstado: 'PAGADO',
+            operacionEstado: facturacion.estado === 'ACEPTADO' ? 'FACTURADO' : snapshot.estado,
             facturacion,
             facturacionEstado: facturacion.estado,
             message: mensajeExito(facturacion)
@@ -152,7 +133,7 @@ const crearVentaDirectaYEmitir = async (payload, userContext, dependencies = {})
         return {
             ...venta,
             success: false,
-            operacionEstado: 'PAGADO',
+            operacionEstado: snapshot.estado,
             facturacion: facturacion || null,
             facturacionEstado: estadoFacturacion,
             httpStatus: status,
@@ -160,6 +141,7 @@ const crearVentaDirectaYEmitir = async (payload, userContext, dependencies = {})
             detalles: {
                 ...(error?.detalles || {}),
                 operacionId: venta.operacionId,
+                operacionEstado: snapshot.estado,
                 ventaRegistrada: true
             },
             error: {

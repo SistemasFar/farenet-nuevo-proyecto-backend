@@ -104,7 +104,37 @@ const nubefactDetractionDecision = String(
 ).trim().toUpperCase();
 
 // Se congelan los objetos exportados para mantenerlos inmutables
+const baseAislada = String(process.env.FAREGAS_CONTINGENCIA_DB_NAME || '').trim();
+const ambienteBd = String(process.env.APP_DATABASE_ENVIRONMENT || '').trim().toUpperCase();
+const flagContingencia = getBooleanEnv('FAREGAS_CONTINGENCIA_ENABLED', false);
+const permitirInspeccion = getBooleanEnv('FAREGAS_CONTINGENCIA_PERMITIR_INSPECCION', false);
+const lista = (valor) => Object.freeze(String(valor || '').split(',').map(item => item.trim()).filter(Boolean));
+const correoUrl = String(process.env.FAREGAS_CONTINGENCIA_CORREO_URL || '').trim();
 const config = Object.freeze({
+  contingencia: Object.freeze({
+    habilitada: flagContingencia && process.env.NODE_ENV !== 'production'
+      && ['DESARROLLO', 'DEMO'].includes(ambienteBd) && nubefactEnvironment === 'DEMO' && nubefactEnabled
+      && !getBooleanEnv('NUBEFACT_ENVIAR_CLIENTE', false)
+      && Boolean(baseAislada) && baseAislada === String(process.env.DB_NAME || '').trim()
+      && (permitirInspeccion ? !/^(farenet_bkp|postgres)$/i.test(baseAislada) : !/^(inspeccion|farenet_bkp|postgres|farenet)$/i.test(baseAislada)),
+    baseAislada,
+    cronHabilitado: getBooleanEnv('FAREGAS_CONTINGENCIA_CRON_AUTO', false),
+    tiposDemo: lista(process.env.FAREGAS_CONTINGENCIA_TIPOS_DEMO?.toUpperCase()),
+    operadoresDemo: lista(process.env.FAREGAS_CONTINGENCIA_OPERADORES_DEMO),
+    correoUrl: /^https:\/\//i.test(correoUrl) ? correoUrl : '',
+    correoToken: process.env.FAREGAS_CONTINGENCIA_CORREO_TOKEN || '',
+    correoIdempotente: getBooleanEnv('FAREGAS_CONTINGENCIA_CORREO_IDEMPOTENTE', false),
+    correoDestinoDemo: process.env.FAREGAS_CONTINGENCIA_CORREO_DESTINO_DEMO || '',
+    correoAdjuntarXml: getBooleanEnv('FAREGAS_CONTINGENCIA_CORREO_XML', false)
+  }),
+  smtp: Object.freeze({
+    host: String(process.env.SMTP_HOST || process.env.FAREGAS_SMTP_HOST || '').trim(),
+    port: getIntegerEnv('SMTP_PORT', getIntegerEnv('FAREGAS_SMTP_PORT', 587)),
+    user: String(process.env.SMTP_USER || process.env.FAREGAS_SMTP_USER || '').trim(),
+    pass: String(process.env.SMTP_PASS || process.env.FAREGAS_SMTP_PASS || '').trim(),
+    from: String(process.env.SMTP_FROM || process.env.FAREGAS_SMTP_FROM || '').trim(),
+    secure: getBooleanEnv('SMTP_SECURE', false) || getBooleanEnv('FAREGAS_SMTP_SECURE', false),
+  }),
   nubefact: Object.freeze({
     enabled: nubefactEnabled,
     simulationEnabled: nubefactSimulationEnabled,

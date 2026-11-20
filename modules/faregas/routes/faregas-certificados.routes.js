@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const contingenciaController = require('../controllers/faregas-contingencia.controller');
 const controller = require('../controllers/faregas-certificados.controller');
 const correlativosController = require('../controllers/faregas-certificados-correlativos.controller');
 const pagosController = require('../controllers/faregas-pagos.controller');
@@ -69,6 +70,10 @@ const facturacionAdminMiddleware = crearMiddlewarePermisoFaregas(db, {
 // Borradores y su facturación pertenecen al flujo Inicio. Los controles
 // fiscales sensibles siguen validándose dentro de los servicios respectivos.
 router.use('/borradores', permisoInicio);
+router.get('/borradores/:id/contingencia', contingenciaController.contexto);
+router.post('/borradores/:id/contingencia/emitir-certificado', contingenciaController.emitirSoloCertificado);
+router.get('/facturacion/admin/contingencia', facturacionAdminMiddleware, contingenciaController.listar);
+router.post('/facturacion/admin/contingencia/:facturacionId/reintentar', facturacionAdminMiddleware, contingenciaController.reintentar);
 
 // Catálogo
 router.get('/operaciones-disponibles', permisoInicio, controller.obtenerOperacionesDisponibles);

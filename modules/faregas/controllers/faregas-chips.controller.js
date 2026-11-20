@@ -34,7 +34,10 @@ const respond = (res, error) => {
         DATOS_CLIENTE_REQUERIDOS: 'Complete los datos del cliente.',
         DATOS_CLIENTE_INVALIDOS: 'Los datos del cliente no son válidos.',
         CONDICION_PAGO_INVALIDA: 'La condición de pago no es válida.',
-        CONDICION_PAGO_NO_DISPONIBLE: 'La venta directa por crédito aún no está disponible en esta fase.',
+        CONDICION_PAGO_NO_DISPONIBLE: 'Selecciona Factura para usar crédito. La boleta requiere pago al contado.',
+        CREDITO_NO_ADMITE_PAGOS: 'El crédito de inventario financia el saldo sin cobros de caja. Retira los medios de pago antes de confirmar.',
+        VENTA_CREDITO_SIN_SALDO: 'La factura a crédito requiere un saldo pendiente para financiar.',
+        CUOTAS_NO_COINCIDEN_CON_SALDO: 'La suma de las cuotas no cubre el saldo a financiar. Revisa sus importes antes de confirmar.',
         PAGO_INCOMPLETO: 'El pago no cubre el total de la venta.',
         PAGO_EXCEDE_TOTAL: 'El pago no puede superar el total de la venta.',
         TIPO_COMPROBANTE_INVALIDO: 'El tipo de comprobante no es válido.',
@@ -65,7 +68,7 @@ const respond = (res, error) => {
         SEDES_IGUALES: 'Seleccione una sede destino diferente a la sede de origen.',
         AMBIENTE_PRODUCCION: 'La limpieza de tipos de chip sólo está disponible en ambiente DEMO o desarrollo.'
     };
-    const status = error.status
+    const status = error.statusCode || error.status
         || ['CHIP_DUPLICADO','CHIP_CODIGO_RESERVADO','CHIP_NO_DISPONIBLE','CHIP_OTRA_SEDE','CHIP_ASIGNADO_CERTIFICADO','RESERVA_NO_COINCIDE','PRODUCTO_INVENTARIABLE_DUPLICADO','PAGO_INCOMPLETO','PAGO_EXCEDE_TOTAL','VENTA_CHIP_NO_HABILITADA','STOCK_CHIP_NO_PERMITIDO','CHIP_PRODUCTO_FISCAL_NO_CONFIGURADO','PRODUCTO_FISCAL_CHIP_INVALIDO','PRECIO_VENTA_FISCAL_CHIP_INVALIDO','CONDICION_PAGO_NO_DISPONIBLE','TIPO_CHIP_BLOQUEADO','AMBIENTE_PRODUCCION','SEDE_ALMACEN_CHIP_NO_HABILITADA','SEDE_TRANSFERENCIA_CHIP_NO_PERMITIDA','SEDE_CHIP_NO_HABILITADA','SEDES_IGUALES','STOCK_INSUFICIENTE','VENTA_PRODUCTO_NO_HABILITADA','STOCK_PRODUCTO_NO_PERMITIDO','CODIGOS_DISPONIBLES_CONFIGURACION_REQUERIDA','CODIGOS_DISPONIBLES_NO_ENCONTRADOS','CODIGOS_PROPUESTA_EXPIRADA','PRODUCTO_NO_HABILITADO_SEDE_INGRESO'].includes(error.message) ? 409
         : ['OPERACION_NOT_FOUND','TIPO_CHIP_NO_ENCONTRADO'].includes(error.message) ? 404
         : ['PLANTA_NO_AUTORIZADA'].includes(error.message) ? 403 : 400;

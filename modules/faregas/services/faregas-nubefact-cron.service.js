@@ -67,6 +67,10 @@ const reclamarLote = async ({
     try {
         await client.query('BEGIN');
 
+        const existeCola = integrationsConfig.contingencia?.habilitada
+            && (await client.query("SELECT to_regclass('public.fg_facturacion_contingencia') IS NOT NULL AS existe")).rows[0]?.existe;
+        const excluirContingencia = existeCola
+            ? "AND NOT EXISTS (SELECT 1 FROM public.fg_facturacion_contingencia j WHERE j.facturacion_id = f.id AND j.estado IN ('PENDIENTE', 'REVISION'))" : '';
         // Los intentos de consulta tienen su propio límite; no alteran el contador
         // de POST de emisión almacenado en fg_facturacion.intentos.
         await client.query(`
@@ -76,6 +80,7 @@ const reclamarLote = async ({
                    fecha_modificacion = CURRENT_TIMESTAMP
              WHERE f.entorno_facturador = $1
                AND f.estado IN ('PENDIENTE', 'PENDIENTE_SUNAT')
+               ${excluirContingencia}
                AND (
                     SELECT COUNT(*)
                       FROM fg_facturacion_intento i
@@ -99,6 +104,7 @@ const reclamarLote = async ({
               LEFT JOIN fg_operacion_comercial oc ON oc.id = f.operacion_id
              WHERE f.entorno_facturador = $1
                AND f.estado IN ('PENDIENTE', 'PENDIENTE_SUNAT')
+               ${excluirContingencia}
                AND COALESCE(c.planta_key, oc.planta_key) IS NOT NULL
                AND (
                     f.certificado_id IS NOT NULL

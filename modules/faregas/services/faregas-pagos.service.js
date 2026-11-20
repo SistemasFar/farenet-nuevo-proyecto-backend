@@ -355,10 +355,10 @@ const insertarPagosNuevosSinAlterarExistentes = async (client, ordenId, pagos, d
     }
 };
 
-exports.guardarPagosOperacion = async (operacionId, data, userContext) => {
-    const client = await db.connect();
+exports.guardarPagosOperacion = async (operacionId, data, userContext, transaccion = null) => {
+    const client = transaccion || await db.connect();
     try {
-        await client.query('BEGIN');
+        if (!transaccion) await client.query('BEGIN');
         
         const operacionResult = await client.query('SELECT * FROM fg_operacion_comercial WHERE id = $1 FOR UPDATE', [operacionId]);
         if (!operacionResult.rowCount) throw new Error('OPERACION_NOT_FOUND');
@@ -441,13 +441,13 @@ exports.guardarPagosOperacion = async (operacionId, data, userContext) => {
         `, [operacionId, estado === 'PAGADO' ? 'PAGADO' : 'PENDIENTE_PAGO', userContext.username]);
 
         const pagosGuardados = await exports.listarPagosPorOrden(orden.id, client);
-        await client.query('COMMIT');
+        if (!transaccion) await client.query('COMMIT');
         return { orden: ordenActualizada.rows[0], pagos: pagosGuardados };
     } catch (error) {
-        await client.query('ROLLBACK');
+        if (!transaccion) await client.query('ROLLBACK');
         throw error;
     } finally {
-        client.release();
+        if (!transaccion) client.release();
     }
 };
 

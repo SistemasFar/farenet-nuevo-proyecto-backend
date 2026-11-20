@@ -11,6 +11,7 @@ const {
 const readinessService = require('./faregas-nubefact-readiness.service');
 const facturacionSnapshotService = require('./faregas-facturacion-snapshot.service');
 const integrationsConfig = require('../../../config/integrations.config');
+const { clasificarResultado, coincideRespuestaFiscal, identificarLimiteDemo } = require('./faregas-contingencia-errores');
 const chipCertificadoService = require('./faregas-chip-certificado.service');
 const clientesService = require('./faregas-clientes.service');
 const { esDocumentoBaseOperable, normalizarEntorno } = require('./faregas-documento-tributario-policy');
@@ -205,6 +206,38 @@ const obtenerOrdenFacturable = async (client, certificadoId, condicionPago = 'CO
     return orden;
 };
 
+const esFalloTemporalProveedor = (facturacion) => {
+    if (!facturacion) return false;
+    const resp = typeof facturacion.respuesta_proveedor === 'string'
+        ? (() => { try { return JSON.parse(facturacion.respuesta_proveedor); } catch { return {}; } })()
+        : (facturacion.respuesta_proveedor || {});
+    const desc = facturacion.sunat_description || '';
+    const errs = JSON.stringify(resp);
+    if (identificarLimiteDemo(desc, errs, resp.errors, resp.message, resp.mensaje)) {
+        return true;
+    }
+    const codigoProveedor = resp.codigo || resp.sunat_responsecode;
+    const tieneCodigoFiscalSunat = Boolean(facturacion.sunat_responsecode && String(facturacion.sunat_responsecode).trim() !== '0');
+    if (tieneCodigoFiscalSunat) {
+        return false;
+    }
+    if (String(codigoProveedor) === '21' || resp.status === 'ERROR' || resp.reason === 'TIMEOUT' || resp.reason === 'NETWORK_ERROR' || resp.reason === 'PROVIDER_HTTP_ERROR') {
+        return true;
+    }
+    const httpStatus = Number(resp.httpStatus);
+    if ([408, 429, 500, 502, 503, 504].includes(httpStatus)) {
+        return true;
+    }
+    return false;
+};
+
+const esRechazoFiscalDefinitivo = (facturacion) => {
+    if (!facturacion) return false;
+    if (esFalloTemporalProveedor(facturacion)) return false;
+    const tieneCodigoFiscal = Boolean(facturacion.sunat_responsecode && String(facturacion.sunat_responsecode).trim() !== '0');
+    return facturacion.estado === 'RECHAZADO' && (tieneCodigoFiscal || facturacion.aceptada_sunat === false);
+};
+
 const respuestaPublica = (row, cuotas = []) => {
     if (!row) return null;
     return {
@@ -253,6 +286,10 @@ const respuestaPublica = (row, cuotas = []) => {
         codigoUnico: row.codigo_unico || null,
         aceptadaSunat: row.aceptada_sunat,
         sunatDescription: row.sunat_description,
+        motivoLimiteDemo: row.estado === 'RECHAZADO' ? identificarLimiteDemo(row.sunat_description,
+            row.respuesta_proveedor?.errors, row.respuesta_proveedor?.emision?.errors) : null,
+        esRechazoDefinitivo: esRechazoFiscalDefinitivo(row),
+        esFalloTemporal: esFalloTemporalProveedor(row),
         sunatResponsecode: row.sunat_responsecode,
         sunatSoapError: row.sunat_soap_error,
         enlacePdf: row.enlace_pdf,
@@ -367,7 +404,10 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
             && (actual.rows[0].enlace_pdf || actual.rows[0].enlace_xml)
             && actual.rows[0].nro_comprobante
         );
-        if (actual.rowCount > 0 && (['PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'ERROR'].includes(actual.rows[0].estado) || yaTieneComprobante)) {
+        const tieneCorrelativoAsignado = actual.rowCount > 0 && Boolean(
+            actual.rows[0].serie && actual.rows[0].numero !== null
+        );
+        if (actual.rowCount > 0 && (['PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'ERROR', 'RECHAZADO'].includes(actual.rows[0].estado) || tieneCorrelativoAsignado || yaTieneComprobante)) {
             const cuotas = await client.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [actual.rows[0].id]);
             await client.query("COMMIT");
             return respuestaPublica(actual.rows[0], cuotas.rows);
@@ -435,7 +475,6 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
             importeTotal: orden.importe_total,
             moneda: orden.moneda_key
         });
-        await client.query('DELETE FROM fg_facturacion_intento WHERE facturacion_id = $1', [result.rows[0].id]);
         await client.query('DELETE FROM fg_facturacion_cuota WHERE facturacion_id = $1', [result.rows[0].id]);
         for (const cuota of normalizada.cuotas) {
             await client.query(
@@ -501,7 +540,7 @@ exports.guardarFacturacion = async (certificadoId, data, userContext) => {
     }
 };
 
-const reservarEmision = async (certificadoId, userContext, dependencies = {}) => {
+const reservarEmision = async (certificadoId, userContext, dependencies = {}, opciones = {}) => {
     const nubefact = dependencies.nubefactService || nubefactService;
     if (!nubefact.obtenerEstadoConfiguracion().enabled) {
         throw errorNegocio('NUBEFACT_DESHABILITADO', 503);
@@ -546,9 +585,21 @@ const reservarEmision = async (certificadoId, userContext, dependencies = {}) =>
             return { yaAceptada: true, facturacion };
         }
         if (facturacion.estado === 'RECHAZADO') {
-            throw errorNegocio('NUBEFACT_RECHAZADO', 422, {
-                motivo: facturacion.sunat_description || 'El comprobante fue rechazado por Nubefact/SUNAT.'
-            });
+            if (esRechazoFiscalDefinitivo(facturacion)) {
+                throw errorNegocio('NUBEFACT_RECHAZADO', 422, {
+                    motivo: facturacion.sunat_description || 'El comprobante tiene un rechazo fiscal definitivo de SUNAT y requiere revisión operativa.'
+                });
+            }
+            if (!opciones.reintentarRechazada && !esFalloTemporalProveedor(facturacion)) {
+                throw errorNegocio('NUBEFACT_RECHAZADO', 422, {
+                    motivo: facturacion.sunat_description || 'El comprobante fue rechazado por Nubefact/SUNAT.'
+                });
+            }
+            if (!facturacion.serie || facturacion.numero === null || !facturacion.nro_comprobante) {
+                throw errorNegocio('REINTENTO_CORRELATIVO_INVALIDO', 409, {
+                    motivo: 'La facturación rechazada no tiene serie y número persistidos; no se puede reintentar sin reservar otro correlativo.'
+                });
+            }
         }
 
         // PREVALIDACIÓN TÉCNICA OBLIGATORIA:
@@ -622,6 +673,42 @@ const reservarEmision = async (certificadoId, userContext, dependencies = {}) =>
         }
 
         if (!correlativoVerificadoEnNubeFact) {
+            if (typeof nubefact?.consultarComprobante === 'function' && facturacion.serie && facturacion.numero !== null) {
+                const consultaPrevia = await nubefact.consultarComprobante({
+                    tipoDeComprobante: facturacion.tipo_comprobante === 'FACTURA' ? 1 : 2,
+                    serie: facturacion.serie,
+                    numero: facturacion.numero
+                }, { credentials: configuracionEmisor.credentials });
+
+                if (['ACCEPTED', 'PENDING_SUNAT'].includes(consultaPrevia?.status)) {
+                    const datosConsulta = consultaPrevia.data || {};
+                    const nuevoEstado = consultaPrevia.status === 'ACCEPTED' ? 'ACEPTADO' : 'PENDIENTE_SUNAT';
+                    await client.query(
+                        `UPDATE fg_facturacion SET
+                            estado = $1, aceptada_sunat = $2, sunat_description = $3,
+                            enlace_pdf = COALESCE($4, enlace_pdf), enlace_xml = COALESCE($5, enlace_xml),
+                            enlace_cdr = COALESCE($6, enlace_cdr), codigo_hash = COALESCE($7, codigo_hash),
+                            respuesta_proveedor = $8::jsonb, usuario_modificacion = $9, fecha_modificacion = CURRENT_TIMESTAMP
+                         WHERE id = $10`,
+                        [
+                            nuevoEstado,
+                            consultaPrevia.status === 'ACCEPTED',
+                            datosConsulta.sunat_description || null,
+                            datosConsulta.enlace_del_pdf || datosConsulta.enlace_pdf || null,
+                            datosConsulta.enlace_del_xml || datosConsulta.enlace_xml || null,
+                            datosConsulta.enlace_del_cdr || datosConsulta.enlace_cdr || null,
+                            datosConsulta.codigo_hash || null,
+                            JSON.stringify(consultaPrevia),
+                            userContext.username,
+                            facturacion.id
+                        ]
+                    );
+                    const updatedFact = await client.query('SELECT * FROM fg_facturacion WHERE id = $1', [facturacion.id]);
+                    await client.query('COMMIT');
+                    return { yaAceptada: true, facturacion: updatedFact.rows[0] };
+                }
+            }
+
             await validarCorrelativoDisponible(nubefact, {
                 tipoComprobante: facturacion.tipo_comprobante,
                 serie: facturacion.serie,
@@ -775,7 +862,10 @@ const esPosibleDuplicadoNubefact = (resultado) => {
 };
 
 const consultarEmisionIncierta = async (proveedor, reserva, resultadoEmision) => {
-    const debeConsultar = resultadoEmision.status === 'ERROR' || esPosibleDuplicadoNubefact(resultadoEmision);
+    const diagnostico = clasificarResultado(resultadoEmision);
+    const diagnosticoDiferible = integrationsConfig.contingencia?.habilitada && reserva.facturacion.certificado_id
+        && (diagnostico.recuperable || diagnostico.categoria === 'LIMITE_DEMO_AGOTADO');
+    const debeConsultar = resultadoEmision.status === 'ERROR' || esPosibleDuplicadoNubefact(resultadoEmision) || diagnosticoDiferible;
     if (!debeConsultar || typeof proveedor.consultarComprobante !== 'function') {
         return { resultado: resultadoEmision, consulta: null };
     }
@@ -794,7 +884,8 @@ const consultarEmisionIncierta = async (proveedor, reserva, resultadoEmision) =>
                 || data.codigo_hash || data.enlace_del_pdf || data.enlace_pdf));
 
     return {
-        resultado: consultaConfirmaDocumento ? consulta : resultadoEmision,
+        resultado: consultaConfirmaDocumento && (!diagnosticoDiferible || coincideRespuestaFiscal(reserva.facturacion, consulta))
+            ? consulta : resultadoEmision,
         consulta
     };
 };
@@ -802,16 +893,21 @@ const consultarEmisionIncierta = async (proveedor, reserva, resultadoEmision) =>
 async function persistirRespuestaNubeFact(reserva, resultadoEmision, recuperacion, userContext, hooks = {}) {
     const resultado = recuperacion.resultado;
     const respuesta = limpiarRespuestaProveedor(resultado.data);
-    const respuestaPersistida = recuperacion.consulta
+    let respuestaPersistida = recuperacion.consulta
         ? {
             emision: limpiarRespuestaProveedor(resultadoEmision.data),
             consulta_recuperacion: limpiarRespuestaProveedor(recuperacion.consulta.data)
         }
         : respuesta;
-    const aceptada = mapearAceptacionSunat(resultado);
+    const diagnosticoFiscal = !['ACCEPTED', 'PENDING_SUNAT'].includes(resultado.status)
+        ? clasificarResultado(resultado, recuperacion.consulta, reserva.intentoId) : null;
+    const diagnostico = hooks.diagnosticarContingencia || diagnosticoFiscal?.categoria === 'LIMITE_DEMO_AGOTADO'
+        ? diagnosticoFiscal : null;
+    if (diagnostico) respuestaPersistida = { ...respuestaPersistida, _faregas_contingencia: diagnostico };
+    const aceptada = diagnostico?.recuperable ? null : mapearAceptacionSunat(resultado);
     const pendienteSunat = resultado.status === 'PENDING_SUNAT';
-    const rechazada = resultado.status === 'REJECTED';
-    const estado = mapearEstadoProveedor(resultado, 'FACTURACION');
+    const rechazada = resultado.status === 'REJECTED' && !diagnostico?.recuperable;
+    const estado = diagnostico?.recuperable ? 'ERROR' : mapearEstadoProveedor(resultado, 'FACTURACION');
     const body = respuesta || {};
 
     const client = await db.connect();
@@ -910,16 +1006,18 @@ async function persistirRespuestaNubeFact(reserva, resultadoEmision, recuperacio
     ]);
     const facturacion = respuestaPublica(final.rows[0], cuotasFinales.rows);
     if (!aceptada && !pendienteSunat) {
-        throw errorNegocio(rechazada ? 'NUBEFACT_RECHAZADO' : 'NUBEFACT_ERROR', rechazada ? 422 : 502, {
+        const error = errorNegocio(rechazada ? 'NUBEFACT_RECHAZADO' : 'NUBEFACT_ERROR', rechazada ? 422 : 502, {
             facturacion,
             motivo: body.sunat_description || body.errors || resultado.reason
         });
+        if (diagnostico) error.diagnosticoContingencia = diagnostico;
+        throw error;
     }
     return facturacion;
 }
 
-exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}) => {
-    const reserva = await reservarEmision(certificadoId, userContext, dependencies);
+exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}, opciones = {}) => {
+    const reserva = await reservarEmision(certificadoId, userContext, dependencies, opciones);
     if (reserva.yaAceptada) {
         const client = await db.connect();
         try {
@@ -947,6 +1045,7 @@ exports.emitirFacturacion = async (certificadoId, userContext, dependencies = {}
     const recuperacion = await consultarEmisionIncierta(proveedor, reserva, resultadoEmision);
 
     return await persistirRespuestaNubeFact(reserva, resultadoEmision, recuperacion, userContext, {
+        diagnosticarContingencia: integrationsConfig.contingencia?.habilitada,
         onDocumentoOperable: async (client) => {
             await chipCertificadoService.consumirEnFacturacion(client, {
                 certificadoId,
@@ -977,14 +1076,14 @@ exports.obtenerFacturacionOperacion = async (operacionId, userContext) => {
     };
 };
 
-exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => {
+exports.guardarFacturacionOperacion = async (operacionId, data, userContext, transaccion = null) => {
     const evaluacion = evaluarDatosFacturacion(data);
     if (evaluacion.errores.length > 0) throw errorNegocio('DATOS_FACTURACION_INVALIDOS', 400, evaluacion.errores);
     const normalizada = evaluacion.datos;
 
-    const client = await db.connect();
+    const client = transaccion || await db.connect();
     try {
-        await client.query('BEGIN');
+        if (!transaccion) await client.query('BEGIN');
         const opRes = await client.query('SELECT * FROM fg_operacion_comercial WHERE id=$1 FOR UPDATE', [operacionId]);
         if(!opRes.rowCount) throw errorNegocio('OPERACION_NOT_FOUND', 404);
         const op = opRes.rows[0];
@@ -1034,7 +1133,7 @@ exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => 
         );
         if (actual.rowCount > 0 && ['PENDIENTE', 'PENDIENTE_SUNAT', 'ACEPTADO', 'ERROR', 'RECHAZADO'].includes(actual.rows[0].estado)) {
             const cuotas = await client.query('SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota', [actual.rows[0].id]);
-            await client.query("COMMIT");
+            if (!transaccion) await client.query('COMMIT');
             return respuestaPublica(actual.rows[0], cuotas.rows);
         }
 
@@ -1114,13 +1213,13 @@ exports.guardarFacturacionOperacion = async (operacionId, data, userContext) => 
             'SELECT * FROM fg_facturacion_cuota WHERE facturacion_id = $1 ORDER BY numero_cuota',
             [result.rows[0].id]
         );
-        await client.query('COMMIT');
+        if (!transaccion) await client.query('COMMIT');
         return respuestaPublica(result.rows[0], cuotasPersistidas.rows);
     } catch (error) {
-        await client.query('ROLLBACK');
+        if (!transaccion) await client.query('ROLLBACK');
         throw error;
     } finally {
-        client.release();
+        if (!transaccion) client.release();
     }
 };
 
@@ -1168,8 +1267,13 @@ const reservarEmisionOperacion = async (operacionId, userContext, opciones = {},
             return { yaAceptada: true, facturacion };
         }
         if (facturacion.estado === 'RECHAZADO') {
-            if (!opciones.reintentarRechazada) {
-                throw errorNegocio('NUBEFACT_RECHAZADO', 422, { motivo: facturacion.sunat_description });
+            if (esRechazoFiscalDefinitivo(facturacion)) {
+                throw errorNegocio('NUBEFACT_RECHAZADO', 422, {
+                    motivo: facturacion.sunat_description || 'El comprobante tiene un rechazo fiscal definitivo de SUNAT y requiere revisión operativa.'
+                });
+            }
+            if (!opciones.reintentarRechazada && !esFalloTemporalProveedor(facturacion)) {
+                throw errorNegocio('NUBEFACT_RECHAZADO', 422, { motivo: facturacion.sunat_description || 'El comprobante fue rechazado por Nubefact/SUNAT.' });
             }
             if (!facturacion.serie || facturacion.numero === null || !facturacion.nro_comprobante) {
                 throw errorNegocio('REINTENTO_CORRELATIVO_INVALIDO', 409, {
@@ -1228,6 +1332,42 @@ const reservarEmisionOperacion = async (operacionId, userContext, opciones = {},
         }
 
         if (!correlativoVerificadoEnNubeFact) {
+            if (typeof proveedor?.consultarComprobante === 'function' && facturacion.serie && facturacion.numero !== null) {
+                const consultaPrevia = await proveedor.consultarComprobante({
+                    tipoDeComprobante: facturacion.tipo_comprobante === 'FACTURA' ? 1 : 2,
+                    serie: facturacion.serie,
+                    numero: facturacion.numero
+                }, { credentials: configuracionEmisor.credentials });
+
+                if (['ACCEPTED', 'PENDING_SUNAT'].includes(consultaPrevia?.status)) {
+                    const datosConsulta = consultaPrevia.data || {};
+                    const nuevoEstado = consultaPrevia.status === 'ACCEPTED' ? 'ACEPTADO' : 'PENDIENTE_SUNAT';
+                    await client.query(
+                        `UPDATE fg_facturacion SET
+                            estado = $1, aceptada_sunat = $2, sunat_description = $3,
+                            enlace_pdf = COALESCE($4, enlace_pdf), enlace_xml = COALESCE($5, enlace_xml),
+                            enlace_cdr = COALESCE($6, enlace_cdr), codigo_hash = COALESCE($7, codigo_hash),
+                            respuesta_proveedor = $8::jsonb, usuario_modificacion = $9, fecha_modificacion = CURRENT_TIMESTAMP
+                         WHERE id = $10`,
+                        [
+                            nuevoEstado,
+                            consultaPrevia.status === 'ACCEPTED',
+                            datosConsulta.sunat_description || null,
+                            datosConsulta.enlace_del_pdf || datosConsulta.enlace_pdf || null,
+                            datosConsulta.enlace_del_xml || datosConsulta.enlace_xml || null,
+                            datosConsulta.enlace_del_cdr || datosConsulta.enlace_cdr || null,
+                            datosConsulta.codigo_hash || null,
+                            JSON.stringify(consultaPrevia),
+                            userContext.username,
+                            facturacion.id
+                        ]
+                    );
+                    const updatedFact = await client.query('SELECT * FROM fg_facturacion WHERE id = $1', [facturacion.id]);
+                    await client.query('COMMIT');
+                    return { yaAceptada: true, facturacion: updatedFact.rows[0] };
+                }
+            }
+
             await validarCorrelativoDisponible(proveedor, {
                 tipoComprobante: facturacion.tipo_comprobante,
                 serie: facturacion.serie,
@@ -1353,7 +1493,10 @@ exports._private = {
     validarCodigosSunatOperacion,
     sincronizarDetraccionFacturacion,
     validarCuentaDetraccionEmisor,
-    validarCreditoSinDescuentoActivo
+    validarCreditoSinDescuentoActivo,
+    esFalloTemporalProveedor,
+    esRechazoFiscalDefinitivo,
+    reservarEmision
 };
 
 

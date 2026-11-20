@@ -1,5 +1,6 @@
 const db = require('../../../config/database');
 const authService = require('./faregas-auth.service');
+const { validarCuotasContraTotal } = require('./faregas-facturacion.rules');
 const clientesService = require('./faregas-clientes.service');
 const { normalizarLoteScanner } = require('./faregas-chips.rules');
 const {
@@ -182,6 +183,7 @@ const crearVentaDirecta = async (payload, userContext) => {
     }
 
     const pagos = normalizarPagos(payload.pagosAgregados || []);
+    if (condicionPago === 'CREDITO' && pagos.length) throw new Error('CREDITO_NO_ADMITE_PAGOS');
     const client = await db.connect();
 
     try {
@@ -271,6 +273,11 @@ const crearVentaDirecta = async (payload, userContext) => {
             err.code = 'VENTA_CREDITO_SIN_SALDO';
             throw err;
         }
+        if (condicionPago === 'CREDITO' && !validarCuotasContraTotal(payload.cuotas, saldoPendiente)) {
+            const error = new Error('CUOTAS_NO_COINCIDEN_CON_SALDO');
+            error.detalles = { saldoPendiente };
+            throw error;
+        }
         for (const pago of pagos) await validarPago(client, pago);
 
         // La venta queda relacionada con el maestro fg_cliente: se reutiliza el
@@ -287,7 +294,8 @@ const crearVentaDirecta = async (payload, userContext) => {
             telefono
         }, client);
 
-        const estadoOperacion = saldoPendiente > 0.009 ? 'PENDIENTE' : 'PAGADO';
+        const estadoOrden = saldoPendiente > 0.009 ? 'PENDIENTE' : 'PAGADO';
+        const estadoOperacion = estadoOrden === 'PENDIENTE' ? 'PENDIENTE_PAGO' : 'PAGADO';
         // El esquema canónico no tiene columna de origen; la relación detalle-chip
         // identifica esta venta sin inventar un tipo o valor no persistido.
         const operacionResult = await client.query(`
@@ -374,7 +382,7 @@ const crearVentaDirecta = async (payload, userContext) => {
             importeAcreditado,
             saldoPendiente,
             formaPagoKey,
-            estadoOperacion,
+            estadoOrden,
             fechaInicioCredito,
             fechaVencimientoCredito,
             userContext.username
@@ -458,7 +466,7 @@ const crearVentaDirecta = async (payload, userContext) => {
             baseImponible,
             igv,
             totalPagado,
-            estado: 'PAGADO'
+            estado: estadoOperacion
         };
     } catch (error) {
         await client.query('ROLLBACK');

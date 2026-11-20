@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+router.use(require('../middlewares/faregas-referencia-error.middleware'));
 const healthController = require('../controllers/health.controller');
 const auditoriaOperativaMiddleware = require('../middlewares/faregas-auditoria-operativa.middleware');
 

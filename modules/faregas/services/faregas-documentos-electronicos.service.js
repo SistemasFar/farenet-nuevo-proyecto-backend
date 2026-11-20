@@ -1,4 +1,5 @@
 const db = require('../../../config/database');
+const { clasificarResultado } = require('./faregas-contingencia-errores');
 const { exigirVentanaDiaFiscal } = require('./faregas-fecha-fiscal-dia.service');
 const nubefactService = require('../../../services/integrations/nubefact.service');
 const nubefactConfigService = require('./faregas-nubefact-config.service');
@@ -718,7 +719,7 @@ const completarNota = async (reserva, resultado, userContext, opciones = {}) => 
     const nota = respuestaNota(final.rows[0], reserva.tipo);
     if (estado === 'PENDIENTE') return nota;
     if (estado !== 'ACEPTADO' && opciones.lanzarError !== false) {
-        throw errorNegocio('NUBEFACT_NOTA_NO_ACEPTADA', resultado.status === 'REJECTED' ? 422 : 502, { nota });
+        throw errorNegocio('NUBEFACT_NOTA_NO_ACEPTADA', resultado.status === 'REJECTED' ? 422 : 502, { nota, contingencia: clasificarResultado(resultado) });
     }
     return { ...nota, anulacionTotalConfirmada: esNotaCreditoAnulacionTotalConfirmada };
 };

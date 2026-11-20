@@ -7,9 +7,22 @@ const { reconciliarAnulacionesPendientes } = require('./modules/faregas/services
 
 let reconciliacionAnulacionesEnCurso = false;
 let emisionNotasEnCurso = false;
+let cronContingencia;
 
 // Se ejecuta todos los d�as a las 3:00 AM
 const startCronJobs = () => {
+  const { contingencia } = require('./config/integrations.config');
+  if (contingencia.habilitada && contingencia.cronHabilitado && !cronContingencia) {
+    const worker = require('./modules/faregas/services/faregas-contingencia-worker.service');
+    cronContingencia = cron.schedule('0 * * * *', async () => {
+      try {
+        const resultado = await worker.procesarLote();
+        if (resultado.reclamados) console.log('[CRON FAREGAS CONTINGENCIA]', resultado);
+      } catch (error) {
+        console.error('[CRON FAREGAS CONTINGENCIA]', error.code || 'ERROR_INTERNO');
+      }
+    }, { noOverlap: true, timezone: 'America/Lima' });
+  }
   cron.schedule('0 3 * * *', async () => {
     console.log('[CRON] Iniciando recolector de basura de borradores...', new Date().toLocaleString());
     const client = await pool.connect();

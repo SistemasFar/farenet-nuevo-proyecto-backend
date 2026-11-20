@@ -2893,7 +2893,7 @@ exports.validarEmision = async (id, userContext, options = {}) => {
             ORDER BY cmp.id DESC LIMIT 1
         `, [id]);
         const reserva = rReservaDesc.rows[0] || null;
-        if (reserva && Number(reserva.descuento_id) === 17 && !reserva.descuento_cliente_id) {
+        if (!options?.soloLectura && reserva && Number(reserva.descuento_id) === 17 && !reserva.descuento_cliente_id) {
             try {
                 await db.query(`
                     UPDATE fg_descuentocomprobante
@@ -3172,7 +3172,7 @@ exports.validarEmision = async (id, userContext, options = {}) => {
     };
 };
 
-exports.emitirCertificado = async (id, userContext) => {
+exports.emitirCertificado = async (id, userContext, options = {}) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
@@ -3205,11 +3205,23 @@ exports.emitirCertificado = async (id, userContext) => {
            if(!pKeys.includes(cert.planta_key)) throw new Error('PLANTA_NO_AUTORIZADA');
         }
 
+        const contingencia = options.contingencia ? require('./faregas-contingencia.service') : null;
+        const trabajo = contingencia ? await contingencia.autorizarEnTransaccion(client, id, userContext) : null;
+        if (trabajo?.yaEmitido) {
+            await client.query('COMMIT');
+            return { numero_certificado: cert.numero_certificado, estado: 'EMITIDO', estadoRegularizacion: trabajo.estado_trabajo, recuperado: true };
+        }
         if (cert.estado !== 'BORRADOR') throw new Error('ESTADO_INVALIDO');
 
-        // Validar emisión internamente
-        const valRes = await exports.validarEmision(id, userContext);
+        const valRes = await exports.validarEmision(id, userContext, trabajo ? {
+            ignorarComprobanteNoEmitido: true, ignorarChipNoConsumido: true, soloLectura: true
+        } : undefined);
         if (!valRes.valido) throw new Error('NO_VALIDO_PARA_EMISION');
+        if (trabajo) {
+            const chipService = require('./faregas-chip-certificado.service');
+            await chipService.consumirEnFacturacion(client, { certificadoId: id, operacionId: trabajo.operacion_id, username: userContext.username });
+            await contingencia.registrar(client, trabajo, userContext.username);
+        }
 
         // El correlativo definitivo se asigna únicamente al emitir. Los
         // certificados legacy que ya tienen número se conservan sin avanzar
@@ -3393,6 +3405,10 @@ exports.emitirCertificado = async (id, userContext) => {
             // La emisión ya fue confirmada; un fallo de snapshot no debe
             // consumir otro correlativo ni revertir el certificado emitido.
             console.error('[FAREGAS_CERTIFICADO_SNAPSHOT_ERROR]', errorSnapshot.message);
+        }
+
+        if (trabajo) {
+            return { numero_certificado, numeroAsignado, origen_correlativo: origenCorrelativo, estado: 'EMITIDO', estadoRegularizacion: 'PENDIENTE' };
         }
 
         // Generar la representación impresa propia de FAREGAS de forma segura tras fijar el correlativo DG
