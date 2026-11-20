@@ -8,6 +8,7 @@ process.env.NUBEFACT_TEST_DEMO_API_URL = 'https://nubefact.invalid/solo-prueba-l
 process.env.NUBEFACT_TEST_DEMO_TOKEN = 'FICTICIO-NO-UTILIZABLE';
 process.env.NUBEFACT_TEST_DEMO_RUC = '20600695771';
 const test = require('node:test');
+const leerSeccionSql = require('./leer-seccion-sql');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -27,8 +28,8 @@ test('Cortesía: pagos, rollback y payload con PostgreSQL real aislado', {
     const ctx = { username: 'cortesia_fixture', perfil_id: 'SISTEMAS', planta_key: 'TEST' };
     let server;
     try {
-        for (const file of ['000_faregas_schema_completo.sql', '001_faregas_datos_iniciales.sql', '008_habilitar_naturaleza_fiscal_spot.sql']) {
-            await db.query(fs.readFileSync(path.join(__dirname, '../database/migrations', file), 'utf8'));
+        for (const numero of ['000', '001', '008']) {
+            await db.query(leerSeccionSql(numero));
         }
         await db.query(`
             -- Los stubs de 000 son mínimos; las consultas reales leen estos nombres de catálogo.

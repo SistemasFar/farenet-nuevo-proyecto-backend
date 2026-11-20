@@ -1,4 +1,5 @@
 const { describe, it } = require('node:test');
+const leerSeccionSql = require('./leer-seccion-sql');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -351,10 +352,8 @@ describe('SUITE OFICIAL DE VALIDACI脫N: R脡GIMEN DE DETRACCIONES (SPOT SUNAT) 鈥
     });
 
     // 20. Confirmaci贸n de estado de Migraci贸n 004
-    it('Escenario 20: La migraci贸n 004 est谩 lista en 004_implementacion_detracciones_spot.sql y preserva la integridad de la base compartida', () => {
-        const rutaMigracion = path.resolve(__dirname, '../database/migrations/004_implementacion_detracciones_spot.sql');
-        assert.ok(fs.existsSync(rutaMigracion), 'El script 004 debe existir');
-        const contenido = fs.readFileSync(rutaMigracion, 'utf8');
+    it('Escenario 20: La secci贸n 004 est谩 en el SQL consolidado y preserva la integridad de la base compartida', () => {
+        const contenido = leerSeccionSql('004');
         assert.ok(contenido.includes('sujeto_detraccion'), 'Debe definir sujeto_detraccion');
         assert.ok(contenido.includes('detraccion_monto'), 'Debe definir detraccion_monto');
         assert.ok(contenido.includes('detraccion_neto'), 'Debe definir detraccion_neto');
@@ -362,8 +361,7 @@ describe('SUITE OFICIAL DE VALIDACI脫N: R脡GIMEN DE DETRACCIONES (SPOT SUNAT) 鈥
         assert.ok(!/sujeto_detraccion\s+boolean\s+DEFAULT\s+true/i.test(contenido), 'No debe presumir que cada servicio est谩 sujeto');
         assert.ok(contenido.includes('detraccion_constancia_nro'), 'Debe permitir el registro posterior de constancia');
 
-        const rutaSchema = path.resolve(__dirname, '../database/migrations/000_faregas_schema_completo.sql');
-        const schemaCompleto = fs.readFileSync(rutaSchema, 'utf8');
+        const schemaCompleto = leerSeccionSql('000');
         assert.ok(!/sujeto_detraccion\s+boolean\s+DEFAULT\s+true/i.test(schemaCompleto), 'El esquema maestro tampoco debe presumir sujeci贸n SPOT');
     });
 

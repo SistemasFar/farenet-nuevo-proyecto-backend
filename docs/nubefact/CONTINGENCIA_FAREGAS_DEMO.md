@@ -4,7 +4,7 @@
 
 El flujo opera con una base de desarrollo aislada y NubeFact DEMO. Se encuentra desactivado por defecto. El guard impide habilitarlo con la base compartida inspeccion, con el entorno fiscal PRODUCCION o con NODE_ENV=production. El archivo de configuración activo de este workspace apunta a inspeccion. Use un perfil aislado separado.
 
-Prepare una base de desarrollo con el esquema FAREGAS vigente. Revise y aplique la migración aditiva 011_crear_fg_facturacion_contingencia.sql únicamente en ese destino. La migración crea fg_facturacion_contingencia. La tabla referencia fg_certificado, fg_facturacion, fg_facturacion_intento, fg_operacion_comercial, sede y empresa. La identidad, el cliente, el correo y el envío original se conservan en el comprobante y el intento que ya existen.
+Prepare una base de desarrollo con el esquema FAREGAS vigente. Revise y aplique la sección aditiva `011_crear_fg_facturacion_contingencia.sql` de [faregas_consolidado.sql](../../modules/faregas/database/faregas_consolidado.sql) únicamente en ese destino, dentro de una transacción. La migración crea fg_facturacion_contingencia. La tabla referencia fg_certificado, fg_facturacion, fg_facturacion_intento, fg_operacion_comercial, sede y empresa. La identidad, el cliente, el correo y el envío original se conservan en el comprobante y el intento que ya existen.
 
 Configure el ambiente y la base verificados antes de activar estos parámetros:
 

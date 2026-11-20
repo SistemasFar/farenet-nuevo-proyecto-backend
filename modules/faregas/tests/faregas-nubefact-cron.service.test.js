@@ -1,5 +1,13 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+process.env.NODE_ENV = 'test';
+
+const configPath = require.resolve('../../../config/integrations.config');
+const config = require(configPath);
+require.cache[configPath].exports = {
+    ...config,
+    contingencia: { ...config.contingencia, habilitada: true }
+};
 const cron = require('../services/faregas-nubefact-cron.service');
 
 describe('Reconciliación NubeFact de ventas directas', () => {
@@ -19,6 +27,9 @@ describe('Reconciliación NubeFact de ventas directas', () => {
             query: async (sql) => {
                 const statement = sql.replace(/\s+/g, ' ').trim();
                 if (statement === 'BEGIN' || statement === 'COMMIT' || statement === 'ROLLBACK') return { rowCount: 0, rows: [] };
+                if (statement.startsWith("SELECT to_regclass('public.fg_facturacion_contingencia')")) {
+                    return { rowCount: 1, rows: [{ existe: true }] };
+                }
                 if (statement.startsWith('UPDATE fg_facturacion f')) return { rowCount: 0, rows: [] };
                 if (statement.startsWith('SELECT f.id AS facturacion_id')) {
                     sqlPendientes = statement;
@@ -45,6 +56,7 @@ describe('Reconciliación NubeFact de ventas directas', () => {
         assert.match(sqlPendientes, /LEFT JOIN fg_operacion_comercial oc ON oc.id = f.operacion_id/);
         assert.match(sqlPendientes, /COALESCE\(c.planta_key, oc.planta_key\) AS planta_key/);
         assert.match(sqlPendientes, /f\.tipo_comprobante IN \('FACTURA', 'BOLETA'\)/);
+        assert.match(sqlPendientes, /NOT EXISTS \(SELECT 1 FROM public\.fg_facturacion_contingencia/);
         assert.equal(filas.length, 1);
         assert.equal(filas[0].operacion_id, 7001);
         assert.equal(filas[0].planta_key, '98');

@@ -1,13 +1,14 @@
 // Integración real de catálogo/HTTP/PostgreSQL. No carga .env ni llama a NubeFact.
 process.env.NODE_ENV='test';process.env.JWT_SECRET_FAREGAS=require('crypto').randomBytes(40).toString('hex');
-const test=require('node:test'),assert=require('node:assert/strict'),fs=require('fs'),path=require('path'),{Pool}=require('pg');
+const test=require('node:test'),assert=require('node:assert/strict'),{Pool}=require('pg');
+const leerSeccionSql = require('./leer-seccion-sql');
 test('Productos fiscales → catálogo wizard → persistencia SPOT → payload existente (PostgreSQL aislado)',{skip:process.env.FAREGAS_TEST_PG!=='1'},async t=>{
  const cfg={host:'127.0.0.1',port:55440,user:'faregas_sandbox',database:'postgres'};const admin=new Pool(cfg),nombre='codex_spot_cierre_'+Date.now();await admin.query(`CREATE DATABASE ${nombre}`);const db=new Pool({...cfg,database:nombre});let server;
  const id=require.resolve('../../../config/database');require.cache[id]={id,filename:id,loaded:true,exports:db};
  try{
- await db.query(fs.readFileSync(path.join(__dirname,'../database/migrations/000_faregas_schema_completo.sql'),'utf8'));
- await db.query(fs.readFileSync(path.join(__dirname,'../database/migrations/001_faregas_datos_iniciales.sql'),'utf8'));
- await db.query(fs.readFileSync(path.join(__dirname,'../database/migrations/008_habilitar_naturaleza_fiscal_spot.sql'),'utf8'));
+ await db.query(leerSeccionSql('000'));
+ await db.query(leerSeccionSql('001'));
+ await db.query(leerSeccionSql('008'));
  await db.query(`INSERT INTO moneda(key,descripcion) VALUES('sol','SOLES');INSERT INTO fg_empresa(key,nombre) VALUES('TEST','EMPRESA FICTICIA');INSERT INTO fg_planta(key,nombre,empresa_key) VALUES('TEST','SEDE FICTICIA','TEST');INSERT INTO fg_usuario(username,user_type,contrasenha,perfil_id,estado) VALUES('spot_fixture','USUARIO','NO_UTILIZABLE','SISTEMAS',TRUE);INSERT INTO fg_usuario_planta VALUES('spot_fixture','TEST');INSERT INTO fg_perfil_planta VALUES('SISTEMAS','TEST');INSERT INTO fg_categoria_servicio(codigo,nombre) VALUES('GNV','GNV PRUEBAS');`);
  const categoria=(await db.query("SELECT id FROM fg_categoria_servicio WHERE codigo='GNV'")).rows[0].id;
  const express=require('express'),jwt=require('jsonwebtoken');const app=express();app.use(express.json());app.use('/api/faregas/config',require('../routes/faregas-config.routes'));server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));

@@ -2,6 +2,7 @@
 // Nunca carga .env ni usa la configuración de PostgreSQL compartido.
 process.env.NODE_ENV = 'test';
 const test = require('node:test');
+const leerSeccionSql = require('./leer-seccion-sql');
 const assert = require('node:assert/strict');
 const { Pool } = require('pg');
 const fs = require('node:fs');
@@ -154,7 +155,7 @@ test('cuentas y perfiles: PostgreSQL aislado', { skip: process.env.FAREGAS_TEST_
     });
     await t.test('migración 005: cascadas y retiro de FK de auditoría, sin borrar snapshots', async () => {
       await reset(); await db.query("INSERT INTO fg_auditoria_config(username) VALUES ('libre')");
-      const migracion=fs.readFileSync(path.join(__dirname,'../database/migrations/005_optimizacion_eliminacion_usuarios_perfiles.sql'),'utf8');
+      const migracion=leerSeccionSql('005');
       await db.query(migracion); await db.query(migracion);
       const referencias=(await db.query("SELECT count(*)::int n FROM pg_constraint WHERE contype='f' AND conrelid='fg_auditoria_config'::regclass")).rows[0].n;
       assert.equal(referencias,0);assert.equal(await n('fg_auditoria_config'),1);

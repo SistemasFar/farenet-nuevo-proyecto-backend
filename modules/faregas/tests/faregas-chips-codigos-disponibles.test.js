@@ -1,6 +1,6 @@
 const test = require('node:test');
+const leerSeccionSql = require('./leer-seccion-sql');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 
 const rules = require('../services/faregas-chips-codigos-disponibles.rules');
@@ -257,9 +257,8 @@ test('sin aplicar 006 los ingresos exactos siguen disponibles y el modo automát
 });
 
 test('migración 006 y esquema maestro reservan códigos globalmente sin tocar FARENET', () => {
-    const migrationDir = path.join(__dirname, '..', 'database', 'migrations');
-    const incremental = fs.readFileSync(path.join(migrationDir, '006_codigos_chip_autogenerables.sql'), 'utf8');
-    const maestro = fs.readFileSync(path.join(migrationDir, '000_faregas_schema_completo.sql'), 'utf8');
+    const incremental = leerSeccionSql('006');
+    const maestro = leerSeccionSql('000');
     assert.match(incremental, /ADD COLUMN IF NOT EXISTS codigo_autogenerable boolean NOT NULL DEFAULT FALSE/i);
     assert.match(incremental, /CREATE TABLE IF NOT EXISTS public\.fg_chip_codigo_reserva/i);
     assert.match(incremental, /UNIQUE INDEX IF NOT EXISTS uq_fg_chip_codigo_reserva_numero\s+ON public\.fg_chip_codigo_reserva \(numero_chip\)/i);

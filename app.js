@@ -47,6 +47,14 @@ const corsOptions = {
     optionsSuccessStatus: 200
 };
 
+app.use('/api/faregas', (_req, res, next) => {
+    res.set({
+        'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff',
+        'X-Robots-Tag': 'noindex, nofollow'
+    });
+    next();
+});
 app.use(cors(corsOptions));
 // La importación administrativa de hasta 10,000 códigos se envía en un único
 // lote JSON; 2 MB evita fragmentarla en miles de solicitudes individuales.
@@ -70,12 +78,11 @@ swaggerOptions.definition.paths = {
                                     type: 'object',
                                     properties: {
                                         username: {
-                                            type: 'string',
-                                            example: 'mchavez'
+                                            type: 'string'
                                         },
                                         password: {
                                             type: 'string',
-                                            example: '76052066'
+                                            format: 'password'
                                         }
                                     },
                                     required: ['username', 'password']

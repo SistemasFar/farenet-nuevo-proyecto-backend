@@ -6,7 +6,7 @@ Este documento detalla el procedimiento técnico, inventario estructural y clasi
 
 ## 1. Archivos Entregables
 
-La carpeta `farenetBackend/modules/faregas/database/migrations/` contiene los scripts oficiales:
+El archivo [faregas_consolidado.sql](../faregas_consolidado.sql) contiene los bloques SQL. Los nombres de la tabla corresponden a los encabezados de esos bloques.
 
 | Archivo | Propósito | Características |
 |---|---|---|
@@ -118,23 +118,15 @@ CREATE DATABASE faregas_db
     TEMPLATE = template0;
 ```
 
-### Paso 2: Despliegue de Esquema Estructural (DDL)
+### Paso 2: Instalación del esquema y los catálogos iniciales
 
-Ejecutar desde terminal mediante `psql` activando la detención ante cualquier error (`ON_ERROR_STOP=1`):
-
-```bash
-psql -h <HOST> -p <PUERTO> -U <USUARIO> -d faregas_db -v ON_ERROR_STOP=1 -f 000_faregas_schema_completo.sql
-```
-
-### Paso 3: Carga de Datos Iniciales y Configuración (DML)
-
-Ejecutar el script de catálogos base e idempotente:
+Desde la carpeta `database`, ejecute el SQL completo con detención ante errores:
 
 ```bash
-psql -h <HOST> -p <PUERTO> -U <USUARIO> -d faregas_db -v ON_ERROR_STOP=1 -f 001_faregas_datos_iniciales.sql
+psql -h <HOST> -p <PUERTO> -U <USUARIO> -d faregas_db -v ON_ERROR_STOP=1 -f faregas_consolidado.sql
 ```
 
-### Paso 4: (Opcional) Carga de Productos de Facturación
+### Paso 3: (Opcional) Carga de Productos de Facturación
 
 Si se requiere poblar el catálogo base de productos de facturación y SKUs de venta:
 
@@ -148,11 +140,7 @@ El orden histórico de migraciones FAREGAS es `002` → `003` → `004` después
 
 Antes de la ejecución, compruebe que el respaldo sea restaurable y que existan `public.fg_facturacion`, `public.fg_credito`, `public.fg_servicio` y `public.fg_producto_facturacion`. La migración requiere PostgreSQL 13 o superior y se ejecuta en una transacción (`BEGIN`/`COMMIT`). Sus columnas SPOT se agregan sin `DEFAULT`, por lo que los valores existentes quedan intactos y la clasificación de servicios/productos permanece `NULL` hasta su configuración explícita.
 
-Ejecute solo el archivo incremental, con detención ante errores:
-
-```bash
-psql -h <HOST> -p <PUERTO> -U <USUARIO> -d inspeccion -v ON_ERROR_STOP=1 -f 004_implementacion_detracciones_spot.sql
-```
+Extraiga la sección `004_implementacion_detracciones_spot.sql` del consolidado y ejecútela dentro de una transacción, con detención ante errores.
 
 Verifique la estructura, ausencia de defaults y pendientes de clasificación:
 
@@ -183,11 +171,7 @@ La instalación nueva (`000`) y la migración incremental (`004`) declaran los m
 
 La tabla `fg_chip_codigo_reserva` guarda propuestas por 15 minutos y reserva cada código de forma global. El índice único de `numero_chip` evita que dos propuestas activas lo compartan. Al confirmar, el backend serializa las reservas e ingresos mediante un advisory lock transaccional, revalida el producto, sede, vencimiento y conjunto exacto propuesto, y conserva la restricción única existente de `fg_chip.numero_chip` como última defensa. Escaneo, importación y rango exacto siguen tratando sus códigos como identificadores físicos: un duplicado se informa y bloquea, sin reemplazo.
 
-La migración no se ejecuta automáticamente. Para preparar su aplicación, inspeccione el objetivo y respaldo primero, luego ejecute únicamente:
-
-```bash
-psql -h <HOST> -p <PUERTO> -U <USUARIO> -d <BASE_FAREGAS> -v ON_ERROR_STOP=1 -f 006_codigos_chip_autogenerables.sql
-```
+Después de verificar la base existente y el respaldo, extraiga la sección `006_codigos_chip_autogenerables.sql` del consolidado y ejecútela dentro de una transacción.
 
 Verificación posterior:
 

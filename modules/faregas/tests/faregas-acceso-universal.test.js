@@ -39,12 +39,12 @@ test('lectura básica y solicitud pendiente universales, sin aprobación ni emis
 test('Dashboard: sin sesión, inactivo, preselección y sede ajena bloqueados',async()=>{reset();await assert.rejects(()=>resolverPlantasAutorizadas({query:{}},fake),e=>e.status===401);
  activo=false;await assert.rejects(()=>resolverPlantasAutorizadas(req(),fake),e=>e.status===403);activo=true;
  await assert.rejects(()=>resolverPlantasAutorizadas(req(),fake),e=>e.status===403 && e.message.includes('permiso'));
- permisos=['DASHBOARD_SEDE'];assert.deepEqual((await resolverPlantasAutorizadas(req(),fake)).plantasFiltro,['98']);
- permisos=[];
+ permisos=['DASHBOARD_SEDE'];await assert.rejects(()=>resolverPlantasAutorizadas(req(),fake),e=>e.status===403 && e.message.includes('permiso'));
+ permisos=['MENU_DASHBOARD'];assert.deepEqual((await resolverPlantasAutorizadas(req(),fake)).plantasFiltro,['98']);
  const r=req();r.user.faregas_flow='pre-select';await assert.rejects(()=>resolverPlantasAutorizadas(r,fake),e=>e.status===403);
  for(const query of [{alcance:'GLOBAL'},{plantaKey:'99'},{plantas:'98,99'},{plantaKey:'98',plantas:'99'}])await assert.rejects(()=>resolverPlantasAutorizadas(req(query),fake),e=>e.status===403);
 });
-test('Dashboard GLOBAL nunca incluye sedes no autorizadas',async()=>{reset();global=true;sedes=['98','99'];assert.deepEqual((await resolverPlantasAutorizadas(req(),fake)).plantasFiltro,['98','99']);await assert.rejects(()=>resolverPlantasAutorizadas(req({plantas:'100'}),fake),e=>e.status===403);});
+test('Dashboard GLOBAL requiere el módulo y nunca incluye sedes no autorizadas',async()=>{reset();global=true;sedes=['98','99'];await assert.rejects(()=>resolverPlantasAutorizadas(req(),fake),e=>e.status===403);permisos=['MENU_DASHBOARD'];assert.deepEqual((await resolverPlantasAutorizadas(req(),fake)).plantasFiltro,['98','99']);await assert.rejects(()=>resolverPlantasAutorizadas(req({plantas:'100'}),fake),e=>e.status===403);});
 test('Solicitudes: usuario inactivo y sede no asignada no pueden solicitar',async()=>{reset();activo=false;await assert.rejects(()=>solicitudes.contextoCertificado(10,req().user,{tipoOperacion:'EMITIR_NOTA_CREDITO'}),e=>e.statusCode===403);activo=true;sedes=['99'];await assert.rejects(()=>solicitudes.crearAutorizacionNotaCredito({certificadoId:10,tipoOperacion:'EMITIR_NOTA_CREDITO',motivo:'Prueba',idempotenciaClave:require('node:crypto').randomUUID(),datosPropuestos:{motivoCodigo:'01'}},req().user),e=>e.statusCode===403);assert.equal(workerCalls,0);});
 // API HTTP real, autenticación real y controlador real; indicadores aislados con fixture.
 let filtros;

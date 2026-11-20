@@ -1,39 +1,20 @@
 # Base de datos FAREGAS
 
-## Instalación nueva
+El SQL de instalación está en [faregas_consolidado.sql](faregas_consolidado.sql).
+Úselo en una base PostgreSQL nueva e independiente con codificación UTF-8.
+Ejecute el script completo desde DataGrip o con psql.
 
-Después de una revisión DBA y únicamente sobre una base nueva, ejecutar
-`faregas_instalacion_completa.sql`. El archivo requiere que ya existan los
-catálogos heredados de FARENET que aparecen como destinos de claves foráneas;
-los consulta o referencia, pero no los modifica.
+```bash
+psql -X -v ON_ERROR_STOP=1 -d faregas_db -f faregas_consolidado.sql
+```
 
-El instalador crea 69 tablas funcionales `fg_*`, incluyendo notificaciones y
-`fg_usuario_perfil`, con sus secuencias, claves, restricciones, índices,
-funciones, triggers y catálogos propios mínimos. No incluye el respaldo
-histórico `fg_descuentodetalle_backup_20260826_reglas_compartidas`, datos
-transaccionales ni credenciales.
+La instalación crea el esquema y los catálogos iniciales en una transacción.
+El archivo conserva el nombre original de cada bloque como encabezado SQL.
+El apéndice contiene la clasificación SPOT por IDs, la plantilla de roles,
+las propuestas pendientes y el instalador alternativo para revisión.
 
-El catálogo RBAC incluye los seis perfiles, 50 permisos y 156 asignaciones
-vigentes observadas el 2026-11-06 mediante consultas de solo lectura. No
-incluye usuarios. Empresa, sedes, servicios, productos, tarifas, talleres,
-series y correlativos son configuración específica de cada despliegue y deben
-provisionarse y validarse separadamente antes de habilitar la operación.
+Para actualizar una base existente, revise su esquema y extraiga únicamente
+la sección que corresponda. La [guía técnica](migrations/README.md) describe
+las dependencias y las verificaciones de cada cambio.
 
-## Actualización de instalaciones existentes
-
-No ejecutar el instalador completo sobre una instalación existente. Para esas
-bases se conservan `migrations/` y `migrations_history/`; cada incremental debe
-ser revisado y aplicado de forma controlada según el estado real de la base.
-No existe un ejecutor automático de migraciones en este directorio.
-
-## Historial
-
-`migrations_history` conserva 97 migraciones incrementales anteriores para
-auditoría y pruebas. Varias pruebas focalizadas leen directamente esos
-archivos; no deben eliminarse, renombrarse ni ejecutarse después de una
-instalación nueva realizada con el consolidado.
-
-La tabla histórica
-`fg_descuentodetalle_backup_20260826_reglas_compartidas` no forma parte del
-nuevo esquema porque era un respaldo puntual y no tiene consumidores en el
-runtime.
+El importador de productos y su catálogo JSON se usan por separado.
