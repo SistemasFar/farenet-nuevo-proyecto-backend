@@ -440,6 +440,25 @@ test('controller.revelarCredencialCustodiada exige reautenticación, audita y en
         assert.equal(resExito.headers['Cache-Control'], 'no-store, no-cache, must-revalidate, private');
         assert.equal(auditRegistrado.evento, 'CREDENCIAL_REVELADA');
         assert.ok(!auditRegistrado.mensaje.includes('ClaveCustodiadaDescifrada#2026'), 'Auditoría nunca debe contener la clave en claro');
+
+        // 5. Autorización directa mediante sesión de administrador autenticado con permiso MENU_USUARIOS
+        const resSesion = {
+            statusCode: 200,
+            headers: {},
+            set(k, v) { this.headers[k] = v; },
+            status(c) { this.statusCode = c; return this; },
+            json(d) { this.data = d; return this; }
+        };
+        await usuariosController.revelarCredencialCustodiada({
+            params: { username: 'testuser' },
+            user: { username: 'admin', permisos: ['MENU_USUARIOS'] },
+            body: {}
+        }, resSesion);
+
+        assert.equal(resSesion.statusCode, 200);
+        assert.equal(resSesion.data.success, true);
+        assert.equal(resSesion.data.password, 'ClaveCustodiadaDescifrada#2026');
+        assert.equal(resSesion.data.metodoAutorizacion, 'SESION_ADMIN_MENU_USUARIOS');
     } finally {
         authService.validarFaregas = originalValidar;
         custodiaService.obtenerCredencialDescifrada = originalDescifrar;

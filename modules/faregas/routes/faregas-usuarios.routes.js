@@ -71,6 +71,14 @@ router.use(adminMiddleware);
 router.get('/paginado', controller.obtenerUsuariosPaginado);
 router.get('/politica-password', controller.obtenerPoliticaPassword);
 router.get('/inventario-credenciales/descargar', controller.descargarInventarioRenovado);
+
+// Segundo factor MFA / TOTP para administradores
+router.get('/mfa/estado', controller.obtenerEstadoMfa);
+router.post('/mfa/iniciar-configuracion', controller.iniciarConfiguracionMfa);
+router.post('/mfa/confirmar-configuracion', controller.confirmarConfiguracionMfa);
+router.post('/mfa/desactivar', controller.desactivarMfa);
+router.post('/mfa/reset-admin/:username', controller.resetMfaAdmin);
+
 router.get('/:username/credencial-asignada', controller.consultarCredencialAsignada);
 router.post('/:username/revelar-credencial', controller.revelarCredencialCustodiada);
 router.post('/:username/generar-credencial-temporal', controller.generarCredencialTemporal);

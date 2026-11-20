@@ -318,7 +318,12 @@ const insertarPagosNuevosSinAlterarExistentes = async (client, ordenId, pagos, d
         porFirmaSolicitada.set(firma, grupo);
     });
 
-    const nuevos = [...porFirmaSolicitada.values()].flat();
+    // El efectivo se agrupa por importe y no entra en las firmas de tarjeta/banco.
+    // Persistirlo sólo si aún no existe: el reintento conserva la fila original.
+    const efectivoNuevo = efectivosPersistidos === 0
+        ? pagos.filter((pago) => pago.tipo === 'efectivo')
+        : [];
+    const nuevos = [...efectivoNuevo, ...[...porFirmaSolicitada.values()].flat()];
     for (const pago of nuevos) {
         const base = redondear(pago.importe / 1.18);
         const igv = redondear(pago.importe - base);

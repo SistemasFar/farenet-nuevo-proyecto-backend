@@ -1,6 +1,12 @@
 'use strict';
 // PostgreSQL real: sólo crea y escribe en una BD sintética de loopback.
 process.env.NODE_ENV = 'test';
+process.env.NUBEFACT_ENABLED = 'true';
+process.env.NUBEFACT_ENVIRONMENT = 'DEMO';
+process.env.NUBEFACT_CORRELATIVOS_V2_ENABLED = 'true';
+process.env.NUBEFACT_TEST_DEMO_API_URL = 'https://nubefact.invalid/solo-prueba-local';
+process.env.NUBEFACT_TEST_DEMO_TOKEN = 'FICTICIO-NO-UTILIZABLE';
+process.env.NUBEFACT_TEST_DEMO_RUC = '20600695771';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -25,6 +31,9 @@ test('Cortesía: pagos, rollback y payload con PostgreSQL real aislado', {
             await db.query(fs.readFileSync(path.join(__dirname, '../database/migrations', file), 'utf8'));
         }
         await db.query(`
+            -- Los stubs de 000 son mínimos; las consultas reales leen estos nombres de catálogo.
+            ALTER TABLE tarjeta ADD COLUMN nombre text;
+            ALTER TABLE entidadfinanciera ADD COLUMN nombre text;
             INSERT INTO moneda(key,descripcion) VALUES('sol','SOLES');
             INSERT INTO formapago(key,descripcion) VALUES('contado','CONTADO');
             INSERT INTO tipocontado(key,descripcion) VALUES('efectivo','EFECTIVO');
@@ -36,6 +45,7 @@ test('Cortesía: pagos, rollback y payload con PostgreSQL real aislado', {
             INSERT INTO fg_perfil_planta VALUES('SISTEMAS','TEST');
             INSERT INTO fg_categoria_servicio(codigo,nombre) VALUES('GNV','GNV PRUEBAS');
             INSERT INTO fg_empresa_facturador(empresa_key,entorno,credencial_clave) VALUES('TEST','DEMO','TEST');
+            INSERT INTO fg_serie_comprobante(planta_key,empresa_key,tipo_comprobante,serie,es_predeterminada,proveedor_emision,entorno_emision) VALUES('TEST','TEST','FACTURA','FCG1',true,'NUBEFACT','DEMO');
             INSERT INTO fg_descuento(id,tipo,codigo,nombre,activo,usuario_creacion,fecha_inicio,fecha_fin)
                 VALUES(17,'CONVENIO','D_CONVENIO_a88137bb742f4157','DESCUENTO CERTIFICADO TALLER',true,'cortesia_fixture',CURRENT_TIMESTAMP-INTERVAL '1 day',CURRENT_TIMESTAMP+INTERVAL '1 day'),
                       (18,'CAMPANA','COMERCIAL_TEST','DESCUENTO COMERCIAL',true,'cortesia_fixture',CURRENT_TIMESTAMP-INTERVAL '1 day',CURRENT_TIMESTAMP+INTERVAL '1 day');

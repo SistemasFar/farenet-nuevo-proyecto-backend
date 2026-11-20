@@ -5,6 +5,7 @@ const service = require('../services/faregas-usuarios.service');
 const authService = require('../services/faregas-auth.service');
 const custodiaService = require('../services/faregas-credencial-custodia.service');
 const credencialesTemporalesService = require('../services/faregas-credenciales-temporales.service');
+const mfaService = require('../services/faregas-mfa.service');
 const auditoriaService = require('../services/faregas-auditoria.service');
 
 const contextoAuditoria = (req) => auditoriaService.contextoRequest(req);
@@ -365,6 +366,8 @@ exports.revelarCredencialCustodiada = async (req, res) => {
         const cleanUsername = username.toLowerCase();
         const adminUsername = req.user?.username;
         const passwordAdmin = req.body?.passwordAdmin;
+        const codigoTotp = req.body?.codigoTotp;
+        const codigoRecuperacion = req.body?.codigoRecuperacion;
 
         if (cleanUsername === 'gibarra') {
             return res.status(403).json({
@@ -376,28 +379,40 @@ exports.revelarCredencialCustodiada = async (req, res) => {
         // 1. Rate limiting estricto anti-scraping
         custodiaService.verificarLimiteRevelaciones(adminUsername || req.ip);
 
-        // 2. Reautenticación obligatoria del administrador en sesión
-        if (!passwordAdmin || typeof passwordAdmin !== 'string') {
+        // 2. Verificación de autorización:
+        // A) Reautenticación por Contraseña / TOTP / Código de Recuperación si se especifican
+        // B) Autorización previa mediante sesión administrativa activa con permiso explícito MENU_USUARIOS
+        let authPaso = null;
+        if (passwordAdmin || codigoTotp || codigoRecuperacion) {
+            authPaso = await mfaService.verificarPasoAutorizacion(
+                db,
+                adminUsername,
+                { passwordAdmin, codigoTotp, codigoRecuperacion },
+                authService
+            );
+        } else if (req.user?.permisos && Array.isArray(req.user.permisos) && req.user.permisos.includes('MENU_USUARIOS')) {
+            authPaso = { valido: true, metodo: 'SESION_ADMIN_MENU_USUARIOS' };
+        } else {
             return res.status(400).json({
-                message: 'Debe ingresar su contraseña de administrador para confirmar la revelación de la credencial.',
+                message: 'Debe ingresar su contraseña o código de autenticación (TOTP/recuperación) para autorizar la revelación.',
                 codigo: 'PASSWORD_ADMIN_REQUERIDA'
             });
         }
 
-        const authValido = await authService.validarFaregas(adminUsername, passwordAdmin);
-        if (!authValido?.valido) {
+        if (!authPaso.valido) {
             await auditoriaService.registrarEvento({
                 ...contextoAuditoria(req),
                 categoria: 'USUARIOS',
                 modulo: 'USUARIOS',
                 evento: 'CREDENCIAL_REVELACION_FALLIDA',
-                mensaje: `Reautenticación fallida al intentar revelar credencial de ${username}. Contraseña de administrador incorrecta.`,
+                mensaje: `Autorización fallida (${authPaso.metodo || 'DESCONOCIDO'}) al intentar revelar credencial de ${username}. ${authPaso.motivo || ''}`,
                 entidad: 'fg_usuario',
                 documento_referencia: username
             });
             return res.status(401).json({
-                message: 'Contraseña de administrador incorrecta. No se puede revelar la credencial.',
-                codigo: 'REAUTENTICACION_FALLIDA'
+                message: authPaso.motivo || 'Autorización incorrecta. No se puede revelar la credencial.',
+                codigo: 'REAUTENTICACION_FALLIDA',
+                metodo: authPaso.metodo
             });
         }
 
@@ -410,7 +425,7 @@ exports.revelarCredencialCustodiada = async (req, res) => {
             categoria: 'USUARIOS',
             modulo: 'USUARIOS',
             evento: 'CREDENCIAL_REVELADA',
-            mensaje: `El administrador ${adminUsername} reveló la credencial administrada custodiada del usuario ${username}.`,
+            mensaje: `El administrador ${adminUsername} reveló la credencial administrada custodiada del usuario ${username} mediante ${authPaso.metodo}.`,
             entidad: 'fg_usuario',
             documento_referencia: username
         });
@@ -425,10 +440,12 @@ exports.revelarCredencialCustodiada = async (req, res) => {
             username: credencial.username,
             password: credencial.password,
             creadoPor: credencial.creadoPor,
-            fechaActualizacion: credencial.fechaActualizacion
+            fechaActualizacion: credencial.fechaActualizacion,
+            metodoAutorizacion: authPaso.metodo,
+            codigosRestantes: authPaso.codigosRestantes
         });
     } catch (e) {
-        if (e.code === 'LIMITE_CONSULTAS_EXCEDIDO') {
+        if (e.code === 'LIMITE_CONSULTAS_EXCEDIDO' || e.code === 'LIMITE_INTENTOS_EXCEDIDO') {
             return res.status(429).json({ message: e.message, codigo: e.code });
         }
         if (e.code === 'CREDENCIAL_NO_CUSTODIADA') {
@@ -439,6 +456,106 @@ exports.revelarCredencialCustodiada = async (req, res) => {
         }
         console.error('Error al revelar credencial custodiada:', e);
         return res.status(500).json({ message: 'Error interno al revelar la credencial custodiada.' });
+    }
+};
+
+exports.obtenerEstadoMfa = async (req, res) => {
+    try {
+        const username = req.user?.username;
+        const estado = await mfaService.consultarEstadoMfa(db, username);
+        return res.json({ success: true, ...estado });
+    } catch (e) {
+        console.error('Error al consultar estado MFA:', e);
+        return res.status(500).json({ message: 'Error al consultar estado MFA.' });
+    }
+};
+
+exports.iniciarConfiguracionMfa = async (req, res) => {
+    try {
+        const username = req.user?.username;
+        const config = await mfaService.iniciarConfiguracionMfa(db, username);
+        return res.json({ success: true, ...config });
+    } catch (e) {
+        console.error('Error al iniciar configuración MFA:', e);
+        return res.status(500).json({ message: 'Error al iniciar configuración MFA.' });
+    }
+};
+
+exports.confirmarConfiguracionMfa = async (req, res) => {
+    try {
+        const username = req.user?.username;
+        const codigoTotp = req.body?.codigoTotp;
+        if (!codigoTotp) {
+            return res.status(400).json({ message: 'Debe ingresar el código de 6 dígitos generado por su aplicación autenticadora.' });
+        }
+        const resultado = await mfaService.confirmarConfiguracionMfa(db, username, codigoTotp);
+        await auditoriaService.registrarEvento({
+            ...contextoAuditoria(req),
+            categoria: 'USUARIOS',
+            modulo: 'USUARIOS',
+            evento: 'MFA_ACTIVADO',
+            mensaje: `El usuario ${username} activó exitosamente su segundo factor TOTP.`,
+            entidad: 'fg_usuario_mfa',
+            documento_referencia: username
+        });
+        return res.json(resultado);
+    } catch (e) {
+        return res.status(400).json({ message: e.message });
+    }
+};
+
+exports.desactivarMfa = async (req, res) => {
+    try {
+        const username = req.user?.username;
+        const { passwordAdmin, codigoTotp } = req.body || {};
+        const auth = await mfaService.verificarPasoAutorizacion(db, username, { passwordAdmin, codigoTotp }, authService);
+        if (!auth.valido) {
+            return res.status(401).json({ message: 'Autorización incorrecta. No se puede desactivar MFA.' });
+        }
+        const resultado = await mfaService.desactivarMfa(db, username);
+        await auditoriaService.registrarEvento({
+            ...contextoAuditoria(req),
+            categoria: 'USUARIOS',
+            modulo: 'USUARIOS',
+            evento: 'MFA_DESACTIVADO',
+            mensaje: `El usuario ${username} desactivó su segundo factor TOTP.`,
+            entidad: 'fg_usuario_mfa',
+            documento_referencia: username
+        });
+        return res.json(resultado);
+    } catch (e) {
+        return res.status(500).json({ message: e.message });
+    }
+};
+
+exports.resetMfaAdmin = async (req, res) => {
+    try {
+        const adminUsername = req.user?.username;
+        const targetUsername = String(req.params.username || '').trim().toLowerCase();
+        const { motivo } = req.body || {};
+
+        if (!motivo) {
+            return res.status(400).json({ message: 'Debe especificar el motivo del reseteo administrativo de MFA.' });
+        }
+
+        const resultado = await mfaService.resetMfaAdmin(db, targetUsername, {
+            autorizadoPor: adminUsername,
+            motivo
+        });
+
+        await auditoriaService.registrarEvento({
+            ...contextoAuditoria(req),
+            categoria: 'USUARIOS',
+            modulo: 'USUARIOS',
+            evento: 'MFA_RESET_ADMINISTRATIVO',
+            mensaje: `El administrador ${adminUsername} ejecutó el reseteo administrativo de MFA para ${targetUsername}. Motivo: ${motivo}`,
+            entidad: 'fg_usuario_mfa',
+            documento_referencia: targetUsername
+        });
+
+        return res.json(resultado);
+    } catch (e) {
+        return res.status(500).json({ message: e.message });
     }
 };
 
