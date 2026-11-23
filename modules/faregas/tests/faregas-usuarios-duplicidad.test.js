@@ -45,6 +45,8 @@ const mockClient = {
             return { rowCount: 0, rows: [] };
         }
 
+        if (sql.includes('INSERT INTO fg_usuario (')) return { rowCount: 1, rows: [{ username: params[0] }] };
+
         // Simular fallo en sedes para probar rollback
         if (sql.includes('fg_perfil_planta') && params[0] === 'FALLA_SEDE') {
             return { rowCount: 0, rows: [] }; // planta no permitida
@@ -244,7 +246,7 @@ test('atomicidad en crearUsuario: si falla asignación de sedes se ejecuta ROLLB
             });
         },
         (err) => {
-            assert.match(err.message, /no permitida para el perfil/);
+            assert.equal(err.code, 'SEDE_NO_PERMITIDA_PARA_PERFIL');
             return true;
         }
     );

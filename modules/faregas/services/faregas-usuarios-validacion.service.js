@@ -35,6 +35,7 @@ const DIRECCION_MAXIMA = 500;
 const EMAIL_MAXIMO = 120;      // mas estricto que el varchar(150) de persona.email
 const TELEFONO_MAXIMO = 9;    // exactamente 9 digitos, sin signos ni espacios
 const USERNAME_MAXIMO = 255;  // fg_usuario.username
+const USERNAME_MAXIMO_ALTA = 100; // fg_usuario_credencial y fg_credencial_custodia
 
 /**
  * Reglas de documento. `longitud` es null cuando el sistema no la define: en ese
@@ -123,13 +124,14 @@ const validarDatosUsuario = (data, { modo = 'crear' } = {}) => {
     const esCrear = modo !== 'editar';
 
     const username = texto(data.username);
+    const maxUsername = esCrear ? USERNAME_MAXIMO_ALTA : USERNAME_MAXIMO;
     if (!username) errores.username = 'El username es obligatorio.';
     else if (!RE_USERNAME.test(username)) {
         errores.username = 'El username admite letras, números, punto, guion y guion bajo.';
     } else if (username.length < 3) {
         errores.username = 'El username debe tener al menos 3 caracteres.';
-    } else if (username.length > USERNAME_MAXIMO) {
-        errores.username = `El username no puede superar los ${USERNAME_MAXIMO} caracteres.`;
+    } else if (username.length > maxUsername) {
+        errores.username = `El username no puede superar los ${maxUsername} caracteres.`;
     }
 
     const tipoDocumentoKey = texto(data.tipoDocumentoKey);

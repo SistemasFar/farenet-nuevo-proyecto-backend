@@ -29,7 +29,7 @@ test('alta manual guarda el hash exacto y permite iniciar sesión con la contras
             }
             if (/INSERT INTO fg_usuario\s*\(/i.test(statement)) {
                 hashGuardado = params[1];
-                return { rowCount: 1, rows: [] };
+                return { rowCount: 1, rows: [{ username: params[0] }] };
             }
             return { rowCount: 1, rows: [] };
         },

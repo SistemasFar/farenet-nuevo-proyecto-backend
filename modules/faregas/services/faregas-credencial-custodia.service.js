@@ -123,10 +123,11 @@ const guardarEnCustodia = async (client, {
     responsable = 'ADMINISTRADOR',
     origen = 'ADMINISTRACION_USUARIOS'
 }) => {
-    const cleanUsername = String(username || '').trim().toLowerCase();
+    // La FK usa la clave exacta guardada en fg_usuario.
+    const cleanUsername = String(username || '').trim();
     if (!cleanUsername) throw new Error('Username requerido para custodia.');
 
-    if (cleanUsername === EXCLUDED_USERNAME) {
+    if (cleanUsername.toLowerCase() === EXCLUDED_USERNAME) {
         const err = new Error('El usuario gibarra es una cuenta administrativa protegida y no puede ingresar a custodia.');
         err.code = 'USUARIO_PROTEGIDO';
         err.statusCode = 403;

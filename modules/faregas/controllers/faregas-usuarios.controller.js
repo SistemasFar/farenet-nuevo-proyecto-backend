@@ -126,8 +126,15 @@ exports.crearUsuario = async (req, res) => {
                 codigo: 'USUARIO_DUPLICADO'
             });
         }
-        console.error(e);
-        res.status(500).json({ message: 'Error interno del servidor' });
+        if (e.code === '23503' && e.constraint === 'fk_fg_usuario_perfil') {
+            return res.status(400).json({ message: 'El perfil seleccionado ya no está disponible. Actualiza el formulario y elige un perfil vigente.', codigo: 'PERFIL_NO_DISPONIBLE' });
+        }
+        if (e.code === 'VAULT_KEY_MISSING' || e.code === 'VAULT_KEY_INVALID') {
+            console.error('[FAREGAS CREAR USUARIO]', e.code);
+            return res.status(503).json({ message: 'No se creó el usuario porque la custodia de credenciales no está disponible. Comunícate con Sistemas.', codigo: 'CUSTODIA_NO_DISPONIBLE' });
+        }
+        console.error('[FAREGAS CREAR USUARIO]', e.code || 'ERROR_INTERNO', e.constraint || '');
+        return res.status(500).json({ message: 'No se pudo completar el registro del usuario. Comunícate con Sistemas.', codigo: 'ALTA_USUARIO_INCOMPLETA' });
     }
 };
 

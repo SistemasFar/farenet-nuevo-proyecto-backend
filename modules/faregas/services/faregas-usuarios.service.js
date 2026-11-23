@@ -379,6 +379,9 @@ exports.crearUsuario = async (data, _creadorUsername) => {
             throw perfilRepository.errorMigracionPendiente();
         }
 
+        // Serializa altas del mismo nombre, incluso si difieren en mayúsculas.
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('faregas.crear_usuario'), hashtext(LOWER($1)))", [cleanUsername]);
+
         // 1. Verificación explícita de duplicidad de username con mensaje orientador
         const uExistente = await client.query(
             'SELECT username, estado FROM fg_usuario WHERE LOWER(TRIM(username)) = LOWER(TRIM($1))',
@@ -412,35 +415,42 @@ exports.crearUsuario = async (data, _creadorUsername) => {
         }
 
         // Nuevos usuarios FAREGAS no necesitan ni crean una persona heredada.
-        await client.query(`
+        const insercion = await client.query(`
             INSERT INTO fg_usuario (username, contrasenha, perfil_id, estado, user_type, persona_nrodocumentoidentidad)
             VALUES ($1, $2, $3, $4, $5, NULL)
+            RETURNING username
         `, [cleanUsername, hash, cleanPerfil, estadoBool, tipoUsr]);
-        await guardarPerfilPropio(client, cleanUsername, datosValidados);
+        const usernamePersistido = insercion.rows[0]?.username;
+        if (insercion.rowCount !== 1 || !usernamePersistido) {
+            throw Object.assign(new Error('El alta no devolvió la clave del usuario.'), { code: 'ALTA_USUARIO_INCOMPLETA' });
+        }
+        await guardarPerfilPropio(client, usernamePersistido, datosValidados);
 
         // 3. Asignar sedes
         if (Array.isArray(sedes) && sedes.length > 0) {
             for (const planta_key of sedes) {
                 const check = await client.query('SELECT 1 FROM fg_perfil_planta WHERE perfil_clave = $1 AND planta_key = $2', [cleanPerfil, planta_key]);
                 if (check.rowCount === 0) {
-                    throw new Error(`Planta ${planta_key} no permitida para el perfil ${cleanPerfil}`);
+                    throw Object.assign(new Error(`La sede ${planta_key} no está permitida para el perfil seleccionado.`), {
+                        code: 'SEDE_NO_PERMITIDA_PARA_PERFIL'
+                    });
                 }
-                await client.query('INSERT INTO fg_usuario_planta (usuario_username, plantas_key) VALUES ($1, $2)', [cleanUsername, planta_key]);
+                await client.query('INSERT INTO fg_usuario_planta (usuario_username, plantas_key) VALUES ($1, $2)', [usernamePersistido, planta_key]);
             }
         }
 
         // 4. Ejecutivo
         if (tipoUsr === 'EJECUTIVO') {
             const nomApe = (nombres || '') + ' ' + (apellidos || '');
-            const nomToSave = nomApe.trim() || nombreRazonSocial || cleanUsername;
+            const nomToSave = nomApe.trim() || nombreRazonSocial || usernamePersistido;
             await client.query(`
                 INSERT INTO fg_ejecutivo (nombre, activo, username)
                 VALUES ($1, $2, $3)
-            `, [nomToSave, estadoBool, cleanUsername]);
+            `, [nomToSave, estadoBool, usernamePersistido]);
         }
 
         await credencialesInventarioService.registrarActualizacionCredencial(client, {
-            username: cleanUsername,
+            username: usernamePersistido,
             estadoCredencial: 'Contraseña actualizada / Vigente',
             tipoOperacion: 'CREACION',
             responsable: _creadorUsername || 'ADMINISTRADOR',
@@ -449,9 +459,9 @@ exports.crearUsuario = async (data, _creadorUsername) => {
             observaciones: `Cuenta creada por ${_creadorUsername || 'ADMINISTRADOR'}.`
         });
 
-        if (cleanUsername !== 'gibarra') {
+        if (usernamePersistido !== 'gibarra') {
             await custodiaService.guardarEnCustodia(client, {
-                username: cleanUsername,
+                username: usernamePersistido,
                 password: passwordPlano,
                 responsable: _creadorUsername || 'ADMINISTRADOR',
                 origen: 'CREACION_USUARIO'
@@ -459,7 +469,7 @@ exports.crearUsuario = async (data, _creadorUsername) => {
         }
 
         await client.query('COMMIT');
-        return { username: cleanUsername, password: passwordPlano };
+        return { username: usernamePersistido, password: passwordPlano };
     } catch (e) {
         await client.query('ROLLBACK');
         throw e;
