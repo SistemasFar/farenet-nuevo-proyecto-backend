@@ -1,6 +1,5 @@
 const cron = require('node-cron');
 const pool = require('./config/database');
-const { habilitarCronFarenet } = require('./config/farenet-legacy');
 const { reconciliarPendientesSunat } = require('./modules/faregas/services/faregas-nubefact-cron.service');
 const { reconciliarNotasPendientesSunat } = require('./modules/faregas/services/faregas-nubefact-notas-cron.service');
 const notasCreditoWorker = require('./modules/faregas/services/faregas-notas-credito-worker.service');
@@ -10,7 +9,6 @@ let reconciliacionAnulacionesEnCurso = false;
 let emisionNotasEnCurso = false;
 let cronContingencia;
 
-// Se ejecuta todos los d�as a las 3:00 AM
 const startCronJobs = () => {
   const { contingencia } = require('./config/integrations.config');
   if (contingencia.habilitada && contingencia.cronHabilitado && !cronContingencia) {
@@ -24,35 +22,8 @@ const startCronJobs = () => {
       }
     }, { noOverlap: true, timezone: 'America/Lima' });
   }
-  if (habilitarCronFarenet()) cron.schedule('0 3 * * *', async () => {
-    console.log('[CRON] Iniciando recolector de basura de borradores...', new Date().toLocaleString());
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      
-      // Buscar inspecciones en PROCESO  que tengan m�s de 24 horas y anularlas (ANU) o eliminarlas.
-      // Para replicar el comportamiento antiguo limpio, las marcaremos como ANU.
-      const updateInspecciones = await client.query(`
-        UPDATE inspeccion 
-        SET inspeccionestado_key = 'ANU', fechmodi = NOW()
-        WHERE inspeccionestado_key = 'PROCESO' 
-          AND fechcreacion < NOW() - INTERVAL '1 day'
-      `);
-      console.log(`[CRON] ${updateInspecciones.rowCount} inspecciones hu�rfanas en PROCESO marcadas como ANULADAS.`);
 
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK');
-      console.error('[CRON] Error ejecutando recolector de basura:', err);
-    } finally {
-      client.release();
-    }
-    console.log('[CRON] Recolector de basura finalizado.');
-  });
-
-  // Recupera trabajos persistentes después de un reinicio. La bandera es
-  // independiente de la conciliación: una nota autorizada se emite una sola
-  // vez y los resultados inciertos se consultan antes de cualquier reintento.
+  // Recupera trabajos persistentes de notas de crédito después de un reinicio.
   cron.schedule('* * * * *', async () => {
     const integrationsConfig = require('./config/integrations.config');
     if (!integrationsConfig.nubefact.enabled
@@ -71,7 +42,7 @@ const startCronJobs = () => {
     }
   });
 
-  // Se ejecuta cada 10 minutos
+  // Reconciliación SUNAT cada 10 minutos
   cron.schedule('*/10 * * * *', async () => {
     const integrationsConfig = require('./config/integrations.config');
     if (integrationsConfig.nubefact.enabled
@@ -84,8 +55,6 @@ const startCronJobs = () => {
         console.error('[CRON] Fallo no controlado en reconciliador SUNAT Facturas/Boletas:', error.message);
       }
 
-      // Se reutiliza el mismo ciclo de reconciliación fiscal. Este paso sólo
-      // consulta bajas ya creadas y nunca reenvía una comunicación de baja.
       if (!reconciliacionAnulacionesEnCurso) {
         reconciliacionAnulacionesEnCurso = true;
         console.log('[CRON] Iniciando reconciliador de anulaciones FAREGAS...', new Date().toLocaleString());
@@ -100,8 +69,6 @@ const startCronJobs = () => {
       }
     }
 
-    // Las notas de crédito se habilitan de manera independiente para que activar
-    // Facturas/Boletas no ponga en marcha accidentalmente un flujo aún no liberado.
     if (integrationsConfig.nubefact.enabled
         && integrationsConfig.nubefact.notasCronReconciliationEnabled) {
       console.log('[CRON] Iniciando reconciliador SUNAT Notas de Credito...', new Date().toLocaleString());
