@@ -26,7 +26,7 @@ test('alta de usuarios y custodia con las claves foráneas de PostgreSQL', { ski
     const modulo = require.resolve('../../../config/database');
     require.cache[modulo] = { exports: pool };
 
-    const ddl = readFileSync(resolve(__dirname, '../database/faregas_consolidado.sql'), 'utf8');
+    const ddl = readFileSync(resolve(__dirname, '../../../database/MIGRACION_SCRIPT.sql'), 'utf8');
     const tablas = ['fg_usuario', 'fg_usuario_perfil', 'fg_usuario_credencial', 'fg_credencial_custodia', 'fg_usuario_planta', 'fg_usuario_sesion', 'fg_ejecutivo'];
     const tabla = nombreTabla => {
         const definition = ddl.match(new RegExp('CREATE TABLE public\\.' + nombreTabla + ' \\([\\s\\S]*?\\r?\\n\\);'));

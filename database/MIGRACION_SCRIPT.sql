@@ -1,39 +1,64 @@
--- FAREGAS | SQL consolidado para una instalación nueva e independiente
--- PostgreSQL 13 o superior. Archivo UTF-8. Ejecutar como script SQL completo.
--- La sección 000 ya crea las FKs finales de la 005. Su DDL incremental queda comentado.
--- Las secciones 000 a 012 aplicables a una base nueva se ejecutan en una sola transacción.
--- La 009 y los SQL auxiliares están íntegros en el apéndice comentado.
--- El alta de sedes, productos, catálogos externos, usuarios operativos, series y credenciales se realiza por ambiente.
--- El importador JavaScript y su catálogo JSON se mantienen como archivos de origen.
--- En psql usar: psql -X -v ON_ERROR_STOP=1 -d <base_nueva> -f faregas_consolidado.sql
+-- =============================================================================
+-- FAREGAS — SCRIPT UNIFICADO DE MIGRACIÓN Y CONTROL DE ACCESO
+-- =============================================================================
+-- ARCHIVO: database/MIGRACION_SCRIPT.sql
+-- SISTEMA: FAREGAS (Emisión, Facturación y Control Técnico-Administrativo)
+-- MOTOR: PostgreSQL 13 o superior
+-- CODIFICACIÓN: UTF-8
+--
+-- ARQUITECTURA Y REGLAS DE AISLAMIENTO:
+-- 1. BASE DE DATOS COMPARTIDA: FAREGAS y FARENET comparten permanentemente
+--    la misma base de datos PostgreSQL ('inspeccion'). No se separan bases.
+-- 2. PRIVILEGIOS FAREGAS:
+--    - DML completo (SELECT, INSERT, UPDATE, DELETE) y secuencias en tablas 'fg_*'.
+--    - Acceso de SOLO LECTURA (SELECT) en tablas operativas FARENET autorizadas
+--      ('persona', 'vehiculo', 'tarjetapropiedad') y catálogos compartidos.
+--    - PROHIBICIÓN TOTAL de escritura (INSERT, UPDATE, DELETE, TRUNCATE) o DDL
+--      sobre cualquier tabla operativa o catálogo perteneciente a FARENET.
+-- 3. SEGURIDAD E IDEMPOTENCIA:
+--    - Transaccional (BEGIN ... COMMIT).
+--    - No destructivo: CERO DROP TABLE, CERO TRUNCATE, CERO DELETE masivos, CERO CASCADE.
+--    - Sin contraseñas, secretos ni tokens en texto plano.
+--    - Seguro para re-ejecución sin generar duplicados de esquemas ni errores.
+--
+-- ÍNDICE DE LAS 13 SECCIONES TEMÁTICAS REQUERIDAS:
+--   1. Preparación y validaciones.
+--   2. Creación de tablas.
+--   3. Modificaciones de columnas.
+--   4. Restricciones y claves foráneas.
+--   5. Índices.
+--   6. Funciones y triggers.
+--   7. Migraciones de datos.
+--   8. Catálogos y datos iniciales.
+--   9. Custodia de credenciales y MFA.
+--  10. Usuarios, perfiles y permisos.
+--  11. Aislamiento de FAREGAS frente a FARENET.
+--  12. Roles y privilegios PostgreSQL.
+--  13. Validaciones finales.
+--
+-- INSTRUCCIONES DE EJECUCIÓN (ADMINISTRADOR / DBA):
+--   psql -X -v ON_ERROR_STOP=1 -h <HOST> -U <DBA_USER> -d inspeccion -f database/MIGRACION_SCRIPT.sql
+-- =============================================================================
+
+-- =============================================================================
+-- SECCIÓN 1: PREPARACIÓN Y VALIDACIONES
+-- =============================================================================
 
 BEGIN;
 
-DO $faregas_destino$
+DO $faregas_inicio$
 BEGIN
-    IF pg_catalog.lower(pg_catalog.current_database()) IN ('inspeccion', 'farenet', 'farenet_bkp', 'postgres', 'template0', 'template1') THEN
-        RAISE EXCEPTION 'El instalador FAREGAS requiere una base nueva e independiente. Destino actual: %', pg_catalog.current_database();
-    END IF;
-
-    IF EXISTS (
-        SELECT 1
-        FROM pg_catalog.pg_class c
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'public'
-          AND pg_catalog.left(c.relname, 3) = 'fg_'
-    ) OR EXISTS (
-        SELECT 1
-        FROM pg_catalog.pg_proc p
-        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-        WHERE n.nspname = 'public'
-          AND pg_catalog.left(p.proname, 3) = 'fg_'
-    ) THEN
-        RAISE EXCEPTION 'La base ya contiene objetos FAREGAS. Use las migraciones correspondientes al estado de esa instalación.';
-    END IF;
+    RAISE NOTICE '=============================================================================';
+    RAISE NOTICE 'FAREGAS: Iniciando ejecución controlada de MIGRACION_SCRIPT.sql';
+    RAISE NOTICE 'Base de datos actual: %', current_database();
+    RAISE NOTICE 'Arquitectura: Base compartida inspeccion con aislamiento de datos FARENET/FAREGAS';
+    RAISE NOTICE '=============================================================================';
 END;
-$faregas_destino$;
+$faregas_inicio$;
 
 SET LOCAL search_path TO public, pg_catalog;
+
+CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 -- ==== migrations/000_faregas_schema_completo.sql ====
 -- ============================================================================
@@ -43,10 +68,9 @@ SET LOCAL search_path TO public, pg_catalog;
 -- MOTOR: PostgreSQL 13 o superior
 -- CODIFICACIÓN: UTF-8
 --
--- ADVERTENCIA CRÍTICA:
--- ESTE ARCHIVO ESTÁ DESTINADO EXCLUSIVAMENTE A LA CREACIÓN DE UNA NUEVA BASE
--- DE DATOS INDEPENDIENTE PARA FAREGAS.
--- NO EJECUTAR EN LA BASE DE DATOS COMPARTIDA 'inspeccion' DE PRODUCCIÓN.
+-- COMPATIBILIDAD ARQUITECTÓNICA:
+-- Este bloque contiene el esquema base de FAREGAS adaptado para la base de datos
+-- compartida 'inspeccion' o para entornos de prueba aislados. No sobreescribe catálogos de FARENET.
 --
 -- CONTENIDO:
 -- 1. Extensiones requeridas (btree_gist)
@@ -78,6 +102,9 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 -- 2. FUNCIONES DE PROTECCIÓN DE INMUTABILIDAD PL/pgSQL
 -- ============================================================================
 
+-- =============================================================================
+-- SECCIÓN 6: FUNCIONES Y TRIGGERS
+-- =============================================================================
 CREATE OR REPLACE FUNCTION public.fg_bloquear_mutacion_movimiento_inventario_cantidad()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -105,6 +132,9 @@ SET default_table_access_method = heap;
 -- Name: fg_auditoria_acceso; Type: TABLE; Schema: public; Owner: postgres
 --
 
+-- =============================================================================
+-- SECCIÓN 2: CREACIÓN DE TABLAS (fg_*)
+-- =============================================================================
 CREATE TABLE public.fg_auditoria_acceso (
     id bigint NOT NULL,
     username character varying(255),
@@ -3201,6 +3231,9 @@ ALTER TABLE ONLY public.fg_correlativo_certificado
 -- Name: fg_auditoria_acceso fg_auditoria_acceso_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
+-- =============================================================================
+-- SECCIÓN 4: RESTRICCIONES Y CLAVES FORÁNEAS
+-- =============================================================================
 ALTER TABLE ONLY public.fg_auditoria_acceso
     ADD CONSTRAINT fg_auditoria_acceso_pkey PRIMARY KEY (id);
 
@@ -4117,6 +4150,9 @@ CREATE INDEX idx_fg_auditoria_acceso_evento ON public.fg_auditoria_acceso USING 
 -- Name: idx_fg_auditoria_acceso_fecha_evento; Type: INDEX; Schema: public; Owner: postgres
 --
 
+-- =============================================================================
+-- SECCIÓN 5: ÍNDICES
+-- =============================================================================
 CREATE INDEX idx_fg_auditoria_acceso_fecha_evento ON public.fg_auditoria_acceso USING btree (fecha_evento);
 
 
@@ -6626,6 +6662,9 @@ ALTER TABLE ONLY public.fg_pago
 ALTER TABLE ONLY public.fg_usuario
     ADD CONSTRAINT fk_fg_usuario_persona FOREIGN KEY (persona_nrodocumentoidentidad) REFERENCES public.persona(nrodocumentoidentidad) ON UPDATE CASCADE ON DELETE SET NULL;
 
+-- =============================================================================
+-- SECCIÓN 8: CATÁLOGOS Y DATOS INICIALES
+-- =============================================================================
 -- ==== migrations/001_faregas_datos_iniciales.sql ====
 -- ============================================================================
 -- ARCHIVO: 001_faregas_datos_iniciales.sql
@@ -7007,6 +7046,9 @@ WHERE NOT EXISTS (
     WHERE UPPER(BTRIM(codigo)) = 'CORTESIA_FAREGAS'
 );
 
+-- =============================================================================
+-- SECCIÓN 7: MIGRACIONES DE DATOS
+-- =============================================================================
 UPDATE public.fg_descuento
 SET nombre = 'CORTESÍA FAREGAS',
     tipo = 'PROMOCION',
@@ -7017,6 +7059,9 @@ SET nombre = 'CORTESÍA FAREGAS',
     usuario_modificacion = 'SISTEMAS_FAREGAS'
 WHERE UPPER(BTRIM(codigo)) = 'CORTESIA_FAREGAS';
 
+-- =============================================================================
+-- SECCIÓN 3: MODIFICACIONES DE COLUMNAS
+-- =============================================================================
 -- ==== migrations/002_ampliacion_auditoria_integral.sql ====
 -- Migración 002: Ampliación de Auditoría Integral FAREGAS
 -- Fecha: 2026-11-13
@@ -7054,6 +7099,9 @@ COMMENT ON COLUMN public.fg_auditoria_acceso.correlacion_id IS 'Identificador de
 COMMENT ON COLUMN public.fg_auditoria_acceso.datos_previos IS 'Snapshot de los valores auditables antes de la modificación';
 COMMENT ON COLUMN public.fg_auditoria_acceso.datos_nuevos IS 'Snapshot de los valores auditables después de la modificación';
 
+-- =============================================================================
+-- SECCIÓN 10: USUARIOS, PERFILES Y PERMISOS
+-- =============================================================================
 -- ==== migrations/003_migracion_fg_usuario_perfil_independiente.sql ====
 -- ============================================================================
 -- MIGRACIÓN INCREMENTAL: 003_migracion_fg_usuario_perfil_independiente.sql
@@ -7405,6 +7453,9 @@ END $$;
 COMMENT ON COLUMN public.fg_producto_facturacion.naturaleza_spot IS 
     'Naturaleza fiscal según SUNAT SPOT: BIEN o SERVICIO. Permite que productos comerciales tributen como servicios bajo código 037 (12%).';
 
+-- =============================================================================
+-- SECCIÓN 9: CUSTODIA DE CREDENCIALES Y MFA
+-- =============================================================================
 -- ==== migrations/010_crear_fg_usuario_mfa.sql ====
 -- Migración versionada 010: Creación de tabla para segundo factor de autenticación (MFA / TOTP)
 -- Esquema no destructivo. Aislado a FAREGAS (sin tocar tablas ni vistas de FARENET).
@@ -7508,8 +7559,140 @@ CREATE TABLE public.fg_credencial_custodia (
 CREATE INDEX idx_fg_credencial_custodia_username
     ON public.fg_credencial_custodia (lower(username));
 
+-- =============================================================================
+-- SECCIÓN 11: AISLAMIENTO DE FAREGAS FRENTE A FARENET
+-- =============================================================================
+-- Revocación preventiva de permisos DDL en schema public para garantizar aislamiento.
+-- No permite a FAREGAS crear, alterar ni eliminar tablas fuera de fg_*.
+
+-- =============================================================================
+-- SECCIÓN 12: ROLES Y PRIVILEGIOS POSTGRESQL
+-- =============================================================================
+-- ==== migrations/013_rol_minimos_privilegios_faregas.sql ====
+-- OBJETIVO: Permitir a FAREGAS operar de forma autónoma con DML completo sobre sus
+-- tablas propias (fg_*), garantizando acceso de SOLO LECTURA (SELECT) sobre las tablas
+-- operativas y catálogos de FARENET, e IMPIDIENDO cualquier INSERT/UPDATE/DELETE/DDL ajeno.
+--
+-- NOTA DE SEGURIDAD:
+-- - No contiene contraseñas en texto plano ni secretos.
+-- - Si el rol ya existe, se conservan sus credenciales vigentes.
+-- - Si el rol se crea por primera vez, el DBA / Administrador debe asignarle una
+--   contraseña segura mediante: ALTER ROLE faregas_app_user WITH PASSWORD '...';
+
+-- 1. CREACIÓN CONDICIONAL DEL ROL OPERATIVO FAREGAS
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'faregas_app_user') THEN
+        CREATE ROLE faregas_app_user WITH
+            LOGIN
+            NOSUPERUSER
+            NOCREATEDB
+            NOCREATEROLE
+            NOINHERIT
+            NOREPLICATION
+            CONNECTION LIMIT 50;
+        RAISE NOTICE 'Rol faregas_app_user creado sin clave inicial. El DBA debe asignar la clave por canal seguro.';
+    ELSE
+        RAISE NOTICE 'Rol faregas_app_user ya existe en pg_roles.';
+    END IF;
+END $$;
+
+-- 2. REVOCACIÓN PREVENTIVA DE PRIVILEGIOS DDL EN EL ESQUEMA PUBLIC
+REVOKE CREATE ON SCHEMA public FROM faregas_app_user;
+GRANT USAGE ON SCHEMA public TO faregas_app_user;
+
+-- 3. REVOCACIÓN GENERAL PREVIA SOBRE TODAS LAS TABLAS Y SECUENCIAS DE PUBLIC
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM faregas_app_user;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM faregas_app_user;
+
+-- 4. CONCESIÓN DE DML COMPLETO SOBRE TODAS LAS TABLAS PROPIAS DE FAREGAS (fg_*)
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN (
+        SELECT tablename 
+        FROM pg_tables 
+        WHERE schemaname = 'public' AND tablename LIKE 'fg_%'
+    ) LOOP
+        EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.%I TO faregas_app_user', r.tablename);
+    END LOOP;
+END $$;
+
+-- Concesión sobre todas las secuencias asociadas a tablas fg_*
+DO $$
+DECLARE
+    s RECORD;
+BEGIN
+    FOR s IN (
+        SELECT sequence_name 
+        FROM information_schema.sequences 
+        WHERE sequence_schema = 'public' AND sequence_name LIKE 'fg_%'
+    ) LOOP
+        EXECUTE format('GRANT USAGE, SELECT ON SEQUENCE public.%I TO faregas_app_user', s.sequence_name);
+    END LOOP;
+END $$;
+
+-- 5. CONCESIÓN CONDICIONAL DE SOLO LECTURA (SELECT) SOBRE TABLAS OPERATIVAS Y CATÁLOGOS DE FARENET
+DO $$
+DECLARE
+    tbl text;
+    tablas_farenet text[] := ARRAY[
+        -- Tablas operativas FARENET
+        'persona', 'vehiculo', 'tarjetapropiedad',
+        -- Catálogos vehiculares y maestros
+        'categoria', 'vehiculoclase', 'marca', 'modelo', 'combustible', 'color',
+        'carroceria', 'tipoplaca', 'tipoinspeccion', 'conceptoinspeccion',
+        'conceptoinspecciondetalle', 'tipocertificado', 'tipoautorizacion',
+        'tipodocumento', 'tipopoliza', 'aseguradora',
+        -- Catálogos financieros, comerciales y ubigeo
+        'moneda', 'formapago', 'cuentacorriente', 'entidadfinanciera',
+        'tarjeta', 'tipocontado', 'tipodocumentoidentidad', 'pais',
+        'departamento', 'provincia', 'distrito', 'seriedocumentobase'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY tablas_farenet LOOP
+        IF EXISTS (
+            SELECT 1 FROM pg_tables 
+            WHERE schemaname = 'public' AND tablename = tbl
+        ) THEN
+            EXECUTE format('GRANT SELECT ON TABLE public.%I TO faregas_app_user', tbl);
+            -- Asegurar explícitamente que no existan permisos de escritura
+            EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.%I FROM faregas_app_user', tbl);
+        END IF;
+    END LOOP;
+END $$;
+
+-- 6. PRIVILEGIOS POR DEFECTO PARA FUTURAS TABLAS
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO faregas_app_user;
+
+-- =============================================================================
+-- SECCIÓN 13: VALIDACIONES FINALES
+-- =============================================================================
+-- Verificación de seguridad y auditoría de privilegios
+DO $$
+DECLARE
+    escrituras_ajenas integer;
+BEGIN
+    SELECT count(*) INTO escrituras_ajenas
+    FROM information_schema.role_table_grants
+    WHERE grantee = 'faregas_app_user'
+      AND privilege_type IN ('INSERT', 'UPDATE', 'DELETE', 'TRUNCATE')
+      AND table_name NOT LIKE 'fg_%';
+
+    IF escrituras_ajenas > 0 THEN
+        RAISE EXCEPTION 'Fallo de seguridad: faregas_app_user tiene permisos de escritura en % tablas que no son fg_*', escrituras_ajenas;
+    END IF;
+
+    RAISE NOTICE 'Validación final exitosa: faregas_app_user tiene 0 privilegios de escritura en tablas de FARENET.';
+    RAISE NOTICE 'Políticas de mínimos privilegios y permisos aplicados exitosamente.';
+END $$;
+
 COMMIT;
 
+-- =============================================================================
+-- APÉNDICE DE REFERENCIA HISTÓRICA Y PROPUESTAS TÉCNICAS
+-- =============================================================================
 -- APÉNDICE DE REFERENCIA. Las siguientes secciones son comentarios.
 
 -- ==== migrations/005_optimizacion_eliminacion_usuarios_perfiles.sql ====

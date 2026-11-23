@@ -1,7 +1,7 @@
 const { readFileSync } = require('node:fs');
-const { join } = require('node:path');
+const { join, resolve } = require('node:path');
 
-const ruta = join(__dirname, '../database/faregas_consolidado.sql');
+const ruta = resolve(__dirname, '../../../database/MIGRACION_SCRIPT.sql');
 
 function leerSeccionSql(numero) {
     const [instalacion, apendice] = readFileSync(ruta, 'utf8').split(/^COMMIT;\r?$/m);

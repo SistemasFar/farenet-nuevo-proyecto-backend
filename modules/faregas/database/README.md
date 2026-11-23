@@ -1,8 +1,10 @@
-# Instalación de la base de datos FAREGAS
+# Instalación y Migración de la base de datos FAREGAS
 
-El archivo [faregas_consolidado.sql](faregas_consolidado.sql) crea el esquema
-FAREGAS para una base nueva e independiente. La instalación contiene **74 tablas
-de FAREGAS** y **13 contratos mínimos para catálogos compartidos**. Los contratos
+El archivo único de migración consolidado [MIGRACION_SCRIPT.sql](../../../database/MIGRACION_SCRIPT.sql)
+contiene el esquema FAREGAS completo, políticas de aislamiento, mínimos privilegios
+y catálogos para la base de datos compartida `inspeccion` o réplicas de prueba.
+La instalación contiene **74 tablas de FAREGAS**, estructuras de contingencia,
+custodia, MFA, inventario de credenciales y **13 contratos mínimos para catálogos compartidos**. Los contratos
 se crean vacíos cuando faltan. Los catálogos existentes conservan su estructura
 y sus filas.
 
@@ -53,7 +55,7 @@ compartidas de autenticación y maestros cubiertas por la prueba de integración
    provisionar los datos maestros y arrancar los procesos de emisión.
 
 ```bash
-psql -X -v ON_ERROR_STOP=1 -h HOST_APROBADO -U ROL_INSTALADOR -d BASE_NUEVA -f faregas_consolidado.sql
+psql -X -v ON_ERROR_STOP=1 -h HOST_APROBADO -U ROL_ADMIN -d inspeccion -f database/MIGRACION_SCRIPT.sql
 ```
 
 El SQL aplica una sola transacción. Protege nombres de bases conocidas y rechaza

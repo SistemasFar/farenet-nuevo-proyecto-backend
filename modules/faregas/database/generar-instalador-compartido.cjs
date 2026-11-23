@@ -2,7 +2,7 @@ const { createHash } = require('node:crypto');
 const { readFileSync, writeFileSync } = require('node:fs');
 const { join, resolve } = require('node:path');
 
-const consolidado = join(__dirname, 'faregas_consolidado.sql');
+const consolidado = resolve(__dirname, '../../../database/MIGRACION_SCRIPT.sql');
 // La variante compartida solo admite la revisión auditada. Revisar el diff
 // completo y repetir la prueba de aislamiento antes de actualizar esta huella.
 const huellaRevisada = '6cb848bda9a731527c040c00a717b93235845d3ca8ea24130c63fa8dd1f4c084';

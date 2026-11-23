@@ -6,7 +6,7 @@ Este documento detalla el procedimiento técnico, inventario estructural y clasi
 
 ## 1. Archivos Entregables
 
-El archivo [faregas_consolidado.sql](../faregas_consolidado.sql) contiene los bloques SQL. La [guía de instalación](../README.md) documenta los catálogos compartidos, la contingencia 011 y las tablas de credenciales y custodia de la sección 012. Los nombres de la tabla corresponden a los encabezados de esos bloques.
+El archivo consolidado unificado [MIGRACION_SCRIPT.sql](../../../../database/MIGRACION_SCRIPT.sql) contiene todos los bloques SQL y políticas de mínimos privilegios. La [guía de instalación](../README.md) documenta los catálogos compartidos, la contingencia 011 y las tablas de credenciales y custodia de la sección 012. Los nombres de la tabla corresponden a los encabezados de esos bloques.
 
 | Archivo | Propósito | Características |
 |---|---|---|
