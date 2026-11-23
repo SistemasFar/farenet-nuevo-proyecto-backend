@@ -7716,34 +7716,16 @@ BEGIN
     END IF;
 END $$;
 
--- 2. REVOCACIÓN PREVENTIVA DE PRIVILEGIOS DDL EN EL ESQUEMA PUBLIC PARA EL ROL FAREGAS
--- NOTA DE AISLAMIENTO: No se modifica PUBLIC ni el esquema global para preservar la compatibilidad
--- y los privilegios preexistentes de FARENET u otros microservicios que comparten la base 'inspeccion'.
+-- 2. PRIVILEGIOS DE ESQUEMA EN PUBLIC
+-- NOTA ARQUITECTÓNICA Y DE TRANSPARENCIA:
+-- No se modifica el pseudo-rol PUBLIC para preservar intactos los permisos y la operativa de FARENET.
+-- Al conservar PUBLIC el privilegio CREATE por defecto en PostgreSQL (<= 14), cualquier rol (incluido
+-- faregas_app_user) hereda la posibilidad técnica de crear objetos nuevos en el esquema 'public'.
+-- El aislamiento de FAREGAS se garantiza en el plano de datos: faregas_app_user carece en absoluto
+-- de privilegios INSERT, UPDATE, DELETE o TRUNCATE sobre tablas de FARENET, y el código de la aplicación
+-- no ejecuta DDL en tiempo de ejecución.
 REVOKE CREATE ON SCHEMA public FROM faregas_app_user;
 GRANT USAGE ON SCHEMA public TO faregas_app_user;
-
--- 2.1. GUARDIA DE NIVEL MOTOR: EVENT TRIGGER PARA IMPEDIR DDL AL ROL FAREGAS
--- PROBLEMA ARQUITECTÓNICO RESUELTO: En PostgreSQL <= 14, el pseudo-rol PUBLIC posee CREATE en
--- el esquema 'public' por defecto. Dado que revocar CREATE a PUBLIC afectaría los permisos de
--- FARENET y los permisos son aditivos, este Event Trigger intercepta cualquier comando DDL
--- (CREATE, ALTER, DROP) emitido específicamente por 'faregas_app_user' y lo rechaza con 42501,
--- asegurando el aislamiento DDL estricto sin alterar en absoluto a FARENET ni a otros roles.
-CREATE OR REPLACE FUNCTION public.fg_bloquear_ddl_faregas_app_user()
-RETURNS event_trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF session_user = 'faregas_app_user' OR current_user = 'faregas_app_user' THEN
-        RAISE EXCEPTION 'Operación DDL no autorizada para el rol de aplicación % (violación de política de mínimos privilegios FAREGAS)', current_user
-            USING ERRCODE = '42501';
-    END IF;
-END;
-$$;
-
-DROP EVENT TRIGGER IF EXISTS trg_bloquear_ddl_faregas_app_user;
-CREATE EVENT TRIGGER trg_bloquear_ddl_faregas_app_user
-ON ddl_command_start
-EXECUTE FUNCTION public.fg_bloquear_ddl_faregas_app_user();
 
 -- 3. REVOCACIÓN GENERAL PREVIA SOBRE TODAS LAS TABLAS Y SECUENCIAS DE PUBLIC
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM faregas_app_user;
