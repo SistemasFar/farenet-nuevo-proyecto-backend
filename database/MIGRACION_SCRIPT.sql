@@ -105,6 +105,13 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 -- =============================================================================
 -- SECCIÓN 6: FUNCIONES Y TRIGGERS
 -- =============================================================================
+
+DO $faregas_schema_000$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'fg_auditoria_acceso'
+    ) THEN
+        RAISE NOTICE 'Iniciando instalación del esquema base 000 de FAREGAS...';
 CREATE OR REPLACE FUNCTION public.fg_bloquear_mutacion_movimiento_inventario_cantidad()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -6461,6 +6468,24 @@ ALTER TABLE ONLY public.fg_chip_codigo_reserva
     FOREIGN KEY (planta_key)
     REFERENCES public.fg_planta(key) ON DELETE CASCADE;
 -- ============================================================================
+
+-- ============================================================================
+-- PROTECCIÓN DE ESTRUCTURAS Y CATÁLOGOS DE FARENET:
+-- En la base compartida de producción 'inspeccion', FAREGAS TIENE ESTRICTAMENTE
+-- PROHIBIDO crear, alterar o eliminar estructuras pertenecientes a FARENET.
+-- Los catálogos ya existen y son administrados exclusivamente por FARENET.
+-- Solo en entornos de prueba de laboratorio vacíos (bases de prueba sin esquema
+-- previo de FARENET), se provisionan contratos mínimos para satisfacer claves foráneas.
+-- ============================================================================
+IF current_database() = 'inspeccion' THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'moneda') THEN
+        RAISE EXCEPTION 'Protección FARENET: El catálogo public.moneda debe existir previamente en inspeccion.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'persona') THEN
+        RAISE EXCEPTION 'Protección FARENET: La tabla public.persona debe existir previamente en inspeccion.';
+    END IF;
+    RAISE NOTICE 'Protección FARENET verificada: Base inspeccion detectada, se omite cualquier DDL sobre catálogos de FARENET.';
+ELSE
 -- Las tablas a continuación corresponden a catálogos maestros alojados en FARENET
 -- Los siete primeros son destinos de FK. Los catálogos de identidad y geografía
 -- soportan Usuarios. El contrato de seriedocumentobase soporta la consulta de series.
@@ -6582,6 +6607,8 @@ CREATE TABLE IF NOT EXISTS public.seriedocumentobase (
 -- Name: fg_credito fk_fg_credito_moneda; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
+
+END IF;
 ALTER TABLE ONLY public.fg_credito
     ADD CONSTRAINT fk_fg_credito_moneda FOREIGN KEY (moneda_key) REFERENCES public.moneda(key) ON UPDATE CASCADE ON DELETE RESTRICT;
 
@@ -6661,6 +6688,14 @@ ALTER TABLE ONLY public.fg_pago
 
 ALTER TABLE ONLY public.fg_usuario
     ADD CONSTRAINT fk_fg_usuario_persona FOREIGN KEY (persona_nrodocumentoidentidad) REFERENCES public.persona(nrodocumentoidentidad) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+        RAISE NOTICE 'Esquema base 000 de FAREGAS instalado exitosamente.';
+    ELSE
+        RAISE NOTICE 'Sección 000: El esquema base fg_* ya se encuentra instalado. Se conservan estructuras existentes.';
+    END IF;
+END;
+$faregas_schema_000$;
 
 -- =============================================================================
 -- SECCIÓN 8: CATÁLOGOS Y DATOS INICIALES
@@ -7482,7 +7517,7 @@ COMMENT ON TABLE public.fg_usuario_mfa IS 'Almacén de segundo factor TOTP (RFC 
 
 -- ==== migrations/011_crear_fg_facturacion_contingencia.sql ====
 
-CREATE TABLE public.fg_facturacion_contingencia (
+CREATE TABLE IF NOT EXISTS public.fg_facturacion_contingencia (
     facturacion_id bigint PRIMARY KEY REFERENCES public.fg_facturacion(id),
     certificado_id bigint NOT NULL UNIQUE REFERENCES public.fg_certificado(id),
     intento_origen_id bigint NOT NULL REFERENCES public.fg_facturacion_intento(id),
@@ -7512,18 +7547,18 @@ CREATE TABLE public.fg_facturacion_contingencia (
     CHECK ((lease_token IS NULL) = (lease_hasta IS NULL))
 );
 
-CREATE INDEX fg_contingencia_fiscal_pendiente_idx
+CREATE INDEX IF NOT EXISTS fg_contingencia_fiscal_pendiente_idx
     ON public.fg_facturacion_contingencia (siguiente_intento, facturacion_id)
     WHERE estado = 'PENDIENTE';
 
-CREATE INDEX fg_contingencia_correo_pendiente_idx
+CREATE INDEX IF NOT EXISTS fg_contingencia_correo_pendiente_idx
     ON public.fg_facturacion_contingencia (correo_proximo, facturacion_id)
     WHERE estado = 'REGULARIZADO' AND correo_estado = 'PENDIENTE';
 
 -- ==== migrations/012_credenciales_y_custodia.sql ====
 -- Estructuras usadas por los servicios de inventario y custodia. Se mantienen
 -- vacías y la clave de custodia se provisiona fuera de PostgreSQL.
-CREATE TABLE public.fg_usuario_credencial (
+CREATE TABLE IF NOT EXISTS public.fg_usuario_credencial (
     id serial PRIMARY KEY,
     username varchar(100) NOT NULL UNIQUE,
     estado_credencial varchar(50) NOT NULL,
@@ -7537,10 +7572,10 @@ CREATE TABLE public.fg_usuario_credencial (
         FOREIGN KEY (username) REFERENCES public.fg_usuario(username) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_fg_usuario_credencial_username
+CREATE INDEX IF NOT EXISTS idx_fg_usuario_credencial_username
     ON public.fg_usuario_credencial (lower(username));
 
-CREATE TABLE public.fg_credencial_custodia (
+CREATE TABLE IF NOT EXISTS public.fg_credencial_custodia (
     id serial PRIMARY KEY,
     username varchar(100) NOT NULL UNIQUE,
     ciphertext text NOT NULL,
@@ -7556,7 +7591,7 @@ CREATE TABLE public.fg_credencial_custodia (
         FOREIGN KEY (username) REFERENCES public.fg_usuario(username) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_fg_credencial_custodia_username
+CREATE INDEX IF NOT EXISTS idx_fg_credencial_custodia_username
     ON public.fg_credencial_custodia (lower(username));
 
 -- =============================================================================
@@ -7598,6 +7633,7 @@ BEGIN
 END $$;
 
 -- 2. REVOCACIÓN PREVENTIVA DE PRIVILEGIOS DDL EN EL ESQUEMA PUBLIC
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 REVOKE CREATE ON SCHEMA public FROM faregas_app_user;
 GRANT USAGE ON SCHEMA public TO faregas_app_user;
 
