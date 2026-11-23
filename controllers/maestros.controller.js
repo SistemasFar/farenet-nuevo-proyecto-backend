@@ -11,13 +11,13 @@ const obtenerMaestrosCaja = async (req, res) => {
             tiposAutorizacion,
             tiposDocumento
         ] = await Promise.all([
-            db.query('SELECT id, nombre FROM tipoplaca ORDER BY nombre ASC'),
-            db.query('SELECT key, COALESCE(abreviatura, nombre) AS abreviatura FROM conceptoinspeccion ORDER BY abreviatura ASC'),
-            db.query('SELECT key, nombre FROM categoria ORDER BY nombre ASC'),
-            db.query('SELECT key, codigosunat, nombre FROM tipoinspeccion ORDER BY nombre ASC'),
-            db.query('SELECT key, COALESCE(abreviacion, nombre) AS abreviacion FROM tipocertificado ORDER BY abreviacion ASC'),
-            db.query('SELECT key, ambito AS nombre FROM tipoautorizacion ORDER BY ambito ASC'),
-            db.query('SELECT key, nombre FROM tipodocumento ORDER BY nombre ASC')
+            db.query('SELECT id, nombre FROM tipoplaca ORDER BY nombre ASC').catch(() => ({ rows: [] })),
+            db.query('SELECT key, COALESCE(abreviatura, nombre) AS abreviatura FROM conceptoinspeccion ORDER BY abreviatura ASC').catch(() => ({ rows: [] })),
+            db.query('SELECT key, nombre FROM categoria ORDER BY nombre ASC').catch(() => ({ rows: [] })),
+            db.query('SELECT key, codigosunat, nombre FROM tipoinspeccion ORDER BY nombre ASC').catch(() => ({ rows: [] })),
+            db.query('SELECT key, COALESCE(abreviacion, nombre) AS abreviacion FROM tipocertificado ORDER BY abreviacion ASC').catch(() => ({ rows: [] })),
+            db.query('SELECT key, ambito AS nombre FROM tipoautorizacion ORDER BY ambito ASC').catch(() => ({ rows: [] })),
+            db.query('SELECT key, nombre FROM tipodocumento ORDER BY nombre ASC').catch(() => ({ rows: [] }))
         ]);
 
         return res.status(200).json({
@@ -222,50 +222,10 @@ const buscarColoresVehiculo = async (req, res) => {
 };
 
 const agregarNuevoMaestro = async (req, res) => {
-    try {
-        const { tabla, nombre } = req.body;
-        
-        // Tablas permitidas para evitar SQL Injection
-        const tablasPermitidas = {
-            'clase': 'vehiculoclase',
-            'marca': 'marca',
-            'carroceria': 'carroceria',
-            'modelo': 'modelo',
-            'color': 'color'
-        };
-
-        const tablaReal = tablasPermitidas[tabla];
-        if (!tablaReal) {
-            return res.status(400).json({ status: 'error', message: 'Tabla no válida' });
-        }
-
-        // Validación extra en el backend: Solo mayúsculas, números y guiones intermedios
-        if (!/^[A-Z0-9]+(?:-[A-Z0-9]+)*$/.test(nombre)) {
-            return res.status(400).json({ status: 'error', message: 'Formato inválido. Solo mayúsculas, números y guiones intermedios permitidos.' });
-        }
-
-        // Verificar si existe
-        const existe = await db.query(`SELECT key, nombre FROM ${tablaReal} WHERE nombre ILIKE $1 LIMIT 1`, [nombre]);
-        
-        if (existe.rows.length > 0) {
-            return res.status(400).json({ status: 'error', message: `El valor "${nombre}" ya existe.` });
-        }
-
-        await db.query(`INSERT INTO ${tablaReal} (key, nombre) VALUES ($1, $2)`, [nombre, nombre]);
-
-        return res.status(200).json({
-            status: 'success',
-            message: `Agregado correctamente a ${tabla}`,
-            data: { key: nombre, nombre: nombre }
-        });
-
-    } catch (error) {
-        console.error('Error al agregar maestro:', error);
-        return res.status(500).json({
-            status: 'error',
-            message: 'Error interno del servidor al agregar el maestro.'
-        });
-    }
+    return res.status(403).json({
+        status: 'error',
+        message: 'Operación no permitida: FAREGAS mantiene acceso exclusivo de solo lectura a los catálogos vehiculares compartidos.'
+    });
 };
 
 const obtenerMaestrosPropietario = async (req, res) => {

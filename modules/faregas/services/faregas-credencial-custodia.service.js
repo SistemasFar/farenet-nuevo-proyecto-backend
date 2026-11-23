@@ -92,26 +92,31 @@ const descifrarPassword = ({ ciphertext, iv, tag }) => {
  * Asegura la existencia no destructiva de la tabla fg_credencial_custodia.
  */
 const asegurarTablaCustodia = async (dbClient) => {
-    await dbClient.query(`
-        CREATE TABLE IF NOT EXISTS public.fg_credencial_custodia (
-            id SERIAL PRIMARY KEY,
-            username VARCHAR(100) NOT NULL UNIQUE,
-            ciphertext TEXT NOT NULL,
-            iv VARCHAR(64) NOT NULL,
-            tag VARCHAR(64) NOT NULL,
-            algoritmo VARCHAR(30) DEFAULT 'aes-256-gcm' NOT NULL,
-            version_clave INT DEFAULT 1 NOT NULL,
-            origen VARCHAR(50) DEFAULT 'ADMINISTRACION_USUARIOS' NOT NULL,
-            creado_por VARCHAR(100) NOT NULL,
-            fecha_creacion TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-            fecha_actualizacion TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-            CONSTRAINT fk_fg_credencial_custodia_user FOREIGN KEY (username) REFERENCES public.fg_usuario(username) ON DELETE CASCADE
-        )
-    `);
-    await dbClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_fg_credencial_custodia_username
-        ON public.fg_credencial_custodia(LOWER(username))
-    `);
+    try {
+        await dbClient.query(`
+            CREATE TABLE IF NOT EXISTS public.fg_credencial_custodia (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(100) NOT NULL UNIQUE,
+                ciphertext TEXT NOT NULL,
+                iv VARCHAR(64) NOT NULL,
+                tag VARCHAR(64) NOT NULL,
+                algoritmo VARCHAR(30) DEFAULT 'aes-256-gcm' NOT NULL,
+                version_clave INT DEFAULT 1 NOT NULL,
+                origen VARCHAR(50) DEFAULT 'ADMINISTRACION_USUARIOS' NOT NULL,
+                creado_por VARCHAR(100) NOT NULL,
+                fecha_creacion TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                fecha_actualizacion TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                CONSTRAINT fk_fg_credencial_custodia_user FOREIGN KEY (username) REFERENCES public.fg_usuario(username) ON DELETE CASCADE
+            )
+        `);
+        await dbClient.query(`
+            CREATE INDEX IF NOT EXISTS idx_fg_credencial_custodia_username
+            ON public.fg_credencial_custodia(LOWER(username))
+        `);
+    } catch (err) {
+        if (err.code === '42501') return;
+        throw err;
+    }
 };
 
 /**

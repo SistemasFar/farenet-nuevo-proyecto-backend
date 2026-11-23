@@ -10,4 +10,5 @@ router.post('/confirmar-planta', faregasAuthController.confirmarPlanta);
 router.post('/cambiar-planta', faregasAuthController.cambiarPlanta);
 router.post('/sesion/refrescar', authFaregasMiddleware, faregasAuthController.refrescarSesion);
 router.post('/cambiar-contrasena', authFaregasMiddleware, faregasAuthController.cambiarContrasena);
+router.post('/logout', authFaregasMiddleware, faregasAuthController.logout);
 module.exports = router;

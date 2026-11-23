@@ -144,24 +144,29 @@ const escapeXml = (str) => String(str ?? '')
  * Garantiza la existencia de la tabla fg_usuario_credencial.
  */
 const asegurarTablaCredenciales = async (dbClient) => {
-    await dbClient.query(`
-        CREATE TABLE IF NOT EXISTS public.fg_usuario_credencial (
-            id SERIAL PRIMARY KEY,
-            username VARCHAR(100) NOT NULL UNIQUE,
-            estado_credencial VARCHAR(50) NOT NULL,
-            tipo_operacion VARCHAR(50) NOT NULL,
-            fecha_modificacion TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-            responsable VARCHAR(100) NOT NULL,
-            cambiada_posteriormente BOOLEAN DEFAULT FALSE,
-            necesita_restablecimiento BOOLEAN DEFAULT FALSE,
-            observaciones TEXT,
-            CONSTRAINT fk_fg_usuario_credencial_user FOREIGN KEY (username) REFERENCES public.fg_usuario(username) ON DELETE CASCADE
-        )
-    `);
-    await dbClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_fg_usuario_credencial_username
-        ON public.fg_usuario_credencial(LOWER(username))
-    `);
+    try {
+        await dbClient.query(`
+            CREATE TABLE IF NOT EXISTS public.fg_usuario_credencial (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(100) NOT NULL UNIQUE,
+                estado_credencial VARCHAR(50) NOT NULL,
+                tipo_operacion VARCHAR(50) NOT NULL,
+                fecha_modificacion TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                responsable VARCHAR(100) NOT NULL,
+                cambiada_posteriormente BOOLEAN DEFAULT FALSE,
+                necesita_restablecimiento BOOLEAN DEFAULT FALSE,
+                observaciones TEXT,
+                CONSTRAINT fk_fg_usuario_credencial_user FOREIGN KEY (username) REFERENCES public.fg_usuario(username) ON DELETE CASCADE
+            )
+        `);
+        await dbClient.query(`
+            CREATE INDEX IF NOT EXISTS idx_fg_usuario_credencial_username
+            ON public.fg_usuario_credencial(LOWER(username))
+        `);
+    } catch (err) {
+        if (err.code === '42501') return;
+        throw err;
+    }
 };
 
 /**

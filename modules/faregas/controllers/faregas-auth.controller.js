@@ -514,3 +514,62 @@ exports.cambiarContrasena = async (req, res) => {
         });
     }
 };
+
+exports.logout = async (req, res) => {
+    try {
+        const { session_jti, username, planta_key } = req.user || {};
+
+        if (!username) {
+            return res.status(400).json({ status: 'error', message: 'Datos de sesión no encontrados en el token.' });
+        }
+
+        // 1. Revocar la sesión en PostgreSQL
+        let sesionRevocada = null;
+        if (session_jti) {
+            sesionRevocada = await faregasAuthService.revocarSesionPorJti(session_jti, username);
+        } else {
+            await faregasAuthService.revocarSesionesUsuario(username);
+        }
+
+        // 2. Registrar evento de auditoría
+        const ip = req.headers['x-forwarded-for'] || req.connection?.remoteAddress || req.ip;
+        const userAgent = req.headers['user-agent'];
+        await faregasAuditoriaService.registrarEvento({
+            username: username,
+            evento: 'LOGOUT',
+            exitoso: true,
+            mensaje: 'Sesión revocada y cerrada en servidor por el usuario',
+            planta_key: planta_key || sesionRevocada?.planta_key || null,
+            ip_direccion: ip,
+            user_agent: userAgent
+        });
+
+        // 3. Desconectar sockets asociados en Socket.IO si están activos
+        try {
+            const notificacionesService = require('../services/faregas-notificaciones.service');
+            const io = notificacionesService.getSocketIO();
+            if (io && io.sockets && io.sockets.sockets) {
+                for (const [id, socket] of io.sockets.sockets) {
+                    const socketToken = socket.data?.faregas?.token;
+                    if (socketToken && socketToken.username === username && (!session_jti || socketToken.session_jti === session_jti)) {
+                        socket.emit('sesion_revocada', { mensaje: 'Sesión finalizada por cierre de sesión' });
+                        socket.disconnect(true);
+                    }
+                }
+            }
+        } catch (sockErr) {
+            console.warn('[LOGOUT] Advertencia al desconectar sockets:', sockErr.message);
+        }
+
+        return res.status(200).json({
+            status: 'success',
+            message: 'Sesión cerrada y revocada correctamente en el servidor.'
+        });
+    } catch (error) {
+        console.error('[LOGOUT] Error al revocar sesión:', error);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Error interno al procesar el cierre de sesión.'
+        });
+    }
+};

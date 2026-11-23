@@ -641,6 +641,8 @@ const setSocketIO = (io) => {
     _io = io;
 };
 
+const getSocketIO = () => _io;
+
 const emitirNotificacionActualizada = async (notificacionId, queryable = db) => {
     if (!_io || !notificacionId) return;
     try {
@@ -684,6 +686,7 @@ module.exports = {
     marcarLeida,
     marcarTodasLeidas,
     setSocketIO,
+    getSocketIO,
     emitirNotificacionActualizada,
     _private: { errorNegocio, rangoMesCalendario, PERMISO_NOTIFICACION_CORTESIA }
 };

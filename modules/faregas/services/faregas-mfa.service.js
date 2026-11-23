@@ -248,24 +248,30 @@ const limpiarIntentosFallidos = (key) => {
  * Asegura la existencia no destructiva de la tabla fg_usuario_mfa en PostgreSQL.
  */
 const asegurarTablaMfa = async (dbClient) => {
-    await dbClient.query(`
-        CREATE TABLE IF NOT EXISTS public.fg_usuario_mfa (
-            username VARCHAR(100) PRIMARY KEY,
-            activo BOOLEAN DEFAULT FALSE NOT NULL,
-            secreto_cifrado TEXT,
-            secreto_iv VARCHAR(64),
-            secreto_tag VARCHAR(64),
-            codigos_recuperacion JSONB DEFAULT '[]'::jsonb NOT NULL,
-            ultimo_paso_usado BIGINT,
-            enrolado_en TIMESTAMP WITH TIME ZONE,
-            actualizado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-            CONSTRAINT fk_fg_usuario_mfa_user FOREIGN KEY (username) REFERENCES public.fg_usuario(username) ON DELETE CASCADE
-        )
-    `);
-    await dbClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_fg_usuario_mfa_username
-        ON public.fg_usuario_mfa(LOWER(username))
-    `);
+    try {
+        await dbClient.query(`
+            CREATE TABLE IF NOT EXISTS public.fg_usuario_mfa (
+                username VARCHAR(100) PRIMARY KEY,
+                activo BOOLEAN DEFAULT FALSE NOT NULL,
+                secreto_cifrado TEXT,
+                secreto_iv VARCHAR(64),
+                secreto_tag VARCHAR(64),
+                codigos_recuperacion JSONB DEFAULT '[]'::jsonb NOT NULL,
+                ultimo_paso_usado BIGINT,
+                enrolado_en TIMESTAMP WITH TIME ZONE,
+                actualizado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                CONSTRAINT fk_fg_usuario_mfa_user FOREIGN KEY (username) REFERENCES public.fg_usuario(username) ON DELETE CASCADE
+            )
+        `);
+        await dbClient.query(`
+            CREATE INDEX IF NOT EXISTS idx_fg_usuario_mfa_username
+            ON public.fg_usuario_mfa(LOWER(username))
+        `);
+    } catch (err) {
+        // En runtime con rol de minimos privilegios (sin CREATE DDL en public), ignorar si ya existe
+        if (err.code === '42501') return;
+        throw err;
+    }
 };
 
 /**

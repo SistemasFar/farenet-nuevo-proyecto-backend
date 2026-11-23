@@ -182,6 +182,19 @@ exports.revocarSesionesUsuario = async (username, client = db) => {
     return res.rowCount;
 };
 
+exports.revocarSesionPorJti = async (sessionJti, username, client = db) => {
+    const query = `
+        UPDATE fg_usuario_sesion
+        SET isactive = false,
+            revoked_at_utc = timezone('UTC'::text, now()),
+            logouttime_utc = timezone('UTC'::text, now())
+        WHERE session_jti = $1 AND usuario_username = $2 AND isactive = true
+        RETURNING id, usuario_username, planta_key
+    `;
+    const res = await client.query(query, [sessionJti, username]);
+    return res.rowCount > 0 ? res.rows[0] : null;
+};
+
 exports.cambiarContrasenhaUsuario = async ({
     username,
     contrasenhaActual,
