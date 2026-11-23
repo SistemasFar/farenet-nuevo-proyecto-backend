@@ -7722,6 +7722,29 @@ END $$;
 REVOKE CREATE ON SCHEMA public FROM faregas_app_user;
 GRANT USAGE ON SCHEMA public TO faregas_app_user;
 
+-- 2.1. GUARDIA DE NIVEL MOTOR: EVENT TRIGGER PARA IMPEDIR DDL AL ROL FAREGAS
+-- PROBLEMA ARQUITECTÓNICO RESUELTO: En PostgreSQL <= 14, el pseudo-rol PUBLIC posee CREATE en
+-- el esquema 'public' por defecto. Dado que revocar CREATE a PUBLIC afectaría los permisos de
+-- FARENET y los permisos son aditivos, este Event Trigger intercepta cualquier comando DDL
+-- (CREATE, ALTER, DROP) emitido específicamente por 'faregas_app_user' y lo rechaza con 42501,
+-- asegurando el aislamiento DDL estricto sin alterar en absoluto a FARENET ni a otros roles.
+CREATE OR REPLACE FUNCTION public.fg_bloquear_ddl_faregas_app_user()
+RETURNS event_trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF session_user = 'faregas_app_user' OR current_user = 'faregas_app_user' THEN
+        RAISE EXCEPTION 'Operación DDL no autorizada para el rol de aplicación % (violación de política de mínimos privilegios FAREGAS)', current_user
+            USING ERRCODE = '42501';
+    END IF;
+END;
+$$;
+
+DROP EVENT TRIGGER IF EXISTS trg_bloquear_ddl_faregas_app_user;
+CREATE EVENT TRIGGER trg_bloquear_ddl_faregas_app_user
+ON ddl_command_start
+EXECUTE FUNCTION public.fg_bloquear_ddl_faregas_app_user();
+
 -- 3. REVOCACIÓN GENERAL PREVIA SOBRE TODAS LAS TABLAS Y SECUENCIAS DE PUBLIC
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM faregas_app_user;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM faregas_app_user;
