@@ -1,4 +1,5 @@
 const db = require('../config/database');
+const { habilitarRutasFarenet } = require('../config/farenet-legacy');
 const bcrypt = require('bcryptjs');
 const faregasAuthService = require('../modules/faregas/services/faregas-auth.service');
 
@@ -64,7 +65,9 @@ exports.validarFarenetReadOnly = async (username, password) => {
 };
 
 exports.detectarEmpresasDisponibles = async (username, password) => {
-    const farenetResult = await exports.validarFarenetReadOnly(username, password);
+    const farenetResult = habilitarRutasFarenet()
+        ? await exports.validarFarenetReadOnly(username, password)
+        : { valido: false };
     const faregasResult = await faregasAuthService.validarFaregas(username, password);
 
     if (!farenetResult.valido && !faregasResult.valido) {

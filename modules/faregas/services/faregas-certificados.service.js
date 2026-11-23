@@ -3485,15 +3485,12 @@ exports.emitirCertificado = async (id, userContext, options = {}) => {
                     username: userContext.username,
                     usuarioNombre: contexto.usuario_nombre
                 });
-                if (notificacionId > 0) notificacionEmitida = contexto;
+                if (notificacionId > 0) notificacionEmitida = notificacionId;
             }
             await client.query('COMMIT');
             if (notificacionEmitida) {
                 const notificacionesService = require('./faregas-notificaciones.service');
-                notificacionesService.emitirNotificacionActualizada(
-                    notificacionEmitida.planta_key,
-                    notificacionEmitida.empresa_key
-                );
+                void notificacionesService.emitirNotificacionActualizada(notificacionEmitida);
             }
         } catch (errorNotificacion) {
             try { await client.query('ROLLBACK'); } catch (_) {}

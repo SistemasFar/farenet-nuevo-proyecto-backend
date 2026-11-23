@@ -1,5 +1,6 @@
 const cron = require('node-cron');
 const pool = require('./config/database');
+const { habilitarCronFarenet } = require('./config/farenet-legacy');
 const { reconciliarPendientesSunat } = require('./modules/faregas/services/faregas-nubefact-cron.service');
 const { reconciliarNotasPendientesSunat } = require('./modules/faregas/services/faregas-nubefact-notas-cron.service');
 const notasCreditoWorker = require('./modules/faregas/services/faregas-notas-credito-worker.service');
@@ -23,7 +24,7 @@ const startCronJobs = () => {
       }
     }, { noOverlap: true, timezone: 'America/Lima' });
   }
-  cron.schedule('0 3 * * *', async () => {
+  if (habilitarCronFarenet()) cron.schedule('0 3 * * *', async () => {
     console.log('[CRON] Iniciando recolector de basura de borradores...', new Date().toLocaleString());
     const client = await pool.connect();
     try {

@@ -1,3 +1,5 @@
+const db = require('../../../config/database');
+const { obtenerAlcanceSocketFaregas, salaNotificacionesFaregas } = require('./faregas-socket-session.service');
 let _db = null;
 const getDb = () => {
     if (!_db) _db = require('../../../config/database');
@@ -639,9 +641,31 @@ const setSocketIO = (io) => {
     _io = io;
 };
 
-const emitirNotificacionActualizada = (plantaKey, empresaKey) => {
-    if (_io) {
-        _io.emit('notificacionActualizada', { plantaKey, empresaKey });
+const emitirNotificacionActualizada = async (notificacionId, queryable = db) => {
+    if (!_io || !notificacionId) return;
+    try {
+        const result = await queryable.query(
+            'SELECT d.usuario_id AS username, n.planta_key AS "plantaKey", p.empresa_key AS "empresaKey" ' +
+            'FROM fg_notificacion n JOIN fg_notificacion_destinatario d ON d.notificacion_id = n.id ' +
+            'JOIN fg_planta p ON p.key = n.planta_key AND p.activo = TRUE ' +
+            'WHERE n.id = $1 AND (n.empresa_key IS NULL OR n.empresa_key = p.empresa_key)',
+            [notificacionId]
+        );
+        const salas = new Set(result.rows.filter(fila => fila.empresaKey).map(salaNotificacionesFaregas));
+        if (!salas.size) return;
+        const sockets = await _io.in([...salas]).fetchSockets();
+        await Promise.all(sockets.map(async socket => {
+            const token = socket.data.faregas?.token;
+            if (!token) return;
+            const alcance = await obtenerAlcanceSocketFaregas(queryable, token);
+            if (!alcance || !salas.has(salaNotificacionesFaregas(alcance))) return;
+            socket.emit('notificacionActualizada', {
+                plantaKey: alcance.plantaKey,
+                empresaKey: alcance.empresaKey
+            });
+        }));
+    } catch {
+        console.warn('[FAREGAS] No se pudo enviar la actualización de notificaciones en vivo.');
     }
 };
 

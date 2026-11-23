@@ -646,7 +646,9 @@ const crearServicio = (database = db, config = {}) => {
         };
     };
 
-    const crear = async (entrada, userContext, opciones = {}) => conTransaccion(async (client) => {
+    const crear = async (entrada, userContext, opciones = {}) => {
+        let notificacionId;
+        const resultado = await conTransaccion(async (client) => {
         const usuario = await obtenerUsuarioActual(client, userContext);
         const permisos = await obtenerPermisos(client, usuario.perfil_id);
         const tipo = normalizarTipo(entrada?.tipoOperacion);
@@ -811,14 +813,14 @@ const crearServicio = (database = db, config = {}) => {
         // Notificar a usuarios autorizados para aprobar/rechazar en la planta de la solicitud.
         try {
             if (tipo === 'EMITIR_NOTA_CREDITO') {
-                await notificacionesService.crearParaAutorizacionNotaCredito(client, solicitud, {
+                notificacionId = await notificacionesService.crearParaAutorizacionNotaCredito(client, solicitud, {
                     eventoClave: 'SOLICITUD_CREADA',
                     tipo: 'SOLICITUD_PENDIENTE_APROBACION',
                     titulo: 'Nueva solicitud de autorización de nota de crédito',
                     mensaje: `Solicitado por: ${solicitud.usuario_solicitante} | Operación: Emitir nota de crédito | Certificado: ${solicitud.numero_certificado || 'N/A'} | Comprobante: ${solicitud.nro_comprobante || 'N/A'} | Sede: ${solicitud.planta_key} | Solicitud: #${solicitud.id}`
                 });
             } else {
-                await notificacionesService.crearParaSolicitud(client, solicitud, {
+                notificacionId = await notificacionesService.crearParaSolicitud(client, solicitud, {
                     eventoClave: 'SOLICITUD_CREADA',
                     tipo: 'SOLICITUD_PENDIENTE_APROBACION',
                     titulo: 'Nueva solicitud pendiente de aprobación',
@@ -829,7 +831,10 @@ const crearServicio = (database = db, config = {}) => {
             // No fallar la creación de la solicitud por un error en notificaciones.
         }
         return { solicitud: mapearSolicitud(solicitud), creada: true };
-    });
+        });
+        if (notificacionId) void notificacionesService.emitirNotificacionActualizada(notificacionId, database);
+        return resultado;
+    };
 
     const construirAlcance = async (executor, userContext, permisoRequerido = PERMISOS_SOLICITUD.VER) => {
         const usuario = await obtenerUsuarioActual(executor, userContext);
@@ -1182,15 +1187,12 @@ const crearServicio = (database = db, config = {}) => {
     };
 
     const decidir = async (id, accion, entrada, userContext) => {
-        let plantaKeyEmitir = null;
-        let empresaKeyEmitir = null;
+        let notificacionId;
         let trabajoNotaCreado = false;
         const resultado = await conTransaccion(async (client) => {
         const transicion = TRANSICIONES_ADMINISTRATIVAS[accion];
         if (!transicion || accion === 'CANCELAR') throw errorNegocio('TRANSICION_SOLICITUD_INVALIDA');
         const { row, alcance } = await obtener(id, userContext, client, true, PERMISOS_SOLICITUD.VER);
-        plantaKeyEmitir = row.planta_key;
-        empresaKeyEmitir = row.empresa_key;
         if (!['ANULAR_AMBOS', 'EMITIR_NOTA_CREDITO', 'RECTIFICAR_CERTIFICADO'].includes(row.tipo_operacion)) {
             throw errorNegocio('SOLICITUD_TIPO_HISTORICO_SOLO_LECTURA', 409);
         }
@@ -1285,7 +1287,7 @@ const crearServicio = (database = db, config = {}) => {
         // Notificar al usuario solicitante de la decisión (aprobación o rechazo).
         try {
             const tipoEvento = accion === 'APROBAR' ? 'SOLICITUD_APROBADA' : 'SOLICITUD_RECHAZADA';
-            await notificacionesService.crearParaSolicitante(client, row, tipoEvento,
+            notificacionId = await notificacionesService.crearParaSolicitante(client, row, tipoEvento,
                 accion === 'APROBAR' ? 'Solicitud aprobada' : 'Solicitud rechazada',
                 accion === 'APROBAR'
                     ? `Solicitado por: ${row.usuario_solicitante} | Autorizado por: ${alcance.usuario.username} | Operación: ${row.tipo_operacion} | Certificado: ${row.numero_certificado || 'N/A'} | Solicitud: #${row.id} | Fecha de aprobación: ${new Date().toISOString()}`
@@ -1297,9 +1299,7 @@ const crearServicio = (database = db, config = {}) => {
 
         return mapearSolicitud(actualizada.rows[0]);
         });
-        if (plantaKeyEmitir) {
-            notificacionesService.emitirNotificacionActualizada(plantaKeyEmitir, empresaKeyEmitir);
-        }
+        if (notificacionId) void notificacionesService.emitirNotificacionActualizada(notificacionId, database);
         if (trabajoNotaCreado) workerNotasCredito.despertar();
         return resultado;
     };

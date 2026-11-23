@@ -25,13 +25,8 @@ const pool = require('./config/database');
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsDoc = require('swagger-jsdoc');
 
-// Importaci�n de Enrutadores Modulares
-const authRoutes = require('./routes/auth.routes');
-const usuarioRoutes = require('./routes/usuario.routes');
-const operacionRoutes = require('./routes/operacion.routes');
-const inspeccionesRoutes = require('./routes/inspecciones.routes');
-const lineaRoutes = require('./routes/linea.routes');
-const campanaRoutes = require('./routes/campana.routes');
+const { habilitarRutasFarenet } = require('./config/farenet-legacy');
+const rutasFarenetHabilitadas = habilitarRutasFarenet();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -359,6 +354,11 @@ swaggerOptions.definition.paths = {
             }
 };
 
+if (!rutasFarenetHabilitadas) {
+    for (const route of Object.keys(swaggerOptions.definition.paths)) {
+        if (/^\/(auth|operacion|inspecciones)(\/|$)/.test(route)) delete swaggerOptions.definition.paths[route];
+    }
+}
 const swaggerDocs = swaggerJsDoc(swaggerOptions);
 
 app.use(
@@ -371,21 +371,26 @@ app.use(
 // RUTAS API
 // ==========================
 
-app.use('/api/auth', authRoutes);
-const auditoriaRoutes = require('./routes/auditoria.routes');
-app.use('/api/auditoria', auditoriaRoutes);
-app.use('/api/usuarios', usuarioRoutes);
-app.use('/api/operacion', operacionRoutes);
-const authMiddleware = require('./middlewares/auth.middleware');
-app.use('/api/inspecciones', authMiddleware, inspeccionesRoutes);
-app.use('/api/linea', lineaRoutes);
-app.use('/linea', lineaRoutes); // Compatibilidad con legacy
-app.use('/api/descuentos', campanaRoutes);
+// Compatibilidad durante el traspaso al backend independiente.
+if (rutasFarenetHabilitadas) {
+    app.use('/api/auth', require('./routes/auth.routes'));
+    app.use('/api/auditoria', require('./routes/auditoria.routes'));
+    app.use('/api/usuarios', require('./routes/usuario.routes'));
+    app.use('/api/operacion', require('./routes/operacion.routes'));
+    app.use('/api/inspecciones', require('./middlewares/auth.middleware'), require('./routes/inspecciones.routes'));
+    const lineaRoutes = require('./routes/linea.routes');
+    app.use('/api/linea', lineaRoutes);
+    app.use('/linea', lineaRoutes);
+    app.use('/api/descuentos', require('./routes/campana.routes'));
+}
+
+// El asistente de certificados de FAREGAS también consume estas rutas.
 const maestrosRoutes = require('./routes/maestros.routes');
 app.use('/api/maestros', maestrosRoutes);
 
-const vehiculoRoutes = require('./routes/vehiculo.routes');
-app.use('/api/vehiculo', vehiculoRoutes);
+if (rutasFarenetHabilitadas) {
+    app.use('/api/vehiculo', require('./routes/vehiculo.routes'));
+}
 
 const externosRoutes = require('./routes/externos.routes');
 app.use('/api/externos', externosRoutes);
@@ -422,39 +427,50 @@ const io = new Server(server, {
     }
 });
 
-// Autenticar conexiones Socket.IO mediante el token JWT existente.
-io.use((socket, next) => {
+
+const jwt = require('jsonwebtoken');
+const { obtenerAlcanceSocketFaregas, salaNotificacionesFaregas } =
+    require('./modules/faregas/services/faregas-socket-session.service');
+
+io.use(async (socket, next) => {
+    const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.replace(/^Bearer /i, '');
+    const rechazar = (message) => next(Object.assign(new Error(message), {
+        data: { codigo: 'SOCKET_NO_AUTORIZADO' }
+    }));
+    if (typeof token !== 'string' || !token) return rechazar('Token de autenticación requerido');
+
     try {
-        const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.replace('Bearer ', '');
-        if (!token) {
-            return next(new Error('Token de autenticación requerido'));
+        // El contenido sin verificar solo selecciona el verificador. No concede acceso.
+        const candidato = jwt.decode(token);
+        if (candidato && typeof candidato === 'object' && Object.hasOwn(candidato, 'faregas_flow')) {
+            const decoded = jwt.verify(token, process.env.JWT_SECRET_FAREGAS, { algorithms: ['HS256'] });
+            const alcance = await obtenerAlcanceSocketFaregas(pool, decoded);
+            if (!alcance) return rechazar('Sesión FAREGAS inválida o expirada');
+            socket.data.faregas = { token: decoded, alcance };
+        } else {
+            if (!rutasFarenetHabilitadas) return rechazar('Conexión FARENET deshabilitada');
+            const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+            if (!decoded.username || !decoded.sessionJti || !decoded.jti || !Number.isFinite(decoded.exp)) {
+                return rechazar('Sesión FARENET inválida o expirada');
+            }
+            socket.data.farenet = decoded;
         }
-        const jwt = require('jsonwebtoken');
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'faregas-secret-dev');
-        socket.data.user = decoded;
-        next();
-    } catch (err) {
-        next(new Error('Token inválido o expirado'));
+        return next();
+    } catch {
+        return rechazar('Token inválido o expirado');
     }
 });
 
 io.on('connection', (socket) => {
-    console.log('?? Cliente conectado a Socket.io:', socket.id);
-    const username = socket.data.user?.username;
-    const plantaKey = socket.data.user?.plantaKey;
-    const empresaKey = socket.data.user?.empresaKey;
-    if (username) {
-        socket.join(`usuario:${username}`);
+    const alcance = socket.data.faregas?.alcance;
+    if (alcance) {
+        socket.join(salaNotificacionesFaregas(alcance));
+        const timer = setTimeout(() => socket.disconnect(true), alcance.expiraEn - Date.now());
+        socket.once('disconnect', () => clearTimeout(timer));
+        return;
     }
-    if (plantaKey) {
-        socket.join(`planta:${plantaKey}`);
-    }
-    if (empresaKey) {
-        socket.join(`empresa:${empresaKey}`);
-    }
-    socket.on('disconnect', () => {
-        console.log('? Cliente desconectado:', socket.id);
-    });
+
+    socket.join('farenet:inspecciones');
 });
 
 // Inyectar la instancia de Socket.IO en el servicio de notificaciones.
@@ -470,7 +486,7 @@ async function setupPostgresListen() {
             if (msg.channel === 'inspeccion_cambio') {
                 const payload = JSON.parse(msg.payload);
                 console.log('?? Evento Postgres "inspeccion_cambio":', payload);
-                io.emit('inspeccionActualizada', payload);
+                io.to('farenet:inspecciones').emit('inspeccionActualizada', payload);
             }
         });
         console.log('? Node.js escuchando eventos "inspeccion_cambio" en PostgreSQL');
@@ -478,7 +494,7 @@ async function setupPostgresListen() {
         console.error('? Error configurando LISTEN en Postgres:', error);
     }
 }
-setupPostgresListen();
+if (rutasFarenetHabilitadas) setupPostgresListen();
 
 // ==========================
 // CRON JOBS
@@ -497,6 +513,6 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`?? NUBEFACT AMBIENTE: ${process.env.NUBEFACT_ENVIRONMENT || 'NO DEFINIDO'}`);
     console.log('?? CORS CONFIGURADO PARA VITE 5173 Y 5174');
     console.log(`?? SWAGGER: http://127.0.0.1:${PORT}/api-docs`);
-    console.log('?? HU011 ACTIVA: GET /api/inspecciones/buscar');
+    if (rutasFarenetHabilitadas) console.log('?? HU011 ACTIVA: GET /api/inspecciones/buscar');
     console.log('================================================================');
 });
