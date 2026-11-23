@@ -6,12 +6,12 @@ Este documento detalla el procedimiento técnico, inventario estructural y clasi
 
 ## 1. Archivos Entregables
 
-El archivo [faregas_consolidado.sql](../faregas_consolidado.sql) contiene los bloques SQL. Los nombres de la tabla corresponden a los encabezados de esos bloques.
+El archivo [faregas_consolidado.sql](../faregas_consolidado.sql) contiene los bloques SQL. La [guía de instalación](../README.md) documenta los catálogos compartidos, la contingencia 011 y las tablas de credenciales y custodia de la sección 012. Los nombres de la tabla corresponden a los encabezados de esos bloques.
 
 | Archivo | Propósito | Características |
 |---|---|---|
 | `000_faregas_schema_completo.sql` | Instalación DDL completa de estructuras | Incluye soporte SPOT en `fg_facturacion`, `fg_credito`, `fg_servicio` y `fg_producto_facturacion`, con índices de facturación. La clasificación comienza en `NULL`; no asigna código ni tasa por defecto. |
-| `001_faregas_datos_iniciales.sql` | Carga inicial de catálogos y reglas RBAC | 11 perfiles (`fg_perfil`), 51 permisos (`fg_permiso`), 221 asignaciones RBAC (`fg_perfil_permiso`), 7 tipos de certificado (`fg_tipo_certificado`), usuario técnico de sistema deshabilitado y descuento inicial `CORTESIA_FAREGAS`. 100% idempotente (`ON CONFLICT`). Cero datos confidenciales. |
+| `001_faregas_datos_iniciales.sql` | Carga inicial de catálogos y reglas RBAC | 11 perfiles (`fg_perfil`), 51 permisos (`fg_permiso`), 221 asignaciones RBAC (`fg_perfil_permiso`), 5 tipos de certificado del catálogo operativo (`fg_tipo_certificado`), usuario técnico de sistema deshabilitado y descuento inicial `CORTESIA_FAREGAS`. 100% idempotente (`ON CONFLICT`). Cero datos confidenciales. |
 | `002_ampliacion_auditoria_integral.sql` | Ampliación de auditoría FAREGAS | Extiende auditoría e índices propios `fg_*`. |
 | `003_migracion_fg_usuario_perfil_independiente.sql` | Perfil propio de usuario FAREGAS | Crea `fg_usuario_perfil` y realiza backfill inicial condicional. No es dependencia de SPOT; 004 no toca usuarios ni perfiles. |
 | `004_implementacion_detracciones_spot.sql` | Migración incremental SPOT para instalaciones existentes | Añade columnas nullable e índices en tablas `fg_*`; es transaccional e idempotente. No contiene `UPDATE`, `DELETE`, defaults de clasificación ni cambios a tablas FARENET. |

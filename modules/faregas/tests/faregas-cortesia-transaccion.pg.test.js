@@ -32,9 +32,6 @@ test('Cortesía: pagos, rollback y payload con PostgreSQL real aislado', {
             await db.query(leerSeccionSql(numero));
         }
         await db.query(`
-            -- Los stubs de 000 son mínimos; las consultas reales leen estos nombres de catálogo.
-            ALTER TABLE tarjeta ADD COLUMN nombre text;
-            ALTER TABLE entidadfinanciera ADD COLUMN nombre text;
             INSERT INTO moneda(key,descripcion) VALUES('sol','SOLES');
             INSERT INTO formapago(key,descripcion) VALUES('contado','CONTADO');
             INSERT INTO tipocontado(key,descripcion) VALUES('efectivo','EFECTIVO');

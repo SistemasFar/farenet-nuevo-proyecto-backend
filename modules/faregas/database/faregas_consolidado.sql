@@ -1,8 +1,9 @@
 -- FAREGAS | SQL consolidado para una instalación nueva e independiente
 -- PostgreSQL 13 o superior. Archivo UTF-8. Ejecutar como script SQL completo.
--- Las migraciones 000 a 011 aplicables a una base nueva se ejecutan en una sola transacción.
+-- La sección 000 ya crea las FKs finales de la 005. Su DDL incremental queda comentado.
+-- Las secciones 000 a 012 aplicables a una base nueva se ejecutan en una sola transacción.
 -- La 009 y los SQL auxiliares están íntegros en el apéndice comentado.
--- El alta de sedes, productos, usuarios operativos, series y credenciales se realiza por ambiente.
+-- El alta de sedes, productos, catálogos externos, usuarios operativos, series y credenciales se realiza por ambiente.
 -- El importador JavaScript y su catálogo JSON se mantienen como archivos de origen.
 -- En psql usar: psql -X -v ON_ERROR_STOP=1 -d <base_nueva> -f faregas_consolidado.sql
 
@@ -20,6 +21,12 @@ BEGIN
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public'
           AND pg_catalog.left(c.relname, 3) = 'fg_'
+    ) OR EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public'
+          AND pg_catalog.left(p.proname, 3) = 'fg_'
     ) THEN
         RAISE EXCEPTION 'La base ya contiene objetos FAREGAS. Use las migraciones correspondientes al estado de esa instalación.';
     END IF;
@@ -6419,54 +6426,117 @@ ALTER TABLE ONLY public.fg_chip_codigo_reserva
     REFERENCES public.fg_planta(key) ON DELETE CASCADE;
 -- ============================================================================
 -- Las tablas a continuación corresponden a catálogos maestros alojados en FARENET
--- (moneda, formapago, cuentacorriente, entidadfinanciera, tarjeta, tipocontado, persona).
--- Se incluyen como definiciones mínimas 'IF NOT EXISTS' para permitir la instalación
--- y validación completa de la integridad referencial en entornos aislados o nuevos.
--- En una migración definitiva a producción independiente, estas tablas pueden ser
--- reemplazadas por réplicas sincronizadas vía Logical Replication, postgres_fdw o tablas locales.
+-- Los siete primeros son destinos de FK. Los catálogos de identidad y geografía
+-- soportan Usuarios. El contrato de seriedocumentobase soporta la consulta de series.
+-- Cada CREATE IF NOT EXISTS evita modificar catálogos ya provisionados. No se insertan filas
+-- en estas tablas. Los contratos para login unificado y maestros legacy se documentan aparte.
 
 CREATE TABLE IF NOT EXISTS public.moneda (
-    key character varying(20) NOT NULL PRIMARY KEY,
+    key character varying(20) PRIMARY KEY,
+    nombre character varying(75),
+    simbolo character varying(5),
+    codigosunat character varying(3),
     descripcion character varying(100),
-    simbolo character varying(10),
     activo boolean DEFAULT true
 );
 
 CREATE TABLE IF NOT EXISTS public.formapago (
-    key character varying(20) NOT NULL PRIMARY KEY,
+    key character varying(20) PRIMARY KEY,
+    nombre character varying(200),
     descripcion character varying(100),
     activo boolean DEFAULT true
 );
 
 CREATE TABLE IF NOT EXISTS public.cuentacorriente (
-    key character varying(20) NOT NULL PRIMARY KEY,
+    key character varying(20) PRIMARY KEY,
+    nroctacorriente character varying(50),
+    entidadfinanciera_key character varying(20),
+    moneda_key character varying(20),
+    empresa_key character varying(10),
     descripcion character varying(150),
     activo boolean DEFAULT true
 );
 
 CREATE TABLE IF NOT EXISTS public.entidadfinanciera (
-    key character varying(20) NOT NULL PRIMARY KEY,
+    key character varying(20) PRIMARY KEY,
+    nombre character varying(75),
     descripcion character varying(150),
     activo boolean DEFAULT true
 );
 
 CREATE TABLE IF NOT EXISTS public.tarjeta (
-    key character varying(20) NOT NULL PRIMARY KEY,
+    key character varying(20) PRIMARY KEY,
+    nombre character varying(150),
     descripcion character varying(100),
     activo boolean DEFAULT true
 );
 
 CREATE TABLE IF NOT EXISTS public.tipocontado (
-    key character varying(20) NOT NULL PRIMARY KEY,
+    key character varying(20) PRIMARY KEY,
+    nombre character varying(200),
     descripcion character varying(100),
     activo boolean DEFAULT true
 );
 
 CREATE TABLE IF NOT EXISTS public.persona (
-    nrodocumentoidentidad character varying(20) NOT NULL PRIMARY KEY,
+    nrodocumentoidentidad character varying(20) PRIMARY KEY,
+    estado boolean,
     nombres character varying(200),
     apellidos character varying(200),
+    nombrerazonsocial character varying(500),
+    tipodocumentoidentidad_key character varying(20),
+    direccion character varying(500),
+    telefono character varying(100),
+    email character varying(150),
+    persona_contacto character varying(250),
+    pais_key character varying(20),
+    departamento_key character varying(20),
+    provincia_key character varying(20),
+    distrito_key character varying(20),
     razonsocial character varying(300)
+);
+
+CREATE TABLE IF NOT EXISTS public.tipodocumentoidentidad (
+    key character varying(20) PRIMARY KEY,
+    nombre character varying(75),
+    codigosunat character varying(1)
+);
+
+CREATE TABLE IF NOT EXISTS public.pais (
+    key character varying(20) PRIMARY KEY,
+    nombre character varying(75)
+);
+
+CREATE TABLE IF NOT EXISTS public.departamento (
+    key character varying(20) PRIMARY KEY,
+    nombre character varying(75),
+    pais_key character varying(20)
+);
+
+CREATE TABLE IF NOT EXISTS public.provincia (
+    key character varying(20) PRIMARY KEY,
+    nombre character varying(200),
+    departamento_key character varying(20)
+);
+
+CREATE TABLE IF NOT EXISTS public.distrito (
+    key character varying(20) PRIMARY KEY,
+    nombre character varying(75),
+    provincia_key character varying(20)
+);
+
+CREATE TABLE IF NOT EXISTS public.seriedocumentobase (
+    id bigint PRIMARY KEY,
+    planta_key character varying(20),
+    estado boolean,
+    serieboleta character varying(150),
+    seriefactura character varying(150),
+    serienotacreditofactura character varying(255),
+    serienotacreditoboleta character varying(150),
+    nroactualfactura bigint,
+    nroactualboleta bigint,
+    nroactualnotacreditofactura bigint,
+    nroactualnotacreditoboleta bigint
 );
 
 -- ----------------------------------------------------------------------------
@@ -6893,24 +6963,17 @@ ON CONFLICT (perfil_clave, permiso_clave) DO NOTHING;
 -- ----------------------------------------------------------------------------
 -- 4. CATÁLOGO DE TIPOS DE CERTIFICADO (fg_tipo_certificado)
 -- ----------------------------------------------------------------------------
-INSERT INTO public.fg_tipo_certificado (
-    clave, nombre, descripcion, activo,
-    entidad_certificadora_nombre, resolucion_directoral,
-    domicilio_fiscal, telefono, lugar_emision, codigo, ancho_correlativo
-)
+-- Códigos del tipo verificados en el catálogo, sin series ni números asignados.
+-- Resolución, domicilio, lugar, teléfono y entidad certificadora se provisionan
+-- por ambiente desde la configuración y los formatos vigentes.
+INSERT INTO public.fg_tipo_certificado (clave, nombre, codigo, ancho_correlativo)
 VALUES
-    ('GLP_ANUAL', 'GLP Revisión Anual', 'Certificación anual periódica para vehículos a GLP', TRUE, 'FAREGAS S.A.C.', 'RD-001-2024-MTC', 'Lima, Perú', '(01) 500-0000', 'LIMA', '01', 8),
-    ('GNV_ANUAL', 'GNV Revisión Anual', 'Certificación anual periódica para vehículos a GNV', TRUE, 'FAREGAS S.A.C.', 'RD-001-2024-MTC', 'Lima, Perú', '(01) 500-0000', 'LIMA', '02', 8),
-    ('GLP_INICIAL', 'Conversión a GLP', 'Certificación inicial de conversión vehicular a GLP', TRUE, 'FAREGAS S.A.C.', 'RD-001-2024-MTC', 'Lima, Perú', '(01) 500-0000', 'LIMA', '03', 8),
-    ('GNV_INICIAL', 'Conversión a GNV', 'Certificación inicial de conversión vehicular a GNV', TRUE, 'FAREGAS S.A.C.', 'RD-001-2024-MTC', 'Lima, Perú', '(01) 500-0000', 'LIMA', '04', 8),
-    ('CONFORMIDAD', 'Certificado de Conformidad', 'Certificado de conformidad de modificación o fabricación', TRUE, 'FAREGAS S.A.C.', 'RD-001-2024-MTC', 'Lima, Perú', '(01) 500-0000', 'LIMA', '05', 8),
-    ('DUPLICADO', 'Duplicado de Certificado', 'Emisión de duplicado de certificado por pérdida o deterioro', TRUE, 'FAREGAS S.A.C.', 'RD-001-2024-MTC', 'Lima, Perú', '(01) 500-0000', 'LIMA', '06', 8),
-    ('MODIFICACION', 'Modificación de Características', 'Certificación de modificaciones mecánicas o estructurales', TRUE, 'FAREGAS S.A.C.', 'RD-001-2024-MTC', 'Lima, Perú', '(01) 500-0000', 'LIMA', '07', 8)
-ON CONFLICT (clave) DO UPDATE
-SET nombre = EXCLUDED.nombre,
-    descripcion = EXCLUDED.descripcion,
-    activo = EXCLUDED.activo,
-    codigo = EXCLUDED.codigo;
+    ('CONFORMIDAD', 'Certificado de Conformidad', '39', 6),
+    ('GLP_ANUAL', 'Certificado de Inspección GLP', '41', 6),
+    ('GNV_ANUAL', 'Certificado de Inspección Anual GNV', '22', 7),
+    ('TALLER_GLP', 'Taller GLP', 'T1', NULL),
+    ('TALLER_GNV', 'Taller GNV', 'T2', NULL)
+ON CONFLICT (clave) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
 -- 5. USUARIO TÉCNICO DE SISTEMA (fg_usuario)
@@ -7206,89 +7269,6 @@ CREATE INDEX IF NOT EXISTS idx_fg_facturacion_detraccion_constancia
 -- NULL significa "pendiente de clasificación tributaria"; configurar cada
 -- servicio contra el Anexo aplicable antes de emitir una factura > S/ 700.
 
--- ==== migrations/005_optimizacion_eliminacion_usuarios_perfiles.sql ====
--- ============================================================================
--- MIGRACIÓN INCREMENTAL: 005_optimizacion_eliminacion_usuarios_perfiles.sql
--- Sistema: FAREGAS
--- Objetivo: Optimizar la eliminación y reasignación de perfiles y usuarios FAREGAS:
---           1. fg_perfil_permiso: ON DELETE CASCADE para permisos de perfil.
---           2. fg_perfil_planta: ON DELETE CASCADE para sedes de perfil.
---           3. fg_auditoria_config: Desvincular clave foránea restrictiva para
---              preservar snapshots históricos de auditoría sin bloquear la
---              gestión de cuentas de usuarios.
--- Idempotencia: 100% seguro para re-ejecución sin duplicados ni pérdida de datos.
--- ============================================================================
-
-
--- 1. Cascada en permisos de perfiles (fg_perfil_permiso -> fg_perfil)
-DO $$
-DECLARE
-    r RECORD;
-BEGIN
-    -- Eliminar cualquier FK existente desde fg_perfil_permiso hacia fg_perfil
-    FOR r IN (
-        SELECT tc.constraint_name
-        FROM information_schema.table_constraints tc
-        JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
-        JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name
-        WHERE tc.table_name = 'fg_perfil_permiso'
-          AND kcu.column_name = 'perfil_clave'
-          AND ccu.table_name = 'fg_perfil'
-    ) LOOP
-        EXECUTE 'ALTER TABLE public.fg_perfil_permiso DROP CONSTRAINT ' || quote_ident(r.constraint_name);
-    END LOOP;
-
-    -- Agregar la FK con ON DELETE CASCADE
-    ALTER TABLE public.fg_perfil_permiso
-        ADD CONSTRAINT fk_fg_pp_perfil
-        FOREIGN KEY (perfil_clave) REFERENCES public.fg_perfil(clave)
-        ON UPDATE CASCADE ON DELETE CASCADE;
-END $$;
-
--- 2. Cascada en plantas/sedes de perfiles (fg_perfil_planta -> fg_perfil)
-DO $$
-DECLARE
-    r RECORD;
-BEGIN
-    -- Eliminar cualquier FK existente desde fg_perfil_planta hacia fg_perfil
-    FOR r IN (
-        SELECT tc.constraint_name
-        FROM information_schema.table_constraints tc
-        JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
-        JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name
-        WHERE tc.table_name = 'fg_perfil_planta'
-          AND kcu.column_name = 'perfil_clave'
-          AND ccu.table_name = 'fg_perfil'
-    ) LOOP
-        EXECUTE 'ALTER TABLE public.fg_perfil_planta DROP CONSTRAINT ' || quote_ident(r.constraint_name);
-    END LOOP;
-
-    -- Agregar la FK con ON DELETE CASCADE
-    ALTER TABLE public.fg_perfil_planta
-        ADD CONSTRAINT fg_perfil_planta_perfil_clave_fkey
-        FOREIGN KEY (perfil_clave) REFERENCES public.fg_perfil(clave)
-        ON UPDATE CASCADE ON DELETE CASCADE;
-END $$;
-
--- 3. Auditoría histórica: eliminar restricción FK para preservar el nombre de usuario
---    como snapshot histórico inmutable sin bloquear la baja de usuarios.
-DO $$
-DECLARE
-    r RECORD;
-BEGIN
-    FOR r IN (
-        SELECT tc.constraint_name
-        FROM information_schema.table_constraints tc
-        JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
-        JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name
-        WHERE tc.table_name = 'fg_auditoria_config'
-          AND kcu.column_name = 'username'
-          AND ccu.table_name = 'fg_usuario'
-    ) LOOP
-        EXECUTE 'ALTER TABLE public.fg_auditoria_config DROP CONSTRAINT ' || quote_ident(r.constraint_name);
-    END LOOP;
-END $$;
-
 -- ==== migrations/006_codigos_chip_autogenerables.sql ====
 -- FAREGAS — Códigos disponibles de chips con opt-in por tipo de producto.
 -- Incremental, transaccional e independiente de tablas FARENET.
@@ -7489,9 +7469,132 @@ CREATE INDEX fg_contingencia_correo_pendiente_idx
     ON public.fg_facturacion_contingencia (correo_proximo, facturacion_id)
     WHERE estado = 'REGULARIZADO' AND correo_estado = 'PENDIENTE';
 
+-- ==== migrations/012_credenciales_y_custodia.sql ====
+-- Estructuras usadas por los servicios de inventario y custodia. Se mantienen
+-- vacías y la clave de custodia se provisiona fuera de PostgreSQL.
+CREATE TABLE public.fg_usuario_credencial (
+    id serial PRIMARY KEY,
+    username varchar(100) NOT NULL UNIQUE,
+    estado_credencial varchar(50) NOT NULL,
+    tipo_operacion varchar(50) NOT NULL,
+    fecha_modificacion timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    responsable varchar(100) NOT NULL,
+    cambiada_posteriormente boolean DEFAULT false,
+    necesita_restablecimiento boolean DEFAULT false,
+    observaciones text,
+    CONSTRAINT fk_fg_usuario_credencial_user
+        FOREIGN KEY (username) REFERENCES public.fg_usuario(username) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_fg_usuario_credencial_username
+    ON public.fg_usuario_credencial (lower(username));
+
+CREATE TABLE public.fg_credencial_custodia (
+    id serial PRIMARY KEY,
+    username varchar(100) NOT NULL UNIQUE,
+    ciphertext text NOT NULL,
+    iv varchar(64) NOT NULL,
+    tag varchar(64) NOT NULL,
+    algoritmo varchar(30) NOT NULL DEFAULT 'aes-256-gcm',
+    version_clave integer NOT NULL DEFAULT 1,
+    origen varchar(50) NOT NULL DEFAULT 'ADMINISTRACION_USUARIOS',
+    creado_por varchar(100) NOT NULL,
+    fecha_creacion timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fecha_actualizacion timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_fg_credencial_custodia_user
+        FOREIGN KEY (username) REFERENCES public.fg_usuario(username) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_fg_credencial_custodia_username
+    ON public.fg_credencial_custodia (lower(username));
+
 COMMIT;
 
 -- APÉNDICE DE REFERENCIA. Las siguientes secciones son comentarios.
+
+-- ==== migrations/005_optimizacion_eliminacion_usuarios_perfiles.sql ====
+-- Referencia para instalaciones existentes. La sección 000 ya crea el resultado final de la 005.
+-- -- ============================================================================
+-- -- MIGRACIÓN INCREMENTAL: 005_optimizacion_eliminacion_usuarios_perfiles.sql
+-- -- Sistema: FAREGAS
+-- -- Objetivo: Optimizar la eliminación y reasignación de perfiles y usuarios FAREGAS:
+-- --           1. fg_perfil_permiso: ON DELETE CASCADE para permisos de perfil.
+-- --           2. fg_perfil_planta: ON DELETE CASCADE para sedes de perfil.
+-- --           3. fg_auditoria_config: Desvincular clave foránea restrictiva para
+-- --              preservar snapshots históricos de auditoría sin bloquear la
+-- --              gestión de cuentas de usuarios.
+-- -- Idempotencia: 100% seguro para re-ejecución sin duplicados ni pérdida de datos.
+-- -- ============================================================================
+--
+--
+-- -- 1. Cascada en permisos de perfiles (fg_perfil_permiso -> fg_perfil)
+-- DO $
+-- DECLARE
+--     r RECORD;
+-- BEGIN
+--     -- Eliminar cualquier FK existente desde fg_perfil_permiso hacia fg_perfil
+--     FOR r IN (
+--         SELECT tc.constraint_name
+--         FROM information_schema.table_constraints tc
+--         JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
+--         JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name
+--         WHERE tc.table_name = 'fg_perfil_permiso'
+--           AND kcu.column_name = 'perfil_clave'
+--           AND ccu.table_name = 'fg_perfil'
+--     ) LOOP
+--         EXECUTE 'ALTER TABLE public.fg_perfil_permiso DROP CONSTRAINT ' || quote_ident(r.constraint_name);
+--     END LOOP;
+--
+--     -- Agregar la FK con ON DELETE CASCADE
+--     ALTER TABLE public.fg_perfil_permiso
+--         ADD CONSTRAINT fk_fg_pp_perfil
+--         FOREIGN KEY (perfil_clave) REFERENCES public.fg_perfil(clave)
+--         ON UPDATE CASCADE ON DELETE CASCADE;
+-- END $;
+--
+-- -- 2. Cascada en plantas/sedes de perfiles (fg_perfil_planta -> fg_perfil)
+-- DO $
+-- DECLARE
+--     r RECORD;
+-- BEGIN
+--     -- Eliminar cualquier FK existente desde fg_perfil_planta hacia fg_perfil
+--     FOR r IN (
+--         SELECT tc.constraint_name
+--         FROM information_schema.table_constraints tc
+--         JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
+--         JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name
+--         WHERE tc.table_name = 'fg_perfil_planta'
+--           AND kcu.column_name = 'perfil_clave'
+--           AND ccu.table_name = 'fg_perfil'
+--     ) LOOP
+--         EXECUTE 'ALTER TABLE public.fg_perfil_planta DROP CONSTRAINT ' || quote_ident(r.constraint_name);
+--     END LOOP;
+--
+--     -- Agregar la FK con ON DELETE CASCADE
+--     ALTER TABLE public.fg_perfil_planta
+--         ADD CONSTRAINT fg_perfil_planta_perfil_clave_fkey
+--         FOREIGN KEY (perfil_clave) REFERENCES public.fg_perfil(clave)
+--         ON UPDATE CASCADE ON DELETE CASCADE;
+-- END $;
+--
+-- -- 3. Auditoría histórica: eliminar restricción FK para preservar el nombre de usuario
+-- --    como snapshot histórico inmutable sin bloquear la baja de usuarios.
+-- DO $
+-- DECLARE
+--     r RECORD;
+-- BEGIN
+--     FOR r IN (
+--         SELECT tc.constraint_name
+--         FROM information_schema.table_constraints tc
+--         JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
+--         JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name
+--         WHERE tc.table_name = 'fg_auditoria_config'
+--           AND kcu.column_name = 'username'
+--           AND ccu.table_name = 'fg_usuario'
+--     ) LOOP
+--         EXECUTE 'ALTER TABLE public.fg_auditoria_config DROP CONSTRAINT ' || quote_ident(r.constraint_name);
+--     END LOOP;
+-- END $;
 
 -- ==== migrations/009_actualizacion_masiva_spot_productos.sql ====
 -- SPOT masivo por IDs de un catálogo específico. Validar los IDs en el ambiente destino.
