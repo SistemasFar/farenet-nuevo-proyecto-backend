@@ -8,7 +8,7 @@
 --
 -- ARQUITECTURA Y REGLAS DE AISLAMIENTO:
 -- 1. BASE DE DATOS COMPARTIDA: FAREGAS y FARENET comparten permanentemente
---    la misma base de datos PostgreSQL ('inspeccion'). No se separan bases.
+--    la misma base de datos PostgreSQL compartida (sin importar el nombre de la base). No se separan bases.
 -- 2. PRIVILEGIOS FAREGAS:
 --    - DML completo (SELECT, INSERT, UPDATE, DELETE) y secuencias en tablas 'fg_*'.
 --    - Acceso de SOLO LECTURA (SELECT) en tablas operativas FARENET autorizadas
@@ -37,7 +37,7 @@
 --  13. Validaciones finales.
 --
 -- INSTRUCCIONES DE EJECUCIÓN (ADMINISTRADOR / DBA):
---   psql -X -v ON_ERROR_STOP=1 -h <HOST> -U <DBA_USER> -d inspeccion -f database/MIGRACION_SCRIPT.sql
+--   psql -X -v ON_ERROR_STOP=1 -h <HOST> -U <DBA_USER> -d <DB_COMPARTIDA> -f database/MIGRACION_SCRIPT.sql
 -- =============================================================================
 
 -- =============================================================================
@@ -51,10 +51,65 @@ BEGIN
     RAISE NOTICE '=============================================================================';
     RAISE NOTICE 'FAREGAS: Iniciando ejecución controlada de MIGRACION_SCRIPT.sql';
     RAISE NOTICE 'Base de datos actual: %', current_database();
-    RAISE NOTICE 'Arquitectura: Base compartida inspeccion con aislamiento de datos FARENET/FAREGAS';
+    RAISE NOTICE 'Arquitectura: Base compartida con aislamiento de datos FARENET/FAREGAS';
     RAISE NOTICE '=============================================================================';
 END;
 $faregas_inicio$;
+
+-- Verificación temprana de pre-requisitos y protección de catálogos compartidos FARENET
+-- FAREGAS NO crea ni altera catálogos de FARENET en la base compartida.
+-- Los 13 catálogos y sus columnas clave deben existir previamente con compatibilidad verificada.
+DO $faregas_valida_dependencias_farenet$
+DECLARE
+    tbl text;
+    col text;
+    catalogos_requeridos text[] := ARRAY[
+        'moneda', 'formapago', 'cuentacorriente', 'entidadfinanciera',
+        'tarjeta', 'tipocontado', 'persona', 'tipodocumentoidentidad',
+        'pais', 'departamento', 'provincia', 'distrito', 'seriedocumentobase'
+    ];
+    columnas_requeridas text[][] := ARRAY[
+        ARRAY['moneda', 'key'],
+        ARRAY['formapago', 'key'],
+        ARRAY['cuentacorriente', 'key'],
+        ARRAY['entidadfinanciera', 'key'],
+        ARRAY['tarjeta', 'key'],
+        ARRAY['tipocontado', 'key'],
+        ARRAY['persona', 'nrodocumentoidentidad'],
+        ARRAY['tipodocumentoidentidad', 'key'],
+        ARRAY['pais', 'key'],
+        ARRAY['departamento', 'key'],
+        ARRAY['provincia', 'key'],
+        ARRAY['distrito', 'key'],
+        ARRAY['seriedocumentobase', 'id']
+    ];
+    i integer;
+BEGIN
+    -- Validar existencia de cada catálogo FARENET en el esquema public
+    FOREACH tbl IN ARRAY catalogos_requeridos LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_tables 
+            WHERE schemaname = 'public' AND tablename = tbl
+        ) THEN
+            RAISE EXCEPTION 'Protección FARENET: Falta el catálogo requerido public.% en la base de datos actual (%). FAREGAS no crea ni altera estructuras de FARENET en bases compartidas. Asegúrese de que el esquema de FARENET esté instalado previamente.', tbl, current_database();
+        END IF;
+    END LOOP;
+
+    -- Validar compatibilidad de columnas destino de Foreign Keys
+    FOR i IN 1..array_length(columnas_requeridas, 1) LOOP
+        tbl := columnas_requeridas[i][1];
+        col := columnas_requeridas[i][2];
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_schema = 'public' AND table_name = tbl AND column_name = col
+        ) THEN
+            RAISE EXCEPTION 'Protección FARENET: La columna requerida public.%.% no existe en la base de datos actual (%). Verifique la compatibilidad del esquema de FARENET.', tbl, col, current_database();
+        END IF;
+    END LOOP;
+
+    RAISE NOTICE 'Dependencias FARENET verificadas exitosamente: 13 catálogos y columnas requeridas presentes y compatibles en "%".', current_database();
+END;
+$faregas_valida_dependencias_farenet$;
 
 SET LOCAL search_path TO public, pg_catalog;
 
@@ -70,7 +125,7 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 --
 -- COMPATIBILIDAD ARQUITECTÓNICA:
 -- Este bloque contiene el esquema base de FAREGAS adaptado para la base de datos
--- compartida 'inspeccion' o para entornos de prueba aislados. No sobreescribe catálogos de FARENET.
+-- compartida con FARENET. No sobreescribe catálogos de FARENET.
 --
 -- CONTENIDO:
 -- 1. Extensiones requeridas (btree_gist)
@@ -6471,144 +6526,18 @@ ALTER TABLE ONLY public.fg_chip_codigo_reserva
 
 -- ============================================================================
 -- PROTECCIÓN DE ESTRUCTURAS Y CATÁLOGOS DE FARENET:
--- En la base compartida de producción 'inspeccion', FAREGAS TIENE ESTRICTAMENTE
--- PROHIBIDO crear, alterar o eliminar estructuras pertenecientes a FARENET.
--- Los catálogos ya existen y son administrados exclusivamente por FARENET.
--- Solo en entornos de prueba de laboratorio vacíos (bases de prueba sin esquema
--- previo de FARENET), se provisionan contratos mínimos para satisfacer claves foráneas.
+-- En cualquier base de datos compartida (independientemente de su nombre: 'inspeccion',
+-- 'farenet_db', 'postgres', etc.), FAREGAS TIENE ESTRICTAMENTE PROHIBIDO crear,
+-- alterar o sobreescribir estructuras pertenecientes a FARENET.
+-- Los catálogos compartidos deben existir previamente y ser administrados por FARENET.
+-- Las 13 tablas compartidas y sus columnas ya fueron validadas estrictamente al inicio
+-- del script (Sección 1). A continuación se establecen exclusivamente las 12 claves
+-- foráneas externas desde las tablas de FAREGAS hacia los catálogos existentes de FARENET.
 -- ============================================================================
-IF current_database() = 'inspeccion' THEN
-    IF NOT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'moneda') THEN
-        RAISE EXCEPTION 'Protección FARENET: El catálogo public.moneda debe existir previamente en inspeccion.';
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'persona') THEN
-        RAISE EXCEPTION 'Protección FARENET: La tabla public.persona debe existir previamente en inspeccion.';
-    END IF;
-    RAISE NOTICE 'Protección FARENET verificada: Base inspeccion detectada, se omite cualquier DDL sobre catálogos de FARENET.';
-ELSE
--- Las tablas a continuación corresponden a catálogos maestros alojados en FARENET
--- Los siete primeros son destinos de FK. Los catálogos de identidad y geografía
--- soportan Usuarios. El contrato de seriedocumentobase soporta la consulta de series.
--- Cada CREATE IF NOT EXISTS evita modificar catálogos ya provisionados. No se insertan filas
--- en estas tablas. Los contratos para login unificado y maestros legacy se documentan aparte.
-
-CREATE TABLE IF NOT EXISTS public.moneda (
-    key character varying(20) PRIMARY KEY,
-    nombre character varying(75),
-    simbolo character varying(5),
-    codigosunat character varying(3),
-    descripcion character varying(100),
-    activo boolean DEFAULT true
-);
-
-CREATE TABLE IF NOT EXISTS public.formapago (
-    key character varying(20) PRIMARY KEY,
-    nombre character varying(200),
-    descripcion character varying(100),
-    activo boolean DEFAULT true
-);
-
-CREATE TABLE IF NOT EXISTS public.cuentacorriente (
-    key character varying(20) PRIMARY KEY,
-    nroctacorriente character varying(50),
-    entidadfinanciera_key character varying(20),
-    moneda_key character varying(20),
-    empresa_key character varying(10),
-    descripcion character varying(150),
-    activo boolean DEFAULT true
-);
-
-CREATE TABLE IF NOT EXISTS public.entidadfinanciera (
-    key character varying(20) PRIMARY KEY,
-    nombre character varying(75),
-    descripcion character varying(150),
-    activo boolean DEFAULT true
-);
-
-CREATE TABLE IF NOT EXISTS public.tarjeta (
-    key character varying(20) PRIMARY KEY,
-    nombre character varying(150),
-    descripcion character varying(100),
-    activo boolean DEFAULT true
-);
-
-CREATE TABLE IF NOT EXISTS public.tipocontado (
-    key character varying(20) PRIMARY KEY,
-    nombre character varying(200),
-    descripcion character varying(100),
-    activo boolean DEFAULT true
-);
-
-CREATE TABLE IF NOT EXISTS public.persona (
-    nrodocumentoidentidad character varying(20) PRIMARY KEY,
-    estado boolean,
-    nombres character varying(200),
-    apellidos character varying(200),
-    nombrerazonsocial character varying(500),
-    tipodocumentoidentidad_key character varying(20),
-    direccion character varying(500),
-    telefono character varying(100),
-    email character varying(150),
-    persona_contacto character varying(250),
-    pais_key character varying(20),
-    departamento_key character varying(20),
-    provincia_key character varying(20),
-    distrito_key character varying(20),
-    razonsocial character varying(300)
-);
-
-CREATE TABLE IF NOT EXISTS public.tipodocumentoidentidad (
-    key character varying(20) PRIMARY KEY,
-    nombre character varying(75),
-    codigosunat character varying(1)
-);
-
-CREATE TABLE IF NOT EXISTS public.pais (
-    key character varying(20) PRIMARY KEY,
-    nombre character varying(75)
-);
-
-CREATE TABLE IF NOT EXISTS public.departamento (
-    key character varying(20) PRIMARY KEY,
-    nombre character varying(75),
-    pais_key character varying(20)
-);
-
-CREATE TABLE IF NOT EXISTS public.provincia (
-    key character varying(20) PRIMARY KEY,
-    nombre character varying(200),
-    departamento_key character varying(20)
-);
-
-CREATE TABLE IF NOT EXISTS public.distrito (
-    key character varying(20) PRIMARY KEY,
-    nombre character varying(75),
-    provincia_key character varying(20)
-);
-
-CREATE TABLE IF NOT EXISTS public.seriedocumentobase (
-    id bigint PRIMARY KEY,
-    planta_key character varying(20),
-    estado boolean,
-    serieboleta character varying(150),
-    seriefactura character varying(150),
-    serienotacreditofactura character varying(255),
-    serienotacreditoboleta character varying(150),
-    nroactualfactura bigint,
-    nroactualboleta bigint,
-    nroactualnotacreditofactura bigint,
-    nroactualnotacreditoboleta bigint
-);
 
 -- ----------------------------------------------------------------------------
 -- CLAVES FORÁNEAS EXTERNAS (12 FKs HACIA CATÁLOGOS COMPARTIDOS)
 -- ----------------------------------------------------------------------------
---
--- Name: fg_credito fk_fg_credito_moneda; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-
-END IF;
 ALTER TABLE ONLY public.fg_credito
     ADD CONSTRAINT fk_fg_credito_moneda FOREIGN KEY (moneda_key) REFERENCES public.moneda(key) ON UPDATE CASCADE ON DELETE RESTRICT;
 
@@ -7727,9 +7656,55 @@ END $$;
 REVOKE CREATE ON SCHEMA public FROM faregas_app_user;
 GRANT USAGE ON SCHEMA public TO faregas_app_user;
 
--- 3. REVOCACIÓN GENERAL PREVIA SOBRE TODAS LAS TABLAS Y SECUENCIAS DE PUBLIC
-REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM faregas_app_user;
-REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM faregas_app_user;
+-- 3. POLÍTICA DE PRIVILEGIOS MÍNIMOS Y SANEAMIENTO GRANULAR DE ACCESOS
+-- En lugar de un REVOKE ALL masivo e indiscriminado sobre todas las tablas de public
+-- (que afectaría permisos preexistentes legítimos en objetos no relacionados o causaría fallos de ownership),
+-- se aplica una política granular, auditable y sin impacto colateral sobre otros roles:
+--   a) Se eliminan de manera quirúrgica todos los privilegios de escritura (INSERT, UPDATE,
+--      DELETE, TRUNCATE, REFERENCES, TRIGGER) que faregas_app_user pudiera tener sobre
+--      cualquier tabla que no pertenezca al prefijo 'fg_*'.
+--   b) Se asegura que sobre tablas de FARENET ajenas a la lista autorizada de lectura
+--      no exista ningún privilegio concedido a faregas_app_user.
+--   c) Se sanean secuencias no pertenecientes a FAREGAS.
+DO $$
+DECLARE
+    r RECORD;
+    s RECORD;
+    tablas_farenet_lectura text[] := ARRAY[
+        'persona', 'vehiculo', 'tarjetapropiedad',
+        'categoria', 'vehiculoclase', 'marca', 'modelo', 'combustible', 'color',
+        'carroceria', 'tipoplaca', 'tipoinspeccion', 'conceptoinspeccion',
+        'conceptoinspecciondetalle', 'tipocertificado', 'tipoautorizacion',
+        'tipodocumento', 'tipopoliza', 'aseguradora',
+        'moneda', 'formapago', 'cuentacorriente', 'entidadfinanciera',
+        'tarjeta', 'tipocontado', 'tipodocumentoidentidad', 'pais',
+        'departamento', 'provincia', 'distrito', 'seriedocumentobase'
+    ];
+BEGIN
+    -- Saneamiento sobre tablas públicas que no son fg_*
+    FOR r IN (
+        SELECT tablename 
+        FROM pg_tables 
+        WHERE schemaname = 'public' AND tablename NOT LIKE 'fg_%'
+    ) LOOP
+        -- Revocar explícitamente cualquier permiso de modificación o DDL
+        EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.%I FROM faregas_app_user', r.tablename);
+        
+        -- Si la tabla no está autorizada para lectura, revocar cualquier privilegio residual
+        IF NOT (r.tablename = ANY(tablas_farenet_lectura)) THEN
+            EXECUTE format('REVOKE ALL PRIVILEGES ON TABLE public.%I FROM faregas_app_user', r.tablename);
+        END IF;
+    END LOOP;
+
+    -- Saneamiento de secuencias que no pertenecen a FAREGAS
+    FOR s IN (
+        SELECT sequence_name 
+        FROM information_schema.sequences 
+        WHERE sequence_schema = 'public' AND sequence_name NOT LIKE 'fg_%'
+    ) LOOP
+        EXECUTE format('REVOKE ALL PRIVILEGES ON SEQUENCE public.%I FROM faregas_app_user', s.sequence_name);
+    END LOOP;
+END $$;
 
 -- 4. CONCESIÓN DE DML COMPLETO SOBRE TODAS LAS TABLAS PROPIAS DE FAREGAS (fg_*)
 DO $$
@@ -7742,10 +7717,12 @@ BEGIN
         WHERE schemaname = 'public' AND tablename LIKE 'fg_%'
     ) LOOP
         EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.%I TO faregas_app_user', r.tablename);
+        -- Principio de mínimos privilegios: el usuario aplicativo no debe poseer TRUNCATE, REFERENCES ni TRIGGER
+        EXECUTE format('REVOKE TRUNCATE, REFERENCES, TRIGGER ON TABLE public.%I FROM faregas_app_user', r.tablename);
     END LOOP;
 END $$;
 
--- Concesión sobre todas las secuencias asociadas a tablas fg_*
+-- Concesión de uso sobre todas las secuencias asociadas a tablas fg_*
 DO $$
 DECLARE
     s RECORD;
@@ -7759,7 +7736,7 @@ BEGIN
     END LOOP;
 END $$;
 
--- 5. CONCESIÓN CONDICIONAL DE SOLO LECTURA (SELECT) SOBRE TABLAS OPERATIVAS Y CATÁLOGOS DE FARENET
+-- 5. CONCESIÓN CONTROLADA DE SOLO LECTURA (SELECT) SOBRE CATÁLOGOS Y MAESTROS DE FARENET
 DO $$
 DECLARE
     tbl text;
@@ -7784,22 +7761,31 @@ BEGIN
         ) THEN
             EXECUTE format('GRANT SELECT ON TABLE public.%I TO faregas_app_user', tbl);
             -- Asegurar explícitamente que no existan permisos de escritura
-            EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.%I FROM faregas_app_user', tbl);
+            EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.%I FROM faregas_app_user', tbl);
         END IF;
     END LOOP;
 END $$;
 
--- 6. PRIVILEGIOS POR DEFECTO PARA FUTURAS TABLAS
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO faregas_app_user;
+-- 6. PROTECCIÓN CONTRA CONCESIÓN IMPLÍCITA EN OBJETOS FUTUROS (PRINCIPIO DE MÍNIMOS PRIVILEGIOS)
+-- En una arquitectura compartida con FARENET, faregas_app_user NO debe recibir privilegios
+-- por defecto sobre tablas o secuencias que se creen en el futuro (evita que reciba INSERT/UPDATE/DELETE
+-- sobre nuevas tablas de FARENET creadas por el DBA u otros sistemas).
+-- Se revoca explícitamente cualquier privilegio por defecto para faregas_app_user en 'public'.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM faregas_app_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM faregas_app_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM faregas_app_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TYPES FROM faregas_app_user;
 
 -- =============================================================================
--- SECCIÓN 13: VALIDACIONES FINALES
+-- SECCIÓN 13: VALIDACIONES FINALES DE SEGURIDAD Y PRIVILEGIOS
 -- =============================================================================
--- Verificación de seguridad y auditoría de privilegios
 DO $$
 DECLARE
     escrituras_ajenas integer;
+    tablas_fg_sin_acceso integer;
+    privilegios_indebidos integer;
 BEGIN
+    -- 1. Verificar CERO permisos de escritura en tablas que no sean fg_*
     SELECT count(*) INTO escrituras_ajenas
     FROM information_schema.role_table_grants
     WHERE grantee = 'faregas_app_user'
@@ -7807,11 +7793,51 @@ BEGIN
       AND table_name NOT LIKE 'fg_%';
 
     IF escrituras_ajenas > 0 THEN
-        RAISE EXCEPTION 'Fallo de seguridad: faregas_app_user tiene permisos de escritura en % tablas que no son fg_*', escrituras_ajenas;
+        RAISE EXCEPTION 'Fallo de seguridad crítico: faregas_app_user tiene permisos de escritura en % tablas que no son fg_*', escrituras_ajenas;
+    END IF;
+
+    -- 2. Verificar que faregas_app_user tenga acceso DML a todas las tablas fg_* existentes
+    SELECT count(*) INTO tablas_fg_sin_acceso
+    FROM (
+        SELECT t.tablename
+        FROM pg_tables t
+        WHERE t.schemaname = 'public' AND t.tablename LIKE 'fg_%'
+        EXCEPT
+        SELECT g.table_name
+        FROM information_schema.role_table_grants g
+        WHERE g.grantee = 'faregas_app_user'
+          AND g.privilege_type = 'SELECT'
+          AND g.table_schema = 'public'
+    ) missing_grants;
+
+    IF tablas_fg_sin_acceso > 0 THEN
+        RAISE EXCEPTION 'Fallo de configuración: Existen % tablas fg_* sin privilegios para faregas_app_user.', tablas_fg_sin_acceso;
+    END IF;
+
+    -- 3. Verificar que no existan privilegios sobre tablas de FARENET fuera de la lista autorizada de lectura
+    SELECT count(*) INTO privilegios_indebidos
+    FROM information_schema.role_table_grants
+    WHERE grantee = 'faregas_app_user'
+      AND table_schema = 'public'
+      AND table_name NOT LIKE 'fg_%'
+      AND table_name NOT IN (
+          'persona', 'vehiculo', 'tarjetapropiedad',
+          'categoria', 'vehiculoclase', 'marca', 'modelo', 'combustible', 'color',
+          'carroceria', 'tipoplaca', 'tipoinspeccion', 'conceptoinspeccion',
+          'conceptoinspecciondetalle', 'tipocertificado', 'tipoautorizacion',
+          'tipodocumento', 'tipopoliza', 'aseguradora',
+          'moneda', 'formapago', 'cuentacorriente', 'entidadfinanciera',
+          'tarjeta', 'tipocontado', 'tipodocumentoidentidad', 'pais',
+          'departamento', 'provincia', 'distrito', 'seriedocumentobase'
+      );
+
+    IF privilegios_indebidos > 0 THEN
+        RAISE EXCEPTION 'Fallo de aislamiento: faregas_app_user tiene privilegios en % tablas de FARENET no autorizadas.', privilegios_indebidos;
     END IF;
 
     RAISE NOTICE 'Validación final exitosa: faregas_app_user tiene 0 privilegios de escritura en tablas de FARENET.';
-    RAISE NOTICE 'Políticas de mínimos privilegios y permisos aplicados exitosamente.';
+    RAISE NOTICE 'Aislamiento comprobado: solo posee SELECT en las tablas FARENET autorizadas y DML sobre las 74 tablas fg_*.';
+    RAISE NOTICE 'Privilegios por defecto en public revocados: nuevas tablas FARENET no concederán ningún acceso.';
 END $$;
 
 COMMIT;
