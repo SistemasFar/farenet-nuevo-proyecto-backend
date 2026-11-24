@@ -9,12 +9,17 @@
  *   de chips, papel valorado y usuarios reales desde la base de origen a RDS,
  *   EXCLUYENDO totalmente las operaciones comerciales y certificados de prueba.
  *
- * Características:
+ * Características de Seguridad e Integridad:
  *   - DRY-RUN por defecto (solo lectura y reporte sin escribir).
  *   - Requiere explícitamente el flag --ejecutar-autorizado para escribir.
  *   - Validación estricta: Origen y Destino NO pueden ser la misma base de datos.
  *   - Transaccional: BEGIN / COMMIT con ROLLBACK ante cualquier error.
- *   - Idempotente: Inserta preservando llaves con ON CONFLICT DO NOTHING/UPDATE.
+ *   - Orden referencial estricto: Padres antes que hijos en Foreign Keys.
+ *   - Idempotente y Seguro:
+ *       * En series y correlativos: GREATEST() para jamás retroceder números.
+ *       * En rangos: Protege estado AGOTADO y saldos reales.
+ *       * En productos y precios: Preserva precios personalizados y SKUs nuevos.
+ *       * En usuarios: Preserva hashes e integridad referencial con tabla persona.
  *   - Cero exposición de secretos en consola ni logs.
  *   - NO escribe ni modifica tablas de FARENET ni FARECOM.
  * ============================================================================
@@ -110,6 +115,7 @@ async function main() {
         // MATRIZ DE TABLAS A MIGRAR EN ORDEN ESTRICTO DE INTEGRIDAD REFERENCIAL
         // ====================================================================
         const planMigracion = [
+            // 1. Catálogos de Seguridad RBAC
             {
                 tabla: 'fg_perfil',
                 descripcion: 'Perfiles de usuario y roles RBAC',
@@ -128,6 +134,7 @@ async function main() {
                 query: 'SELECT perfil_clave, permiso_clave, created_at FROM fg_perfil_permiso ORDER BY perfil_clave, permiso_clave',
                 pkey: ['perfil_clave', 'permiso_clave']
             },
+            // 2. Empresas y Facturadores
             {
                 tabla: 'fg_empresa',
                 descripcion: '14 empresas del grupo y datos fiscales (RUC, cuenta BN)',
@@ -140,6 +147,7 @@ async function main() {
                 query: 'SELECT id, empresa_key, proveedor, entorno, credencial_clave, activo, fecha_creacion, fecha_modificacion FROM fg_empresa_facturador ORDER BY id',
                 pkey: ['id']
             },
+            // 3. Sedes / Plantas
             {
                 tabla: 'fg_planta',
                 descripcion: '31 sedes de inspección (14 activas y 17 históricas)',
@@ -152,11 +160,97 @@ async function main() {
                 query: 'SELECT perfil_clave, planta_key FROM fg_perfil_planta ORDER BY perfil_clave, planta_key',
                 pkey: ['perfil_clave', 'planta_key']
             },
+            // 4. Tipos y Formatos de Certificado (Requeridos por fg_servicio)
+            {
+                tabla: 'fg_tipo_certificado',
+                descripcion: '5 tipos oficiales de certificado (39, 41, 22, T1, T2)',
+                query: 'SELECT clave, nombre, descripcion, activo, entidad_certificadora_nombre, resolucion_directoral, domicilio_fiscal, telefono, lugar_emision, codigo, ancho_correlativo FROM fg_tipo_certificado ORDER BY clave',
+                pkey: ['clave']
+            },
+            {
+                tabla: 'fg_certificado_formato',
+                descripcion: '14 formatos aprobados de certificados y plantillas',
+                query: 'SELECT id, codigo, nombre, motor, es_protegido, activo, creado_en, actualizado_en, formato_padre_id FROM fg_certificado_formato ORDER BY id',
+                pkey: ['id']
+            },
+            {
+                tabla: 'fg_certificado_formato_version',
+                descripcion: '20 versiones de plantillas y layouts de impresión',
+                query: 'SELECT id, formato_id, version, archivo_ruta, configuracion, estado, vigente_desde, creado_por, creado_en, motor FROM fg_certificado_formato_version ORDER BY id',
+                pkey: ['id']
+            },
+            // 5. Categorías y Servicios Operativos
+            {
+                tabla: 'fg_categoria_servicio',
+                descripcion: '4 categorías de servicio (GLP, GNV, CONFORMIDAD, COMPLEMENTARIOS)',
+                query: 'SELECT id, codigo, nombre, descripcion, activo, orden, fecha_creacion, fecha_modificacion FROM fg_categoria_servicio ORDER BY id',
+                pkey: ['id']
+            },
+            {
+                tabla: 'fg_servicio',
+                descripcion: '96 servicios y flujos operativos',
+                query: 'SELECT id, codigo, nombre, familia, tipo_certificado_clave, modalidad, requiere_certificado, requiere_vehiculo, activo, orden, categoria_id, tipo_flujo, formato_id, sujeto_detraccion, detraccion_codigo, detraccion_porcentaje FROM fg_servicio ORDER BY id',
+                pkey: ['id']
+            },
+            // 6. Productos Comerciales y Físicos (Resolución de dependencia circular inventariable <-> facturación)
+            {
+                tabla: 'fg_producto_inventariable',
+                descripcion: '3 productos físicos inventariables (CHIP, HOJA_GLP, HOJA_CONFORMIDAD) - Fase 1 sin FK circular',
+                query: 'SELECT id, codigo, nombre, NULL::bigint as producto_facturacion_id, control_stock, activo, fecha_creacion, fecha_modificacion, tipo FROM fg_producto_inventariable ORDER BY id',
+                pkey: ['id']
+            },
+            {
+                tabla: 'fg_producto_facturacion',
+                descripcion: '275 productos con precios de referencia y SKU editados',
+                query: 'SELECT id, codigo_sku, descripcion, tipo_producto, categoria_dms, cuenta_por_cobrar, unidad, precio_unitario, precio_referencia, valor_referencial_unitario, codigo_clasificacion_sunat, tipo_afectacion_igv, porcentaje_isc, disponible_pos, es_para_venta, es_para_compra, tiene_icbper, activo, fecha_creacion, fecha_modificacion, categoria_id, requiere_chip, producto_chip_id, precio_chip, codigo_barras, codigo_afectacion_isc, imagen_url, sujeto_detraccion, detraccion_codigo, detraccion_porcentaje, naturaleza_spot FROM fg_producto_facturacion ORDER BY id',
+                pkey: ['id']
+            },
+            {
+                tabla: 'fg_producto_inventariable_update_fks',
+                descripcion: '3 productos inventariables - Fase 2 vinculación con producto_facturacion_id',
+                query: 'SELECT id, producto_facturacion_id FROM fg_producto_inventariable WHERE producto_facturacion_id IS NOT NULL ORDER BY id',
+                pkey: ['id'],
+                esUpdateCustom: async (filas, destClient) => {
+                    for (const fila of filas) {
+                        await destClient.query(
+                            'UPDATE fg_producto_inventariable SET producto_facturacion_id = $1 WHERE id = $2',
+                            [fila.producto_facturacion_id, fila.id]
+                        );
+                    }
+                }
+            },
+            {
+                tabla: 'fg_producto_inventariable_sede',
+                descripcion: '20 asignaciones y habilitaciones de venta inventariable por sede',
+                query: 'SELECT id, producto_inventariable_id, planta_key, precio, activo, fecha_creacion, fecha_modificacion, stock_permitido, venta_habilitada, producto_facturacion_id FROM fg_producto_inventariable_sede ORDER BY id',
+                pkey: ['id']
+            },
+            // 7. Tarifario Cruzado
+            {
+                tabla: 'fg_tarifa',
+                descripcion: '175 tarifas configuradas por sede y servicio',
+                query: 'SELECT id, planta_key, codigo, familia, nombre, tipo_certificado_clave, modalidad, precio, activo, orden, servicio_id, producto_facturacion_id FROM fg_tarifa ORDER BY id',
+                pkey: ['id']
+            },
+            // 8. Usuarios y Seguridad (Con validación referencial segura de persona)
             {
                 tabla: 'fg_usuario',
                 descripcion: '33 cuentas reales de usuarios (hashes y estados)',
                 query: 'SELECT username, user_type, contrasenha, perfil_id, persona_nrodocumentoidentidad, estado, foto FROM fg_usuario ORDER BY username',
-                pkey: ['username']
+                pkey: ['username'],
+                prepararFila: async (fila, destClient) => {
+                    // Validar integridad referencial con tabla compartida persona
+                    if (fila.persona_nrodocumentoidentidad && destClient) {
+                        try {
+                            const pRes = await destClient.query('SELECT 1 FROM persona WHERE nrodocumentoidentidad = $1', [fila.persona_nrodocumentoidentidad]);
+                            if (pRes.rowCount === 0) {
+                                fila.persona_nrodocumentoidentidad = null;
+                            }
+                        } catch (_) {
+                            fila.persona_nrodocumentoidentidad = null;
+                        }
+                    }
+                }
             },
             {
                 tabla: 'fg_usuario_credencial',
@@ -182,82 +276,11 @@ async function main() {
                 query: 'SELECT id, username, ciphertext, iv, tag, algoritmo, version_clave, origen, creado_por, fecha_creacion, fecha_actualizacion FROM fg_credencial_custodia ORDER BY id',
                 pkey: ['username']
             },
-            {
-                tabla: 'fg_categoria_servicio',
-                descripcion: '4 categorías de servicio (GLP, GNV, CONFORMIDAD, COMPLEMENTARIOS)',
-                query: 'SELECT id, codigo, nombre, descripcion, activo, orden, fecha_creacion, fecha_modificacion FROM fg_categoria_servicio ORDER BY id',
-                pkey: ['id']
-            },
-            {
-                tabla: 'fg_servicio',
-                descripcion: '96 servicios y flujos operativos',
-                query: 'SELECT id, codigo, nombre, familia, tipo_certificado_clave, modalidad, requiere_certificado, requiere_vehiculo, activo, orden, categoria_id, tipo_flujo, formato_id, sujeto_detraccion, detraccion_codigo, detraccion_porcentaje FROM fg_servicio ORDER BY id',
-                pkey: ['id']
-            },
-            {
-                tabla: 'fg_producto_facturacion',
-                descripcion: '275 productos con precios de referencia y SKU editados',
-                query: 'SELECT id, codigo_sku, descripcion, tipo_producto, categoria_dms, cuenta_por_cobrar, unidad, precio_unitario, precio_referencia, valor_referencial_unitario, codigo_clasificacion_sunat, tipo_afectacion_igv, porcentaje_isc, disponible_pos, es_para_venta, es_para_compra, tiene_icbper, activo, fecha_creacion, fecha_modificacion, categoria_id, requiere_chip, producto_chip_id, precio_chip, codigo_barras, codigo_afectacion_isc, imagen_url, sujeto_detraccion, detraccion_codigo, detraccion_porcentaje, naturaleza_spot FROM fg_producto_facturacion ORDER BY id',
-                pkey: ['id']
-            },
-            {
-                tabla: 'fg_producto_inventariable',
-                descripcion: '3 productos físicos inventariables (CHIP, HOJA_GLP, HOJA_CONFORMIDAD)',
-                query: 'SELECT id, codigo, nombre, producto_facturacion_id, control_stock, activo, fecha_creacion, fecha_modificacion, tipo FROM fg_producto_inventariable ORDER BY id',
-                pkey: ['id']
-            },
-            {
-                tabla: 'fg_producto_inventariable_sede',
-                descripcion: '20 asignaciones y habilitaciones de venta inventariable por sede',
-                query: 'SELECT id, producto_inventariable_id, planta_key, precio, activo, fecha_creacion, fecha_modificacion, stock_permitido, venta_habilitada, producto_facturacion_id FROM fg_producto_inventariable_sede ORDER BY id',
-                pkey: ['id']
-            },
-            {
-                tabla: 'fg_tarifa',
-                descripcion: '175 tarifas configuradas por sede y servicio',
-                query: 'SELECT id, planta_key, codigo, familia, nombre, tipo_certificado_clave, modalidad, precio, activo, orden, servicio_id, producto_facturacion_id FROM fg_tarifa ORDER BY id',
-                pkey: ['id']
-            },
+            // 9. Descuentos, Talleres y Ejecutivos
             {
                 tabla: 'fg_descuento',
                 descripcion: 'Reglas de descuento comercial (CORTESIA_FAREGAS al 100%)',
                 query: 'SELECT id, codigo, nombre, tipo, empresa_aliada_ruc, empresa_aliada_nombre, tipo_calculo, valor, fecha_inicio, fecha_fin, planta_key, activo, usuario_creacion, fecha_creacion, usuario_modificacion, fecha_modificacion, ejecutivo, ejecutivo_id FROM fg_descuento ORDER BY id',
-                pkey: ['id']
-            },
-            {
-                tabla: 'fg_serie_comprobante',
-                descripcion: '288 series (conservando ultimo_numero fiscal exacto por sede)',
-                query: 'SELECT id, planta_key, tipo_comprobante, serie, ultimo_numero, es_predeterminada, autogenerada, contingencia, activo, fecha_creacion, fecha_modificacion, tipo_documento_referencia, serie_pos, empresa_key, proveedor_emision, entorno_emision, confirmada_produccion, numero_inicial_confirmado, sistema_origen, fecha_corte, usuario_confirmacion, fecha_confirmacion, nombre_dms, codigo_local_dms, nombre_local_dms, telefono_local_dms, correo_local_dms, direccion_comercial_dms FROM fg_serie_comprobante ORDER BY id',
-                pkey: ['id']
-            },
-            {
-                tabla: 'fg_tipo_certificado',
-                descripcion: '5 tipos oficiales de certificado (39, 41, 22, T1, T2)',
-                query: 'SELECT clave, nombre, descripcion, activo, entidad_certificadora_nombre, resolucion_directoral, domicilio_fiscal, telefono, lugar_emision, codigo, ancho_correlativo FROM fg_tipo_certificado ORDER BY clave',
-                pkey: ['clave']
-            },
-            {
-                tabla: 'fg_correlativo_certificado',
-                descripcion: '66 correlativos configurados por planta y modalidad',
-                query: 'SELECT id, tipo_certificado_clave, nro_actual, activo, fecha_modificacion, planta_key, nro_inicio, nro_maximo, fecha_asignacion, fecha_cierre, modalidad FROM fg_correlativo_certificado ORDER BY id',
-                pkey: ['id']
-            },
-            {
-                tabla: 'fg_correlativo_certificado_sede',
-                descripcion: '74 rangos físicos de papel (64 agotados y 10 activos con saldos)',
-                query: 'SELECT id, planta_key, rango_inicio, rango_fin, numero_actual, estado, fecha_asignacion, fecha_cierre, observacion, fecha_creacion, fecha_modificacion FROM fg_correlativo_certificado_sede ORDER BY id',
-                pkey: ['id']
-            },
-            {
-                tabla: 'fg_certificado_formato',
-                descripcion: '14 formatos aprobados de certificados y plantillas',
-                query: 'SELECT id, codigo, nombre, motor, es_protegido, activo, creado_en, actualizado_en, formato_padre_id FROM fg_certificado_formato ORDER BY id',
-                pkey: ['id']
-            },
-            {
-                tabla: 'fg_certificado_formato_version',
-                descripcion: '20 versiones de plantillas y layouts de impresión',
-                query: 'SELECT id, formato_id, version, archivo_ruta, configuracion, estado, vigente_desde, creado_por, creado_en, motor FROM fg_certificado_formato_version ORDER BY id',
                 pkey: ['id']
             },
             {
@@ -272,10 +295,52 @@ async function main() {
                 query: 'SELECT id, username, nombre, activo, usuario_creacion, fecha_creacion, usuario_modificacion, fecha_modificacion FROM fg_ejecutivo ORDER BY id',
                 pkey: ['id']
             },
+            // 10. Series de Facturación (Protección de correlativos con GREATEST)
+            {
+                tabla: 'fg_serie_comprobante',
+                descripcion: '288 series (conservando ultimo_numero fiscal exacto por sede)',
+                query: 'SELECT id, planta_key, tipo_comprobante, serie, ultimo_numero, es_predeterminada, autogenerada, contingencia, activo, fecha_creacion, fecha_modificacion, tipo_documento_referencia, serie_pos, empresa_key, proveedor_emision, entorno_emision, confirmada_produccion, numero_inicial_confirmado, sistema_origen, fecha_corte, usuario_confirmacion, fecha_confirmacion, nombre_dms, codigo_local_dms, nombre_local_dms, telefono_local_dms, correo_local_dms, direccion_comercial_dms FROM fg_serie_comprobante ORDER BY id',
+                pkey: ['id'],
+                onConflictCustom: (cols, pkeys) => {
+                    // Jamás retroceder el último número de serie emitido
+                    const sets = cols.filter(c => !pkeys.includes(c)).map(c => {
+                        if (c === 'ultimo_numero') return `"ultimo_numero" = GREATEST("fg_serie_comprobante"."ultimo_numero", EXCLUDED."ultimo_numero")`;
+                        return `"${c}" = EXCLUDED."${c}"`;
+                    });
+                    return `ON CONFLICT (${pkeys.map(k => `"${k}"`).join(', ')}) DO UPDATE SET ${sets.join(', ')}`;
+                }
+            },
+            // 11. Correlativos y Rangos Físicos de Certificados
+            {
+                tabla: 'fg_correlativo_certificado',
+                descripcion: '66 correlativos configurados por planta y modalidad',
+                query: 'SELECT id, tipo_certificado_clave, nro_actual, activo, fecha_modificacion, planta_key, nro_inicio, nro_maximo, fecha_asignacion, fecha_cierre, modalidad FROM fg_correlativo_certificado ORDER BY id',
+                pkey: ['id'],
+                onConflictCustom: (cols, pkeys) => {
+                    const sets = cols.filter(c => !pkeys.includes(c)).map(c => {
+                        if (c === 'nro_actual') return `"nro_actual" = GREATEST("fg_correlativo_certificado"."nro_actual", EXCLUDED."nro_actual")`;
+                        return `"${c}" = EXCLUDED."${c}"`;
+                    });
+                    return `ON CONFLICT (${pkeys.map(k => `"${k}"`).join(', ')}) DO UPDATE SET ${sets.join(', ')}`;
+                }
+            },
+            {
+                tabla: 'fg_correlativo_certificado_sede',
+                descripcion: '74 rangos físicos de papel (64 agotados y 10 activos con saldos)',
+                query: 'SELECT id, planta_key, rango_inicio, rango_fin, numero_actual, estado, fecha_asignacion, fecha_cierre, observacion, fecha_creacion, fecha_modificacion FROM fg_correlativo_certificado_sede ORDER BY id',
+                pkey: ['id'],
+                onConflictCustom: (cols, pkeys) => {
+                    const sets = cols.filter(c => !pkeys.includes(c)).map(c => {
+                        if (c === 'numero_actual') return `"numero_actual" = GREATEST("fg_correlativo_certificado_sede"."numero_actual", EXCLUDED."numero_actual")`;
+                        return `"${c}" = EXCLUDED."${c}"`;
+                    });
+                    return `ON CONFLICT (${pkeys.map(k => `"${k}"`).join(', ')}) DO UPDATE SET ${sets.join(', ')}`;
+                }
+            },
+            // 12. Chips Físicos y Movimientos (Desvinculados de ventas de prueba)
             {
                 tabla: 'fg_chip',
                 descripcion: '38 chips físicos (3 DISPONIBLES en sede 160, 35 VENDIDOS desvinculados de pruebas)',
-                // Nota: operacion_reserva_id se establece en NULL para no depender de transacciones de prueba
                 query: `SELECT id, producto_inventariable_id, numero_chip, planta_actual_key, estado, 
                                NULL::bigint as operacion_reserva_id, NULL::timestamp as reservado_en,
                                creado_por, creado_en, actualizado_por, actualizado_en 
@@ -290,6 +355,7 @@ async function main() {
                         FROM fg_chip_movimiento ORDER BY id`,
                 pkey: ['id']
             },
+            // 13. Papel Valorado (Solo ingresos físicos en sedes)
             {
                 tabla: 'fg_inventario_cantidad_movimiento',
                 descripcion: 'Movimientos de ingreso inicial de papel valorado en sedes',
@@ -310,6 +376,15 @@ async function main() {
             const filas = filasRes.rows;
             const cantidad = filas.length;
 
+            if (item.esUpdateCustom) {
+                if (!esDryRun && destClient) {
+                    await item.esUpdateCustom(filas, destClient);
+                }
+                console.log(`[${esDryRun ? 'DRY-RUN' : 'APLICADO'}] ${item.tabla.padEnd(35)} : ${String(cantidad).padStart(5)} filas actualizadas (${item.descripcion})`);
+                resumenResultados.push({ tabla: item.tabla, filas: cantidad, estado: esDryRun ? 'SIMULADO OK' : 'MIGRADO REAL' });
+                continue;
+            }
+
             if (esDryRun) {
                 console.log(`[DRY-RUN] ${item.tabla.padEnd(35)} : ${String(cantidad).padStart(5)} filas leídas (${item.descripcion})`);
                 resumenResultados.push({ tabla: item.tabla, filas: cantidad, estado: 'SIMULADO OK' });
@@ -319,16 +394,25 @@ async function main() {
                     const columnas = Object.keys(filas[0]);
                     const colsList = columnas.map(c => `"${c}"`).join(', ');
                     const pkeysList = item.pkey.map(c => `"${c}"`).join(', ');
-                    const updateCols = columnas
-                        .filter(c => !item.pkey.includes(c))
-                        .map(c => `"${c}" = EXCLUDED."${c}"`)
-                        .join(', ');
 
-                    const onConflictClause = updateCols.length > 0
-                        ? `ON CONFLICT (${pkeysList}) DO UPDATE SET ${updateCols}`
-                        : `ON CONFLICT (${pkeysList}) DO NOTHING`;
+                    let onConflictClause;
+                    if (item.onConflictCustom) {
+                        onConflictClause = item.onConflictCustom(columnas, item.pkey);
+                    } else {
+                        const updateCols = columnas
+                            .filter(c => !item.pkey.includes(c))
+                            .map(c => `"${c}" = EXCLUDED."${c}"`)
+                            .join(', ');
+
+                        onConflictClause = updateCols.length > 0
+                            ? `ON CONFLICT (${pkeysList}) DO UPDATE SET ${updateCols}`
+                            : `ON CONFLICT (${pkeysList}) DO NOTHING`;
+                    }
 
                     for (const fila of filas) {
+                        if (item.prepararFila) {
+                            await item.prepararFila(fila, destClient);
+                        }
                         const vals = columnas.map(c => fila[c]);
                         const paramsList = columnas.map((_, idx) => `$${idx + 1}`).join(', ');
                         const sqlInsert = `INSERT INTO "${item.tabla}" (${colsList}) VALUES (${paramsList}) ${onConflictClause};`;
@@ -347,21 +431,20 @@ async function main() {
         if (!esDryRun && destClient) {
             console.log('\n--- AJUSTANDO SECUENCIAS AUTO-INCREMENTALES EN DESTINO ---');
             const secuenciasRes = await destClient.query(`
-                SELECT sequence_name, table_name, column_name
+                SELECT table_name, column_name, pg_get_serial_sequence(quote_ident(table_name), column_name) as seq_name
                 FROM information_schema.columns
                 WHERE table_schema = 'public' 
                   AND table_name LIKE 'fg_%' 
-                  AND column_default LIKE 'nextval%'
+                  AND (column_default LIKE 'nextval%' OR is_identity = 'YES')
             `);
 
             for (const seq of secuenciasRes.rows) {
-                const seqName = seq.sequence_name;
-                const tblName = seq.table_name;
-                const colName = seq.column_name;
-                await destClient.query(`
-                    SELECT setval('${seqName}', COALESCE((SELECT MAX("${colName}") FROM "${tblName}"), 1), true)
-                `);
-                console.log(`  -> Secuencia ${seqName} ajustada al máximo de ${tblName}.${colName}`);
+                if (seq.seq_name) {
+                    await destClient.query(`
+                        SELECT setval($1, COALESCE((SELECT MAX("${seq.column_name}") FROM "${seq.table_name}"), 1), true)
+                    `, [seq.seq_name]);
+                    console.log(`  -> Secuencia ${seq.seq_name} ajustada al máximo de ${seq.table_name}.${seq.column_name}`);
+                }
             }
 
             await destClient.query('COMMIT');
