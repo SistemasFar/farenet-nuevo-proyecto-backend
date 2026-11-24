@@ -497,6 +497,13 @@ const validarContextoParaTipo = (row, tipo, opciones = {}) => {
             motivo: 'No se puede rectificar este certificado porque su comprobante ya tiene una nota de crédito emitida.'
         });
     }
+    if (tipo === 'EMITIR_NOTA_CREDITO') {
+        if (!row.facturacion_id || !row.fecha_documento) {
+            throw errorNegocio('COMPROBANTE_ORIGINAL_SIN_FECHA_EMISION', 409, {
+                motivo: 'El comprobante original no cuenta con una fecha de emisión válida en base de datos.'
+            });
+        }
+    }
 };
 
 const mapearSolicitud = (row) => {
@@ -1015,7 +1022,7 @@ const crearServicio = (database = db, config = {}) => {
                         tipoComprobante: f.tipo_comprobante,
                         estado: f.estado,
                         aceptadaSunat: f.aceptada_sunat,
-                        fechaEmision: f.fecha_documento || f.fecha_creacion,
+                        fechaEmision: f.fecha_documento || null,
                         fechaAceptacion: f.fecha_aceptacion,
                         enlaceCdr: f.enlace_cdr,
                         importeTotal: Number(f.importe_total),
@@ -1034,7 +1041,7 @@ const crearServicio = (database = db, config = {}) => {
                     estado: f.estado,
                     aceptadaSunat: f.aceptada_sunat,
                     sunatDescripcion: f.sunat_description,
-                    fechaEmision: f.fecha_documento || f.fecha_creacion,
+                    fechaEmision: f.fecha_documento || null,
                     fechaAceptacion: f.fecha_aceptacion,
                     enlacePdf: f.enlace_pdf,
                     enlaceCdr: f.enlace_cdr,
@@ -1878,7 +1885,7 @@ const crearServicio = (database = db, config = {}) => {
         return resolverOperacionFiscal({
             documento,
             estadoProveedor: documento?.estado,
-            fechaEmision: documento?.fecha_documento || documento?.fecha_creacion,
+            fechaEmision: documento?.fecha_documento || null,
             fechaAceptacion: documento?.fecha_aceptacion,
             plazoBaja,
             ...opciones

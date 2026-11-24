@@ -73,7 +73,8 @@ const validarAccesoFacturacion = async (executor, certificadoId, userContext, bl
 
 const validarAccesoFacturacionOperacion = async (executor, operacionId, userContext, bloquear = false) => {
     const result = await executor.query(`
-        SELECT f.*, oc.planta_key, oc.estado AS operacion_estado
+        SELECT f.*, f.fecha_documento::text AS fecha_documento_fiscal_dia,
+               oc.planta_key, oc.estado AS operacion_estado
         FROM fg_facturacion f
         JOIN fg_operacion_comercial oc ON oc.id = f.operacion_id
         WHERE f.operacion_id = $1

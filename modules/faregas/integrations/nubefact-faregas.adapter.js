@@ -5,6 +5,104 @@ const { evaluarDetraccion, CAT_SPOT, CAT_SPOT_BIENES } = require('../services/fa
 
 const dosDecimales = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
+const formatearFechaReferencia = (valor) => {
+    if (!valor) return null;
+    let dia, mes, anio;
+    if (valor instanceof Date) {
+        if (Number.isNaN(valor.getTime())) return null;
+        const parts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'America/Lima',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+        }).formatToParts(valor);
+        const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+        dia = Number(map.day);
+        mes = Number(map.month);
+        anio = Number(map.year);
+    } else {
+        const str = String(valor).trim();
+        const matchSlash = str.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (matchSlash) {
+            dia = Number(matchSlash[1]);
+            mes = Number(matchSlash[2]);
+            anio = Number(matchSlash[3]);
+        } else {
+            const matchDMY = str.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+            if (matchDMY) {
+                dia = Number(matchDMY[1]);
+                mes = Number(matchDMY[2]);
+                anio = Number(matchDMY[3]);
+            } else {
+                const matchYMD = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+                if (matchYMD) {
+                    anio = Number(matchYMD[1]);
+                    mes = Number(matchYMD[2]);
+                    dia = Number(matchYMD[3]);
+                } else {
+                    return null;
+                }
+            }
+        }
+    }
+    if (mes < 1 || mes > 12 || dia < 1 || dia > 31 || anio < 2000 || anio > 2100) {
+        return null;
+    }
+    const d = new Date(Date.UTC(anio, mes - 1, dia));
+    if (d.getUTCFullYear() !== anio || d.getUTCMonth() + 1 !== mes || d.getUTCDate() !== dia) {
+        return null;
+    }
+    const manana = new Date();
+    manana.setUTCHours(0, 0, 0, 0);
+    manana.setUTCDate(manana.getUTCDate() + 1);
+    if (d >= manana) {
+        return null;
+    }
+    return `${String(dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}/${anio}`;
+};
+
+const yaContieneReferencia = (texto, serie, numero) => {
+    if (!texto || typeof texto !== 'string') return false;
+    const clean = texto.toUpperCase();
+    if (!clean.includes('DOC. MODIFICA')) return false;
+    const num = Number(numero);
+    const tokenNum = `${serie}-${num}`.toUpperCase();
+    const tokenPad = `${serie}-${String(num).padStart(8, '0')}`.toUpperCase();
+    const tokenRaw = `${serie}-${numero}`.toUpperCase();
+    return clean.includes(tokenNum) || clean.includes(tokenPad) || clean.includes(tokenRaw);
+};
+
+const combinarObservacionesNota = ({ sustento = '', tipoTexto = '', serie = '', numero = '', fechaRef = '' }) => {
+    const ref = `DOC. MODIFICA: ${tipoTexto} ${serie}-${numero} DEL ${fechaRef}`.trim();
+    const sust = String(sustento || '').trim();
+
+    if (!ref || !fechaRef) {
+        return sust.slice(0, 250);
+    }
+
+    if (yaContieneReferencia(sust, serie, numero)) {
+        return sust.slice(0, 250);
+    }
+
+    if (!sust) {
+        return ref.slice(0, 250);
+    }
+
+    const separador = ' | ';
+    const textoCompleto = `${sust}${separador}${ref}`;
+    if (textoCompleto.length <= 250) {
+        return textoCompleto;
+    }
+
+    const espacioDisponibleSustento = 250 - (separador.length + ref.length);
+    if (espacioDisponibleSustento > 10) {
+        const sustentoRecortado = sust.slice(0, espacioDisponibleSustento).trimEnd();
+        return `${sustentoRecortado}${separador}${ref}`;
+    }
+
+    return ref.slice(0, 250);
+};
+
 const crearCodigoUnico = (facturacionId, prefijo = 'FG') => {
     const id = Number(facturacionId);
     if (!Number.isSafeInteger(id) || id <= 0) throw new Error('FACTURACION_ID_INVALIDO');
@@ -486,7 +584,38 @@ const construirPayloadNota = ({ nota, facturacion, tipoNota, snapshotFiscal, dat
         throw error;
     }
 
-    const sustento = String(nota.sustento || '').trim().slice(0, 250);
+    const fechaOriginalRaw = facturacion?.fecha_documento_fiscal_dia
+        || facturacion?.fecha_documento
+        || snapshotFiscal?.fecha_documento
+        || snapshotFiscal?.fecha_de_emision;
+
+    if (!fechaOriginalRaw) {
+        const error = new Error('COMPROBANTE_ORIGINAL_SIN_FECHA_EMISION');
+        error.code = 'COMPROBANTE_ORIGINAL_SIN_FECHA_EMISION';
+        error.statusCode = 409;
+        throw error;
+    }
+
+    const fechaRef = formatearFechaReferencia(fechaOriginalRaw);
+    if (!fechaRef) {
+        const error = new Error('FECHA_EMISION_ORIGINAL_INVALIDA');
+        error.code = 'FECHA_EMISION_ORIGINAL_INVALIDA';
+        error.statusCode = 409;
+        throw error;
+    }
+
+    const tipoModificaNum = Number(snapshotFiscal.tipo_de_comprobante || (facturacion?.tipo_comprobante === 'FACTURA' ? 1 : 2));
+    const tipoTexto = tipoModificaNum === 1 ? 'FACTURA' : 'BOLETA';
+    const serieModifica = snapshotFiscal.serie || facturacion?.serie || '';
+    const numeroModifica = Number(snapshotFiscal.numero || facturacion?.numero || 0);
+
+    const observacionesFinal = combinarObservacionesNota({
+        sustento: nota.sustento,
+        tipoTexto,
+        serie: serieModifica,
+        numero: numeroModifica,
+        fechaRef
+    });
     return {
         operacion: 'generar_comprobante',
         tipo_de_comprobante: 3,
@@ -513,7 +642,7 @@ const construirPayloadNota = ({ nota, facturacion, tipoNota, snapshotFiscal, dat
         total_gratuita: dosDecimales(snapshotFiscal.total_gratuita || 0),
         total_otros_cargos: dosDecimales(snapshotFiscal.total_otros_cargos || 0),
         total: dosDecimales(snapshotFiscal.total),
-        observaciones: sustento,
+        observaciones: observacionesFinal,
         documento_que_se_modifica_tipo: Number(snapshotFiscal.tipo_de_comprobante),
         documento_que_se_modifica_serie: snapshotFiscal.serie,
         documento_que_se_modifica_numero: Number(snapshotFiscal.numero),
@@ -546,5 +675,8 @@ module.exports = {
     construirPayloadNota,
     construirItem,
     obtenerIndicadorDetraccion,
-    fechaDocumento
+    fechaDocumento,
+    formatearFechaReferencia,
+    yaContieneReferencia,
+    combinarObservacionesNota
 };

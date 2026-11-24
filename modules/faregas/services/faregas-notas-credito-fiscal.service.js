@@ -24,9 +24,17 @@ const numeroFiscal = (valor, campo, { permitirCero = true } = {}) => {
 const clonar = (valor) => JSON.parse(JSON.stringify(valor));
 
 const validarFechaDocumentoOriginal = (valor) => {
+    if (!valor) {
+        throw errorFiscal('COMPROBANTE_ORIGINAL_SIN_FECHA_EMISION', 409, {
+            motivo: 'El comprobante original no cuenta con una fecha de emisión válida en base de datos.'
+        });
+    }
     if (valor instanceof Date) {
         if (Number.isNaN(valor.getTime())) throw errorFiscal('FECHA_EMISION_ORIGINAL_INVALIDA');
-        return validarFechaDocumentoOriginal(valor.toISOString().slice(0, 10));
+        const anio = valor.getUTCFullYear();
+        const mes = String(valor.getUTCMonth() + 1).padStart(2, '0');
+        const dia = String(valor.getUTCDate()).padStart(2, '0');
+        return validarFechaDocumentoOriginal(`${anio}-${mes}-${dia}`);
     }
     const texto = String(valor || '').trim();
     const match = texto.match(/^(\d{2})-(\d{2})-(\d{4})$/)
@@ -138,7 +146,9 @@ const normalizarSnapshotFiscal = (snapshot, facturacion = {}) => {
         cliente_denominacion: clienteDenominacion,
         moneda,
         fecha_de_emision: validarFechaDocumentoOriginal(
-            snapshot.fecha_de_emision || facturacion.fecha_documento
+            facturacion.fecha_documento_fiscal_dia
+            || facturacion.fecha_documento
+            || snapshot.fecha_de_emision
         ),
         total_descuento: totalDescuento,
         total_gravada: totalGravada,
@@ -153,6 +163,24 @@ const normalizarSnapshotFiscal = (snapshot, facturacion = {}) => {
 };
 
 const obtenerSnapshotFiscalOriginal = async (executor, facturacion) => {
+    let facturacionCompleta = facturacion;
+    if ((!facturacion?.fecha_documento && !facturacion?.fecha_documento_fiscal_dia) && facturacion?.id) {
+        const queryFact = await executor.query(`
+            SELECT f.*, f.fecha_documento::text AS fecha_documento_fiscal_dia
+            FROM fg_facturacion f
+            WHERE f.id = $1
+        `, [facturacion.id]);
+        if (queryFact.rowCount > 0) {
+            facturacionCompleta = queryFact.rows[0];
+        }
+    }
+
+    if (facturacionCompleta?.id && !facturacionCompleta.fecha_documento && !facturacionCompleta.fecha_documento_fiscal_dia) {
+        throw errorFiscal('COMPROBANTE_ORIGINAL_SIN_FECHA_EMISION', 409, {
+            motivo: 'El comprobante original no cuenta con una fecha de emisión válida en base de datos.'
+        });
+    }
+
     const result = await executor.query(`
         SELECT solicitud, estado, numero_intento, fecha_creacion
         FROM fg_facturacion_intento
@@ -162,9 +190,9 @@ const obtenerSnapshotFiscalOriginal = async (executor, facturacion) => {
                  numero_intento DESC,
                  id DESC
         LIMIT 1
-    `, [facturacion.id]);
+    `, [facturacionCompleta.id]);
     if (result.rowCount === 0) throw errorFiscal('SNAPSHOT_FISCAL_NO_ENCONTRADO', 409);
-    return normalizarSnapshotFiscal(result.rows[0].solicitud, facturacion);
+    return normalizarSnapshotFiscal(result.rows[0].solicitud, facturacionCompleta);
 };
 
 const derivarDatosNotaCredito = ({ snapshot, motivoCodigo, sustento, itemIndice, descripcionCorregida }) => {
@@ -179,6 +207,7 @@ const derivarDatosNotaCredito = ({ snapshot, motivoCodigo, sustento, itemIndice,
         tipo_comprobante: Number(snapshot.tipo_de_comprobante) === 1 ? 'FACTURA' : 'BOLETA',
         serie: snapshot.serie,
         numero: snapshot.numero,
+        fecha_documento_fiscal_dia: snapshot.fecha_de_emision,
         fecha_documento: snapshot.fecha_de_emision
     });
     const items = fiscal.items.map(clonar);
