@@ -127,6 +127,9 @@ const config = Object.freeze({
     correoDestinoDemo: process.env.FAREGAS_CONTINGENCIA_CORREO_DESTINO_DEMO || '',
     correoAdjuntarXml: getBooleanEnv('FAREGAS_CONTINGENCIA_CORREO_XML', false)
   }),
+  cron: Object.freeze({
+    enabled: getBooleanEnv('FAREGAS_CRON_ENABLED', false)
+  }),
   smtp: Object.freeze({
     host: String(process.env.SMTP_HOST || process.env.FAREGAS_SMTP_HOST || '').trim(),
     port: getIntegerEnv('SMTP_PORT', getIntegerEnv('FAREGAS_SMTP_PORT', 587)),

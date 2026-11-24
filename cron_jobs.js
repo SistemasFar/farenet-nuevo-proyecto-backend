@@ -7,9 +7,59 @@ const { reconciliarAnulacionesPendientes } = require('./modules/faregas/services
 
 let reconciliacionAnulacionesEnCurso = false;
 let emisionNotasEnCurso = false;
-let cronContingencia;
+let cronContingencia = null;
+let tareasCronRegistradas = [];
+
+/**
+ * Evalúa si las tareas automáticas (CRON) están habilitadas globalmente.
+ * Requiere explícitamente FAREGAS_CRON_ENABLED='true'.
+ * Cualquier otro valor (false, 0, vacío, undefined, etc.) desactiva todos los CRON.
+ */
+const esCronHabilitado = () => {
+  const valor = String(process.env.FAREGAS_CRON_ENABLED ?? '').trim().toLowerCase();
+  return valor === 'true';
+};
+
+const stopCronJobs = () => {
+  for (const tarea of tareasCronRegistradas) {
+    if (tarea && typeof tarea.stop === 'function') {
+      try { tarea.stop(); } catch (_) { /* sin acción */ }
+    }
+  }
+  tareasCronRegistradas = [];
+  if (cronContingencia && typeof cronContingencia.stop === 'function') {
+    try { cronContingencia.stop(); } catch (_) { /* sin acción */ }
+  }
+  cronContingencia = null;
+  reconciliacionAnulacionesEnCurso = false;
+  emisionNotasEnCurso = false;
+};
+
+const obtenerEstadoCronJobs = () => {
+  return {
+    habilitado: esCronHabilitado(),
+    tareasRegistradas: tareasCronRegistradas.length + (cronContingencia ? 1 : 0),
+    emisionNotasEnCurso,
+    reconciliacionAnulacionesEnCurso
+  };
+};
 
 const startCronJobs = () => {
+  // Punto central de protección: Si no está explícitamente en 'true', se bloquean todos los CRON.
+  if (!esCronHabilitado()) {
+    console.log('[CRON FAREGAS] Tareas automáticas deshabilitadas globalmente (FAREGAS_CRON_ENABLED != "true").');
+    stopCronJobs();
+    return {
+      habilitado: false,
+      tareasRegistradas: 0
+    };
+  }
+
+  console.log('[CRON FAREGAS] Tareas automáticas habilitadas explícitamente (FAREGAS_CRON_ENABLED="true").');
+
+  // Limpiar instancias previas antes de volver a registrar
+  stopCronJobs();
+
   const { contingencia } = require('./config/integrations.config');
   if (contingencia.habilitada && contingencia.cronHabilitado && !cronContingencia) {
     const worker = require('./modules/faregas/services/faregas-contingencia-worker.service');
@@ -24,7 +74,7 @@ const startCronJobs = () => {
   }
 
   // Recupera trabajos persistentes de notas de crédito después de un reinicio.
-  cron.schedule('* * * * *', async () => {
+  const tareaNotas = cron.schedule('* * * * *', async () => {
     const integrationsConfig = require('./config/integrations.config');
     if (!integrationsConfig.nubefact.enabled
         || !integrationsConfig.nubefact.notasAutoEmissionEnabled
@@ -41,9 +91,10 @@ const startCronJobs = () => {
       emisionNotasEnCurso = false;
     }
   });
+  tareasCronRegistradas.push(tareaNotas);
 
   // Reconciliación SUNAT cada 10 minutos
-  cron.schedule('*/10 * * * *', async () => {
+  const tareaReconciliacion = cron.schedule('*/10 * * * *', async () => {
     const integrationsConfig = require('./config/integrations.config');
     if (integrationsConfig.nubefact.enabled
         && integrationsConfig.nubefact.cronReconciliationEnabled) {
@@ -80,6 +131,17 @@ const startCronJobs = () => {
       }
     }
   });
+  tareasCronRegistradas.push(tareaReconciliacion);
+
+  return {
+    habilitado: true,
+    tareasRegistradas: tareasCronRegistradas.length + (cronContingencia ? 1 : 0)
+  };
 };
 
-module.exports = { startCronJobs };
+module.exports = {
+  startCronJobs,
+  stopCronJobs,
+  esCronHabilitado,
+  obtenerEstadoCronJobs
+};

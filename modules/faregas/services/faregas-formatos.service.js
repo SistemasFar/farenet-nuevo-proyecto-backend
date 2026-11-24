@@ -24,7 +24,11 @@ const STORAGE_PATH = process.env.FAREGAS_FORMATOS_STORAGE_PATH || path.join(__di
 
 // Ensure uploads directory exists
 if (!fs.existsSync(STORAGE_PATH)) {
-  fs.mkdirSync(STORAGE_PATH, { recursive: true });
+  try {
+    fs.mkdirSync(STORAGE_PATH, { recursive: true });
+  } catch (_) {
+    // Si la ruta no es accesible al requerir el módulo, se creará bajo demanda
+  }
 }
 
 function getParagraphTextAndMappings(pNode) {
