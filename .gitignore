@@ -7,6 +7,8 @@ scripts/
 !/scripts/run-faregas-tests.js
 !/scripts/importar-series-dms.js
 !/scripts/faregas-recuperar-nota-credito-aprobada.js
+!/scripts/migrar-configuraciones-faregas.cjs
+!/scripts/verificar-migracion-faregas.cjs
 
 # Scripts locales de diagnostico que pueden contener credenciales o ejecutar emisiones.
 query.js
