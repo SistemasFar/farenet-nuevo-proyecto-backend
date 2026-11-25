@@ -5,6 +5,8 @@ validateEnvironment();
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
+const path = require('path');
+const fs = require('fs');
 const { Server } = require('socket.io');
 const pool = require('./config/database');
 const swaggerUi = require('swagger-ui-express');
@@ -26,6 +28,7 @@ if (isAuthDisabled) {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '127.0.0.1';
 
 // Configuración de red
 app.set('case sensitive routing', false);
@@ -99,6 +102,80 @@ app.get('/api/health', (req, res) => {
 });
 
 // ==========================
+// 404 PARA APIS INEXISTENTES
+// ==========================
+app.use('/api', (req, res) => {
+    res.status(404).json({
+        error: 'Endpoint de API no encontrado',
+        path: req.originalUrl
+    });
+});
+
+// ==============================================================================
+// SERVICIO DE FRONTEND COMPILADO (REACT SPA)
+// ==============================================================================
+const FRONTEND_DIR = process.env.FRONTEND_DIR || (
+    fs.existsSync('C:\\FAREGAS\\FRONTEND')
+        ? 'C:\\FAREGAS\\FRONTEND'
+        : path.resolve(__dirname, '../farenetFrontend/dist')
+);
+
+if (fs.existsSync(FRONTEND_DIR)) {
+    const indexPath = path.join(FRONTEND_DIR, 'index.html');
+
+    // 1. Servir recursos estáticos reales (assets, img, favicon, etc.)
+    app.use(express.static(FRONTEND_DIR, {
+        maxAge: '1d',
+        index: false,
+        setHeaders: (res, filePath) => {
+            if (filePath.endsWith('index.html')) {
+                res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            }
+        }
+    }));
+
+    // 2. Ruta raíz explícita GET / y HEAD /
+    app.get('/', (_req, res) => {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        return res.sendFile(indexPath);
+    });
+
+    // 3. Fallback SPA para navegación React Router (F5 y rutas profundas)
+    // Acepta únicamente solicitudes GET/HEAD de navegación HTML;
+    // nunca intercepta /api, /socket.io, /api-docs ni responde HTML ante recursos estáticos inexistentes.
+    app.use((req, res, next) => {
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+            return next();
+        }
+
+        if (
+            req.path.startsWith('/api') ||
+            req.path.startsWith('/socket.io') ||
+            req.path.startsWith('/api-docs')
+        ) {
+            return next();
+        }
+
+        // Si tiene extensión de archivo (ej. .js, .css, .png, .ico), es un recurso estático inexistente -> 404
+        if (path.extname(req.path)) {
+            return res.status(404).type('txt').send('Recurso no encontrado');
+        }
+
+        // Solo responder con index.html si el cliente solicita o acepta HTML
+        if (!req.accepts('html')) {
+            return next();
+        }
+
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        return res.sendFile(indexPath);
+    });
+
+    console.log(`📦 [FAREGAS FRONTEND] Conectado a: ${FRONTEND_DIR}`);
+} else {
+    console.warn(`⚠️ [FAREGAS FRONTEND] Directorio no encontrado en: ${FRONTEND_DIR}. Solo APIs activas.`);
+}
+
+// ==========================
 // WEBSOCKETS (FAREGAS)
 // ==========================
 const server = http.createServer(app);
@@ -159,14 +236,15 @@ startCronJobs();
 // START SERVER
 // ==========================
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, HOST, () => {
     console.log('================================================================');
-    console.log(`🚀 SERVIDOR FAREGAS CORRIENDO EN: http://127.0.0.1:${PORT}`);
+    console.log(`🚀 SERVIDOR FAREGAS CORRIENDO EN: http://${HOST}:${PORT}`);
     console.log(`🏢 SISTEMA: FAREGAS S.A.C.`);
     console.log(`🗄️ BD AMBIENTE: ${process.env.APP_DATABASE_ENVIRONMENT || 'NO DEFINIDO'}`);
     console.log(`📄 NUBEFACT AMBIENTE: ${process.env.NUBEFACT_ENVIRONMENT || 'NO DEFINIDO'}`);
+    console.log(`🌐 FRONTEND DIR: ${fs.existsSync(FRONTEND_DIR) ? FRONTEND_DIR : 'NO DISPONIBLE (solo API)'}`);
     console.log('🌐 CORS CONFIGURADO PARA VITE 5173 Y 5174');
-    console.log(`📚 SWAGGER: http://127.0.0.1:${PORT}/api-docs`);
+    console.log(`📚 SWAGGER: http://${HOST}:${PORT}/api-docs`);
     console.log('================================================================');
 });
 
